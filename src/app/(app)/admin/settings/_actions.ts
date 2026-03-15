@@ -5,7 +5,7 @@ import { revalidatePath } from 'next/cache'
 
 export async function getClientes() {
     const supabase = await createAdminClient()
-    const { data: clientes, error } = await supabase.from('clientes').select('*').order('created_at', { ascending: false })
+    const { data: clientes, error } = await supabase.from('clientes').select('*, layout:layouts_reporte(id, nombre)').order('created_at', { ascending: false })
 
     if (error) {
         console.error('Error fetching clients:', error)
