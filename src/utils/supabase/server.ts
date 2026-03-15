@@ -30,8 +30,14 @@ export async function createClient() {
 import { createClient as createSupabaseClient } from '@supabase/supabase-js'
 
 export async function createAdminClient() {
-    return createSupabaseClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.SUPABASE_SERVICE_ROLE_KEY!
-    )
+    const url = process.env.NEXT_PUBLIC_SUPABASE_URL
+    const key = process.env.SUPABASE_SERVICE_ROLE_KEY
+
+    if (!url || !key) {
+        console.error('CRITICAL: Missing Supabase URL or Service Role Key in Env Variables')
+        // We throw a clear error that Next.js can catch or show in logs
+        throw new Error('Database configuration missing')
+    }
+
+    return createSupabaseClient(url, key)
 }
