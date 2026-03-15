@@ -31,22 +31,37 @@ export async function updateSession(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser()
 
-  /*
-  if (
-    !user &&
-    !request.nextUrl.pathname.startsWith('/login') &&
-    !request.nextUrl.pathname.startsWith('/api/')
-  ) {
+  const isLoginPage = request.nextUrl.pathname.startsWith('/login')
+  const isApiPage = request.nextUrl.pathname.startsWith('/api/')
+  const isAdminPage = request.nextUrl.pathname.startsWith('/admin')
+
+  // 1. If not logged in and trying to access a protected page
+  if (!user && !isLoginPage && !isApiPage) {
     const url = request.nextUrl.clone()
     url.pathname = '/login'
     return NextResponse.redirect(url)
   }
-  */
 
-  if (user && request.nextUrl.pathname === '/login') {
+  // 2. If logged in and trying to access login page
+  if (user && isLoginPage) {
     const url = request.nextUrl.clone()
     url.pathname = '/'
     return NextResponse.redirect(url)
+  }
+
+  // 3. Admin role check for /admin routes
+  if (user && isAdminPage) {
+    const { data: profile } = await supabase
+      .from('user_profiles')
+      .select('role')
+      .eq('id', user.id)
+      .single()
+
+    if (profile?.role !== 'admin') {
+      const url = request.nextUrl.clone()
+      url.pathname = '/' // Redirect non-admins to home
+      return NextResponse.redirect(url)
+    }
   }
 
   return supabaseResponse
