@@ -49,7 +49,7 @@ export async function updateSession(request: NextRequest) {
     return NextResponse.redirect(url)
   }
 
-  // 3. Admin role check for /admin routes
+  // 3. Admin/Trafficker role check for /admin routes
   if (user && isAdminPage) {
     const { data: profile } = await supabase
       .from('user_profiles')
@@ -57,9 +57,11 @@ export async function updateSession(request: NextRequest) {
       .eq('id', user.id)
       .single()
 
-    if (profile?.role !== 'admin') {
+    const hasAdminAccess = profile?.role === 'admin' || profile?.role === 'trafficker'
+
+    if (!hasAdminAccess) {
       const url = request.nextUrl.clone()
-      url.pathname = '/' // Redirect non-admins to home
+      url.pathname = '/' // Redirect unauthorized users to home
       return NextResponse.redirect(url)
     }
   }

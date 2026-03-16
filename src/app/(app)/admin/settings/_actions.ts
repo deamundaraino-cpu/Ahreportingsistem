@@ -67,8 +67,15 @@ export async function assignLayoutToCliente(clienteId: string, layoutId: string 
 }
 
 export async function deleteCliente(id: string) {
-    const supabase = await createAdminClient()
+    const supabaseStore = await createClient()
+    const { data: { user } } = await supabaseStore.auth.getUser()
 
+    if (!user) return { error: 'No autorizado' }
+
+    const { data: profile } = await supabaseStore.from('user_profiles').select('role').eq('id', user.id).single()
+    if (profile?.role !== 'admin') return { error: 'Solo los administradores pueden borrar clientes' }
+
+    const supabase = await createAdminClient()
     const { error } = await supabase.from('clientes').delete().eq('id', id)
 
     if (error) {
@@ -106,6 +113,14 @@ export async function updateLayout(id: string, payload: { nombre?: string; descr
 }
 
 export async function deleteLayout(id: string) {
+    const supabaseStore = await createClient()
+    const { data: { user } } = await supabaseStore.auth.getUser()
+
+    if (!user) return { error: 'No autorizado' }
+
+    const { data: profile } = await supabaseStore.from('user_profiles').select('role').eq('id', user.id).single()
+    if (profile?.role !== 'admin') return { error: 'Solo los administradores pueden borrar layouts' }
+
     const supabase = await createAdminClient()
     const { error } = await supabase.from('layouts_reporte').delete().eq('id', id)
     if (error) return { error: error.message }

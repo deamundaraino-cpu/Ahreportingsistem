@@ -2,9 +2,16 @@ import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/componen
 import { getClientes } from "./_actions"
 import { NewClientDialog } from "./components/NewClientDialog"
 import { ExternalLink, Settings, AtSign } from "lucide-react"
+import { createClient } from "@/utils/supabase/server"
 
 export default async function AdminClientesPage() {
     const clientes = await getClientes()
+    
+    // Fetch user profile to check role
+    const supabase = await createClient()
+    const { data: { user } } = await supabase.auth.getUser()
+    const { data: profile } = await supabase.from('user_profiles').select('role').eq('id', user?.id).single()
+    const isAdmin = profile?.role === 'admin'
 
     return (
         <div className="space-y-6">
@@ -13,7 +20,7 @@ export default async function AdminClientesPage() {
                     <h2 className="text-2xl font-bold text-white">Ajustes de Sistema Unificado</h2>
                     <p className="text-zinc-400">Configura accesos y credenciales de API para cada cliente.</p>
                 </div>
-                <NewClientDialog />
+                {isAdmin && <NewClientDialog />}
             </div>
 
             {!clientes || clientes.length === 0 ? (
@@ -25,7 +32,7 @@ export default async function AdminClientesPage() {
                     <p className="text-zinc-400 mt-2 max-w-sm mb-6">
                         Aún no has creado configuraciones para tus clientes. Empieza creando tu primer cliente para conectarlo a Meta o Hotmart.
                     </p>
-                    <NewClientDialog />
+                    {isAdmin && <NewClientDialog />}
                 </Card>
             ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">

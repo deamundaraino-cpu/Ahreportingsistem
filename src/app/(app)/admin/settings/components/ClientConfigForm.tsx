@@ -10,7 +10,7 @@ import { updateClienteConfig, deleteCliente, assignLayoutToCliente } from '../_a
 import { testMetaConnection, testHotmartConnection, testGA4Connection } from '../test_actions'
 import { Loader2, ArrowLeft, Save, Trash2, CheckCircle2, AlertCircle, RefreshCw, LayoutDashboard } from 'lucide-react'
 
-export function ClientConfigForm({ cliente, layouts = [] }: { cliente: any; layouts?: any[] }) {
+export function ClientConfigForm({ cliente, layouts = [], isAdmin = false }: { cliente: any; layouts?: any[]; isAdmin?: boolean }) {
     const router = useRouter()
     const [loading, setLoading] = useState(false)
     const [error, setError] = useState<string | null>(null)
@@ -341,10 +341,13 @@ export function ClientConfigForm({ cliente, layouts = [] }: { cliente: any; layo
                     </div>
                 </CardContent>
                 <CardFooter className="bg-zinc-950/50 border-t border-zinc-800 flex justify-between pt-6">
-                    <Button variant="destructive" onClick={handleDelete} className="gap-2">
-                        <Trash2 className="w-4 h-4" />
-                        Eliminar Cliente
-                    </Button>
+                    {isAdmin && (
+                        <Button variant="destructive" onClick={handleDelete} className="gap-2">
+                            <Trash2 className="w-4 h-4" />
+                            Eliminar Cliente
+                        </Button>
+                    )}
+                    {!isAdmin && <div />}
                     <Button onClick={handleSave} disabled={loading} className="gap-2">
                         {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
                         Guardar Todo

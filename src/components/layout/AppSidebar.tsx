@@ -1,8 +1,9 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
+import { createClient } from '@/utils/supabase/client'
 import {
     Users,
     BarChart3,
@@ -10,25 +11,55 @@ import {
     Settings,
     LayoutDashboard,
     Menu,
-    X
+    X,
+    Shield
 } from 'lucide-react'
 
 export function AppSidebar() {
     const pathname = usePathname()
     const [isOpen, setIsOpen] = useState(false)
+    const [role, setRole] = useState<string | null>(null)
+    const [loading, setLoading] = useState(true)
+
+    const supabase = createClient()
+
+    useEffect(() => {
+        async function fetchUserRole() {
+            const { data: { user } } = await supabase.auth.getUser()
+            if (user) {
+                const { data: profile } = await supabase
+                    .from('user_profiles')
+                    .select('role')
+                    .eq('id', user.id)
+                    .single()
+                setRole(profile?.role || 'viewer')
+            }
+            setLoading(false)
+        }
+        fetchUserRole()
+    }, [supabase])
 
     const navigation = [
         { name: 'General Overview', href: '/dashboard', icon: LayoutDashboard },
     ]
+
+    const isAdmin = role === 'admin'
+    const isTrafficker = role === 'trafficker'
+    const canAccessSettings = isAdmin || isTrafficker
 
     const settingsNavigation = [
         { name: 'Ajustes de Sistema', href: '/admin/settings', icon: Settings },
         { name: 'Constructor de Layouts', href: '/admin/layouts', icon: Users },
     ]
 
+    // Only Admin can see the User Management link if we add one in the future
+    // For now, both see settings, but we might want to hide specific items for traffickers later
+    
     const isActive = (path: string) => {
         return pathname?.startsWith(path)
     }
+
+    if (loading) return null // Or a skeleton
 
     return (
         <>
@@ -104,7 +135,8 @@ export function AppSidebar() {
                         </div>
                     </div>
 
-                    <div>
+                    {canAccessSettings && (
+                        <div>
                         <p className="px-2 text-xs font-semibold text-zinc-500 uppercase tracking-wider mb-4">
                             Configuración & APIs
                         </p>
@@ -139,7 +171,8 @@ export function AppSidebar() {
                             })}
                         </div>
                     </div>
-                </nav>
+                )}
+            </nav>
 
                 <div className="p-4 border-t border-zinc-800/50">
                     <form action="/auth/signout" method="post" className="w-full">

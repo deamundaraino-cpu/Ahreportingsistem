@@ -185,7 +185,7 @@ function LayoutEditor({ initial, onSave, onCancel }: { initial: any; onSave: (l:
 }
 
 // ─── Main Builder Client ──────────────────────────────────────────────────────
-export function LayoutBuilderClient({ layouts: initial }: { layouts: any[] }) {
+export function LayoutBuilderClient({ layouts: initial, isAdmin = false }: { layouts: any[]; isAdmin?: boolean }) {
     const [layouts, setLayouts] = useState(initial)
     const [editing, setEditing] = useState<any | null>(null)
     const [isNew, setIsNew] = useState(false)
@@ -218,7 +218,7 @@ export function LayoutBuilderClient({ layouts: initial }: { layouts: any[] }) {
     return (
         <div className="space-y-4">
             <div className="flex justify-end">
-                <Button onClick={() => { setEditing(emptyLayout()); setIsNew(true) }} className="gap-2 bg-indigo-600 hover:bg-indigo-700 text-white">
+                <Button onClick={() => { setEditing(emptyLayout()); setIsNew(true) }} className="gap-2 bg-indigo-600 hover:bg-indigo-700 text-white shadow-lg shadow-indigo-500/20">
                     <Plus className="w-4 h-4" /> Nueva Plantilla
                 </Button>
             </div>
@@ -248,9 +248,11 @@ export function LayoutBuilderClient({ layouts: initial }: { layouts: any[] }) {
                                     <Button size="sm" variant="outline" onClick={() => setEditing(layout)} className="gap-1.5 border-zinc-700 text-zinc-300 hover:text-white hover:bg-zinc-800">
                                         <PenSquare className="w-3.5 h-3.5" /> Editar
                                     </Button>
-                                    <Button size="sm" variant="outline" onClick={() => handleDelete(layout.id)} className="border-zinc-700 text-zinc-500 hover:text-red-400 hover:border-red-500/30 hover:bg-red-500/5">
-                                        <Trash2 className="w-3.5 h-3.5" />
-                                    </Button>
+                                    {isAdmin && (
+                                        <Button size="sm" variant="outline" onClick={() => handleDelete(layout.id)} className="border-zinc-700 text-zinc-500 hover:text-red-400 hover:border-red-500/30 hover:bg-red-500/5">
+                                            <Trash2 className="w-3.5 h-3.5" />
+                                        </Button>
+                                    )}
                                 </div>
                             </div>
                         </CardHeader>
