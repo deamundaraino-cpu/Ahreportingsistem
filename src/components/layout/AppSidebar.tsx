@@ -52,6 +52,10 @@ export function AppSidebar() {
         { name: 'Constructor de Layouts', href: '/admin/layouts', icon: Users },
     ]
 
+    if (isAdmin) {
+        settingsNavigation.push({ name: 'Gestión de Usuarios', href: '/admin/users', icon: Shield })
+    }
+
     // Only Admin can see the User Management link if we add one in the future
     // For now, both see settings, but we might want to hide specific items for traffickers later
     
