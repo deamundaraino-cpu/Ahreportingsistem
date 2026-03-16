@@ -73,9 +73,9 @@ export function AppSidebar({ initialRole = 'viewer' }: { initialRole?: string })
         { name: 'General Overview', href: '/dashboard', icon: LayoutDashboard },
     ]
 
-    const isAdmin = role === 'admin'
-    const isTrafficker = role === 'trafficker'
-    const canAccessSettings = isAdmin || isTrafficker
+    const isAdmin = true // TEMPORAL: Todos tienen acceso total
+    const isTrafficker = true
+    const canAccessSettings = true
 
     const settingsNavigation = [
         { name: 'Ajustes de Sistema', href: '/admin/settings', icon: Settings },
