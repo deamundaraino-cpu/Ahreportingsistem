@@ -73,18 +73,12 @@ export function AppSidebar({ initialRole = 'viewer' }: { initialRole?: string })
         { name: 'General Overview', href: '/dashboard', icon: LayoutDashboard },
     ]
 
-    const isAdmin = role === 'admin' // Restituído
-    const isTrafficker = role === 'trafficker'
-    const canAccessSettings = role === 'admin' || role === 'trafficker'
-
+    // Acceso global — todos los usuarios ven todo el menú
     const settingsNavigation = [
         { name: 'Ajustes de Sistema', href: '/admin/settings', icon: Settings },
         { name: 'Constructor de Layouts', href: '/admin/layouts', icon: Users },
+        { name: 'Gestión de Usuarios', href: '/admin/users', icon: Shield },
     ]
-
-    if (isAdmin) {
-        settingsNavigation.push({ name: 'Gestión de Usuarios', href: '/admin/users', icon: Shield })
-    }
 
     // Only Admin can see the User Management link if we add one in the future
     // For now, both see settings, but we might want to hide specific items for traffickers later
@@ -169,8 +163,7 @@ export function AppSidebar({ initialRole = 'viewer' }: { initialRole?: string })
                         </div>
                     </div>
 
-                    {canAccessSettings && (
-                        <div>
+                    <div>
                         <p className="px-2 text-xs font-semibold text-zinc-500 uppercase tracking-wider mb-4">
                             Configuración & APIs
                         </p>
@@ -205,7 +198,6 @@ export function AppSidebar({ initialRole = 'viewer' }: { initialRole?: string })
                             })}
                         </div>
                     </div>
-                )}
             </nav>
 
                 <div className="p-4 border-t border-zinc-800/50">
