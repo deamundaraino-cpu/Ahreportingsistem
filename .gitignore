@@ -30,6 +30,14 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
+# debug/test scripts (root level)
+/fix_*.js
+/insert_test*.js
+/meta_test*.js
+/query*.js
+/test_*.js
+*_test.js
+
 # env files (can opt-in for committing if needed)
 .env*
 

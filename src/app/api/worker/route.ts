@@ -10,7 +10,7 @@ export async function GET(request: Request) {
         return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    let adminSupabase;
+    let adminSupabase: any;
     if (process.env.SUPABASE_SERVICE_ROLE_KEY) {
         adminSupabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY)
     } else {
@@ -87,299 +87,285 @@ export async function GET(request: Request) {
             log(`[Cliente ${cliente.nombre}] No tiene config.hotmart_basic definida.`)
         }
 
-        for (const targetDate of datesToSync) {
-            let metaRecord = { spend: 0, impressions: 0, clicks: 0, campaigns: [] as any[] }
-            let gaRecord = { sessions: 0 }
-            let hotmartRecord = { principal: 0, bump: 0, upsell: 0, pagos_iniciados: 0 }
-
-            // --- Meta Ads ---
-            if (config.meta_token && config.meta_account_id) {
-                try {
-                    const actId = config.meta_account_id.startsWith('act_') ? config.meta_account_id : `act_${config.meta_account_id}`
-                    const url = new URL(`https://graph.facebook.com/v19.0/${actId}/insights`)
-                    url.searchParams.append('access_token', config.meta_token)
-                    url.searchParams.append('time_range', JSON.stringify({ since: targetDate, until: targetDate }))
-                    url.searchParams.append('fields', 'campaign_name,spend,impressions,clicks,inline_link_clicks,reach,frequency,cpc,cpm,ctr,actions,conversions')
-                    url.searchParams.append('level', 'campaign')
-                    url.searchParams.append('limit', '500')
-
-                    const res = await fetch(url.toString())
-                    const data = await res.json()
-                    if (data.data) {
-                        let totalSpend = 0, totalImpr = 0, totalClicks = 0;
-                        const campaignsArr: any[] = [];
-
-                        data.data.forEach((camp: any) => {
-                            const cSpend = parseFloat(camp.spend || '0');
-                            const cImpr = parseInt(camp.impressions || '0');
-                            const cClicks = parseInt(camp.clicks || '0');
-                            const cLinkClicks = parseInt(camp.inline_link_clicks || '0');
-                            const cReach = parseInt(camp.reach || '0');
-                            const cFrequency = parseFloat(camp.frequency || '0');
-                            const cCpc = parseFloat(camp.cpc || '0');
-                            const cCpm = parseFloat(camp.cpm || '0');
-                            const cCtr = parseFloat(camp.ctr || '0');
-
-                            let cLeads = 0, cPurchases = 0, cAddsToCart = 0, cInitiatesCheckout = 0;
-                            let cLandingPageViews = 0, cVideoViews = 0, cResults = 0;
-                            const cCustomConversions: Record<string, number> = {};
-
-                            if (camp.actions) {
-                                camp.actions.forEach((a: any) => {
-                                    const val = parseInt(a.value || '0');
-                                    if (a.action_type === 'lead') cLeads += val;
-                                    if (a.action_type === 'purchase') cPurchases += val;
-                                    if (a.action_type === 'offsite_conversion.fb_pixel_add_to_cart') cAddsToCart += val;
-                                    if (a.action_type === 'offsite_conversion.fb_pixel_initiate_checkout') cInitiatesCheckout += val;
-                                    if (a.action_type === 'landing_page_view') cLandingPageViews += val;
-                                    if (a.action_type === 'video_view') cVideoViews += val;
-                                });
-                            }
-
-                            // Capture custom pixel conversions (offsite_conversion.fb_pixel_custom.*)
-                            if (camp.conversions) {
-                                camp.conversions.forEach((cv: any) => {
-                                    const type: string = cv.action_type || '';
-                                    const val = parseInt(cv.value || '0');
-                                    if (type.startsWith('offsite_conversion.fb_pixel_custom.')) {
-                                        // Extract key: e.g. "LEADTCC" from "offsite_conversion.fb_pixel_custom.LEADTCC"
-                                        const key = type.replace('offsite_conversion.fb_pixel_custom.', '').toLowerCase()
-                                        cCustomConversions[key] = (cCustomConversions[key] || 0) + val;
-                                    }
-                                });
-                            }
-
-                            // Try to extract dynamic results (often matches objective, can be a sum of leads or purchases depending on configuration)
-                            cResults = cLeads + cPurchases + cInitiatesCheckout;
-
-                            totalSpend += cSpend;
-                            totalImpr += cImpr;
-                            totalClicks += cClicks;
-
-                            campaignsArr.push({
-                                name: camp.campaign_name || 'Desconocida',
-                                spend: cSpend,
-                                impressions: cImpr,
-                                clicks: cClicks,
-                                link_clicks: cLinkClicks,
-                                reach: cReach,
-                                frequency: cFrequency,
-                                cpc: cCpc,
-                                cpm: cCpm,
-                                ctr: cCtr,
-                                leads: cLeads,
-                                purchases: cPurchases,
-                                adds_to_cart: cAddsToCart,
-                                initiates_checkout: cInitiatesCheckout,
-                                landing_page_views: cLandingPageViews,
-                                video_views: cVideoViews,
-                                results: cResults,
-                                custom_conversions: cCustomConversions
-                            });
-                        });
-
-                        log(`[Meta] ${targetDate} Datos de campañas obtenidos. Total Spend: ${totalSpend}`)
-                        metaRecord.spend = totalSpend
-                        metaRecord.impressions = totalImpr
-                        metaRecord.clicks = totalClicks
-                        metaRecord.campaigns = campaignsArr
-                        platformLogs.meta = 'Conectado OK'
-
-                        // ── Auto-discover custom conversions → upsert into catalog ─────────
-                        const allCustomKeys = new Set<string>()
-                        campaignsArr.forEach((camp: any) => {
-                            if (camp.custom_conversions) {
-                                Object.keys(camp.custom_conversions).forEach(k => allCustomKeys.add(k))
-                            }
-                        })
-
-                        if (allCustomKeys.size > 0) {
-                            const catalogRows = Array.from(allCustomKeys).map((key) => {
-                                // Convert raw key (e.g. "leadtcc") to a human readable label
-                                // Key is already lowercase (per worker extraction logic)
-                                const label = key
-                                    .replace(/_/g, ' ')
-                                    .replace(/\b\w/g, c => c.toUpperCase())
-                                    .trim()
-                                return {
-                                    cliente_id: cliente.id,
-                                    conversion_key: key,
-                                    label: `Lead ${label.replace('Lead', '').trim() || label}`,
-                                    field_id: `meta_custom_${key}`,
-                                    last_seen: targetDate,
-                                }
-                            })
-
-                            const { error: catErr } = await adminSupabase
-                                .from('meta_conversiones_catalogo')
-                                .upsert(catalogRows, {
-                                    onConflict: 'cliente_id,conversion_key',
-                                    ignoreDuplicates: false,
-                                })
-
-                            if (catErr) {
-                                log(`[Meta] ⚠️ Error actualizando catálogo de conversiones: ${catErr.message}`)
-                            } else {
-                                log(`[Meta] ✓ Catálogo de conversiones actualizado: ${Array.from(allCustomKeys).join(', ')}`)
-                            }
-                        }
-                    } else if (data.error) {
-                        log(`[Meta] ${targetDate} Error de API: ${JSON.stringify(data.error)}`)
-                        if (platformLogs.meta === 'Saltado') platformLogs.meta = 'Error API'
-                    } else {
-                        log(`[Meta] ${targetDate} Sin Datos para hoy.`)
-                        if (platformLogs.meta === 'Saltado') platformLogs.meta = 'Sin Datos'
-                    }
-                } catch (e: any) {
-                    log(`[Meta] Catch Error: ${e.message}`)
-                    platformLogs.meta = 'Error'
-                }
-            } else {
+        // ─── Helper: Fetch Meta Ads for a single date ────────────────────────
+        async function fetchMeta(targetDate: string) {
+            const record = { spend: 0, impressions: 0, clicks: 0, campaigns: [] as any[] }
+            if (!(config.meta_token && config.meta_account_id)) {
                 log(`[Meta] Sin config para el cliente.`)
+                return record
             }
+            try {
+                const actId = config.meta_account_id.startsWith('act_') ? config.meta_account_id : `act_${config.meta_account_id}`
+                const url = new URL(`https://graph.facebook.com/v19.0/${actId}/insights`)
+                url.searchParams.append('access_token', config.meta_token)
+                url.searchParams.append('time_range', JSON.stringify({ since: targetDate, until: targetDate }))
+                url.searchParams.append('fields', 'campaign_name,spend,impressions,clicks,inline_link_clicks,reach,frequency,cpc,cpm,ctr,actions,conversions')
+                url.searchParams.append('level', 'campaign')
+                url.searchParams.append('limit', '500')
 
-            // --- Hotmart (PRECISIÓN TOTAL) ---
-            if (hotmartAccessToken) {
-                try {
-                    const clean = (str: string) => (str || '').toLowerCase().split(',').map(s => s.trim()).filter(s => s)
-                    const principalNames = clean(config.hotmart_principal_names)
-                    const bumpNames = clean(config.hotmart_bump_names)
-                    const upsellNames = clean(config.hotmart_upsell_names)
+                const res = await fetch(url.toString())
+                const data = await res.json()
+                if (data.data) {
+                    let totalSpend = 0, totalImpr = 0, totalClicks = 0
+                    const campaignsArr: any[] = []
 
-                    // Zona Horaria de Colombia (-05:00, ajustable en servidor)
-                    // Fijan la ventana de tiempo para el inicio y fin del día en esa franja horaria.
-                    const dayStart = new Date(`${targetDate}T00:00:00.000-05:00`).getTime()
-                    const dayEnd = new Date(`${targetDate}T23:59:59.999-05:00`).getTime()
+                    data.data.forEach((camp: any) => {
+                        const cSpend = parseFloat(camp.spend || '0')
+                        const cImpr = parseInt(camp.impressions || '0')
+                        const cClicks = parseInt(camp.clicks || '0')
+                        const cLinkClicks = parseInt(camp.inline_link_clicks || '0')
+                        const cReach = parseInt(camp.reach || '0')
+                        const cFrequency = parseFloat(camp.frequency || '0')
+                        const cCpc = parseFloat(camp.cpc || '0')
+                        const cCpm = parseFloat(camp.cpm || '0')
+                        const cCtr = parseFloat(camp.ctr || '0')
 
-                    // ==========================================
-                    // PASO 1: Obtener las transacciones válidas aprobadas en el día
-                    // ==========================================
-                    let pageToken = ""
-                    let hasNext = true
-                    const validTransactions = new Set<string>()
+                        let cLeads = 0, cPurchases = 0, cAddsToCart = 0, cInitiatesCheckout = 0
+                        let cLandingPageViews = 0, cVideoViews = 0, cResults = 0
+                        const cCustomConversions: Record<string, number> = {}
 
-                    while (hasNext) {
-                        const url = new URL('https://developers.hotmart.com/payments/api/v1/sales/history')
-                        url.searchParams.append('start_date', dayStart.toString())
-                        url.searchParams.append('end_date', dayEnd.toString())
-                        url.searchParams.append('max_results', '100')
-                        url.searchParams.append('transaction_status', 'APPROVED')
-                        url.searchParams.append('transaction_status', 'COMPLETE')
-                        if (pageToken) url.searchParams.append('page_token', pageToken)
-
-                        const res = await fetch(url.toString(), {
-                            headers: { 'Authorization': `Bearer ${hotmartAccessToken}` }
-                        })
-                        const data = await res.json()
-
-                        if (data.error || data.message) {
-                            log(`[Hotmart] ${targetDate} API Error on History: ${JSON.stringify(data)}`)
-                            hasNext = false
-                            platformLogs.hotmart = 'Error API'
-                            break;
+                        if (camp.actions) {
+                            camp.actions.forEach((a: any) => {
+                                const val = parseInt(a.value || '0')
+                                if (a.action_type === 'lead') cLeads += val
+                                if (a.action_type === 'purchase') cPurchases += val
+                                if (a.action_type === 'offsite_conversion.fb_pixel_add_to_cart') cAddsToCart += val
+                                if (a.action_type === 'offsite_conversion.fb_pixel_initiate_checkout') cInitiatesCheckout += val
+                                if (a.action_type === 'landing_page_view') cLandingPageViews += val
+                                if (a.action_type === 'video_view') cVideoViews += val
+                            })
                         }
 
-                        if (data.items) {
-                            data.items.forEach((item: any) => {
-                                if (item.purchase?.transaction) {
-                                    validTransactions.add(item.purchase.transaction)
+                        if (camp.conversions) {
+                            camp.conversions.forEach((cv: any) => {
+                                const type: string = cv.action_type || ''
+                                const val = parseInt(cv.value || '0')
+                                if (type.startsWith('offsite_conversion.fb_pixel_custom.')) {
+                                    const key = type.replace('offsite_conversion.fb_pixel_custom.', '').toLowerCase()
+                                    cCustomConversions[key] = (cCustomConversions[key] || 0) + val
                                 }
                             })
                         }
-                        pageToken = data.page_info?.next_page_token
-                        hasNext = !!pageToken
-                    }
 
-                    // ==========================================
-                    // PASO 2: Obtener las Comisiones Exactas (en dólares) de cada transacción validada
-                    // ==========================================
-                    pageToken = ""
-                    hasNext = true
-                    let totalItemsProcessed = 0
+                        cResults = cLeads + cPurchases + cInitiatesCheckout
 
-                    while (hasNext) {
-                        const url2 = new URL('https://developers.hotmart.com/payments/api/v1/sales/commissions')
-                        url2.searchParams.append('start_date', dayStart.toString())
-                        url2.searchParams.append('end_date', dayEnd.toString())
-                        url2.searchParams.append('max_results', '100')
-                        if (pageToken) url2.searchParams.append('page_token', pageToken)
+                        totalSpend += cSpend
+                        totalImpr += cImpr
+                        totalClicks += cClicks
 
-                        const res2 = await fetch(url2.toString(), {
-                            headers: { 'Authorization': `Bearer ${hotmartAccessToken}` }
+                        campaignsArr.push({
+                            name: camp.campaign_name || 'Desconocida',
+                            spend: cSpend, impressions: cImpr, clicks: cClicks,
+                            link_clicks: cLinkClicks, reach: cReach, frequency: cFrequency,
+                            cpc: cCpc, cpm: cCpm, ctr: cCtr,
+                            leads: cLeads, purchases: cPurchases, adds_to_cart: cAddsToCart,
+                            initiates_checkout: cInitiatesCheckout, landing_page_views: cLandingPageViews,
+                            video_views: cVideoViews, results: cResults,
+                            custom_conversions: cCustomConversions
                         })
-                        const data2 = await res2.json()
+                    })
 
-                        if (data2.items) {
-                            data2.items.forEach((item: any) => {
-                                // Solo nos importan comisiones de transacciones que aparecieron como APROBADAS hoy
-                                if (validTransactions.has(item.transaction)) {
-                                    totalItemsProcessed++
-                                    let netUSD = 0;
+                    log(`[Meta] ${targetDate} Datos de campañas obtenidos. Total Spend: ${totalSpend}`)
+                    record.spend = totalSpend
+                    record.impressions = totalImpr
+                    record.clicks = totalClicks
+                    record.campaigns = campaignsArr
+                    platformLogs.meta = 'Conectado OK'
 
-                                    // Buscar la comisión Dolares(USD) asignada a 'PRODUCER'
-                                    if (item.commissions && Array.isArray(item.commissions)) {
-                                        item.commissions.forEach((c: any) => {
-                                            if (c.source === 'PRODUCER' && c.commission?.currency_code === 'USD') {
-                                                netUSD += c.commission.value
-                                            }
-                                        })
-                                    }
-
-                                    const prodName = (item.product?.name || '').toLowerCase().trim()
-
-                                    if (principalNames.includes(prodName)) {
-                                        hotmartRecord.principal += netUSD
-                                    } else if (bumpNames.includes(prodName)) {
-                                        hotmartRecord.bump += netUSD
-                                    } else if (upsellNames.includes(prodName)) {
-                                        hotmartRecord.upsell += netUSD
-                                    } else {
-                                        hotmartRecord.principal += netUSD
-                                    }
-                                }
-                            })
+                    // ── Auto-discover custom conversions → upsert into catalog
+                    const allCustomKeys = new Set<string>()
+                    campaignsArr.forEach((camp: any) => {
+                        if (camp.custom_conversions) {
+                            Object.keys(camp.custom_conversions).forEach(k => allCustomKeys.add(k))
                         }
-                        pageToken = data2.page_info?.next_page_token
-                        hasNext = !!pageToken
+                    })
+
+                    if (allCustomKeys.size > 0) {
+                        const catalogRows = Array.from(allCustomKeys).map((key) => {
+                            const label = key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()).trim()
+                            return {
+                                cliente_id: cliente.id,
+                                conversion_key: key,
+                                label: `Lead ${label.replace('Lead', '').trim() || label}`,
+                                field_id: `meta_custom_${key}`,
+                                last_seen: targetDate,
+                            }
+                        })
+
+                        const { error: catErr } = await adminSupabase
+                            .from('meta_conversiones_catalogo')
+                            .upsert(catalogRows, { onConflict: 'cliente_id,conversion_key', ignoreDuplicates: false })
+
+                        if (catErr) {
+                            log(`[Meta] ⚠️ Error actualizando catálogo: ${catErr.message}`)
+                        } else {
+                            log(`[Meta] ✓ Catálogo actualizado: ${Array.from(allCustomKeys).join(', ')}`)
+                        }
                     }
-
-                    log(`[Hotmart] ${targetDate} Creado cruce de ${totalItemsProcessed} registros procesados con precisión (TZ Chile). USD Generados en DB: ${hotmartRecord.principal.toFixed(2)}`)
-                    platformLogs.hotmart = 'Conectado OK'
-
-                } catch (e: any) {
-                    log(`[Hotmart] Catch Error: ${e.message}`)
-                    platformLogs.hotmart = 'Error'
+                } else if (data.error) {
+                    log(`[Meta] ${targetDate} Error de API: ${JSON.stringify(data.error)}`)
+                    if (platformLogs.meta === 'Saltado') platformLogs.meta = 'Error API'
+                } else {
+                    log(`[Meta] ${targetDate} Sin Datos para hoy.`)
+                    if (platformLogs.meta === 'Saltado') platformLogs.meta = 'Sin Datos'
                 }
-            } else {
+            } catch (e: any) {
+                log(`[Meta] Catch Error: ${e.message}`)
+                platformLogs.meta = 'Error'
+            }
+            return record
+        }
+
+        // ─── Helper: Fetch Hotmart for a single date ────────────────────────
+        async function fetchHotmart(targetDate: string) {
+            const record = { principal: 0, bump: 0, upsell: 0, pagos_iniciados: 0 }
+            if (!hotmartAccessToken) {
                 log(`[Hotmart] Sin accessToken generado.`)
+                return record
             }
+            try {
+                const clean = (str: string) => (str || '').toLowerCase().split(',').map(s => s.trim()).filter(s => s)
+                const principalNames = clean(config.hotmart_principal_names)
+                const bumpNames = clean(config.hotmart_bump_names)
+                const upsellNames = clean(config.hotmart_upsell_names)
 
-            // --- Google Analytics 4 (por día) ---
-            if (config.ga_property_id && config.ga_client_email && config.ga_private_key) {
-                try {
-                    const { BetaAnalyticsDataClient } = require('@google-analytics/data')
-                    const analyticsDataClient = new BetaAnalyticsDataClient({
-                        credentials: {
-                            client_email: config.ga_client_email,
-                            private_key: config.ga_private_key.replace(/\\n/g, '\n')
-                        }
+                const dayStart = new Date(`${targetDate}T00:00:00.000-05:00`).getTime()
+                const dayEnd = new Date(`${targetDate}T23:59:59.999-05:00`).getTime()
+
+                // PASO 1: Transacciones válidas aprobadas
+                let pageToken = ""
+                let hasNext = true
+                const validTransactions = new Set<string>()
+
+                while (hasNext) {
+                    const url = new URL('https://developers.hotmart.com/payments/api/v1/sales/history')
+                    url.searchParams.append('start_date', dayStart.toString())
+                    url.searchParams.append('end_date', dayEnd.toString())
+                    url.searchParams.append('max_results', '100')
+                    url.searchParams.append('transaction_status', 'APPROVED')
+                    url.searchParams.append('transaction_status', 'COMPLETE')
+                    if (pageToken) url.searchParams.append('page_token', pageToken)
+
+                    const res = await fetch(url.toString(), {
+                        headers: { 'Authorization': `Bearer ${hotmartAccessToken}` }
                     })
-                    const [response] = await analyticsDataClient.runReport({
-                        property: `properties/${config.ga_property_id}`,
-                        dateRanges: [{ startDate: targetDate, endDate: targetDate }],
-                        metrics: [{ name: 'sessions' }],
-                    })
-                    if (response.rows?.[0]) {
-                        gaRecord.sessions = parseInt(response.rows[0].metricValues?.[0]?.value || '0')
+                    const data = await res.json()
+
+                    if (data.error || data.message) {
+                        log(`[Hotmart] ${targetDate} API Error on History: ${JSON.stringify(data)}`)
+                        hasNext = false
+                        platformLogs.hotmart = 'Error API'
+                        break
                     }
-                    platformLogs.ga4 = 'Conectado OK'
-                } catch (e: any) {
-                    console.error("Error GA4", e)
-                    platformLogs.ga4 = 'Error'
+
+                    if (data.items) {
+                        data.items.forEach((item: any) => {
+                            if (item.purchase?.transaction) {
+                                validTransactions.add(item.purchase.transaction)
+                            }
+                        })
+                    }
+                    pageToken = data.page_info?.next_page_token
+                    hasNext = !!pageToken
                 }
-            } else {
-                log(`[GA4] Sin config conectada.`)
+
+                // PASO 2: Comisiones exactas (USD) de transacciones validadas
+                pageToken = ""
+                hasNext = true
+                let totalItemsProcessed = 0
+
+                while (hasNext) {
+                    const url2 = new URL('https://developers.hotmart.com/payments/api/v1/sales/commissions')
+                    url2.searchParams.append('start_date', dayStart.toString())
+                    url2.searchParams.append('end_date', dayEnd.toString())
+                    url2.searchParams.append('max_results', '100')
+                    if (pageToken) url2.searchParams.append('page_token', pageToken)
+
+                    const res2 = await fetch(url2.toString(), {
+                        headers: { 'Authorization': `Bearer ${hotmartAccessToken}` }
+                    })
+                    const data2 = await res2.json()
+
+                    if (data2.items) {
+                        data2.items.forEach((item: any) => {
+                            if (validTransactions.has(item.transaction)) {
+                                totalItemsProcessed++
+                                let netUSD = 0
+
+                                if (item.commissions && Array.isArray(item.commissions)) {
+                                    item.commissions.forEach((c: any) => {
+                                        if (c.source === 'PRODUCER' && c.commission?.currency_code === 'USD') {
+                                            netUSD += c.commission.value
+                                        }
+                                    })
+                                }
+
+                                const prodName = (item.product?.name || '').toLowerCase().trim()
+
+                                if (principalNames.includes(prodName)) {
+                                    record.principal += netUSD
+                                } else if (bumpNames.includes(prodName)) {
+                                    record.bump += netUSD
+                                } else if (upsellNames.includes(prodName)) {
+                                    record.upsell += netUSD
+                                } else {
+                                    record.principal += netUSD
+                                }
+                            }
+                        })
+                    }
+                    pageToken = data2.page_info?.next_page_token
+                    hasNext = !!pageToken
+                }
+
+                log(`[Hotmart] ${targetDate} Procesados ${totalItemsProcessed} registros. USD: ${record.principal.toFixed(2)}`)
+                platformLogs.hotmart = 'Conectado OK'
+            } catch (e: any) {
+                log(`[Hotmart] Catch Error: ${e.message}`)
+                platformLogs.hotmart = 'Error'
             }
+            return record
+        }
+
+        // ─── Helper: Fetch GA4 for a single date ────────────────────────────
+        async function fetchGA4(targetDate: string) {
+            const record = { sessions: 0 }
+            if (!(config.ga_property_id && config.ga_client_email && config.ga_private_key)) {
+                log(`[GA4] Sin config conectada.`)
+                return record
+            }
+            try {
+                const { BetaAnalyticsDataClient } = require('@google-analytics/data')
+                const analyticsDataClient = new BetaAnalyticsDataClient({
+                    credentials: {
+                        client_email: config.ga_client_email,
+                        private_key: config.ga_private_key.replace(/\\n/g, '\n')
+                    }
+                })
+                const [response] = await analyticsDataClient.runReport({
+                    property: `properties/${config.ga_property_id}`,
+                    dateRanges: [{ startDate: targetDate, endDate: targetDate }],
+                    metrics: [{ name: 'sessions' }],
+                })
+                if (response.rows?.[0]) {
+                    record.sessions = parseInt(response.rows[0].metricValues?.[0]?.value || '0')
+                }
+                platformLogs.ga4 = 'Conectado OK'
+            } catch (e: any) {
+                console.error("Error GA4", e)
+                platformLogs.ga4 = 'Error'
+            }
+            return record
+        }
+
+        // ─── Process all dates: Meta + Hotmart + GA4 in PARALLEL per date ───
+        for (const targetDate of datesToSync) {
+            // Launch all 3 platform fetches concurrently for this date
+            const [metaRecord, hotmartRecord, gaRecord] = await Promise.all([
+                fetchMeta(targetDate),
+                fetchHotmart(targetDate),
+                fetchGA4(targetDate),
+            ])
 
             // --- Guardar en Supabase ---
             const { error: upsertError } = await adminSupabase.from('metricas_diarias').upsert({
@@ -407,7 +393,7 @@ export async function GET(request: Request) {
                 date: targetDate,
                 status: upsertError ? 'failed' : 'ok',
                 localLog: `Principal: ${hotmartRecord.principal}, Bump: ${hotmartRecord.bump}, Upsell: ${hotmartRecord.upsell}`,
-                platform_status: platformLogs
+                platform_status: { ...platformLogs }
             })
         }
     }

@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import { format, parseISO, addDays, getDay, differenceInDays } from 'date-fns'
 import { es } from 'date-fns/locale'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
@@ -143,112 +143,127 @@ function DynamicDashboard({ data, initialLayout, isCustomized }: {
         : []
 
     // 1. Determine active tab object
-    const activeTabObj = tabs.find((t: any) => t.id === activeTabId)
+    const activeTabObj = useMemo(() => tabs.find((t: any) => t.id === activeTabId), [tabs, activeTabId])
 
     // 2. Determine effective keyword filter
     const effectiveKeyword = activeTabObj ? activeTabObj.keyword_meta : keywordFilter
 
     // 3. Determine effective layout — priority (highest to lowest):
-    //    a) Local override (applied in this session via Personalizar)
-    //    b) Tab's saved column/card overrides (from DB)
-    //    c) Tab's assigned global template
-    //    d) Client-level layout (initialLayout)
-    let activeLayout: ReportLayout = initialLayout
-    let layoutIsCustomized = isCustomized
+    const { activeLayout, layoutIsCustomized } = useMemo(() => {
+        let layout: ReportLayout = initialLayout
+        let customized = isCustomized
 
-    if (tabLayoutOverrides[activeTabId]) {
-        activeLayout = tabLayoutOverrides[activeTabId]
-        layoutIsCustomized = true
-    } else if (activeTabObj) {
-        if (activeTabObj.columnas && activeTabObj.tarjetas) {
-            activeLayout = {
-                nombre: activeTabObj.nombre,
-                columnas: activeTabObj.columnas,
-                tarjetas: activeTabObj.tarjetas,
-                graficos: activeTabObj.graficos,
-            }
-            layoutIsCustomized = true
-        } else if (activeTabObj.plantilla_id) {
-            const found = allLayouts.find((l: any) => l.id === activeTabObj.plantilla_id)
-            if (found) {
-                activeLayout = found
-                layoutIsCustomized = false
-            }
-        }
-    }
-
-    const filteredMetrics = metrics.map((m: any) => enrichMetaRow(m, effectiveKeyword))
-    const visibleCols = activeLayout.columnas.filter((c: ColDef) => !c.hidden)
-
-    // Compute varContext for formulas
-    const varContext: Record<string, number> = {}
-    if (activeTabObj) {
-        if (activeTabObj.fecha_inicio && activeTabObj.fecha_finalizacion) {
-            const start = parseISO(activeTabObj.fecha_inicio)
-            const end = parseISO(activeTabObj.fecha_finalizacion)
-            const totalDays = differenceInDays(end, start) + 1
-            const elapsedDays = differenceInDays(new Date(), start) + 1
-            
-            varContext.dias_totales = totalDays
-            varContext.dias_transcurridos = elapsedDays > totalDays ? totalDays : (elapsedDays < 0 ? 0 : elapsedDays)
-            varContext.dias_restantes = varContext.dias_totales - varContext.dias_transcurridos
-        }
-        if (activeTabObj.presupuesto_objetivo) {
-            varContext.presupuesto_objetivo = parseFloat(activeTabObj.presupuesto_objetivo)
-            if (varContext.dias_totales && varContext.dias_totales > 0) {
-                varContext.presupuesto_diario_ideal = varContext.presupuesto_objetivo / varContext.dias_totales
-            }
-        }
-        if (globalSpend !== null) {
-            varContext.presupuesto_gastado_total = globalSpend
-            if (varContext.presupuesto_objetivo) {
-                varContext.presupuesto_restante = varContext.presupuesto_objetivo - globalSpend
-                if (varContext.dias_restantes && varContext.dias_restantes > 0) {
-                    varContext.presupuesto_diario_sugerido = varContext.presupuesto_restante / varContext.dias_restantes
-                } else {
-                    varContext.presupuesto_diario_sugerido = 0
+        if (tabLayoutOverrides[activeTabId]) {
+            layout = tabLayoutOverrides[activeTabId]
+            customized = true
+        } else if (activeTabObj) {
+            if (activeTabObj.columnas && activeTabObj.tarjetas) {
+                layout = {
+                    nombre: activeTabObj.nombre,
+                    columnas: activeTabObj.columnas,
+                    tarjetas: activeTabObj.tarjetas,
+                    graficos: activeTabObj.graficos,
+                }
+                customized = true
+            } else if (activeTabObj.plantilla_id) {
+                const found = allLayouts.find((l: any) => l.id === activeTabObj.plantilla_id)
+                if (found) {
+                    layout = found
+                    customized = false
                 }
             }
         }
-    }
+        return { activeLayout: layout, layoutIsCustomized: customized }
+    }, [initialLayout, isCustomized, tabLayoutOverrides, activeTabId, activeTabObj, allLayouts])
+
+    const filteredMetrics = useMemo(() => {
+        return metrics.map((m: any) => enrichMetaRow(m, effectiveKeyword))
+    }, [metrics, effectiveKeyword])
+
+    const visibleCols = useMemo(() => {
+        return activeLayout.columnas.filter((c: ColDef) => !c.hidden)
+    }, [activeLayout.columnas])
+
+    // Compute varContext for formulas
+    const varContext = useMemo(() => {
+        const ctx: Record<string, number> = {}
+        if (activeTabObj) {
+            if (activeTabObj.fecha_inicio && activeTabObj.fecha_finalizacion) {
+                const start = parseISO(activeTabObj.fecha_inicio)
+                const end = parseISO(activeTabObj.fecha_finalizacion)
+                const totalDays = differenceInDays(end, start) + 1
+                const elapsedDays = differenceInDays(new Date(), start) + 1
+                
+                ctx.dias_totales = totalDays
+                ctx.dias_transcurridos = elapsedDays > totalDays ? totalDays : (elapsedDays < 0 ? 0 : elapsedDays)
+                ctx.dias_restantes = ctx.dias_totales - ctx.dias_transcurridos
+            }
+            if (activeTabObj.presupuesto_objetivo) {
+                ctx.presupuesto_objetivo = parseFloat(activeTabObj.presupuesto_objetivo)
+                if (ctx.dias_totales && ctx.dias_totales > 0) {
+                    ctx.presupuesto_diario_ideal = ctx.presupuesto_objetivo / ctx.dias_totales
+                }
+            }
+            if (globalSpend !== null) {
+                ctx.presupuesto_gastado_total = globalSpend
+                if (ctx.presupuesto_objetivo) {
+                    ctx.presupuesto_restante = ctx.presupuesto_objetivo - globalSpend
+                    if (ctx.dias_restantes && ctx.dias_restantes > 0) {
+                        ctx.presupuesto_diario_sugerido = ctx.presupuesto_restante / ctx.dias_restantes
+                    } else {
+                        ctx.presupuesto_diario_sugerido = 0
+                    }
+                }
+            }
+        }
+        return ctx
+    }, [activeTabObj, globalSpend])
 
     // Summary cards — aggregate formula over all filtered rows
-    const tarjetaValues = activeLayout.tarjetas.map((t: CardDef) => ({
-        ...t,
-        value: aggregateFormula(t.formula, filteredMetrics, varContext),
-    }))
+    const tarjetaValues = useMemo(() => {
+        return activeLayout.tarjetas.map((t: CardDef) => ({
+            ...t,
+            value: aggregateFormula(t.formula, filteredMetrics, varContext),
+        }))
+    }, [activeLayout.tarjetas, filteredMetrics, varContext])
 
     // Determine formulas for Gasto and Leads based on visible columns
-    const gastoCol = visibleCols.find((c: ColDef) => c.label.toLowerCase().includes('gasto'))
-    const leadsCol = visibleCols.find((c: ColDef) => c.label.toLowerCase().includes('lead') || c.label.toLowerCase().includes('registro'))
-    const gastoFormula = gastoCol ? gastoCol.formula : 'meta_spend'
-    const leadsFormula = leadsCol ? leadsCol.formula : 'meta_leads'
+    const { gastoFormula, leadsFormula } = useMemo(() => {
+        const gastoCol = visibleCols.find((c: ColDef) => c.label.toLowerCase().includes('gasto'))
+        const leadsCol = visibleCols.find((c: ColDef) => c.label.toLowerCase().includes('lead') || c.label.toLowerCase().includes('registro'))
+        return {
+            gastoFormula: gastoCol ? gastoCol.formula : 'meta_spend',
+            leadsFormula: leadsCol ? leadsCol.formula : 'meta_leads'
+        }
+    }, [visibleCols])
 
     // Build chart data based on weekly aggregates
-    const chartData = weeks.map((week: any) => {
-        let currentDate = parseISO(week.start)
-        const endDate = parseISO(week.end)
-        const weekRows: any[] = []
+    const chartData = useMemo(() => {
+        return weeks.map((week: any) => {
+            let currentDate = parseISO(week.start)
+            const endDate = parseISO(week.end)
+            const weekRows: any[] = []
 
-        while (currentDate.getTime() <= endDate.getTime()) {
-            const dayStr = format(currentDate, 'yyyy-MM-dd')
-            const raw = filteredMetrics.find((m: any) => m.fecha === dayStr) || {
-                fecha: dayStr, meta_spend: 0, meta_impressions: 0, meta_clicks: 0, meta_campaigns: [],
-                ga_sessions: 0, hotmart_pagos_iniciados: 0, ventas_principal: 0, ventas_bump: 0, ventas_upsell: 0
+            while (currentDate.getTime() <= endDate.getTime()) {
+                const dayStr = format(currentDate, 'yyyy-MM-dd')
+                const raw = filteredMetrics.find((m: any) => m.fecha === dayStr) || {
+                    fecha: dayStr, meta_spend: 0, meta_impressions: 0, meta_clicks: 0, meta_campaigns: [],
+                    ga_sessions: 0, hotmart_pagos_iniciados: 0, ventas_principal: 0, ventas_bump: 0, ventas_upsell: 0
+                }
+                weekRows.push(raw)
+                currentDate = addDays(currentDate, 1)
             }
-            weekRows.push(raw)
-            currentDate = addDays(currentDate, 1)
-        }
 
-        const totalGasto = aggregateFormula(gastoFormula, weekRows, varContext)
-        const totalLeads = aggregateFormula(leadsFormula, weekRows, varContext)
+            const totalGasto = aggregateFormula(gastoFormula, weekRows, varContext)
+            const totalLeads = aggregateFormula(leadsFormula, weekRows, varContext)
 
-        return {
-            date: `Sem ${week.weekNumber}`,
-            "Gasto": totalGasto === null || isNaN(totalGasto) ? 0 : totalGasto,
-            "Leads": totalLeads === null || isNaN(totalLeads) ? 0 : totalLeads
-        }
-    })
+            return {
+                date: `Sem ${week.weekNumber}`,
+                "Gasto": totalGasto === null || isNaN(totalGasto) ? 0 : totalGasto,
+                "Leads": totalLeads === null || isNaN(totalLeads) ? 0 : totalLeads
+            }
+        })
+    }, [weeks, filteredMetrics, varContext, gastoFormula, leadsFormula])
 
     let budgetCards = null
     if (activeTabObj && (activeTabObj.fecha_inicio || activeTabObj.fecha_finalizacion || activeTabObj.presupuesto_objetivo)) {
@@ -641,27 +656,33 @@ function ClassicDashboard({ data }: { data: any }) {
     const hasHotmart = !!(cliente.config_api?.hotmart_token || cliente.config_api?.hotmart_basic)
     const hasGA = !!cliente.config_api?.ga_property_id
 
-    const metaKeywords: string[] = cliente.config_api?.meta_keywords
-        ? cliente.config_api.meta_keywords.split(',').map((k: string) => k.trim()).filter(Boolean)
-        : []
+    const metaKeywords: string[] = useMemo(() => {
+        return cliente.config_api?.meta_keywords
+            ? cliente.config_api.meta_keywords.split(',').map((k: string) => k.trim()).filter(Boolean)
+            : []
+    }, [cliente.config_api?.meta_keywords])
 
-    let totalGasto = 0
-    let totalFacturacion = 0
+    const { totalGasto, totalFacturacion } = useMemo(() => {
+        let gasto = 0
+        let facturacion = 0
 
-    metrics.forEach((m: any) => {
-        let mSpend = 0
-        if (!keywordFilter || !m.meta_campaigns) {
-            mSpend = parseFloat(m.meta_spend || '0')
-        } else {
-            const kw = keywordFilter.toLowerCase()
-            const camps = Array.isArray(m.meta_campaigns) ? m.meta_campaigns : []
-            camps.forEach((c: any) => { if (c.name?.toLowerCase().includes(kw)) mSpend += parseFloat(c.spend || '0') })
-        }
-        totalGasto += mSpend
-        totalFacturacion += parseFloat(m.ventas_principal || '0') + parseFloat(m.ventas_bump || '0') + parseFloat(m.ventas_upsell || '0')
-    })
+        metrics.forEach((m: any) => {
+            let mSpend = 0
+            if (!keywordFilter || !m.meta_campaigns) {
+                mSpend = parseFloat(m.meta_spend || '0')
+            } else {
+                const kw = keywordFilter.toLowerCase()
+                const camps = Array.isArray(m.meta_campaigns) ? m.meta_campaigns : []
+                camps.forEach((c: any) => { if (c.name?.toLowerCase().includes(kw)) mSpend += parseFloat(c.spend || '0') })
+            }
+            gasto += mSpend
+            facturacion += parseFloat(m.ventas_principal || '0') + parseFloat(m.ventas_bump || '0') + parseFloat(m.ventas_upsell || '0')
+        })
 
-    const generalRoas = totalGasto > 0 ? (totalFacturacion / totalGasto).toFixed(2) : '0.00'
+        return { totalGasto: gasto, totalFacturacion: facturacion }
+    }, [metrics, keywordFilter])
+
+    const generalRoas = useMemo(() => totalGasto > 0 ? (totalFacturacion / totalGasto).toFixed(2) : '0.00', [totalGasto, totalFacturacion])
     const totalColumns = 1 + (hasMeta ? 5 : 0) + (hasGA ? 1 : 0) + (hasHotmart ? 4 : 0) + (hasMeta && hasHotmart ? 2 : 0)
 
     return (
