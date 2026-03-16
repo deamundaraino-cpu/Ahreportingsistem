@@ -99,10 +99,11 @@ function LayoutConfigButton({ onClick, isCustomized }: { onClick: () => void; is
 
 // ─── Dynamic Dashboard ────────────────────────────────────────────────────────
 
-function DynamicDashboard({ data, initialLayout, isCustomized }: {
+function DynamicDashboard({ data, initialLayout, isCustomized, isPublic }: {
     data: any
     initialLayout: ReportLayout
     isCustomized: boolean
+    isPublic?: boolean
 }) {
     const { cliente, metrics, weeks, allLayouts, clienteLayoutId, tabs = [], conversionesCatalogo = [] } = data
     const [activeTabId, setActiveTabId] = useState<string>('general')
@@ -360,21 +361,25 @@ function DynamicDashboard({ data, initialLayout, isCustomized }: {
                                 <span className="text-[9px] text-indigo-400 font-bold" title="Vista personalizada">✦</span>
                             )}
                         </button>
-                        <button
-                            onClick={(e) => { e.stopPropagation(); setTabToEdit(tab); setShowTabModal(true); }}
-                            className={`absolute right-1 p-1 text-zinc-500 hover:text-white rounded bg-zinc-900 shadow border border-zinc-700 opacity-0 group-hover:opacity-100 transition ${activeTabId === tab.id ? 'opacity-100' : ''}`}
-                        >
-                            <Edit2 className="w-3 h-3" />
-                        </button>
+                        {!isPublic && (
+                            <button
+                                onClick={(e) => { e.stopPropagation(); setTabToEdit(tab); setShowTabModal(true); }}
+                                className={`absolute right-1 p-1 text-zinc-500 hover:text-white rounded bg-zinc-900 shadow border border-zinc-700 opacity-0 group-hover:opacity-100 transition ${activeTabId === tab.id ? 'opacity-100' : ''}`}
+                            >
+                                <Edit2 className="w-3 h-3" />
+                            </button>
+                        )}
                     </div>
                 ))}
-                <button
-                    onClick={() => { setTabToEdit(null); setShowTabModal(true); }}
-                    className="ml-2 px-3 py-1.5 text-xs font-medium text-zinc-400 hover:text-zinc-200 bg-zinc-900 border border-zinc-700 hover:border-zinc-500 rounded flex items-center gap-1 transition"
-                >
-                    <Plus className="w-3.5 h-3.5" />
-                    Nueva Pestaña
-                </button>
+                {!isPublic && (
+                    <button
+                        onClick={() => { setTabToEdit(null); setShowTabModal(true); }}
+                        className="ml-2 px-3 py-1.5 text-xs font-medium text-zinc-400 hover:text-zinc-200 bg-zinc-900 border border-zinc-700 hover:border-zinc-500 rounded flex items-center gap-1 transition"
+                    >
+                        <Plus className="w-3.5 h-3.5" />
+                        Nueva Pestaña
+                    </button>
+                )}
             </div>
 
             {/* Toolbar */}
@@ -382,24 +387,26 @@ function DynamicDashboard({ data, initialLayout, isCustomized }: {
                 <div className="flex items-center gap-3">
                     <div className="flex items-center gap-2 text-xs text-indigo-400 bg-indigo-500/5 border border-indigo-500/20 rounded-lg px-3 py-1.5">
                         <LayoutDashboard className="w-3.5 h-3.5" />
-                        <span><strong>{activeLayout.nombre}</strong>{layoutIsCustomized ? ' — Personalizado' : ' — Plantilla Base'}</span>
+                        <span><strong>{activeLayout.nombre}</strong>{layoutIsCustomized ? ' — Personalizada' : ' — Plantilla Base'}</span>
                     </div>
                 </div>
-                {activeTabId === 'general' ? (
-                    <LayoutConfigButton
-                        onClick={() => setShowModal(true)}
-                        isCustomized={layoutIsCustomized}
-                    />
-                ) : (
-                    <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => setShowModal(true)}
-                        className="gap-1.5 border-zinc-700 text-zinc-400 hover:text-indigo-300 hover:border-indigo-500/40 hover:bg-indigo-500/5 text-xs transition"
-                    >
-                        <Settings2 className="w-3.5 h-3.5" />
-                        Personalizar esta Vista
-                    </Button>
+                {!isPublic && (
+                    activeTabId === 'general' ? (
+                        <LayoutConfigButton
+                            onClick={() => setShowModal(true)}
+                            isCustomized={layoutIsCustomized}
+                        />
+                    ) : (
+                        <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => setShowModal(true)}
+                            className="gap-1.5 border-zinc-700 text-zinc-400 hover:text-indigo-300 hover:border-indigo-500/40 hover:bg-indigo-500/5 text-xs transition"
+                        >
+                            <Settings2 className="w-3.5 h-3.5" />
+                            Personalizar esta Vista
+                        </Button>
+                    )
                 )}
             </div>
 
@@ -538,17 +545,21 @@ function DynamicDashboard({ data, initialLayout, isCustomized }: {
                                                 if (col.isManual) {
                                                     return (
                                                         <TableCell key={col.id} className={`${col.align === 'right' ? 'text-right' : ''} p-1`}>
-                                                            <Input
-                                                                type="number"
-                                                                defaultValue={val || ''}
-                                                                className="h-7 w-20 text-xs text-right bg-zinc-950 border-zinc-700 mx-auto"
-                                                                onBlur={async (e) => {
-                                                                    const newVal = parseFloat(e.target.value) || 0
-                                                                    if (newVal !== val) {
-                                                                        await updateManualMetric(cliente.id, dayStr, col.formula, newVal)
-                                                                    }
-                                                                }}
-                                                            />
+                                                            {isPublic ? (
+                                                                <span className="text-zinc-200 block mt-1">{val || '0'}</span>
+                                                            ) : (
+                                                                <Input
+                                                                    type="number"
+                                                                    defaultValue={val || ''}
+                                                                    className="h-7 w-20 text-xs text-right bg-zinc-950 border-zinc-700 mx-auto"
+                                                                    onBlur={async (e) => {
+                                                                        const newVal = parseFloat(e.target.value) || 0
+                                                                        if (newVal !== val) {
+                                                                            await updateManualMetric(cliente.id, dayStr, col.formula, newVal)
+                                                                        }
+                                                                    }}
+                                                                />
+                                                            )}
                                                         </TableCell>
                                                     )
                                                 }
@@ -635,7 +646,7 @@ function DynamicDashboard({ data, initialLayout, isCustomized }: {
 
 // ─── Classic Dashboard ────────────────────────────────────────────────────────
 
-function ClassicDashboard({ data }: { data: any }) {
+function ClassicDashboard({ data, isPublic }: { data: any, isPublic?: boolean }) {
     const { cliente, metrics, weeks, allLayouts } = data
     const [keywordFilter, setKeywordFilter] = useState('')
     const [showModal, setShowModal] = useState(false)
@@ -648,6 +659,7 @@ function ClassicDashboard({ data }: { data: any }) {
                 data={data}
                 initialLayout={appliedLayout}
                 isCustomized={true}
+                isPublic={isPublic}
             />
         )
     }
@@ -688,9 +700,11 @@ function ClassicDashboard({ data }: { data: any }) {
     return (
         <div className="space-y-6">
             {/* Classic mode toolbar */}
-            <div className="flex justify-end">
-                <LayoutConfigButton onClick={() => setShowModal(true)} isCustomized={false} />
-            </div>
+            {!isPublic && (
+                <div className="flex justify-end">
+                    <LayoutConfigButton onClick={() => setShowModal(true)} isCustomized={false} />
+                </div>
+            )}
 
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
                 {hasMeta && (
@@ -888,7 +902,7 @@ function ClassicDashboard({ data }: { data: any }) {
 
 // ─── Main Export ─────────────────────────────────────────────────────────────
 
-export function DashboardClient({ data }: { data: any }) {
+export function DashboardClient({ data, isPublic = false }: { data: any, isPublic?: boolean }) {
     const { cliente, layout, clienteLayoutId } = data
 
     if (!cliente) {
@@ -906,10 +920,11 @@ export function DashboardClient({ data }: { data: any }) {
                 data={data}
                 initialLayout={layout}
                 isCustomized={!!clienteLayoutId}
+                isPublic={isPublic}
             />
         )
     }
 
     // Fallback: classic view with Configurar Layout button
-    return <ClassicDashboard data={data} />
+    return <ClassicDashboard data={data} isPublic={isPublic} />
 }

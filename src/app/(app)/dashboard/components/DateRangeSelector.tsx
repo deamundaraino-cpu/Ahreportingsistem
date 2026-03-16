@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Loader2, RefreshCcw, CheckCircle2, AlertCircle } from 'lucide-react'
 
-export function DateRangeSelector() {
+export function DateRangeSelector({ basePath = '/dashboard' }: { basePath?: string }) {
     const router = useRouter()
     const searchParams = useSearchParams()
     const params = useParams()
@@ -25,7 +25,7 @@ export function DateRangeSelector() {
     const [syncLogs, setSyncLogs] = useState<{ meta?: string, hotmart?: string, ga4?: string }>({})
 
     const handleApply = () => {
-        router.push(`/dashboard/${clientId}?from=${from}&to=${to}`)
+        router.push(`${basePath}/${clientId}?from=${from}&to=${to}`)
     }
 
     const handleSync = async () => {

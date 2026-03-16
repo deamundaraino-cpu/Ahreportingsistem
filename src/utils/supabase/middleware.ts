@@ -33,10 +33,11 @@ export async function updateSession(request: NextRequest) {
 
   const isLoginPage = request.nextUrl.pathname.startsWith('/login')
   const isApiPage = request.nextUrl.pathname.startsWith('/api/')
+  const isReportPage = request.nextUrl.pathname.startsWith('/report/')
   const isAdminPage = request.nextUrl.pathname.startsWith('/admin')
 
   // 1. If not logged in and trying to access a protected page
-  if (!user && !isLoginPage && !isApiPage) {
+  if (!user && !isLoginPage && !isApiPage && !isReportPage) {
     const url = request.nextUrl.clone()
     url.pathname = '/login'
     return NextResponse.redirect(url)
