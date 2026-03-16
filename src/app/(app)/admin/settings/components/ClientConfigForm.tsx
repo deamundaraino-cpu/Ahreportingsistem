@@ -6,15 +6,15 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter }
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Button } from '@/components/ui/button'
-import { updateClienteConfig, deleteCliente, assignLayoutToCliente, testMetaConnection, testHotmartConnection, testGA4Connection } from '../_actions'
-import { Loader2, ArrowLeft, Save, Trash2, CheckCircle2, AlertCircle, RefreshCw, LayoutDashboard } from 'lucide-react'
+import { updateClienteConfig, deleteCliente, assignLayoutToCliente, testMetaConnection, testHotmartConnection, testGA4Connection, refreshMetaCustomConversions } from '../_actions'
+import { Loader2, ArrowLeft, Save, Trash2, CheckCircle2, AlertCircle, RefreshCw, LayoutDashboard, DownloadCloud } from 'lucide-react'
 
 export function ClientConfigForm({ cliente, layouts = [], isAdmin = false }: { cliente: any; layouts?: any[]; isAdmin?: boolean }) {
     const router = useRouter()
     const [loading, setLoading] = useState(false)
     const [error, setError] = useState<string | null>(null)
     const [config, setConfig] = useState(cliente.config_api || {})
-    const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean, success?: boolean, error?: string } }>({})
+    const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean, success?: boolean, error?: string, message?: string } }>({})
     const [layoutSaving, setLayoutSaving] = useState(false)
     const [selectedLayoutId, setSelectedLayoutId] = useState<string>(cliente.layout_id || '')
     async function runTest(key: string, fn: () => Promise<any>) {
@@ -24,7 +24,14 @@ export function ClientConfigForm({ cliente, layouts = [], isAdmin = false }: { c
             if (res.error) {
                 setTestStatus(prev => ({ ...prev, [key]: { loading: false, error: res.error } }))
             } else {
-                setTestStatus(prev => ({ ...prev, [key]: { loading: false, success: true } }))
+                setTestStatus(prev => ({ 
+                    ...prev, 
+                    [key]: { 
+                        loading: false, 
+                        success: true, 
+                        message: res.message || undefined 
+                    } 
+                }))
             }
         } catch (err: any) {
             setTestStatus(prev => ({ ...prev, [key]: { loading: false, error: err.message } }))
@@ -80,7 +87,8 @@ export function ClientConfigForm({ cliente, layouts = [], isAdmin = false }: { c
                     </div>
                     <CardDescription>Conecta el Business SDK ingresando el Access Token y el ID de Cuenta de Anuncios.</CardDescription>
                     {testStatus.meta?.success && <p className="text-green-500 text-xs flex items-center mt-2"><CheckCircle2 className="w-3 h-3 mr-1" /> Conexión Exitosa</p>}
-                    {testStatus.meta?.error && <p className="text-red-500 text-xs flex items-center mt-2"><AlertCircle className="w-3 h-3 mr-1" /> {testStatus.meta.error}</p>}
+                    {testStatus.metaSync?.success && <p className="text-emerald-400 text-sm flex items-center mt-2 p-2 bg-emerald-500/10 rounded"><CheckCircle2 className="w-4 h-4 mr-2" /> {testStatus.metaSync.message}</p>}
+                    {(testStatus.meta?.error || testStatus.metaSync?.error) && <p className="text-red-500 text-xs flex items-center mt-2"><AlertCircle className="w-3 h-3 mr-1" /> {testStatus.meta?.error || testStatus.metaSync?.error}</p>}
                 </CardHeader>
                 <CardContent className="space-y-4">
                     <div className="space-y-2">
@@ -103,6 +111,25 @@ export function ClientConfigForm({ cliente, layouts = [], isAdmin = false }: { c
                             onChange={(e) => setConfig({ ...config, meta_account_id: e.target.value })}
                             className="bg-zinc-950 border-zinc-700"
                         />
+                    </div>
+                    {/* Botón de Sincronización de Conversiones Personalizadas */}
+                    <div className="pt-4 mt-2 border-t border-zinc-800">
+                        <div className="flex justify-between items-center bg-zinc-950/50 p-3 rounded-lg border border-zinc-800">
+                            <div>
+                                <h4 className="text-sm font-medium text-zinc-200">Conversiones Personalizadas</h4>
+                                <p className="text-xs text-zinc-500 mt-1">Busca y actualiza todos los eventos personalizados detectados en Meta durante los últimos 30 días.</p>
+                            </div>
+                            <Button 
+                                variant="secondary" 
+                                size="sm" 
+                                className="bg-indigo-500/20 text-indigo-300 hover:bg-indigo-500/30 border border-indigo-500/30 whitespace-nowrap"
+                                onClick={() => runTest('metaSync', () => refreshMetaCustomConversions(cliente.id, config))}
+                                disabled={testStatus.metaSync?.loading || !config.meta_token || !config.meta_account_id}
+                            >
+                                {testStatus.metaSync?.loading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <DownloadCloud className="w-4 h-4 mr-2" />}
+                                Sincronizar Conversiones
+                            </Button>
+                        </div>
                     </div>
                 </CardContent>
             </Card>

@@ -207,3 +207,75 @@ export async function testGA4Connection(config: any) {
         return { error: err.message }
     }
 }
+
+export async function refreshMetaCustomConversions(clienteId: string, metaConfig: any) {
+    if (!metaConfig?.meta_token || !metaConfig?.meta_account_id) {
+        return { error: 'El cliente no tiene conectada la API de Meta Ads.' }
+    }
+
+    try {
+        const actId = metaConfig.meta_account_id.startsWith('act_') ? metaConfig.meta_account_id : `act_${metaConfig.meta_account_id}`
+        const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
+        const until = new Date().toISOString().split('T')[0]
+
+        const url = new URL(`https://graph.facebook.com/v19.0/${actId}/insights`)
+        url.searchParams.append('access_token', metaConfig.meta_token)
+        url.searchParams.append('time_range', JSON.stringify({ since, until }))
+        url.searchParams.append('fields', 'conversions')
+        url.searchParams.append('level', 'account')
+
+        const res = await fetch(url.toString())
+        const data = await res.json()
+
+        if (data.error) {
+            return { error: `Error de la API de Meta: ${data.error.message}` }
+        }
+
+        const allCustomKeys = new Set<string>()
+
+        if (data.data && data.data[0] && data.data[0].conversions) {
+            data.data[0].conversions.forEach((cv: any) => {
+                const type: string = cv.action_type || ''
+                if (type.startsWith('offsite_conversion.fb_pixel_custom.')) {
+                    const key = type.replace('offsite_conversion.fb_pixel_custom.', '').toLowerCase()
+                    allCustomKeys.add(key)
+                }
+            })
+        }
+
+        if (allCustomKeys.size === 0) {
+            return { success: true, count: 0, message: 'No se encontraron conversiones personalizadas con actividad en los últimos 30 días.' }
+        }
+
+        // Prepare data for upsert
+        const catalogRows = Array.from(allCustomKeys).map((key) => {
+            const label = key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()).trim()
+            return {
+                cliente_id: clienteId,
+                conversion_key: key,
+                label: `Lead ${label.replace('Lead', '').trim() || label}`,
+                field_id: `meta_custom_${key}`,
+                last_seen: new Date().toISOString().split('T')[0],
+            }
+        })
+
+        const supabase = await createAdminClient()
+        const { error: catErr } = await supabase
+            .from('meta_conversiones_catalogo')
+            .upsert(catalogRows, { onConflict: 'cliente_id,conversion_key' })
+
+        if (catErr) {
+            return { error: `Error guardando en BD: ${catErr.message}` }
+        }
+
+        return { 
+            success: true, 
+            count: allCustomKeys.size, 
+            conversions: Array.from(allCustomKeys),
+            message: `Se actualizaron ${allCustomKeys.size} conversiones personalizadas exitosamente.`
+        }
+    } catch (e: any) {
+        return { error: e.message }
+    }
+}
+
