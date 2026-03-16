@@ -39,7 +39,7 @@ export async function createCliente(data: { nombre: string }) {
         return { error: error.message }
     }
 
-    revalidatePath('/admin/clientes')
+    revalidatePath('/admin/settings')
     return { success: true, data: newClient }
 }
 
@@ -53,8 +53,8 @@ export async function updateClienteConfig(id: string, config_api: any) {
         return { error: error.message }
     }
 
-    revalidatePath(`/admin/clientes/${id}`)
-    revalidatePath('/admin/clientes')
+    revalidatePath(`/admin/settings/${id}`)
+    revalidatePath('/admin/settings')
     return { success: true }
 }
 
@@ -83,7 +83,7 @@ export async function deleteCliente(id: string) {
         return { error: error.message }
     }
 
-    revalidatePath('/admin/clientes')
+    revalidatePath('/admin/settings')
     return { success: true }
 }
 

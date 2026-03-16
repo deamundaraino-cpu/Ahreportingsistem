@@ -11,7 +11,7 @@ export default async function ClientDetailPage(props: { params: Promise<{ id: st
     ])
 
     if (!cliente) {
-        redirect('/admin/clientes')
+        redirect('/admin/settings')
     }
 
     return (
