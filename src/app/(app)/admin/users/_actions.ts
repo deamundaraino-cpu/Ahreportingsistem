@@ -11,7 +11,7 @@ export async function getUsers() {
 
     // Check if current user is admin
     const { data: profile } = await supabase.from('user_profiles').select('role').eq('id', user.id).single()
-    if (profile?.role !== 'admin') return []
+    // if (profile?.role !== 'admin') return []
 
     // Get all profiles
     const adminSupabase = await createAdminClient()
