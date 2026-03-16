@@ -49,22 +49,7 @@ export async function updateSession(request: NextRequest) {
     return NextResponse.redirect(url)
   }
 
-  // 3. Admin/Trafficker role check for /admin routes
-  if (user && isAdminPage) {
-    const { data: profile } = await supabase
-      .from('user_profiles')
-      .select('role')
-      .eq('id', user.id)
-      .single()
-
-    const hasAdminAccess = profile?.role === 'admin' || profile?.role === 'trafficker'
-
-    if (!hasAdminAccess) {
-      const url = request.nextUrl.clone()
-      url.pathname = '/' // Redirect unauthorized users to home
-      return NextResponse.redirect(url)
-    }
-  }
+  // 3. All authenticated users can access /admin routes (no role restriction)
 
   return supabaseResponse
 }
