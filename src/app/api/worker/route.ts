@@ -358,43 +358,67 @@ export async function GET(request: Request) {
             return record
         }
 
-        // ─── Process all dates: Meta + Hotmart + GA4 in PARALLEL per date ───
-        for (const targetDate of datesToSync) {
-            // Launch all 3 platform fetches concurrently for this date
-            const [metaRecord, hotmartRecord, gaRecord] = await Promise.all([
-                fetchMeta(targetDate),
-                fetchHotmart(targetDate),
-                fetchGA4(targetDate),
-            ])
-
-            // --- Guardar en Supabase ---
-            const { error: upsertError } = await adminSupabase.from('metricas_diarias').upsert({
-                cliente_id: cliente.id,
-                fecha: targetDate,
-                meta_spend: metaRecord.spend,
-                meta_impressions: metaRecord.impressions,
-                meta_clicks: metaRecord.clicks,
-                meta_campaigns: metaRecord.campaigns,
-                ga_sessions: gaRecord.sessions,
-                ventas_principal: hotmartRecord.principal,
-                ventas_bump: hotmartRecord.bump,
-                ventas_upsell: hotmartRecord.upsell,
-                hotmart_pagos_iniciados: hotmartRecord.pagos_iniciados
-            }, { onConflict: 'cliente_id, fecha' })
-
-            if (upsertError) {
-                log(`[DB] Error guardando ${targetDate}: ${upsertError.message}`)
-            } else {
-                log(`[DB] Guardado exitoso ${targetDate}`)
+        // ─── Process all dates: chunked in parallel (Batching) ───
+        const CHUNK_SIZE = 5; // Procesamos 5 días totalmente en paralelo a la vez para no saturar APIs
+        const upsertPayloads: any[] = [];
+        
+        for (let i = 0; i < datesToSync.length; i += CHUNK_SIZE) {
+            const chunk = datesToSync.slice(i, i + CHUNK_SIZE);
+            log(`[Batch] Procesando chunk de fechas en paralelo: ${chunk.join(', ')}`);
+            
+            const chunkResults = await Promise.all(
+                chunk.map(async (targetDate) => {
+                    // Fetch Meta, Hotmart and GA4 in parallel for this specific date
+                    const [metaRecord, hotmartRecord, gaRecord] = await Promise.all([
+                        fetchMeta(targetDate),
+                        fetchHotmart(targetDate),
+                        fetchGA4(targetDate),
+                    ]);
+                    
+                    return { targetDate, metaRecord, hotmartRecord, gaRecord };
+                })
+            );
+            
+            // Collect the results for the mass upsert list
+            for (const res of chunkResults) {
+                const { targetDate, metaRecord, hotmartRecord, gaRecord } = res;
+                upsertPayloads.push({
+                    cliente_id: cliente.id,
+                    fecha: targetDate,
+                    meta_spend: metaRecord.spend,
+                    meta_impressions: metaRecord.impressions,
+                    meta_clicks: metaRecord.clicks,
+                    meta_campaigns: metaRecord.campaigns,
+                    ga_sessions: gaRecord.sessions,
+                    ventas_principal: hotmartRecord.principal,
+                    ventas_bump: hotmartRecord.bump,
+                    ventas_upsell: hotmartRecord.upsell,
+                    hotmart_pagos_iniciados: hotmartRecord.pagos_iniciados
+                });
+                
+                results.push({
+                    cliente_id: cliente.id,
+                    date: targetDate,
+                    localLog: `Principal: ${hotmartRecord.principal}, Bump: ${hotmartRecord.bump}, Upsell: ${hotmartRecord.upsell}`,
+                    platform_status: { ...platformLogs }
+                } as any);
             }
-
-            results.push({
-                cliente_id: cliente.id,
-                date: targetDate,
-                status: upsertError ? 'failed' : 'ok',
-                localLog: `Principal: ${hotmartRecord.principal}, Bump: ${hotmartRecord.bump}, Upsell: ${hotmartRecord.upsell}`,
-                platform_status: { ...platformLogs }
-            })
+        }
+        
+        // ─── Mass Upsert into Supabase (1 Single Database Query per Client!) ───
+        if (upsertPayloads.length > 0) {
+            log(`[DB] Ejecutando Mass Upsert de ${upsertPayloads.length} días de golpe para el cliente ${cliente.nombre}...`);
+            const { error: batchError } = await adminSupabase
+                .from('metricas_diarias')
+                .upsert(upsertPayloads, { onConflict: 'cliente_id, fecha' });
+            
+            if (batchError) {
+                log(`[DB] ❌ Error en Mass Upsert: ${batchError.message}`);
+                results.forEach((r: any) => { if (r.cliente_id === cliente.id) r.status = 'failed' });
+            } else {
+                log(`[DB] ✓ Mass Upsert exitoso. ${upsertPayloads.length} filas actualizadas/insertadas procesadas rapidísimo.`);
+                results.forEach((r: any) => { if (r.cliente_id === cliente.id) r.status = 'ok' });
+            }
         }
     }
 
