@@ -55,6 +55,7 @@ export async function getDashboardData(clientId: string, startStr: string, endSt
         clienteLayoutId: clienteLayoutRes.data?.id || null,
         tabs: tabsRes.data || [],
         conversionesCatalogo: conversionesRes.data || [],
+        layoutPublico: cliente.layout_publico || null,
     }
 }
 

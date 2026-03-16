@@ -279,3 +279,32 @@ export async function refreshMetaCustomConversions(clienteId: string, metaConfig
     }
 }
 
+// ─── Public Layout (Executive View) ──────────────────────────────────────────
+
+export async function savePublicLayout(clienteId: string, payload: {
+    tarjetas: any[]
+    graficos: any[]
+}) {
+    const supabase = await createAdminClient()
+    const { error } = await supabase
+        .from('clientes')
+        .update({ layout_publico: payload })
+        .eq('id', clienteId)
+
+    if (error) return { error: error.message }
+    revalidatePath(`/report/${clienteId}`)
+    revalidatePath(`/dashboard/${clienteId}`)
+    return { success: true }
+}
+
+export async function getPublicLayout(clienteId: string) {
+    const supabase = await createAdminClient()
+    const { data, error } = await supabase
+        .from('clientes')
+        .select('layout_publico')
+        .eq('id', clienteId)
+        .single()
+
+    if (error) return null
+    return data?.layout_publico || null
+}

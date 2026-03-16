@@ -2,6 +2,7 @@ import { getDashboardData } from "../_actions"
 import { DateRangeSelector } from "../components/DateRangeSelector"
 import { DashboardClient } from "../components/DashboardClient"
 import { CopyLinkButton } from "../components/CopyLinkButton"
+import { PublicLayoutButton } from "../components/PublicLayoutButton"
 import { format, subDays } from "date-fns"
 
 export default async function DashboardPage(props: {
@@ -27,6 +28,11 @@ export default async function DashboardPage(props: {
                     <div className="flex items-center gap-3 mb-1">
                         <h2 className="text-2xl font-bold tracking-tight text-white">Embudo de Ventas V2</h2>
                         <CopyLinkButton clientId={clientId} />
+                        <PublicLayoutButton
+                            clienteId={clientId}
+                            initialLayout={dashboardData?.layoutPublico || null}
+                            conversionesCatalogo={dashboardData?.conversionesCatalogo || []}
+                        />
                     </div>
                     <p className="text-zinc-400">Datos consolidados de Meta, GA4 y Hotmart.</p>
                 </div>

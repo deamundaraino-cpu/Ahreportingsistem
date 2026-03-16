@@ -12,7 +12,7 @@ import { LayoutConfigModal } from './LayoutConfigModal'
 import { TabConfigModal } from './TabConfigModal'
 import { MetricCharts } from './MetricCharts'
 import { LayoutDashboard, Settings2, Plus, Edit2, CalendarDays, Timer, BadgeDollarSign, Wallet } from 'lucide-react'
-import type { ColDef, CardDef, ReportLayout } from '@/lib/layout-types'
+import type { ColDef, CardDef, ReportLayout, ChartDef } from '@/lib/layout-types'
 import { updateManualMetric, getTabTotalSpend } from '../_actions'
 
 // Types imported from @/lib/layout-types
@@ -900,10 +900,74 @@ function ClassicDashboard({ data, isPublic }: { data: any, isPublic?: boolean })
     )
 }
 
+// ─── Executive Public Dashboard ────────────────────────────────────────────────
+
+function ExecutiveDashboard({ data, layout }: { data: any, layout: { tarjetas: CardDef[], graficos: ChartDef[] } }) {
+    const { metrics, weeks } = data
+
+    const filteredMetrics = useMemo(() => {
+        return metrics.map((m: any) => enrichMetaRow(m, ''))
+    }, [metrics])
+
+    const varContext = useMemo(() => ({}), [])
+
+    const tarjetaValues = useMemo(() => {
+        return (layout.tarjetas || []).map((t: CardDef) => ({
+            ...t,
+            value: aggregateFormula(t.formula, filteredMetrics, varContext),
+        }))
+    }, [layout.tarjetas, filteredMetrics, varContext])
+
+    return (
+        <div className="space-y-6 animate-in fade-in duration-500">
+            {/* Summary Cards */}
+            {tarjetaValues.length > 0 && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                    {tarjetaValues.map((t: CardDef & { value: number | null }) => (
+                        <Card key={t.id} className="bg-zinc-900 border-zinc-800 hover:border-zinc-700 transition">
+                            <CardHeader className="pb-2">
+                                <CardDescription className="text-zinc-400 font-medium">
+                                    {t.label}
+                                </CardDescription>
+                            </CardHeader>
+                            <CardContent className="overflow-hidden">
+                                <p
+                                    className={`truncate text-2xl lg:text-3xl font-bold font-mono tracking-tight ${COLOR_MAP[t.color || 'default']}`}
+                                    title={formatValue(t.value, { prefix: t.prefix, suffix: t.suffix, decimals: t.decimals ?? 2 })}
+                                >
+                                    {formatValue(t.value, { prefix: t.prefix, suffix: t.suffix, decimals: t.decimals ?? 2 })}
+                                </p>
+                            </CardContent>
+                        </Card>
+                    ))}
+                </div>
+            )}
+
+            {/* Dynamic Charts */}
+            {layout.graficos && layout.graficos.length > 0 && (
+                <div className="pt-2">
+                    <MetricCharts
+                        charts={layout.graficos}
+                        metrics={filteredMetrics}
+                        weeks={weeks}
+                        varContext={varContext}
+                    />
+                </div>
+            )}
+            
+            {tarjetaValues.length === 0 && (!layout.graficos || layout.graficos.length === 0) && (
+                <div className="flex flex-col items-center justify-center p-12 text-center text-zinc-500">
+                    <p>No hay tarjetas ni gráficos configurados para este reporte.</p>
+                </div>
+            )}
+        </div>
+    )
+}
+
 // ─── Main Export ─────────────────────────────────────────────────────────────
 
 export function DashboardClient({ data, isPublic = false }: { data: any, isPublic?: boolean }) {
-    const { cliente, layout, clienteLayoutId } = data
+    const { cliente, layout, clienteLayoutId, layoutPublico } = data
 
     if (!cliente) {
         return (
@@ -913,6 +977,19 @@ export function DashboardClient({ data, isPublic = false }: { data: any, isPubli
         )
     }
 
+    if (isPublic) {
+        if (!layoutPublico || (!layoutPublico.tarjetas?.length && !layoutPublico.graficos?.length)) {
+            return (
+                <div className="flex flex-col items-center justify-center p-16 text-center border-2 border-dashed border-zinc-800 rounded-2xl bg-zinc-900/30">
+                    <span className="text-4xl mb-4">🚧</span>
+                    <h3 className="text-xl font-semibold text-white mb-2">Reporte no configurado</h3>
+                    <p className="text-zinc-400 max-w-md">El administrador de la cuenta aún no ha asignado las métricas y gráficos para esta vista pública.</p>
+                </div>
+            )
+        }
+        return <ExecutiveDashboard data={data} layout={layoutPublico} />
+    }
+
     // Has a layout (client-specific takes priority, then global assigned)
     if (layout && Array.isArray(layout.columnas) && layout.columnas.length > 0) {
         return (
@@ -920,11 +997,11 @@ export function DashboardClient({ data, isPublic = false }: { data: any, isPubli
                 data={data}
                 initialLayout={layout}
                 isCustomized={!!clienteLayoutId}
-                isPublic={isPublic}
+                isPublic={false}
             />
         )
     }
 
     // Fallback: classic view with Configurar Layout button
-    return <ClassicDashboard data={data} isPublic={isPublic} />
+    return <ClassicDashboard data={data} isPublic={false} />
 }
