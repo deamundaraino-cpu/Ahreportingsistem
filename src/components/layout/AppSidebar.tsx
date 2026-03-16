@@ -15,11 +15,11 @@ import {
     Shield
 } from 'lucide-react'
 
-export function AppSidebar() {
+export function AppSidebar({ initialRole = 'viewer' }: { initialRole?: string }) {
     const pathname = usePathname()
     const [isOpen, setIsOpen] = useState(false)
-    const [role, setRole] = useState<string | null>(null)
-    const [loading, setLoading] = useState(true)
+    const [role, setRole] = useState<string | null>(initialRole)
+    const [loading, setLoading] = useState(false) // No longer need initial loading since we pass initialRole
 
     const supabase = createClient()
 

@@ -1,7 +1,23 @@
 import { AppSidebar } from '@/components/layout/AppSidebar'
 import { ReactNode } from 'react'
+import { createClient } from '@/utils/supabase/server'
 
-export default function AppLayout({ children }: { children: ReactNode }) {
+export default async function AppLayout({ children }: { children: ReactNode }) {
+    const supabase = await createClient()
+    const { data: { user } } = await supabase.auth.getUser()
+    
+    let role = 'viewer'
+    if (user) {
+        const { data: profile } = await supabase
+            .from('user_profiles')
+            .select('role')
+            .eq('id', user.id)
+            .single()
+        if (profile?.role) {
+            role = profile.role
+        }
+    }
+
     return (
         <div className="flex min-h-screen bg-[#050505] text-zinc-50 font-sans selection:bg-indigo-500/30">
             {/* Dynamic Background Effects */}
@@ -11,7 +27,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
             </div>
 
             {/* Elegant Sidebar */}
-            <AppSidebar />
+            <AppSidebar initialRole={role} />
 
             {/* Main Content Area */}
             <div className="flex-1 flex flex-col relative w-full transition-all duration-300 ease-in-out lg:ml-64">
