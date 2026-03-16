@@ -24,19 +24,49 @@ export function AppSidebar() {
     const supabase = createClient()
 
     useEffect(() => {
-        async function fetchUserRole() {
-            const { data: { user } } = await supabase.auth.getUser()
-            if (user) {
-                const { data: profile } = await supabase
+        let mounted = true
+
+        async function getProfile(userId: string) {
+            try {
+                const { data, error } = await supabase
                     .from('user_profiles')
                     .select('role')
-                    .eq('id', user.id)
+                    .eq('id', userId)
                     .single()
-                setRole(profile?.role || 'viewer')
+                
+                if (error) throw error
+                if (mounted) setRole(data?.role || 'viewer')
+            } catch (err) {
+                console.error('Error fetching role:', err)
+                if (mounted) setRole('viewer')
+            } finally {
+                if (mounted) setLoading(false)
             }
-            setLoading(false)
         }
-        fetchUserRole()
+
+        const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+            if (session?.user) {
+                await getProfile(session.user.id)
+            } else if (event === 'SIGNED_OUT') {
+                if (mounted) {
+                    setRole(null)
+                    setLoading(false)
+                }
+            } else {
+                // Check once just in case
+                const { data: { user } } = await supabase.auth.getUser()
+                if (user) {
+                    await getProfile(user.id)
+                } else {
+                    if (mounted) setLoading(false)
+                }
+            }
+        })
+
+        return () => {
+            mounted = false
+            subscription.unsubscribe()
+        }
     }, [supabase])
 
     const navigation = [
