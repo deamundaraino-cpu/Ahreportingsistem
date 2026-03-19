@@ -7,7 +7,96 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Button } from '@/components/ui/button'
 import { updateClienteConfig, deleteCliente, assignLayoutToCliente, testMetaConnection, testHotmartConnection, testGA4Connection, refreshMetaCustomConversions, testTikTokConnection, syncClienteMetrics } from '../_actions'
-import { Loader2, ArrowLeft, Save, Trash2, CheckCircle2, AlertCircle, RefreshCw, LayoutDashboard, DownloadCloud, DatabaseZap } from 'lucide-react'
+import { Loader2, ArrowLeft, Save, Trash2, CheckCircle2, AlertCircle, RefreshCw, LayoutDashboard, DownloadCloud, DatabaseZap, Plus } from 'lucide-react'
+
+// ─── Types ───────────────────────────────────────────────────────────────────
+
+interface MetaAccount {
+    id: string
+    label: string
+    account_id: string
+    token: string
+}
+
+// ─── MetaAccountRow sub-component ────────────────────────────────────────────
+
+function MetaAccountRow({ account, sharedToken, testStatus, onChange, onRemove, onTest }: {
+    account: MetaAccount
+    sharedToken: string
+    testStatus?: { loading: boolean; success?: boolean; error?: string }
+    onChange: (updated: MetaAccount) => void
+    onRemove: () => void
+    onTest: () => void
+}) {
+    return (
+        <div className="bg-zinc-950/60 border border-zinc-800 rounded-lg p-4 space-y-3">
+            <div className="flex items-center gap-2">
+                <Input
+                    placeholder="Nombre de la cuenta (ej: Cuenta Principal)"
+                    value={account.label}
+                    onChange={(e) => onChange({ ...account, label: e.target.value })}
+                    className="bg-zinc-900 border-zinc-700 h-8 text-sm"
+                />
+                <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={onRemove}
+                    className="text-zinc-500 hover:text-red-400 shrink-0 h-8 w-8 p-0"
+                >
+                    <Trash2 className="w-4 h-4" />
+                </Button>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                    <Label className="text-zinc-400 text-xs">Ad Account ID</Label>
+                    <Input
+                        placeholder="act_1234567890"
+                        value={account.account_id}
+                        onChange={(e) => onChange({ ...account, account_id: e.target.value })}
+                        className="bg-zinc-900 border-zinc-700 h-8 text-sm"
+                    />
+                </div>
+                <div className="space-y-1.5">
+                    <Label className="text-zinc-400 text-xs">Token propio (opcional)</Label>
+                    <Input
+                        type="password"
+                        placeholder={sharedToken ? 'Usa token compartido' : 'EAA...'}
+                        value={account.token}
+                        onChange={(e) => onChange({ ...account, token: e.target.value })}
+                        className="bg-zinc-900 border-zinc-700 h-8 text-sm"
+                    />
+                </div>
+            </div>
+            <div className="flex items-center gap-3">
+                <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={onTest}
+                    disabled={testStatus?.loading || !account.account_id}
+                    className="h-7 text-xs"
+                >
+                    {testStatus?.loading
+                        ? <RefreshCw className="w-3 h-3 animate-spin mr-1" />
+                        : <RefreshCw className="w-3 h-3 mr-1" />
+                    }
+                    Probar conexión
+                </Button>
+                {testStatus?.success && (
+                    <span className="text-green-500 text-xs flex items-center gap-1">
+                        <CheckCircle2 className="w-3 h-3" /> Conexión exitosa
+                    </span>
+                )}
+                {testStatus?.error && (
+                    <span className="text-red-500 text-xs flex items-center gap-1">
+                        <AlertCircle className="w-3 h-3" /> {testStatus.error}
+                    </span>
+                )}
+            </div>
+        </div>
+    )
+}
+
+// ─── Main component ───────────────────────────────────────────────────────────
 
 export function ClientConfigForm({ cliente, layouts = [], isAdmin = false }: { cliente: any; layouts?: any[]; isAdmin?: boolean }) {
     const router = useRouter()
@@ -21,6 +110,30 @@ export function ClientConfigForm({ cliente, layouts = [], isAdmin = false }: { c
     const defaultStart = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
     const [syncStart, setSyncStart] = useState(defaultStart)
     const [syncEnd, setSyncEnd] = useState(today)
+
+    // ── metaAccounts state (with backward compat migration) ──────────────────
+    const initAccounts = (): MetaAccount[] => {
+        const cfg = cliente.config_api || {}
+        if (cfg.meta_accounts && Array.isArray(cfg.meta_accounts) && cfg.meta_accounts.length > 0) {
+            return cfg.meta_accounts
+        }
+        if (cfg.meta_token || cfg.meta_account_id) {
+            return [{ id: crypto.randomUUID(), label: 'Cuenta Principal', account_id: cfg.meta_account_id || '', token: '' }]
+        }
+        return []
+    }
+    const [metaAccounts, setMetaAccounts] = useState<MetaAccount[]>(initAccounts)
+
+    function addAccount() {
+        setMetaAccounts(prev => [...prev, { id: crypto.randomUUID(), label: `Cuenta ${prev.length + 1}`, account_id: '', token: '' }])
+    }
+    function removeAccount(idx: number) {
+        setMetaAccounts(prev => prev.filter((_, i) => i !== idx))
+    }
+    function updateAccount(idx: number, updated: MetaAccount) {
+        setMetaAccounts(prev => prev.map((a, i) => i === idx ? updated : a))
+    }
+
     async function runTest(key: string, fn: () => Promise<any>) {
         setTestStatus(prev => ({ ...prev, [key]: { loading: true } }))
         try {
@@ -28,13 +141,9 @@ export function ClientConfigForm({ cliente, layouts = [], isAdmin = false }: { c
             if (res.error) {
                 setTestStatus(prev => ({ ...prev, [key]: { loading: false, error: res.error } }))
             } else {
-                setTestStatus(prev => ({ 
-                    ...prev, 
-                    [key]: { 
-                        loading: false, 
-                        success: true, 
-                        message: res.message || undefined 
-                    } 
+                setTestStatus(prev => ({
+                    ...prev,
+                    [key]: { loading: false, success: true, message: res.message || undefined }
                 }))
             }
         } catch (err: any) {
@@ -45,7 +154,12 @@ export function ClientConfigForm({ cliente, layouts = [], isAdmin = false }: { c
     async function handleSave() {
         setLoading(true)
         setError(null)
-        const { success, error: updateError } = await updateClienteConfig(cliente.id, config)
+        const finalConfig = {
+            ...config,
+            meta_accounts: metaAccounts,
+            meta_account_id: metaAccounts[0]?.account_id || config.meta_account_id || '',
+        }
+        const { success, error: updateError } = await updateClienteConfig(cliente.id, finalConfig)
         if (!success) {
             setError(updateError || 'Error al guardar la configuración')
         } else {
@@ -63,6 +177,8 @@ export function ClientConfigForm({ cliente, layouts = [], isAdmin = false }: { c
         }
     }
 
+    const hasMetaConfig = metaAccounts.length > 0 || config.meta_token
+
     return (
         <div className="space-y-6">
             <div className="flex gap-4 items-center">
@@ -75,28 +191,30 @@ export function ClientConfigForm({ cliente, layouts = [], isAdmin = false }: { c
 
             {error && <p className="text-red-500 bg-red-500/10 p-4 rounded">{error}</p>}
 
+            {/* ─── Meta Ads ─────────────────────────────────────────────────── */}
             <Card className="bg-zinc-900 border-zinc-800">
                 <CardHeader>
-                    <div className="flex justify-between items-center">
-                        <CardTitle>Meta Ads Configuration</CardTitle>
-                        <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => runTest('meta', () => testMetaConnection(config.meta_token, config.meta_account_id))}
-                            disabled={testStatus.meta?.loading}
-                        >
-                            {testStatus.meta?.loading ? <RefreshCw className="w-3 h-3 animate-spin mr-2" /> : <RefreshCw className="w-3 h-3 mr-2" />}
-                            Probar Conexión
-                        </Button>
-                    </div>
-                    <CardDescription>Conecta el Business SDK ingresando el Access Token y el ID de Cuenta de Anuncios.</CardDescription>
-                    {testStatus.meta?.success && <p className="text-green-500 text-xs flex items-center mt-2"><CheckCircle2 className="w-3 h-3 mr-1" /> Conexión Exitosa</p>}
-                    {testStatus.metaSync?.success && <p className="text-emerald-400 text-sm flex items-center mt-2 p-2 bg-emerald-500/10 rounded"><CheckCircle2 className="w-4 h-4 mr-2" /> {testStatus.metaSync.message}</p>}
-                    {(testStatus.meta?.error || testStatus.metaSync?.error) && <p className="text-red-500 text-xs flex items-center mt-2"><AlertCircle className="w-3 h-3 mr-1" /> {testStatus.meta?.error || testStatus.metaSync?.error}</p>}
+                    <CardTitle>Meta Ads Configuration</CardTitle>
+                    <CardDescription>
+                        Conecta una o más cuentas publicitarias de Meta. Los datos de todas las cuentas se consolidarán en el reporte.
+                    </CardDescription>
+                    {testStatus.metaSync?.success && (
+                        <p className="text-emerald-400 text-sm flex items-center mt-2 p-2 bg-emerald-500/10 rounded">
+                            <CheckCircle2 className="w-4 h-4 mr-2" /> {testStatus.metaSync.message}
+                        </p>
+                    )}
+                    {testStatus.metaSync?.error && (
+                        <p className="text-red-500 text-xs flex items-center mt-2">
+                            <AlertCircle className="w-3 h-3 mr-1" /> {testStatus.metaSync.error}
+                        </p>
+                    )}
                 </CardHeader>
-                <CardContent className="space-y-4">
+                <CardContent className="space-y-5">
+                    {/* Shared token */}
                     <div className="space-y-2">
-                        <Label htmlFor="meta_token" className="text-zinc-300">Access Token (User o System User)</Label>
+                        <Label htmlFor="meta_token" className="text-zinc-300">
+                            Access Token Compartido
+                        </Label>
                         <Input
                             id="meta_token"
                             type="password"
@@ -105,30 +223,54 @@ export function ClientConfigForm({ cliente, layouts = [], isAdmin = false }: { c
                             onChange={(e) => setConfig({ ...config, meta_token: e.target.value })}
                             className="bg-zinc-950 border-zinc-700"
                         />
+                        <p className="text-xs text-zinc-500">
+                            Token de System User o User Token. Si una cuenta no tiene token propio, se usará este.
+                        </p>
                     </div>
-                    <div className="space-y-2">
-                        <Label htmlFor="meta_account_id" className="text-zinc-300">Ad Account ID</Label>
-                        <Input
-                            id="meta_account_id"
-                            placeholder="act_1234567890"
-                            value={config.meta_account_id || ''}
-                            onChange={(e) => setConfig({ ...config, meta_account_id: e.target.value })}
-                            className="bg-zinc-950 border-zinc-700"
-                        />
+
+                    {/* Account list */}
+                    <div className="space-y-3">
+                        <div className="flex items-center justify-between">
+                            <Label className="text-zinc-300">Cuentas Publicitarias</Label>
+                            <Button size="sm" variant="outline" onClick={addAccount} className="h-7 text-xs">
+                                <Plus className="w-3 h-3 mr-1" /> Agregar Cuenta
+                            </Button>
+                        </div>
+
+                        {metaAccounts.length === 0 && (
+                            <p className="text-xs text-zinc-500 py-3 text-center border border-dashed border-zinc-800 rounded-lg">
+                                Sin cuentas configuradas. Agrega al menos una para activar Meta Ads.
+                            </p>
+                        )}
+
+                        {metaAccounts.map((acct, idx) => (
+                            <MetaAccountRow
+                                key={acct.id}
+                                account={acct}
+                                sharedToken={config.meta_token || ''}
+                                testStatus={testStatus[`meta_${acct.id}`]}
+                                onChange={(updated) => updateAccount(idx, updated)}
+                                onRemove={() => removeAccount(idx)}
+                                onTest={() => runTest(`meta_${acct.id}`, () =>
+                                    testMetaConnection(acct.token || config.meta_token, acct.account_id)
+                                )}
+                            />
+                        ))}
                     </div>
-                    {/* Botón de Sincronización de Conversiones Personalizadas */}
+
+                    {/* Conversiones personalizadas */}
                     <div className="pt-4 mt-2 border-t border-zinc-800">
                         <div className="flex justify-between items-center bg-zinc-950/50 p-3 rounded-lg border border-zinc-800">
                             <div>
                                 <h4 className="text-sm font-medium text-zinc-200">Conversiones Personalizadas</h4>
                                 <p className="text-xs text-zinc-500 mt-1">Busca y actualiza todos los eventos personalizados detectados en Meta durante los últimos 30 días.</p>
                             </div>
-                            <Button 
-                                variant="secondary" 
-                                size="sm" 
+                            <Button
+                                variant="secondary"
+                                size="sm"
                                 className="bg-indigo-500/20 text-indigo-300 hover:bg-indigo-500/30 border border-indigo-500/30 whitespace-nowrap"
                                 onClick={() => runTest('metaSync', () => refreshMetaCustomConversions(cliente.id, config))}
-                                disabled={testStatus.metaSync?.loading || !config.meta_token || !config.meta_account_id}
+                                disabled={testStatus.metaSync?.loading || !hasMetaConfig}
                             >
                                 {testStatus.metaSync?.loading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <DownloadCloud className="w-4 h-4 mr-2" />}
                                 Sincronizar Conversiones
@@ -196,6 +338,7 @@ export function ClientConfigForm({ cliente, layouts = [], isAdmin = false }: { c
                 </CardContent>
             </Card>
 
+            {/* ─── Hotmart ──────────────────────────────────────────────────── */}
             <Card className="bg-zinc-900 border-zinc-800">
                 <CardHeader>
                     <div className="flex justify-between items-center">
@@ -290,6 +433,7 @@ export function ClientConfigForm({ cliente, layouts = [], isAdmin = false }: { c
                 </CardContent>
             </Card>
 
+            {/* ─── GA4 ──────────────────────────────────────────────────────── */}
             <Card className="bg-zinc-900 border-zinc-800">
                 <CardHeader>
                     <div className="flex justify-between items-center">
@@ -343,6 +487,7 @@ export function ClientConfigForm({ cliente, layouts = [], isAdmin = false }: { c
                 </CardContent>
             </Card>
 
+            {/* ─── TikTok ───────────────────────────────────────────────────── */}
             <Card className="bg-zinc-900 border-zinc-800">
                 <CardHeader>
                     <div className="flex justify-between items-center">
@@ -386,6 +531,7 @@ export function ClientConfigForm({ cliente, layouts = [], isAdmin = false }: { c
                 </CardContent>
             </Card>
 
+            {/* ─── Filtros de Dashboard ─────────────────────────────────────── */}
             <Card className="bg-zinc-900 border-zinc-800">
                 <CardHeader>
                     <CardTitle>Filtros de Dashboard</CardTitle>
@@ -406,6 +552,7 @@ export function ClientConfigForm({ cliente, layouts = [], isAdmin = false }: { c
                 </CardContent>
             </Card>
 
+            {/* ─── Plantilla de Reporte ─────────────────────────────────────── */}
             <Card className="bg-zinc-900 border-zinc-800 border-indigo-500/30">
                 <CardHeader>
                     <div className="flex items-center gap-3">

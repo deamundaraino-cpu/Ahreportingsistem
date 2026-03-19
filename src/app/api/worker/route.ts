@@ -87,17 +87,13 @@ export async function GET(request: Request) {
             log(`[Cliente ${cliente.nombre}] No tiene config.hotmart_basic definida.`)
         }
 
-        // ─── Helper: Fetch Meta Ads for a single date ────────────────────────
-        async function fetchMeta(targetDate: string) {
+        // ─── Helper: Fetch Meta Ads for a single account+date ───────────────
+        async function fetchMetaSingleAccount(targetDate: string, rawAccountId: string, token: string) {
             const record = { spend: 0, impressions: 0, clicks: 0, campaigns: [] as any[] }
-            if (!(config.meta_token && config.meta_account_id)) {
-                log(`[Meta] Sin config para el cliente.`)
-                return record
-            }
             try {
-                const actId = config.meta_account_id.startsWith('act_') ? config.meta_account_id : `act_${config.meta_account_id}`
+                const actId = rawAccountId.startsWith('act_') ? rawAccountId : `act_${rawAccountId}`
                 const url = new URL(`https://graph.facebook.com/v19.0/${actId}/insights`)
-                url.searchParams.append('access_token', config.meta_token)
+                url.searchParams.append('access_token', token)
                 url.searchParams.append('time_range', JSON.stringify({ since: targetDate, until: targetDate }))
                 url.searchParams.append('fields', 'campaign_name,spend,impressions,clicks,inline_link_clicks,reach,frequency,cpc,cpm,ctr,actions,conversions,video_thruplay_watched_actions')
                 url.searchParams.append('level', 'campaign')
@@ -197,6 +193,7 @@ export async function GET(request: Request) {
                         totalClicks += cClicks
 
                         campaignsArr.push({
+                            account_id: rawAccountId,
                             name: camp.campaign_name || 'Desconocida',
                             // Entrega
                             spend: cSpend, impressions: cImpr, clicks: cClicks,
@@ -226,54 +223,90 @@ export async function GET(request: Request) {
                         })
                     })
 
-                    log(`[Meta] ${targetDate} Datos de campañas obtenidos. Total Spend: ${totalSpend}`)
+                    log(`[Meta] ${targetDate} [${rawAccountId}] Spend: ${totalSpend}, Campañas: ${campaignsArr.length}`)
                     record.spend = totalSpend
                     record.impressions = totalImpr
                     record.clicks = totalClicks
                     record.campaigns = campaignsArr
-                    platformLogs.meta = 'Conectado OK'
-
-                    // ── Auto-discover custom conversions → upsert into catalog
-                    const allCustomKeys = new Set<string>()
-                    campaignsArr.forEach((camp: any) => {
-                        if (camp.custom_conversions) {
-                            Object.keys(camp.custom_conversions).forEach(k => allCustomKeys.add(k))
-                        }
-                    })
-
-                    if (allCustomKeys.size > 0) {
-                        const catalogRows = Array.from(allCustomKeys).map((key) => {
-                            const label = key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()).trim()
-                            return {
-                                cliente_id: cliente.id,
-                                conversion_key: key,
-                                label: `Lead ${label.replace('Lead', '').trim() || label}`,
-                                field_id: `meta_custom_${key}`,
-                                last_seen: targetDate,
-                            }
-                        })
-
-                        const { error: catErr } = await adminSupabase
-                            .from('meta_conversiones_catalogo')
-                            .upsert(catalogRows, { onConflict: 'cliente_id,conversion_key', ignoreDuplicates: false })
-
-                        if (catErr) {
-                            log(`[Meta] ⚠️ Error actualizando catálogo: ${catErr.message}`)
-                        } else {
-                            log(`[Meta] ✓ Catálogo actualizado: ${Array.from(allCustomKeys).join(', ')}`)
-                        }
-                    }
                 } else if (data.error) {
-                    log(`[Meta] ${targetDate} Error de API: ${JSON.stringify(data.error)}`)
-                    if (platformLogs.meta === 'Saltado') platformLogs.meta = 'Error API'
+                    log(`[Meta] ${targetDate} [${rawAccountId}] Error de API: ${JSON.stringify(data.error)}`)
                 } else {
-                    log(`[Meta] ${targetDate} Sin Datos para hoy.`)
-                    if (platformLogs.meta === 'Saltado') platformLogs.meta = 'Sin Datos'
+                    log(`[Meta] ${targetDate} [${rawAccountId}] Sin datos.`)
                 }
             } catch (e: any) {
-                log(`[Meta] Catch Error: ${e.message}`)
-                platformLogs.meta = 'Error'
+                log(`[Meta] [${rawAccountId}] Catch Error: ${e.message}`)
             }
+            return record
+        }
+
+        // ─── Helper: Fetch Meta Ads for a single date (multi-account) ────────
+        async function fetchMeta(targetDate: string) {
+            const record = { spend: 0, impressions: 0, clicks: 0, campaigns: [] as any[] }
+
+            // Build account list — multi-account if configured, legacy fallback otherwise
+            let accountsToFetch: { account_id: string; token: string }[] = []
+            if (config.meta_accounts && Array.isArray(config.meta_accounts) && config.meta_accounts.length > 0) {
+                accountsToFetch = config.meta_accounts
+                    .filter((a: any) => a.account_id)
+                    .map((a: any) => ({ account_id: a.account_id, token: a.token || config.meta_token || '' }))
+            } else if (config.meta_token && config.meta_account_id) {
+                accountsToFetch = [{ account_id: config.meta_account_id, token: config.meta_token }]
+            }
+
+            if (accountsToFetch.length === 0) {
+                log(`[Meta] Sin config para el cliente.`)
+                return record
+            }
+
+            // Fetch all accounts in parallel for this date
+            const accountResults = await Promise.all(
+                accountsToFetch.map(({ account_id, token }) => fetchMetaSingleAccount(targetDate, account_id, token))
+            )
+
+            // Merge results from all accounts
+            let anySuccess = false
+            for (const r of accountResults) {
+                record.spend += r.spend
+                record.impressions += r.impressions
+                record.clicks += r.clicks
+                record.campaigns.push(...r.campaigns)
+                if (r.campaigns.length > 0 || r.spend > 0) anySuccess = true
+            }
+
+            platformLogs.meta = anySuccess ? 'Conectado OK' : 'Sin Datos'
+            log(`[Meta] ${targetDate} Total consolidado — Spend: ${record.spend.toFixed(2)}, Campañas: ${record.campaigns.length}`)
+
+            // Auto-discover custom conversions → upsert into catalog
+            const allCustomKeys = new Set<string>()
+            record.campaigns.forEach((camp: any) => {
+                if (camp.custom_conversions) {
+                    Object.keys(camp.custom_conversions).forEach(k => allCustomKeys.add(k))
+                }
+            })
+
+            if (allCustomKeys.size > 0) {
+                const catalogRows = Array.from(allCustomKeys).map((key) => {
+                    const label = key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()).trim()
+                    return {
+                        cliente_id: cliente.id,
+                        conversion_key: key,
+                        label: `Lead ${label.replace('Lead', '').trim() || label}`,
+                        field_id: `meta_custom_${key}`,
+                        last_seen: targetDate,
+                    }
+                })
+
+                const { error: catErr } = await adminSupabase
+                    .from('meta_conversiones_catalogo')
+                    .upsert(catalogRows, { onConflict: 'cliente_id,conversion_key', ignoreDuplicates: false })
+
+                if (catErr) {
+                    log(`[Meta] ⚠️ Error actualizando catálogo: ${catErr.message}`)
+                } else {
+                    log(`[Meta] ✓ Catálogo actualizado: ${Array.from(allCustomKeys).join(', ')}`)
+                }
+            }
+
             return record
         }
 

@@ -210,39 +210,52 @@ export async function testGA4Connection(config: any) {
 }
 
 export async function refreshMetaCustomConversions(clienteId: string, metaConfig: any) {
-    if (!metaConfig?.meta_token || !metaConfig?.meta_account_id) {
+    const hasMulti = metaConfig?.meta_accounts?.length > 0
+    const hasLegacy = metaConfig?.meta_token && metaConfig?.meta_account_id
+    if (!hasMulti && !hasLegacy) {
         return { error: 'El cliente no tiene conectada la API de Meta Ads.' }
     }
 
+    const accountsToQuery: { account_id: string; token: string }[] = hasMulti
+        ? metaConfig.meta_accounts
+            .filter((a: any) => a.account_id)
+            .map((a: any) => ({ account_id: a.account_id, token: a.token || metaConfig.meta_token || '' }))
+        : [{ account_id: metaConfig.meta_account_id, token: metaConfig.meta_token }]
+
     try {
-        const actId = metaConfig.meta_account_id.startsWith('act_') ? metaConfig.meta_account_id : `act_${metaConfig.meta_account_id}`
         const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
         const until = new Date().toISOString().split('T')[0]
 
-        const url = new URL(`https://graph.facebook.com/v19.0/${actId}/insights`)
-        url.searchParams.append('access_token', metaConfig.meta_token)
-        url.searchParams.append('time_range', JSON.stringify({ since, until }))
-        url.searchParams.append('fields', 'conversions')
-        url.searchParams.append('level', 'account')
-
-        const res = await fetch(url.toString())
-        const data = await res.json()
-
-        if (data.error) {
-            return { error: `Error de la API de Meta: ${data.error.message}` }
-        }
-
         const allCustomKeys = new Set<string>()
 
-        if (data.data && data.data[0] && data.data[0].conversions) {
-            data.data[0].conversions.forEach((cv: any) => {
-                const type: string = cv.action_type || ''
-                if (type.startsWith('offsite_conversion.fb_pixel_custom.')) {
-                    const key = type.replace('offsite_conversion.fb_pixel_custom.', '').toLowerCase()
-                    allCustomKeys.add(key)
+        await Promise.all(
+            accountsToQuery.map(async ({ account_id, token }) => {
+                const actId = account_id.startsWith('act_') ? account_id : `act_${account_id}`
+                const url = new URL(`https://graph.facebook.com/v19.0/${actId}/insights`)
+                url.searchParams.append('access_token', token)
+                url.searchParams.append('time_range', JSON.stringify({ since, until }))
+                url.searchParams.append('fields', 'conversions')
+                url.searchParams.append('level', 'account')
+
+                const res = await fetch(url.toString())
+                const data = await res.json()
+
+                if (data.error) {
+                    console.warn(`[refreshMeta] ${account_id} error: ${data.error.message}`)
+                    return
+                }
+
+                if (data.data?.[0]?.conversions) {
+                    data.data[0].conversions.forEach((cv: any) => {
+                        const type: string = cv.action_type || ''
+                        if (type.startsWith('offsite_conversion.fb_pixel_custom.')) {
+                            const key = type.replace('offsite_conversion.fb_pixel_custom.', '').toLowerCase()
+                            allCustomKeys.add(key)
+                        }
+                    })
                 }
             })
-        }
+        )
 
         if (allCustomKeys.size === 0) {
             return { success: true, count: 0, message: 'No se encontraron conversiones personalizadas con actividad en los últimos 30 días.' }
