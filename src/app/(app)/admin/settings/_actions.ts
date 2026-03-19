@@ -2,6 +2,7 @@
 
 import { createClient, createAdminClient } from '@/utils/supabase/server'
 import { revalidatePath } from 'next/cache'
+import { headers } from 'next/headers'
 
 export async function getClientes() {
     const supabase = await createAdminClient()
@@ -315,6 +316,44 @@ export async function savePublicLayout(clienteId: string, payload: {
     revalidatePath(`/report/${clienteId}`)
     revalidatePath(`/dashboard/${clienteId}`)
     return { success: true }
+}
+
+export async function syncClienteMetrics(clienteId: string, startDate: string, endDate: string) {
+    try {
+        const headersList = await headers()
+        const host = headersList.get('host') || 'localhost:3001'
+        const protocol = host.includes('localhost') ? 'http' : 'https'
+        const baseUrl = `${protocol}://${host}`
+
+        const url = `${baseUrl}/api/worker?client_id=${clienteId}&start=${startDate}&end=${endDate}`
+        const cronSecret = process.env.CRON_SECRET
+
+        const res = await fetch(url, {
+            headers: cronSecret ? { Authorization: `Bearer ${cronSecret}` } : {},
+            cache: 'no-store',
+        })
+
+        const data = await res.json()
+
+        if (!res.ok) return { error: data.error || 'Error al sincronizar' }
+
+        const logs = (data.debugLogs || []) as string[]
+        const metaLog = logs.find((l: string) => l.includes('[Meta]') && l.includes('Datos de campañas')) || ''
+        const dbLog = logs.find((l: string) => l.includes('Mass Upsert exitoso')) || ''
+        const errorLog = logs.find((l: string) => l.includes('❌')) || ''
+
+        if (errorLog) return { error: errorLog }
+
+        revalidatePath(`/dashboard/${clienteId}`)
+        return {
+            success: true,
+            message: dbLog
+                ? `✓ Sincronizado correctamente. ${metaLog}`
+                : `Sync completado. Revisa los datos en el dashboard.`
+        }
+    } catch (e: any) {
+        return { error: e.message }
+    }
 }
 
 export async function getPublicLayout(clienteId: string) {

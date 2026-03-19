@@ -6,8 +6,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter }
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Button } from '@/components/ui/button'
-import { updateClienteConfig, deleteCliente, assignLayoutToCliente, testMetaConnection, testHotmartConnection, testGA4Connection, refreshMetaCustomConversions, testTikTokConnection } from '../_actions'
-import { Loader2, ArrowLeft, Save, Trash2, CheckCircle2, AlertCircle, RefreshCw, LayoutDashboard, DownloadCloud } from 'lucide-react'
+import { updateClienteConfig, deleteCliente, assignLayoutToCliente, testMetaConnection, testHotmartConnection, testGA4Connection, refreshMetaCustomConversions, testTikTokConnection, syncClienteMetrics } from '../_actions'
+import { Loader2, ArrowLeft, Save, Trash2, CheckCircle2, AlertCircle, RefreshCw, LayoutDashboard, DownloadCloud, DatabaseZap } from 'lucide-react'
 
 export function ClientConfigForm({ cliente, layouts = [], isAdmin = false }: { cliente: any; layouts?: any[]; isAdmin?: boolean }) {
     const router = useRouter()
@@ -17,6 +17,10 @@ export function ClientConfigForm({ cliente, layouts = [], isAdmin = false }: { c
     const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean, success?: boolean, error?: string, message?: string } }>({})
     const [layoutSaving, setLayoutSaving] = useState(false)
     const [selectedLayoutId, setSelectedLayoutId] = useState<string>(cliente.layout_id || '')
+    const today = new Date().toISOString().split('T')[0]
+    const defaultStart = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
+    const [syncStart, setSyncStart] = useState(defaultStart)
+    const [syncEnd, setSyncEnd] = useState(today)
     async function runTest(key: string, fn: () => Promise<any>) {
         setTestStatus(prev => ({ ...prev, [key]: { loading: true } }))
         try {
@@ -130,6 +134,64 @@ export function ClientConfigForm({ cliente, layouts = [], isAdmin = false }: { c
                                 Sincronizar Conversiones
                             </Button>
                         </div>
+                    </div>
+                </CardContent>
+            </Card>
+
+            {/* ─── Sincronización de Datos ──────────────────────────────────── */}
+            <Card className="bg-zinc-900 border-zinc-800 border-indigo-500/20">
+                <CardHeader>
+                    <CardTitle className="flex items-center gap-2 text-indigo-300">
+                        <DatabaseZap className="w-5 h-5" />
+                        Sincronizar Datos Diarios
+                    </CardTitle>
+                    <CardDescription className="text-zinc-400">
+                        Carga o recarga los datos de Meta, Hotmart y GA4 para el rango de fechas seleccionado.
+                        Usa esto cuando falten datos o para actualizar métricas históricas.
+                    </CardDescription>
+                    {testStatus.dataSync?.success && (
+                        <p className="text-emerald-400 text-sm flex items-start gap-2 mt-2 p-3 bg-emerald-500/10 rounded">
+                            <CheckCircle2 className="w-4 h-4 mt-0.5 shrink-0" />
+                            <span>{testStatus.dataSync.message}</span>
+                        </p>
+                    )}
+                    {testStatus.dataSync?.error && (
+                        <p className="text-red-400 text-sm flex items-start gap-2 mt-2 p-3 bg-red-500/10 rounded">
+                            <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
+                            <span>{testStatus.dataSync.error}</span>
+                        </p>
+                    )}
+                </CardHeader>
+                <CardContent>
+                    <div className="flex items-end gap-3 flex-wrap">
+                        <div className="space-y-1.5 flex-1 min-w-[140px]">
+                            <Label className="text-zinc-400 text-xs">Fecha inicio</Label>
+                            <Input
+                                type="date"
+                                value={syncStart}
+                                onChange={e => setSyncStart(e.target.value)}
+                                className="bg-zinc-950 border-zinc-700 text-zinc-100 h-9"
+                            />
+                        </div>
+                        <div className="space-y-1.5 flex-1 min-w-[140px]">
+                            <Label className="text-zinc-400 text-xs">Fecha fin</Label>
+                            <Input
+                                type="date"
+                                value={syncEnd}
+                                onChange={e => setSyncEnd(e.target.value)}
+                                className="bg-zinc-950 border-zinc-700 text-zinc-100 h-9"
+                            />
+                        </div>
+                        <Button
+                            onClick={() => runTest('dataSync', () => syncClienteMetrics(cliente.id, syncStart, syncEnd))}
+                            disabled={testStatus.dataSync?.loading || !syncStart || !syncEnd}
+                            className="bg-indigo-600 hover:bg-indigo-700 text-white h-9 whitespace-nowrap"
+                        >
+                            {testStatus.dataSync?.loading
+                                ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Sincronizando...</>
+                                : <><DatabaseZap className="w-4 h-4 mr-2" /> Sincronizar Datos</>
+                            }
+                        </Button>
                     </div>
                 </CardContent>
             </Card>
