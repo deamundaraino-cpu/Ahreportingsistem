@@ -40,21 +40,50 @@ function enrichMetaRow(row: any, keywordFilter: string): any {
     const kw = keywordFilter ? keywordFilter.toLowerCase() : ''
     const matching = row.meta_campaigns.filter((c: any) => kw === '' || c.name?.toLowerCase().includes(kw))
 
+    const sum = (field: string) => matching.reduce((s: number, c: any) => s + (parseFloat(c[field] || '0') || 0), 0)
+    const sumInt = (field: string) => matching.reduce((s: number, c: any) => s + (parseInt(c[field] || '0') || 0), 0)
+
     // Base metrics from matched campaigns
     const base = {
         ...row,
-        meta_spend: matching.reduce((s: number, c: any) => s + parseFloat(c.spend || '0'), 0),
-        meta_impressions: matching.reduce((s: number, c: any) => s + parseInt(c.impressions || '0'), 0),
-        meta_clicks: matching.reduce((s: number, c: any) => s + parseInt(c.clicks || '0'), 0),
-        meta_link_clicks: matching.reduce((s: number, c: any) => s + parseInt(c.link_clicks || '0'), 0),
-        meta_reach: matching.reduce((s: number, c: any) => s + parseInt(c.reach || '0'), 0),
-        meta_leads: matching.reduce((s: number, c: any) => s + parseInt(c.leads || '0'), 0),
-        meta_purchases: matching.reduce((s: number, c: any) => s + parseInt(c.purchases || '0'), 0),
-        meta_adds_to_cart: matching.reduce((s: number, c: any) => s + parseInt(c.adds_to_cart || '0'), 0),
-        meta_initiates_checkout: matching.reduce((s: number, c: any) => s + parseInt(c.initiates_checkout || '0'), 0),
-        meta_landing_page_views: matching.reduce((s: number, c: any) => s + parseInt(c.landing_page_views || '0'), 0),
-        meta_video_views: matching.reduce((s: number, c: any) => s + parseInt(c.video_views || '0'), 0),
-        meta_results: matching.reduce((s: number, c: any) => s + parseInt(c.results || '0'), 0),
+        meta_spend: sum('spend'),
+        meta_impressions: sumInt('impressions'),
+        meta_clicks: sumInt('clicks'),
+        meta_link_clicks: sumInt('link_clicks'),
+        meta_reach: sumInt('reach'),
+        // Leads y conversiones estándar
+        meta_leads: sumInt('leads'),
+        meta_purchases: sumInt('purchases'),
+        meta_adds_to_cart: sumInt('adds_to_cart'),
+        meta_initiates_checkout: sumInt('initiates_checkout'),
+        meta_landing_page_views: sumInt('landing_page_views'),
+        meta_complete_registration: sumInt('complete_registration'),
+        meta_view_content: sumInt('view_content'),
+        meta_search: sumInt('search'),
+        meta_add_to_wishlist: sumInt('add_to_wishlist'),
+        meta_customize_product: sumInt('customize_product'),
+        meta_contact: sumInt('contact'),
+        meta_schedule: sumInt('schedule'),
+        meta_start_trial: sumInt('start_trial'),
+        meta_submit_application: sumInt('submit_application'),
+        meta_subscribe: sumInt('subscribe'),
+        meta_find_location: sumInt('find_location'),
+        meta_donate: sumInt('donate'),
+        // Video
+        meta_video_views: sumInt('video_views'),
+        meta_video_thruplay: sumInt('video_thruplay'),
+        meta_video_3s_views: sumInt('video_3s'),
+        // Mensajería
+        meta_messaging_conversations_started: sumInt('messaging_conversations'),
+        // Engagement
+        meta_page_engagement: sumInt('page_engagement'),
+        meta_post_engagement: sumInt('post_engagement'),
+        meta_post_reactions: sumInt('post_reactions'),
+        meta_post_shares: sumInt('post_shares'),
+        meta_post_saves: sumInt('post_saves'),
+        meta_post_comments: sumInt('post_comments'),
+        // Resultados
+        meta_results: sumInt('results'),
     }
 
     // Auto-expand custom pixel conversions: custom_conversions: { leadtcc: 456, lead_neuroemocion: 115 }
