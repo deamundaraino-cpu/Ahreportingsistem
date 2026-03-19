@@ -15,51 +15,94 @@ import type { ColDef, CardDef, ChartDef, ChartType, ReportLayout, CardColor } fr
 // ─── Available Metrics for Dropdown ──────────────────────────────────────────
 
 const AVAILABLE_METRICS = [
-    // Meta Ads
-    { id: 'meta_spend', label: 'Meta: Gasto' },
+    // ── Meta · Entrega ────────────────────────────────────────────────────────
+    { id: 'meta_spend',       label: 'Meta: Gasto' },
     { id: 'meta_impressions', label: 'Meta: Impresiones' },
-    { id: 'meta_clicks', label: 'Meta: Clics (Todos)' },
+    { id: 'meta_reach',       label: 'Meta: Alcance' },
+    { id: 'meta_frequency',   label: 'Meta: Frecuencia' },
+    { id: 'meta_clicks',      label: 'Meta: Clics (Todos)' },
     { id: 'meta_link_clicks', label: 'Meta: Clics en el enlace' },
-    { id: 'meta_cpc', label: 'Meta: CPC (Todos)' },
+
+    // ── Meta · Costos y Tasas ─────────────────────────────────────────────────
+    { id: 'meta_cpm',      label: 'Meta: CPM' },
+    { id: 'meta_cpc',      label: 'Meta: CPC (Todos)' },
     { id: 'meta_cpc_link', label: 'Meta: CPC (Enlace)' },
-    { id: 'meta_cpm', label: 'Meta: CPM' },
-    { id: 'meta_ctr', label: 'Meta: CTR (Todos)' },
+    { id: 'meta_ctr',      label: 'Meta: CTR (Todos)' },
     { id: 'meta_ctr_link', label: 'Meta: CTR (Enlace)' },
-    { id: 'meta_reach', label: 'Meta: Alcance' },
-    { id: 'meta_frequency', label: 'Meta: Frecuencia' },
-    { id: 'meta_leads', label: 'Meta: Clientes Potenciales (Leads)' },
-    { id: 'meta_cpl', label: 'Meta: Costo por Lead (CPL)' },
-    { id: 'meta_purchases', label: 'Meta: Compras' },
-    { id: 'meta_cpp', label: 'Meta: Costo por Compra (CPP)' },
-    { id: 'meta_roas', label: 'Meta: ROAS (Retorno de Inversión)' },
-    { id: 'meta_adds_to_cart', label: 'Meta: Artículos al carrito' },
-    { id: 'meta_cost_per_add_to_cart', label: 'Meta: Costo por Add to Cart' },
-    { id: 'meta_initiates_checkout', label: 'Meta: Pagos Iniciados' },
-    { id: 'meta_cost_per_initiate_checkout', label: 'Meta: Costo por Pago Inic.' },
-    { id: 'meta_landing_page_views', label: 'Meta: Vistas de pág. de destino' },
-    { id: 'meta_cost_per_landing_page_view', label: 'Meta: Costo por Vista Pág.' },
-    { id: 'meta_results', label: 'Meta: Resultados' },
-    { id: 'meta_cost_per_result', label: 'Meta: Costo por Resultado' },
-    { id: 'meta_video_views', label: 'Meta: Reproducciones de Video' },
 
-    // Meta: Conversiones Personalizadas
-    { id: 'meta_custom_leadtcc', label: 'Meta: Lead TCC' },
-    { id: 'meta_custom_lead_neuroemocion', label: 'Meta: Lead Neuro' },
-    { id: 'meta_custom_leads_psico_clinica', label: 'Meta: Lead Psico Clínica' },
-    { id: 'meta_custom_leadautismo', label: 'Meta: Lead Autismo' },
-    { id: 'meta_custom_lead_docenciau', label: 'Meta: Lead Docencia' },
+    // ── Meta · Leads y Registro ───────────────────────────────────────────────
+    { id: 'meta_leads',                            label: 'Meta: Leads' },
+    { id: 'meta_cpl',                              label: 'Meta: Costo por Lead (CPL)' },
+    { id: 'meta_complete_registration',            label: 'Meta: Registros completados' },
+    { id: 'meta_cost_per_complete_registration',   label: 'Meta: Costo por Registro' },
+    { id: 'meta_submit_application',               label: 'Meta: Solicitudes enviadas' },
+    { id: 'meta_start_trial',                      label: 'Meta: Trials iniciados' },
+    { id: 'meta_subscribe',                        label: 'Meta: Suscripciones' },
 
-    // Google Analytics 4
-    { id: 'ga_sessions', label: 'GA4: Sesiones' },
-    { id: 'ga_bounce_rate', label: 'GA4: Tasa de Rebote' },
-    { id: 'ga_avg_session_duration', label: 'GA4: Duración Promedio' },
+    // ── Meta · Compras y Carrito ──────────────────────────────────────────────
+    { id: 'meta_purchases',                        label: 'Meta: Compras' },
+    { id: 'meta_cpp',                              label: 'Meta: Costo por Compra (CPP)' },
+    { id: 'meta_roas',                             label: 'Meta: ROAS' },
+    { id: 'meta_adds_to_cart',                     label: 'Meta: Añadir al carrito' },
+    { id: 'meta_cost_per_add_to_cart',             label: 'Meta: Costo por Add to Cart' },
+    { id: 'meta_initiates_checkout',               label: 'Meta: Inicio de pago (Checkout)' },
+    { id: 'meta_cost_per_initiate_checkout',       label: 'Meta: Costo por Checkout' },
 
-    // Hotmart
-    { id: 'hotmart_pagos_iniciados', label: 'Hotmart: Pagos Inic.' },
-    { id: 'hotmart_clics_link', label: 'Hotmart: Clics Link' },
-    { id: 'ventas_principal', label: 'Ventas (Principal)' },
-    { id: 'ventas_bump', label: 'Ventas (Bump)' },
-    { id: 'ventas_upsell', label: 'Ventas (Upsell)' }
+    // ── Meta · Contenido y Navegación ────────────────────────────────────────
+    { id: 'meta_landing_page_views',               label: 'Meta: Vistas de Landing Page' },
+    { id: 'meta_cost_per_landing_page_view',       label: 'Meta: Costo por Vista LP' },
+    { id: 'meta_view_content',                     label: 'Meta: Ver contenido (ViewContent)' },
+    { id: 'meta_cost_per_view_content',            label: 'Meta: Costo por ViewContent' },
+    { id: 'meta_search',                           label: 'Meta: Búsquedas (Search)' },
+    { id: 'meta_add_to_wishlist',                  label: 'Meta: Lista de deseos' },
+    { id: 'meta_customize_product',               label: 'Meta: Personalizar producto' },
+
+    // ── Meta · Acciones locales y contacto ────────────────────────────────────
+    { id: 'meta_contact',                          label: 'Meta: Contactos' },
+    { id: 'meta_cost_per_contact',                 label: 'Meta: Costo por Contacto' },
+    { id: 'meta_schedule',                         label: 'Meta: Citas agendadas' },
+    { id: 'meta_cost_per_schedule',                label: 'Meta: Costo por Cita' },
+    { id: 'meta_find_location',                    label: 'Meta: Encontrar ubicación' },
+    { id: 'meta_donate',                           label: 'Meta: Donaciones' },
+
+    // ── Meta · Video ──────────────────────────────────────────────────────────
+    { id: 'meta_video_views',        label: 'Meta: Vistas de video' },
+    { id: 'meta_video_3s_views',     label: 'Meta: Vistas 3 segundos' },
+    { id: 'meta_video_thruplay',     label: 'Meta: ThruPlay' },
+    { id: 'meta_cost_per_thruplay',  label: 'Meta: Costo por ThruPlay' },
+
+    // ── Meta · Engagement ─────────────────────────────────────────────────────
+    { id: 'meta_page_engagement',  label: 'Meta: Engagement de página' },
+    { id: 'meta_post_engagement',  label: 'Meta: Engagement de publicación' },
+    { id: 'meta_post_reactions',   label: 'Meta: Reacciones' },
+    { id: 'meta_post_shares',      label: 'Meta: Compartidos' },
+    { id: 'meta_post_saves',       label: 'Meta: Guardados' },
+    { id: 'meta_post_comments',    label: 'Meta: Comentarios' },
+
+    // ── Meta · Mensajería ─────────────────────────────────────────────────────
+    { id: 'meta_messaging_conversations_started',  label: 'Meta: Conversaciones iniciadas' },
+    { id: 'meta_cost_per_messaging_conversation',  label: 'Meta: Costo por Conversación' },
+
+    // ── Meta · Resultado de objetivo ─────────────────────────────────────────
+    { id: 'meta_results',          label: 'Meta: Resultados' },
+    { id: 'meta_cost_per_result',  label: 'Meta: Costo por Resultado' },
+
+    // ── Google Analytics 4 ────────────────────────────────────────────────────
+    { id: 'ga_sessions',              label: 'GA4: Sesiones' },
+    { id: 'ga_bounce_rate',           label: 'GA4: Tasa de Rebote' },
+    { id: 'ga_avg_session_duration',  label: 'GA4: Duración Promedio' },
+
+    // ── Hotmart ───────────────────────────────────────────────────────────────
+    { id: 'hotmart_pagos_iniciados',  label: 'Hotmart: Pagos Iniciados' },
+    { id: 'hotmart_clics_link',       label: 'Hotmart: Clics Link' },
+
+    // ── Ventas ────────────────────────────────────────────────────────────────
+    { id: 'ventas_principal',  label: 'Ventas (Principal)' },
+    { id: 'ventas_bump',       label: 'Ventas (Bump)' },
+    { id: 'ventas_upsell',     label: 'Ventas (Upsell)' },
+
+    // ── Manual ────────────────────────────────────────────────────────────────
+    { id: 'leads_registrados', label: 'Leads Registrados (Manual)' },
 ]
 
 /** Build dynamic metric list merging static + catalog custom conversions */
