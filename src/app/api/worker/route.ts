@@ -99,7 +99,7 @@ export async function GET(request: Request) {
                 const url = new URL(`https://graph.facebook.com/v19.0/${actId}/insights`)
                 url.searchParams.append('access_token', config.meta_token)
                 url.searchParams.append('time_range', JSON.stringify({ since: targetDate, until: targetDate }))
-                url.searchParams.append('fields', 'campaign_name,spend,impressions,clicks,inline_link_clicks,reach,frequency,cpc,cpm,ctr,actions,conversions,video_thruplay_watched_actions,video_p3_watched_actions')
+                url.searchParams.append('fields', 'campaign_name,spend,impressions,clicks,inline_link_clicks,reach,frequency,cpc,cpm,ctr,actions,conversions,video_thruplay_watched_actions')
                 url.searchParams.append('level', 'campaign')
                 url.searchParams.append('limit', '500')
 
