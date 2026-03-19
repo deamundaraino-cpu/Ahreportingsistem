@@ -99,7 +99,7 @@ export async function GET(request: Request) {
                 const url = new URL(`https://graph.facebook.com/v19.0/${actId}/insights`)
                 url.searchParams.append('access_token', config.meta_token)
                 url.searchParams.append('time_range', JSON.stringify({ since: targetDate, until: targetDate }))
-                url.searchParams.append('fields', 'campaign_name,spend,impressions,clicks,inline_link_clicks,reach,frequency,cpc,cpm,ctr,actions,conversions')
+                url.searchParams.append('fields', 'campaign_name,spend,impressions,clicks,inline_link_clicks,reach,frequency,cpc,cpm,ctr,actions,conversions,video_thruplay_watched_actions,video_p3_watched_actions')
                 url.searchParams.append('level', 'campaign')
                 url.searchParams.append('limit', '500')
 
@@ -121,8 +121,13 @@ export async function GET(request: Request) {
                         const cCtr = parseFloat(camp.ctr || '0')
 
                         let cLeads = 0, cPurchases = 0, cAddsToCart = 0, cInitiatesCheckout = 0
-                        let cLandingPageViews = 0, cVideoViews = 0, cResults = 0
-                        let cCompleteRegistration = 0
+                        let cLandingPageViews = 0, cVideoViews = 0, cVideoThruplay = 0, cVideo3s = 0, cResults = 0
+                        let cCompleteRegistration = 0, cViewContent = 0, cSearch = 0, cAddToWishlist = 0
+                        let cContact = 0, cSchedule = 0, cStartTrial = 0, cSubmitApplication = 0
+                        let cSubscribe = 0, cFindLocation = 0, cCustomizeProduct = 0, cDonate = 0
+                        let cMessagingConversations = 0
+                        let cPageEngagement = 0, cPostEngagement = 0, cPostReactions = 0
+                        let cPostShares = 0, cPostSaves = 0, cPostComments = 0
                         const cCustomConversions: Record<string, number> = {}
 
                         if (camp.actions) {
@@ -133,7 +138,7 @@ export async function GET(request: Request) {
                                 if (t === 'lead' || t === 'offsite_conversion.fb_pixel_lead') cLeads += val
                                 // Purchases: native + pixel
                                 if (t === 'purchase' || t === 'offsite_conversion.fb_pixel_purchase') cPurchases += val
-                                // Registro completado (Complete Registration pixel)
+                                // Registro completado
                                 if (t === 'offsite_conversion.fb_pixel_complete_registration' || t === 'complete_registration') cCompleteRegistration += val
                                 // Carrito y checkout
                                 if (t === 'offsite_conversion.fb_pixel_add_to_cart') cAddsToCart += val
@@ -141,7 +146,37 @@ export async function GET(request: Request) {
                                 // Landing page y video
                                 if (t === 'landing_page_view') cLandingPageViews += val
                                 if (t === 'video_view') cVideoViews += val
+                                // Contenido y navegación
+                                if (t === 'offsite_conversion.fb_pixel_view_content' || t === 'view_content') cViewContent += val
+                                if (t === 'offsite_conversion.fb_pixel_search' || t === 'search') cSearch += val
+                                if (t === 'offsite_conversion.fb_pixel_add_to_wishlist' || t === 'add_to_wishlist') cAddToWishlist += val
+                                if (t === 'offsite_conversion.fb_pixel_customize_product' || t === 'customize_product') cCustomizeProduct += val
+                                // Contacto y agenda
+                                if (t === 'offsite_conversion.fb_pixel_contact' || t === 'contact') cContact += val
+                                if (t === 'offsite_conversion.fb_pixel_schedule' || t === 'schedule') cSchedule += val
+                                if (t === 'offsite_conversion.fb_pixel_start_trial' || t === 'start_trial') cStartTrial += val
+                                if (t === 'offsite_conversion.fb_pixel_submit_application' || t === 'submit_application') cSubmitApplication += val
+                                if (t === 'offsite_conversion.fb_pixel_subscribe' || t === 'subscribe') cSubscribe += val
+                                if (t === 'offsite_conversion.fb_pixel_find_location' || t === 'find_location') cFindLocation += val
+                                if (t === 'offsite_conversion.fb_pixel_donate' || t === 'donate') cDonate += val
+                                // Mensajería
+                                if (t === 'onsite_conversion.messaging_conversation_started_7d') cMessagingConversations += val
+                                // Engagement
+                                if (t === 'page_engagement') cPageEngagement += val
+                                if (t === 'post_engagement') cPostEngagement += val
+                                if (t === 'post_reaction') cPostReactions += val
+                                if (t === 'post_share' || t === 'post') cPostShares += val
+                                if (t === 'onsite_conversion.post_save') cPostSaves += val
+                                if (t === 'comment') cPostComments += val
                             })
+                        }
+
+                        // ThruPlay y vistas de 3s (campos separados en la respuesta de Meta)
+                        if (camp.video_thruplay_watched_actions) {
+                            camp.video_thruplay_watched_actions.forEach((a: any) => { cVideoThruplay += parseInt(a.value || '0') })
+                        }
+                        if (camp.video_p3_watched_actions) {
+                            camp.video_p3_watched_actions.forEach((a: any) => { cVideo3s += parseInt(a.value || '0') })
                         }
 
                         if (camp.conversions) {
@@ -163,12 +198,29 @@ export async function GET(request: Request) {
 
                         campaignsArr.push({
                             name: camp.campaign_name || 'Desconocida',
+                            // Entrega
                             spend: cSpend, impressions: cImpr, clicks: cClicks,
                             link_clicks: cLinkClicks, reach: cReach, frequency: cFrequency,
                             cpc: cCpc, cpm: cCpm, ctr: cCtr,
-                            leads: cLeads, purchases: cPurchases, adds_to_cart: cAddsToCart,
-                            initiates_checkout: cInitiatesCheckout, landing_page_views: cLandingPageViews,
-                            video_views: cVideoViews, complete_registration: cCompleteRegistration,
+                            // Conversiones estándar
+                            leads: cLeads, purchases: cPurchases,
+                            adds_to_cart: cAddsToCart, initiates_checkout: cInitiatesCheckout,
+                            landing_page_views: cLandingPageViews,
+                            complete_registration: cCompleteRegistration,
+                            view_content: cViewContent, search: cSearch,
+                            add_to_wishlist: cAddToWishlist, customize_product: cCustomizeProduct,
+                            contact: cContact, schedule: cSchedule,
+                            start_trial: cStartTrial, submit_application: cSubmitApplication,
+                            subscribe: cSubscribe, find_location: cFindLocation, donate: cDonate,
+                            // Video
+                            video_views: cVideoViews, video_thruplay: cVideoThruplay, video_3s: cVideo3s,
+                            // Mensajería
+                            messaging_conversations: cMessagingConversations,
+                            // Engagement
+                            page_engagement: cPageEngagement, post_engagement: cPostEngagement,
+                            post_reactions: cPostReactions, post_shares: cPostShares,
+                            post_saves: cPostSaves, post_comments: cPostComments,
+                            // Resultados y custom
                             results: cResults,
                             custom_conversions: cCustomConversions
                         })
