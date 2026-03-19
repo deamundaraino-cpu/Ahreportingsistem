@@ -66,6 +66,14 @@ export default async function AdminClientesPage() {
                                                 <span className="text-amber-400 flex items-center gap-1 text-xs">● Pendiente</span>
                                             )}
                                         </div>
+                                        <div className="flex justify-between items-center bg-zinc-950/60 p-2 rounded">
+                                            <span className="text-zinc-300">TikTok Ads</span>
+                                            {cliente.config_api?.tiktok_access_token && cliente.config_api?.tiktok_advertiser_id ? (
+                                                <span className="text-emerald-400 flex items-center gap-1 text-xs font-medium">● Conectado</span>
+                                            ) : (
+                                                <span className="text-amber-400 flex items-center gap-1 text-xs">● Pendiente</span>
+                                            )}
+                                        </div>
                                     </div>
                                 </CardContent>
                                 <CardFooter className="pt-2 border-t border-zinc-800 mt-2 text-xs flex justify-between items-center">

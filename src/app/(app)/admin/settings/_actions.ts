@@ -279,6 +279,26 @@ export async function refreshMetaCustomConversions(clienteId: string, metaConfig
     }
 }
 
+export async function testTikTokConnection(accessToken: string, advertiserId: string) {
+    if (!accessToken || !advertiserId) return { error: 'Faltan credenciales de TikTok' }
+
+    try {
+        const url = `https://business-api.tiktok.com/open_api/v1.3/advertiser/info/?advertiser_ids=["${advertiserId}"]`
+        const res = await fetch(url, {
+            headers: { 'Access-Token': accessToken }
+        })
+        const data = await res.json()
+
+        if (data.code !== 0) {
+            return { error: data.message || 'Error de conexión con TikTok' }
+        }
+        const advertiser = data.data?.list?.[0]
+        return { success: true, name: advertiser?.advertiser_name }
+    } catch (err: any) {
+        return { error: err.message }
+    }
+}
+
 // ─── Public Layout (Executive View) ──────────────────────────────────────────
 
 export async function savePublicLayout(clienteId: string, payload: {

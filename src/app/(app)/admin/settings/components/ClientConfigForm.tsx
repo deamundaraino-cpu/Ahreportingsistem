@@ -6,7 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter }
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Button } from '@/components/ui/button'
-import { updateClienteConfig, deleteCliente, assignLayoutToCliente, testMetaConnection, testHotmartConnection, testGA4Connection, refreshMetaCustomConversions } from '../_actions'
+import { updateClienteConfig, deleteCliente, assignLayoutToCliente, testMetaConnection, testHotmartConnection, testGA4Connection, refreshMetaCustomConversions, testTikTokConnection } from '../_actions'
 import { Loader2, ArrowLeft, Save, Trash2, CheckCircle2, AlertCircle, RefreshCw, LayoutDashboard, DownloadCloud } from 'lucide-react'
 
 export function ClientConfigForm({ cliente, layouts = [], isAdmin = false }: { cliente: any; layouts?: any[]; isAdmin?: boolean }) {
@@ -276,6 +276,49 @@ export function ClientConfigForm({ cliente, layouts = [], isAdmin = false }: { c
                             value={config.ga_private_key || ''}
                             onChange={(e) => setConfig({ ...config, ga_private_key: e.target.value })}
                             className="flex min-h-[80px] w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm ring-offset-zinc-950 placeholder:text-zinc-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-600 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                        />
+                    </div>
+                </CardContent>
+            </Card>
+
+            <Card className="bg-zinc-900 border-zinc-800">
+                <CardHeader>
+                    <div className="flex justify-between items-center">
+                        <CardTitle>TikTok Ads</CardTitle>
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => runTest('tiktok', () => testTikTokConnection(config.tiktok_access_token, config.tiktok_advertiser_id))}
+                            disabled={testStatus.tiktok?.loading}
+                        >
+                            {testStatus.tiktok?.loading ? <RefreshCw className="w-3 h-3 animate-spin mr-2" /> : <RefreshCw className="w-3 h-3 mr-2" />}
+                            Probar Conexión
+                        </Button>
+                    </div>
+                    <CardDescription>Conecta tu cuenta de TikTok Ads ingresando el Access Token y el Advertiser ID.</CardDescription>
+                    {testStatus.tiktok?.success && <p className="text-green-500 text-xs flex items-center mt-2"><CheckCircle2 className="w-3 h-3 mr-1" /> Conexión Exitosa</p>}
+                    {testStatus.tiktok?.error && <p className="text-red-500 text-xs flex items-center mt-2"><AlertCircle className="w-3 h-3 mr-1" /> {testStatus.tiktok.error}</p>}
+                </CardHeader>
+                <CardContent className="space-y-4">
+                    <div className="space-y-2">
+                        <Label htmlFor="tiktok_access_token" className="text-zinc-300">Access Token</Label>
+                        <Input
+                            id="tiktok_access_token"
+                            type="password"
+                            placeholder="Tu TikTok Marketing API Access Token"
+                            value={config.tiktok_access_token || ''}
+                            onChange={(e) => setConfig({ ...config, tiktok_access_token: e.target.value })}
+                            className="bg-zinc-950 border-zinc-700"
+                        />
+                    </div>
+                    <div className="space-y-2">
+                        <Label htmlFor="tiktok_advertiser_id" className="text-zinc-300">Advertiser ID</Label>
+                        <Input
+                            id="tiktok_advertiser_id"
+                            placeholder="1234567890123456789"
+                            value={config.tiktok_advertiser_id || ''}
+                            onChange={(e) => setConfig({ ...config, tiktok_advertiser_id: e.target.value })}
+                            className="bg-zinc-950 border-zinc-700"
                         />
                     </div>
                 </CardContent>
