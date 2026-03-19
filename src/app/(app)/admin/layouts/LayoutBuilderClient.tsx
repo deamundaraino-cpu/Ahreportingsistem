@@ -6,29 +6,249 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { createLayout, updateLayout, deleteLayout } from '../settings/_actions'
-import { Plus, Trash2, Save, ChevronDown, ChevronUp, GripVertical, LayoutDashboard, Loader2, PenSquare, X } from 'lucide-react'
+import { Plus, Trash2, Save, GripVertical, LayoutDashboard, Loader2, PenSquare, X, ChevronDown, ChevronUp, Search } from 'lucide-react'
 
-// ─── Available metric fields ─────────────────────────────────────────────────
-const AVAILABLE_METRICS = [
-    { id: 'meta_spend', label: 'Gasto Meta (meta_spend)' },
-    { id: 'meta_impressions', label: 'Impresiones (meta_impressions)' },
-    { id: 'meta_clicks', label: 'Clics (meta_clicks)' },
-    { id: 'ga_sessions', label: 'Sesiones GA4 (ga_sessions)' },
-    { id: 'hotmart_pagos_iniciados', label: 'Checkouts Hotmart (hotmart_pagos_iniciados)' },
-    { id: 'ventas_principal', label: 'Ventas Principal (ventas_principal)' },
-    { id: 'ventas_bump', label: 'Ventas Bump (ventas_bump)' },
-    { id: 'ventas_upsell', label: 'Ventas Upsell (ventas_upsell)' },
+// ─── Catálogo completo de métricas por categoría ──────────────────────────────
+const METRIC_CATALOG = [
+    {
+        category: 'Meta · Entrega',
+        color: 'blue',
+        metrics: [
+            { id: 'meta_spend',       label: 'Gasto',         desc: 'Importe total gastado' },
+            { id: 'meta_impressions', label: 'Impresiones',   desc: 'Veces que se mostró el anuncio' },
+            { id: 'meta_reach',       label: 'Alcance',       desc: 'Personas únicas alcanzadas' },
+            { id: 'meta_frequency',   label: 'Frecuencia',    desc: 'Promedio de impresiones por persona' },
+            { id: 'meta_clicks',      label: 'Clics (todos)', desc: 'Total de clics en el anuncio' },
+            { id: 'meta_link_clicks', label: 'Clics en enlace', desc: 'Clics que llevan al destino' },
+        ],
+    },
+    {
+        category: 'Meta · Costos y Tasas',
+        color: 'blue',
+        metrics: [
+            { id: 'meta_cpm',      label: 'CPM',       desc: 'Costo por 1.000 impresiones' },
+            { id: 'meta_cpc',      label: 'CPC',       desc: 'Costo por clic (todos)' },
+            { id: 'meta_cpc_link', label: 'CPC enlace',desc: 'Costo por clic en enlace' },
+            { id: 'meta_ctr',      label: 'CTR %',     desc: 'Tasa de clics (todos)' },
+            { id: 'meta_ctr_link', label: 'CTR enlace %', desc: 'Tasa de clics en enlace' },
+        ],
+    },
+    {
+        category: 'Meta · Leads y Registro',
+        color: 'indigo',
+        metrics: [
+            { id: 'meta_leads',                       label: 'Leads',                  desc: 'Evento lead estándar de píxel' },
+            { id: 'meta_cpl',                         label: 'CPL',                    desc: 'Costo por lead (calculado)' },
+            { id: 'meta_complete_registration',       label: 'Registros completados',  desc: 'Evento CompleteRegistration' },
+            { id: 'meta_cost_per_complete_registration', label: 'Costo / Registro',    desc: 'Calculado' },
+            { id: 'meta_submit_application',          label: 'Solicitudes enviadas',   desc: 'Evento SubmitApplication' },
+            { id: 'meta_start_trial',                 label: 'Trials iniciados',       desc: 'Evento StartTrial' },
+            { id: 'meta_subscribe',                   label: 'Suscripciones',          desc: 'Evento Subscribe' },
+        ],
+    },
+    {
+        category: 'Meta · Compras y Carrito',
+        color: 'emerald',
+        metrics: [
+            { id: 'meta_purchases',                   label: 'Compras',                desc: 'Evento Purchase estándar' },
+            { id: 'meta_cpp',                         label: 'CPP',                    desc: 'Costo por compra (calculado)' },
+            { id: 'meta_roas',                        label: 'ROAS',                   desc: 'Retorno sobre gasto publicitario' },
+            { id: 'meta_adds_to_cart',                label: 'Añadir al carrito',      desc: 'Evento AddToCart' },
+            { id: 'meta_cost_per_add_to_cart',        label: 'Costo / AddToCart',      desc: 'Calculado' },
+            { id: 'meta_initiates_checkout',          label: 'Inicio de pago',         desc: 'Evento InitiateCheckout' },
+            { id: 'meta_cost_per_initiate_checkout',  label: 'Costo / Checkout',       desc: 'Calculado' },
+        ],
+    },
+    {
+        category: 'Meta · Contenido y Navegación',
+        color: 'amber',
+        metrics: [
+            { id: 'meta_landing_page_views',          label: 'Vistas de landing',      desc: 'Evento ViewLandingPage' },
+            { id: 'meta_cost_per_landing_page_view',  label: 'Costo / Vista LP',       desc: 'Calculado' },
+            { id: 'meta_view_content',                label: 'Ver contenido',          desc: 'Evento ViewContent' },
+            { id: 'meta_cost_per_view_content',       label: 'Costo / ViewContent',    desc: 'Calculado' },
+            { id: 'meta_search',                      label: 'Búsquedas',              desc: 'Evento Search' },
+            { id: 'meta_add_to_wishlist',             label: 'Lista de deseos',        desc: 'Evento AddToWishlist' },
+            { id: 'meta_customize_product',           label: 'Personalizar producto',  desc: 'Evento CustomizeProduct' },
+        ],
+    },
+    {
+        category: 'Meta · Acciones locales y contacto',
+        color: 'amber',
+        metrics: [
+            { id: 'meta_contact',                     label: 'Contactos',              desc: 'Evento Contact' },
+            { id: 'meta_cost_per_contact',            label: 'Costo / Contacto',       desc: 'Calculado' },
+            { id: 'meta_schedule',                    label: 'Citas agendadas',        desc: 'Evento Schedule' },
+            { id: 'meta_cost_per_schedule',           label: 'Costo / Cita',           desc: 'Calculado' },
+            { id: 'meta_find_location',               label: 'Encontrar ubicación',    desc: 'Evento FindLocation' },
+            { id: 'meta_donate',                      label: 'Donaciones',             desc: 'Evento Donate' },
+        ],
+    },
+    {
+        category: 'Meta · Video',
+        color: 'purple',
+        metrics: [
+            { id: 'meta_video_views',        label: 'Vistas de video',    desc: 'Vistas totales de video' },
+            { id: 'meta_video_3s_views',     label: 'Vistas 3 segundos',  desc: 'Reproducciones de ≥3s' },
+            { id: 'meta_video_thruplay',     label: 'ThruPlay',           desc: 'Vistas completas (15s+)' },
+            { id: 'meta_cost_per_thruplay',  label: 'Costo / ThruPlay',   desc: 'Calculado' },
+        ],
+    },
+    {
+        category: 'Meta · Engagement',
+        color: 'pink',
+        metrics: [
+            { id: 'meta_page_engagement',  label: 'Engagement de página',       desc: 'Interacciones con la página' },
+            { id: 'meta_post_engagement',  label: 'Engagement de publicación',  desc: 'Interacciones con el post' },
+            { id: 'meta_post_reactions',   label: 'Reacciones',                 desc: 'Me gusta, amor, etc.' },
+            { id: 'meta_post_shares',      label: 'Compartidos',                desc: 'Veces que compartieron' },
+            { id: 'meta_post_saves',       label: 'Guardados',                  desc: 'Veces que guardaron' },
+            { id: 'meta_post_comments',    label: 'Comentarios',                desc: 'Comentarios en el post' },
+        ],
+    },
+    {
+        category: 'Meta · Mensajería',
+        color: 'pink',
+        metrics: [
+            { id: 'meta_messaging_conversations_started',  label: 'Conversaciones iniciadas', desc: 'Chats en Messenger/WhatsApp/Instagram' },
+            { id: 'meta_cost_per_messaging_conversation',  label: 'Costo / Conversación',     desc: 'Calculado' },
+        ],
+    },
+    {
+        category: 'Meta · Resultado de objetivo',
+        color: 'zinc',
+        metrics: [
+            { id: 'meta_results',           label: 'Resultados',          desc: 'Resultado principal del objetivo' },
+            { id: 'meta_cost_per_result',   label: 'Costo por resultado', desc: 'Calculado' },
+        ],
+    },
+    {
+        category: 'Google Analytics 4',
+        color: 'orange',
+        metrics: [
+            { id: 'ga_sessions',              label: 'Sesiones',           desc: 'Sesiones web GA4' },
+            { id: 'ga_bounce_rate',           label: 'Tasa de rebote %',   desc: 'Porcentaje de sesiones sin interacción' },
+            { id: 'ga_avg_session_duration',  label: 'Duración media',     desc: 'Segundos promedio por sesión' },
+        ],
+    },
+    {
+        category: 'Hotmart',
+        color: 'red',
+        metrics: [
+            { id: 'hotmart_pagos_iniciados',  label: 'Checkouts iniciados', desc: 'Pagos iniciados en Hotmart' },
+            { id: 'hotmart_clics_link',       label: 'Clics en enlace',     desc: 'Clics a página de ventas' },
+        ],
+    },
+    {
+        category: 'Ventas',
+        color: 'emerald',
+        metrics: [
+            { id: 'ventas_principal',  label: 'Ventas Principal',  desc: 'Ingresos del producto principal' },
+            { id: 'ventas_bump',       label: 'Ventas Bump',       desc: 'Ingresos de order bump' },
+            { id: 'ventas_upsell',     label: 'Ventas Upsell',     desc: 'Ingresos de upsell' },
+        ],
+    },
+    {
+        category: 'Manual',
+        color: 'zinc',
+        metrics: [
+            { id: 'leads_registrados', label: 'Leads registrados', desc: 'Entrada manual de leads' },
+        ],
+    },
 ]
+
+// Colores de categoría
+const CATEGORY_COLORS: Record<string, string> = {
+    blue:    'bg-blue-500/10 text-blue-300 border-blue-500/20 hover:bg-blue-500/20',
+    indigo:  'bg-indigo-500/10 text-indigo-300 border-indigo-500/20 hover:bg-indigo-500/20',
+    emerald: 'bg-emerald-500/10 text-emerald-300 border-emerald-500/20 hover:bg-emerald-500/20',
+    amber:   'bg-amber-500/10 text-amber-300 border-amber-500/20 hover:bg-amber-500/20',
+    purple:  'bg-purple-500/10 text-purple-300 border-purple-500/20 hover:bg-purple-500/20',
+    pink:    'bg-pink-500/10 text-pink-300 border-pink-500/20 hover:bg-pink-500/20',
+    orange:  'bg-orange-500/10 text-orange-300 border-orange-500/20 hover:bg-orange-500/20',
+    red:     'bg-red-500/10 text-red-300 border-red-500/20 hover:bg-red-500/20',
+    zinc:    'bg-zinc-700/40 text-zinc-300 border-zinc-600/30 hover:bg-zinc-700/60',
+}
 
 // ─── Quick formula templates ──────────────────────────────────────────────────
 const FORMULA_PRESETS = [
-    { label: 'CPC', formula: 'meta_spend / meta_clicks', prefix: '$', suffix: '' },
-    { label: 'CTR %', formula: '(meta_clicks / meta_impressions) * 100', prefix: '', suffix: '%' },
-    { label: 'ROAS', formula: '(ventas_principal + ventas_bump + ventas_upsell) / meta_spend', prefix: '', suffix: 'x' },
-    { label: 'ROI %', formula: '((ventas_principal + ventas_bump + ventas_upsell - meta_spend) / meta_spend) * 100', prefix: '', suffix: '%' },
-    { label: 'CPA', formula: 'meta_spend / (ventas_principal + ventas_bump + ventas_upsell)', prefix: '$', suffix: '' },
-    { label: 'Total Ventas', formula: 'ventas_principal + ventas_bump + ventas_upsell', prefix: '$', suffix: '' },
+    { label: 'CPM',          formula: 'meta_cpm',                                                                   prefix: '$', suffix: '' },
+    { label: 'CPC',          formula: 'meta_cpc',                                                                   prefix: '$', suffix: '' },
+    { label: 'CTR %',        formula: 'meta_ctr',                                                                   prefix: '',  suffix: '%' },
+    { label: 'CPL',          formula: 'meta_cpl',                                                                   prefix: '$', suffix: '' },
+    { label: 'CPP',          formula: 'meta_cpp',                                                                   prefix: '$', suffix: '' },
+    { label: 'ROAS',         formula: 'meta_roas',                                                                  prefix: '',  suffix: 'x' },
+    { label: 'ROI %',        formula: '((ventas_principal + ventas_bump + ventas_upsell - meta_spend) / meta_spend) * 100', prefix: '', suffix: '%' },
+    { label: 'Total Ventas', formula: 'ventas_principal + ventas_bump + ventas_upsell',                             prefix: '$', suffix: '' },
 ]
+
+// ─── Buscador / Catálogo de métricas ─────────────────────────────────────────
+function MetricCatalog({ onInsert }: { onInsert: (id: string) => void }) {
+    const [query, setQuery] = useState('')
+    const [expanded, setExpanded] = useState(false)
+
+    const filtered = query.trim()
+        ? METRIC_CATALOG.map(cat => ({
+            ...cat,
+            metrics: cat.metrics.filter(m =>
+                m.label.toLowerCase().includes(query.toLowerCase()) ||
+                m.id.toLowerCase().includes(query.toLowerCase()) ||
+                m.desc.toLowerCase().includes(query.toLowerCase())
+            )
+          })).filter(cat => cat.metrics.length > 0)
+        : METRIC_CATALOG
+
+    return (
+        <div className="border border-zinc-700 rounded-lg bg-zinc-950/80 overflow-hidden">
+            <button
+                onClick={() => setExpanded(v => !v)}
+                className="w-full flex items-center justify-between px-3 py-2 text-xs font-medium text-zinc-300 hover:bg-zinc-800/50 transition"
+            >
+                <span className="flex items-center gap-2">
+                    <Search className="w-3.5 h-3.5 text-zinc-500" />
+                    Catálogo de métricas — haz click en una para insertarla en la fórmula
+                </span>
+                {expanded ? <ChevronUp className="w-3.5 h-3.5 text-zinc-500" /> : <ChevronDown className="w-3.5 h-3.5 text-zinc-500" />}
+            </button>
+
+            {expanded && (
+                <div className="border-t border-zinc-800">
+                    <div className="p-2">
+                        <Input
+                            placeholder="Buscar métrica..."
+                            value={query}
+                            onChange={e => setQuery(e.target.value)}
+                            className="bg-zinc-900 border-zinc-700 text-zinc-100 h-7 text-xs"
+                            autoFocus
+                        />
+                    </div>
+                    <div className="max-h-72 overflow-y-auto px-2 pb-2 space-y-3">
+                        {filtered.map(cat => (
+                            <div key={cat.category}>
+                                <p className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider mb-1 px-1">{cat.category}</p>
+                                <div className="flex flex-wrap gap-1">
+                                    {cat.metrics.map(m => (
+                                        <button
+                                            key={m.id}
+                                            title={`${m.desc}\n${m.id}`}
+                                            onClick={() => onInsert(m.id)}
+                                            className={`text-[10px] px-2 py-0.5 rounded border transition cursor-pointer ${CATEGORY_COLORS[cat.color]}`}
+                                        >
+                                            {m.label}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                        ))}
+                        {filtered.length === 0 && (
+                            <p className="text-xs text-zinc-500 text-center py-4">Sin resultados para "{query}"</p>
+                        )}
+                    </div>
+                </div>
+            )}
+        </div>
+    )
+}
 
 // ─── Empty defaults ───────────────────────────────────────────────────────────
 const emptyColumn = () => ({ id: crypto.randomUUID(), label: '', formula: '', prefix: '', suffix: '', decimals: 2, align: 'right', highlight: false })
@@ -36,7 +256,7 @@ const emptyTarjeta = () => ({ id: crypto.randomUUID(), label: '', formula: '', p
 const emptyLayout = () => ({ nombre: '', descripcion: '', columnas: [{ ...emptyColumn(), formula: 'fecha', label: 'Fecha', align: 'left', decimals: 0 }], tarjetas: [] })
 
 // ─── Column/Tarjeta row editor ────────────────────────────────────────────────
-function FieldRow({ item, onChange, onRemove, type }: { item: any; onChange: (v: any) => void; onRemove: () => void; type: 'column' | 'card' }) {
+function FieldRow({ item, onChange, onRemove, onInsertMetric }: { item: any; onChange: (v: any) => void; onRemove: () => void; onInsertMetric: (id: string) => void }) {
     return (
         <div className="grid grid-cols-12 gap-2 items-start bg-zinc-950/60 border border-zinc-800 rounded-lg p-3">
             <div className="col-span-1 flex justify-center pt-2.5 text-zinc-600">
@@ -77,22 +297,58 @@ function FieldRow({ item, onChange, onRemove, type }: { item: any; onChange: (v:
 function LayoutEditor({ initial, onSave, onCancel }: { initial: any; onSave: (l: any) => Promise<void>; onCancel: () => void }) {
     const [layout, setLayout] = useState(initial)
     const [saving, setSaving] = useState(false)
+    // Tracks which field row is "active" for metric insertion: { section: 'col'|'card', idx: number }
+    const [activeField, setActiveField] = useState<{ section: 'col' | 'card'; idx: number } | null>(null)
 
     const updateCol = (idx: number, val: any) => {
-        const cols = [...layout.columnas]
-        cols[idx] = val
+        const cols = [...layout.columnas]; cols[idx] = val
         setLayout({ ...layout, columnas: cols })
     }
     const removeCol = (idx: number) => setLayout({ ...layout, columnas: layout.columnas.filter((_: any, i: number) => i !== idx) })
-    const addCol = () => setLayout({ ...layout, columnas: [...layout.columnas, emptyColumn()] })
+    const addCol = () => {
+        const newCol = emptyColumn()
+        setLayout({ ...layout, columnas: [...layout.columnas, newCol] })
+        setActiveField({ section: 'col', idx: layout.columnas.length })
+    }
 
     const updateCard = (idx: number, val: any) => {
-        const cards = [...layout.tarjetas]
-        cards[idx] = val
+        const cards = [...layout.tarjetas]; cards[idx] = val
         setLayout({ ...layout, tarjetas: cards })
     }
     const removeCard = (idx: number) => setLayout({ ...layout, tarjetas: layout.tarjetas.filter((_: any, i: number) => i !== idx) })
-    const addCard = () => setLayout({ ...layout, tarjetas: [...layout.tarjetas, emptyTarjeta()] })
+    const addCard = () => {
+        const newCard = emptyTarjeta()
+        setLayout({ ...layout, tarjetas: [...layout.tarjetas, newCard] })
+        setActiveField({ section: 'card', idx: layout.tarjetas.length })
+    }
+
+    // Insert metric ID into the formula of the active field
+    function handleInsertMetric(metricId: string) {
+        if (!activeField) return
+        if (activeField.section === 'col') {
+            const col = layout.columnas[activeField.idx]
+            if (!col) return
+            const current = col.formula || ''
+            updateCol(activeField.idx, { ...col, formula: current ? current + ' ' + metricId : metricId })
+        } else {
+            const card = layout.tarjetas[activeField.idx]
+            if (!card) return
+            const current = card.formula || ''
+            updateCard(activeField.idx, { ...card, formula: current ? current + ' ' + metricId : metricId })
+        }
+    }
+
+    const colHeaders = (
+        <div className="grid grid-cols-12 gap-2 text-[10px] text-zinc-500 font-medium px-1 mb-1">
+            <div className="col-span-1" />
+            <div className="col-span-3">Etiqueta</div>
+            <div className="col-span-4">Fórmula</div>
+            <div className="col-span-1">Prefijo</div>
+            <div className="col-span-1">Sufijo</div>
+            <div className="col-span-1">Dec.</div>
+            <div className="col-span-1" />
+        </div>
+    )
 
     return (
         <div className="space-y-6">
@@ -112,12 +368,24 @@ function LayoutEditor({ initial, onSave, onCancel }: { initial: any; onSave: (l:
                 </CardContent>
             </Card>
 
+            {/* Catálogo de métricas */}
+            <MetricCatalog onInsert={handleInsertMetric} />
+            {activeField && (
+                <p className="text-[11px] text-indigo-400 text-center -mt-3">
+                    Insertando en: <span className="font-mono font-semibold">
+                        {activeField.section === 'col'
+                            ? layout.columnas[activeField.idx]?.label || `columna ${activeField.idx + 1}`
+                            : layout.tarjetas[activeField.idx]?.label || `tarjeta ${activeField.idx + 1}`}
+                    </span> — haz click en otra fila para cambiar el destino
+                </p>
+            )}
+
             <Card className="bg-zinc-900 border-zinc-800">
                 <CardHeader>
                     <div className="flex items-center justify-between">
                         <div>
                             <CardTitle className="text-white text-base">Columnas de la Tabla</CardTitle>
-                            <CardDescription className="text-zinc-400">Define cada columna que aparecerá en la tabla diaria.</CardDescription>
+                            <CardDescription className="text-zinc-400">Define cada columna que aparecerá en la tabla diaria. Haz click en una fila para activarla como destino del catálogo.</CardDescription>
                         </div>
                         <Button size="sm" variant="outline" onClick={addCol} className="gap-1 border-zinc-700 text-zinc-300 hover:bg-zinc-800">
                             <Plus className="w-3.5 h-3.5" /> Añadir columna
@@ -125,17 +393,11 @@ function LayoutEditor({ initial, onSave, onCancel }: { initial: any; onSave: (l:
                     </div>
                 </CardHeader>
                 <CardContent className="space-y-2">
-                    <div className="grid grid-cols-12 gap-2 text-[10px] text-zinc-500 font-medium px-1 mb-1">
-                        <div className="col-span-1"></div>
-                        <div className="col-span-3">Etiqueta</div>
-                        <div className="col-span-4">Fórmula</div>
-                        <div className="col-span-1">Prefijo</div>
-                        <div className="col-span-1">Sufijo</div>
-                        <div className="col-span-1">Dec.</div>
-                        <div className="col-span-1"></div>
-                    </div>
+                    {colHeaders}
                     {layout.columnas.map((col: any, i: number) => (
-                        <FieldRow key={col.id} item={col} onChange={v => updateCol(i, v)} onRemove={() => removeCol(i)} type="column" />
+                        <div key={col.id} onClick={() => setActiveField({ section: 'col', idx: i })} className={`rounded-lg ring-1 transition ${activeField?.section === 'col' && activeField.idx === i ? 'ring-indigo-500/60' : 'ring-transparent'}`}>
+                            <FieldRow item={col} onChange={v => updateCol(i, v)} onRemove={() => removeCol(i)} onInsertMetric={handleInsertMetric} />
+                        </div>
                     ))}
                     {layout.columnas.length === 0 && (
                         <p className="text-xs text-zinc-500 text-center py-4">Sin columnas. Añade al menos la columna "fecha".</p>
@@ -156,17 +418,11 @@ function LayoutEditor({ initial, onSave, onCancel }: { initial: any; onSave: (l:
                     </div>
                 </CardHeader>
                 <CardContent className="space-y-2">
-                    <div className="grid grid-cols-12 gap-2 text-[10px] text-zinc-500 font-medium px-1 mb-1">
-                        <div className="col-span-1"></div>
-                        <div className="col-span-3">Etiqueta</div>
-                        <div className="col-span-4">Fórmula</div>
-                        <div className="col-span-1">Prefijo</div>
-                        <div className="col-span-1">Sufijo</div>
-                        <div className="col-span-1">Dec.</div>
-                        <div className="col-span-1"></div>
-                    </div>
+                    {colHeaders}
                     {layout.tarjetas.map((card: any, i: number) => (
-                        <FieldRow key={card.id} item={card} onChange={v => updateCard(i, v)} onRemove={() => removeCard(i)} type="card" />
+                        <div key={card.id} onClick={() => setActiveField({ section: 'card', idx: i })} className={`rounded-lg ring-1 transition ${activeField?.section === 'card' && activeField.idx === i ? 'ring-indigo-500/60' : 'ring-transparent'}`}>
+                            <FieldRow item={card} onChange={v => updateCard(i, v)} onRemove={() => removeCard(i)} onInsertMetric={handleInsertMetric} />
+                        </div>
                     ))}
                     {layout.tarjetas.length === 0 && (
                         <p className="text-xs text-zinc-500 text-center py-4">Sin tarjetas de resumen todavía.</p>
