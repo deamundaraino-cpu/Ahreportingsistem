@@ -1,0 +1,308 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+  --radius-3xl: calc(var(--radius) + 12px);
+  --radius-4xl: calc(var(--radius) + 16px);
+}
+
+/* ─── AdsHouse Brand Tokens ──────────────────────────────────────────────── */
+:root {
+  /* Brand primitives — AdsHouse logo colors */
+  --brand-red:        oklch(0.548 0.215 27);   /* #E53529 — AdsHouse Red  */
+  --brand-red-light:  oklch(0.650 0.195 27);   /* Lighter red for dark text */
+  --brand-red-muted:  oklch(0.548 0.215 27 / 12%);
+  --brand-blue:       oklch(0.482 0.138 258);  /* #1E6AB5 — AdsHouse Blue */
+  --brand-blue-light: oklch(0.610 0.150 258);  /* Lighter blue for dark text */
+  --brand-blue-muted: oklch(0.482 0.138 258 / 12%);
+}
+
+/* ─── Light Mode ─────────────────────────────────────────────────────────── */
+:root {
+  --radius: 0.625rem;
+
+  /* Surfaces */
+  --background:          oklch(0.980 0 0);         /* #F8F8F8 — soft white   */
+  --foreground:          oklch(0.130 0 0);         /* #1C1C1C — near black   */
+  --card:                oklch(1 0 0);             /* #FFFFFF — pure white   */
+  --card-foreground:     oklch(0.130 0 0);
+  --popover:             oklch(1 0 0);
+  --popover-foreground:  oklch(0.130 0 0);
+
+  /* Primary = AdsHouse Blue (actions, links, focus) */
+  --primary:             var(--brand-blue);
+  --primary-foreground:  oklch(1 0 0);             /* white on blue ✓ 4.7:1 */
+
+  /* Secondary = light blue tint */
+  --secondary:           oklch(0.955 0.012 258);
+  --secondary-foreground: oklch(0.130 0 0);
+
+  /* Muted / neutral */
+  --muted:               oklch(0.950 0 0);
+  --muted-foreground:    oklch(0.480 0 0);         /* #6E6E6E — WCAG AA ✓   */
+
+  /* Accent = light red tint */
+  --accent:              oklch(0.960 0.008 27);
+  --accent-foreground:   oklch(0.130 0 0);
+
+  /* Semantic */
+  --destructive:         var(--brand-red);
+
+  /* Borders / inputs */
+  --border:              oklch(0.880 0 0);
+  --input:               oklch(0.880 0 0);
+  --ring:                var(--brand-blue);
+
+  /* Charts — brand-aligned, WCAG AA on white */
+  --chart-1:  oklch(0.482 0.138 258);   /* Brand Blue    */
+  --chart-2:  oklch(0.548 0.215 27);    /* Brand Red     */
+  --chart-3:  oklch(0.520 0.165 164);   /* Emerald       */
+  --chart-4:  oklch(0.630 0.160 60);    /* Amber         */
+  --chart-5:  oklch(0.520 0.185 295);   /* Violet        */
+
+  /* Sidebar */
+  --sidebar:                    oklch(1 0 0);
+  --sidebar-foreground:         oklch(0.130 0 0);
+  --sidebar-primary:            var(--brand-blue);
+  --sidebar-primary-foreground: oklch(1 0 0);
+  --sidebar-accent:             oklch(0.955 0.012 258);
+  --sidebar-accent-foreground:  oklch(0.130 0 0);
+  --sidebar-border:             oklch(0.880 0 0);
+  --sidebar-ring:               var(--brand-blue);
+}
+
+/* ─── Dark Mode ──────────────────────────────────────────────────────────── */
+.dark {
+  /* Surfaces */
+  --background:          oklch(0.115 0 0);         /* #151515 — near black   */
+  --foreground:          oklch(0.960 0 0);         /* #F5F5F5 — off white    */
+  --card:                oklch(0.165 0 0);         /* #222222 — dark card    */
+  --card-foreground:     oklch(0.960 0 0);
+  --popover:             oklch(0.175 0 0);
+  --popover-foreground:  oklch(0.960 0 0);
+
+  /* Primary = bright near-white for generic use */
+  --primary:             oklch(0.920 0 0);
+  --primary-foreground:  oklch(0.165 0 0);
+
+  /* Secondary */
+  --secondary:           oklch(0.235 0 0);
+  --secondary-foreground: oklch(0.960 0 0);
+
+  /* Muted */
+  --muted:               oklch(0.235 0 0);
+  --muted-foreground:    oklch(0.620 0 0);         /* #888 — WCAG AA ✓       */
+
+  /* Accent */
+  --accent:              oklch(0.235 0 0);
+  --accent-foreground:   oklch(0.960 0 0);
+
+  /* Semantic */
+  --destructive:         oklch(0.680 0.200 22);    /* brighter red for dark  */
+
+  /* Borders / inputs */
+  --border:              oklch(1 0 0 / 10%);
+  --input:               oklch(1 0 0 / 14%);
+  --ring:                var(--brand-blue-light);
+
+  /* Charts — slightly lighter so they pop on dark bg */
+  --chart-1:  oklch(0.620 0.150 258);   /* Brand Blue light   */
+  --chart-2:  oklch(0.660 0.200 27);    /* Brand Red light    */
+  --chart-3:  oklch(0.650 0.170 164);   /* Emerald light      */
+  --chart-4:  oklch(0.720 0.165 68);    /* Amber light        */
+  --chart-5:  oklch(0.650 0.185 295);   /* Violet light       */
+
+  /* Sidebar */
+  --sidebar:                    oklch(0.138 0 0);
+  --sidebar-foreground:         oklch(0.960 0 0);
+  --sidebar-primary:            var(--brand-blue-light);
+  --sidebar-primary-foreground: oklch(0.115 0 0);
+  --sidebar-accent:             oklch(0.200 0 0);
+  --sidebar-accent-foreground:  oklch(0.960 0 0);
+  --sidebar-border:             oklch(1 0 0 / 8%);
+  --sidebar-ring:               var(--brand-blue-light);
+}
+
+/* ─── Base Styles ────────────────────────────────────────────────────────── */
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+/* ─── Scrollbar ──────────────────────────────────────────────────────────── */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 4px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: oklch(0.5 0 0 / 20%);
+  border-radius: 4px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: oklch(0.5 0 0 / 35%);
+}
+
+/* ─── Tremor / Recharts Dark Mode Overrides ──────────────────────────────── */
+/* Scoped inside .chart-dark-wrapper rendered by MetricCharts */
+
+.chart-dark-wrapper {
+  --tremor-content-emphasis: #f0f0f1;
+  --tremor-content:          #9ca3af;
+  --tremor-content-subtle:   #6b7280;
+  --tremor-content-muted:    #374151;
+}
+
+.chart-dark-wrapper .recharts-cartesian-axis-tick text,
+.chart-dark-wrapper .recharts-cartesian-axis-tick-value {
+  fill: #6b7280 !important;
+  font-size: 11px !important;
+  letter-spacing: 0.02em;
+}
+
+.chart-dark-wrapper .recharts-cartesian-axis-line,
+.chart-dark-wrapper .recharts-cartesian-axis line {
+  stroke: rgba(255, 255, 255, 0.08) !important;
+}
+
+.chart-dark-wrapper .recharts-cartesian-grid line {
+  stroke: rgba(255, 255, 255, 0.05) !important;
+  stroke-dasharray: 3 3;
+}
+
+/* Hide native legend — we render our own */
+.chart-dark-wrapper .recharts-legend-wrapper {
+  display: none !important;
+}
+
+/* Tooltip */
+.chart-dark-wrapper .recharts-tooltip-wrapper > div {
+  background-color: oklch(0.165 0 0) !important;
+  border: 1px solid rgba(255, 255, 255, 0.12) !important;
+  border-radius: 10px !important;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.7) !important;
+  padding: 10px 14px !important;
+}
+
+.chart-dark-wrapper .recharts-tooltip-item-name {
+  color: #9ca3af !important;
+  font-size: 11px !important;
+}
+
+.chart-dark-wrapper .recharts-tooltip-item-value {
+  color: #f0f0f1 !important;
+  font-weight: 600 !important;
+  font-size: 12px !important;
+}
+
+.chart-dark-wrapper .recharts-tooltip-label {
+  color: #6b7280 !important;
+  font-size: 10px !important;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  margin-bottom: 6px;
+  font-weight: 700;
+}
+
+/* Cursor */
+.chart-dark-wrapper .recharts-active-dot circle {
+  stroke: rgba(255, 255, 255, 0.35) !important;
+  stroke-width: 2;
+}
+
+.chart-dark-wrapper .recharts-rectangle.recharts-tooltip-cursor {
+  fill: rgba(255, 255, 255, 0.04) !important;
+}
+
+.chart-dark-wrapper .recharts-cursor-crosshair,
+.chart-dark-wrapper .recharts-cross {
+  stroke: rgba(255, 255, 255, 0.18) !important;
+}
+
+/* Area drop shadow */
+.chart-dark-wrapper .recharts-area-curve {
+  filter: drop-shadow(0 4px 12px rgba(0, 0, 0, 0.4));
+}
+
+/* ─── Bar Chart Visibility Fix ───────────────────────────────────────────── */
+.chart-dark-wrapper path.recharts-rectangle {
+  stroke-width: 0;
+}
+
+.chart-dark-wrapper .recharts-bar-rectangle rect,
+.chart-dark-wrapper .recharts-bar-rectangle path {
+  fill-opacity: 1 !important;
+  filter: none !important;
+}
+
+/* Force Tremor palette colors */
+[class*="fill-amber-500"]   { fill: #f59e0b !important; }
+[class*="fill-cyan-500"]    { fill: #06b6d4 !important; }
+[class*="fill-blue-500"]    { fill: #3b82f6 !important; }
+[class*="fill-emerald-500"] { fill: #10b981 !important; }
+[class*="fill-violet-500"]  { fill: #8b5cf6 !important; }
+[class*="fill-rose-500"]    { fill: #f43f5e !important; }
+[class*="fill-orange-500"]  { fill: #f97316 !important; }
+
+[class*="tremor-content-brand"] { fill: #3b82f6 !important; }
+
+.chart-dark-wrapper .recharts-bar-rectangle:hover rect,
+.chart-dark-wrapper .recharts-bar-rectangle:hover path {
+  filter: brightness(1.2) !important;
+}
+
+.chart-dark-wrapper .recharts-bar .recharts-rectangle {
+  opacity: 1 !important;
+}
+
+/* Donut */
+.chart-dark-wrapper .recharts-pie-sector path {
+  stroke: oklch(0.165 0 0) !important;
+  stroke-width: 2px;
+}
