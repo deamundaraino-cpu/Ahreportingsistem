@@ -35,9 +35,10 @@ export async function updateSession(request: NextRequest) {
   const isApiPage = request.nextUrl.pathname.startsWith('/api/')
   const isReportPage = request.nextUrl.pathname.startsWith('/report/')
   const isAdminPage = request.nextUrl.pathname.startsWith('/admin')
+  const isMirrorPage = request.nextUrl.pathname.startsWith('/p/')
 
   // 1. If not logged in and trying to access a protected page
-  if (!user && !isLoginPage && !isApiPage && !isReportPage) {
+  if (!user && !isLoginPage && !isApiPage && !isReportPage && !isMirrorPage) {
     const url = request.nextUrl.clone()
     url.pathname = '/login'
     return NextResponse.redirect(url)
