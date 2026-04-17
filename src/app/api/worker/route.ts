@@ -97,6 +97,64 @@ export async function GET(request: Request) {
             log(`[Cliente ${cliente.nombre}] No tiene config.hotmart_basic definida.`)
         }
 
+        // ─── Helper: Fetch campaign targeting location from Meta ────────────────
+        async function enrichCampaignsWithTargeting(campaigns: any[], token: string) {
+            if (campaigns.length === 0) return campaigns
+            try {
+                // Batch fetch targeting for campaigns (limit 50 per batch to avoid rate limits)
+                const batchSize = 50
+                for (let i = 0; i < campaigns.length; i += batchSize) {
+                    const batch = campaigns.slice(i, i + batchSize)
+                    const requests = batch
+                        .filter((c: any) => c.campaign_id)
+                        .map((c: any, idx: number) => ({
+                            method: 'GET',
+                            relative_url: `${c.campaign_id}?fields=targeting`,
+                            name: `req${idx}`
+                        }))
+
+                    if (requests.length === 0) continue
+
+                    try {
+                        const batchUrl = new URL(`https://graph.facebook.com/v19.0`)
+                        const batchBody = new URLSearchParams()
+                        batchBody.append('batch', JSON.stringify(requests))
+                        batchBody.append('access_token', token)
+
+                        const res = await fetch(batchUrl.toString(), {
+                            method: 'POST',
+                            body: batchBody
+                        })
+                        const batchResults = await res.json()
+
+                        if (Array.isArray(batchResults)) {
+                            batchResults.forEach((result: any, idx: number) => {
+                                if (result.body) {
+                                    try {
+                                        const parsed = typeof result.body === 'string' ? JSON.parse(result.body) : result.body
+                                        const campIdx = i + idx
+                                        if (campaigns[campIdx] && parsed.targeting) {
+                                            const geoLocations = parsed.targeting.geo_locations
+                                            if (geoLocations && geoLocations.regions) {
+                                                campaigns[campIdx].targeting_regions = geoLocations.regions
+                                            }
+                                        }
+                                    } catch (e: any) {
+                                        // Silent fail on parsing individual results
+                                    }
+                                }
+                            })
+                        }
+                    } catch (err: any) {
+                        log(`[Meta] Targeting enrichment batch error (non-critical): ${err.message}`)
+                    }
+                }
+            } catch (err: any) {
+                log(`[Meta] Targeting enrichment failed (non-critical): ${err.message}`)
+            }
+            return campaigns
+        }
+
         // ─── Helper: Fetch Meta Ads for a single account+date ───────────────
         async function fetchMetaSingleAccount(targetDate: string, rawAccountId: string, token: string) {
             const record = { spend: 0, impressions: 0, clicks: 0, campaigns: [] as any[] }
@@ -323,6 +381,14 @@ export async function GET(request: Request) {
                     crossDedup.set(key, c)
                 }
                 record.campaigns = Array.from(crossDedup.values())
+            }
+
+            // Enrich campaigns with targeting location data (non-blocking)
+            if (record.campaigns.length > 0 && accountsToFetch.length > 0) {
+                const primaryToken = accountsToFetch[0]?.token || config.meta_token || ''
+                if (primaryToken) {
+                    record.campaigns = await enrichCampaignsWithTargeting(record.campaigns, primaryToken)
+                }
             }
 
             platformLogs.meta = anySuccess ? 'Conectado OK' : 'Sin Datos'

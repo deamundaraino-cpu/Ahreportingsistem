@@ -47,11 +47,13 @@ export default async function DashboardPage(props: {
                 <DashboardClient data={dashboardData || { cliente: null, metrics: [], weeks: [] }} />
             </div>
 
-            {/* Google Sheets Leads Section */}
-            <div className="pt-6 border-t border-zinc-800">
-                <h3 className="text-lg font-semibold text-white mb-4">📊 Leads desde Google Sheets</h3>
-                <GoogleSheetsLeadsCard dailyData={leadsResult.data || []} error={leadsResult.error} />
-            </div>
+            {/* Google Sheets Leads Section — only show if enabled */}
+            {dashboardData?.cliente?.config_api?.google_sheets?.enabled && (
+                <div className="pt-6 border-t border-zinc-800">
+                    <h3 className="text-lg font-semibold text-white mb-4">📊 Leads desde Google Sheets</h3>
+                    <GoogleSheetsLeadsCard dailyData={leadsResult.data || []} error={leadsResult.error} />
+                </div>
+            )}
         </div>
     )
 }

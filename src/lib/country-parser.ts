@@ -39,18 +39,48 @@ function normalizeCountry(raw: string): string {
 }
 
 /**
- * Extracts a country label from a campaign name.
+ * Extracts country from Meta targeting regions.
+ * Meta returns targeting regions with keys like "US", "BR", "MX", etc.
+ */
+function extractCountryFromTargeting(regions: any[]): string | null {
+    if (!Array.isArray(regions) || regions.length === 0) return null
+
+    const regionMap: Record<string, string> = {
+        'US': 'USA', 'BR': 'Brasil', 'MX': 'México', 'CO': 'Colombia', 'CL': 'Chile',
+        'PE': 'Perú', 'AR': 'Argentina', 'VE': 'Venezuela', 'EC': 'Ecuador', 'ES': 'España',
+        'PT': 'Portugal', 'UY': 'Uruguay', 'PY': 'Paraguay', 'PA': 'Panama', 'CR': 'Costa Rica',
+        'GT': 'Guatemala', 'HN': 'Honduras', 'SV': 'El Salvador', 'NI': 'Nicaragua',
+        'DO': 'Rep. Dominicana', 'CU': 'Cuba', 'BO': 'Bolivia'
+    }
+
+    for (const region of regions) {
+        const key = region.key || region.name || region
+        const country = regionMap[key.toUpperCase()]
+        if (country) return country
+    }
+    return null
+}
+
+/**
+ * Extracts a country label from a campaign, prioritizing Meta targeting location.
  *
  * Priority:
- *   1. Bracket segments: [TOKEN] — matches any bracket against known countries
- *   2. Dash segments: last "-Token" that matches a known country
+ *   1. Meta targeting_regions: direct location from campaign's targeting configuration
+ *   2. Bracket segments: [TOKEN] — matches any bracket against known countries
+ *   3. Dash segments: last "-Token" that matches a known country
  *
  * Returns null if no country detected.
  */
-export function extractCountry(campaignName: string): string | null {
+export function extractCountry(campaignName: string, targetingRegions?: any[]): string | null {
+    // 1. Use Meta targeting regions if available (highest priority for accuracy)
+    if (targetingRegions && targetingRegions.length > 0) {
+        const fromTargeting = extractCountryFromTargeting(targetingRegions)
+        if (fromTargeting) return fromTargeting
+    }
+
     if (!campaignName) return null
 
-    // 1. Bracket notation — e.g. [MEXICO], [COLOMBIA]
+    // 2. Bracket notation — e.g. [MEXICO], [COLOMBIA]
     const bracketMatches = [...campaignName.matchAll(/\[([^\]]+)\]/g)]
     for (const match of bracketMatches) {
         const token = match[1].trim()
@@ -60,7 +90,7 @@ export function extractCountry(campaignName: string): string | null {
         }
     }
 
-    // 2. Dash suffix — e.g. "Diplomado-Colombia"
+    // 3. Dash suffix — e.g. "Diplomado-Colombia"
     const parts = campaignName.split('-').map(p => p.trim()).filter(Boolean)
     for (let i = parts.length - 1; i >= 1; i--) {
         const lower = parts[i].toLowerCase()
@@ -145,7 +175,7 @@ export function aggregateByCountry(
         )
 
         for (const campaign of campaigns) {
-            const country = extractCountry(campaign.name || '') ?? 'Sin País'
+            const country = extractCountry(campaign.name || '', campaign.targeting_regions) ?? 'Sin País'
 
             if (!countryMap.has(country)) {
                 countryMap.set(country, { spend: 0, leads: 0, results: 0, impressions: 0, clicks: 0, ads: new Map() })

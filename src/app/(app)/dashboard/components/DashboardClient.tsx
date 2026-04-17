@@ -590,7 +590,7 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                 <Card className="bg-zinc-900 border-zinc-800 border-l-4 border-l-blue-500 shadow-lg">
                     <CardContent className="py-3 px-4 flex items-center justify-between">
                         <div>
-                            <p className="text-xs text-zinc-400 font-medium mb-1">Rango del Diplomado</p>
+                            <p className="text-xs text-zinc-400 font-medium mb-1">Rango de Captación</p>
                             <p className="text-sm text-zinc-200 font-semibold">{fechaInicioStr} - {fechaFinStr}</p>
                         </div>
                         <CalendarDays className="w-7 h-7 text-blue-500/50" />
