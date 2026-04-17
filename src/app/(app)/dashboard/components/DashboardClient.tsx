@@ -18,7 +18,6 @@ import { SortableCard, SortableChart, SortableTable, SortableText } from './Puzz
 import { CountryBreakdown } from './CountryBreakdown'
 import { MonthlyReportTab } from './MonthlyReportTab'
 import { SupportModule } from './SupportModule'
-import { MirrorLinkButton } from './MirrorLinkButton'
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, DragEndEvent, DragStartEvent, DragOverlay, defaultDropAnimationSideEffects } from '@dnd-kit/core'
 import { SortableContext, horizontalListSortingStrategy, verticalListSortingStrategy, useSortable, arrayMove } from '@dnd-kit/sortable'
 
@@ -650,6 +649,24 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
 
     return (
         <div className="space-y-6">
+            {/* Public Tabs Bar — simplified, no drag, no edit */}
+            {isPublic && tabs.length > 0 && (
+                <div className="flex items-center gap-2 overflow-x-auto pb-2 custom-scrollbar border-b border-zinc-800">
+                    {tabs.map((tab: any) => (
+                        <button
+                            key={tab.id}
+                            onClick={() => setActiveTabId(tab.id)}
+                            className={`px-4 py-2 text-sm font-medium rounded-t-lg transition whitespace-nowrap border-b-2 flex items-center gap-1.5 ${activeTabId === tab.id ? 'border-blue-500 text-blue-400 bg-blue-500/10' : 'border-transparent text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800'}`}
+                        >
+                            {tab.nombre}
+                            {tab.keyword_meta && (
+                                <span className="text-[10px] bg-zinc-800/80 px-1.5 py-0.5 rounded text-zinc-400 font-mono tracking-wider">{tab.keyword_meta}</span>
+                            )}
+                        </button>
+                    ))}
+                </div>
+            )}
+
             {/* Tabs Bar with Drag & Drop */}
             {!isPublic && (
                 <div className="flex items-center gap-2 overflow-x-auto pb-2 custom-scrollbar border-b border-zinc-800">
@@ -789,12 +806,7 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                             </Button>
                         )}
 
-                        <MirrorLinkButton 
-                            id={activeTabId === 'general' ? cliente.id : activeTabId} 
-                            type={activeTabId === 'general' ? 'client' : 'tab'} 
-                        />
-
-                        {activeTabId === 'general' ? (
+{activeTabId === 'general' ? (
                             <LayoutConfigButton
                                 onClick={() => setShowModal(true)}
                                 isCustomized={layoutIsCustomized}

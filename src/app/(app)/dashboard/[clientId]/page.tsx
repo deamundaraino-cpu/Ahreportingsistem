@@ -3,7 +3,7 @@ import { DateRangeSelector } from "../components/DateRangeSelector"
 import { DashboardClient } from "../components/DashboardClient"
 import { GoogleSheetsLeadsCard } from "../components/GoogleSheetsLeadsCard"
 import { CopyLinkButton } from "../components/CopyLinkButton"
-import { PublicLayoutButton } from "../components/PublicLayoutButton"
+import { PublicLinkButton } from "../components/PublicLinkButton"
 import { format, subDays } from "date-fns"
 
 export default async function DashboardPage(props: {
@@ -32,10 +32,10 @@ export default async function DashboardPage(props: {
                     <div className="flex items-center gap-3 mb-1">
                         <h2 className="text-2xl font-bold tracking-tight text-white">Embudo de Ventas V2</h2>
                         <CopyLinkButton clientId={clientId} />
-                        <PublicLayoutButton
+                        <PublicLinkButton
                             clienteId={clientId}
-                            initialLayout={dashboardData?.layoutPublico || null}
-                            conversionesCatalogo={dashboardData?.conversionesCatalogo || []}
+                            tabs={dashboardData?.tabs || []}
+                            initialTabIds={dashboardData?.layoutPublico?.type === 'tab_mirror' ? (dashboardData.layoutPublico.tab_ids ?? []) : []}
                         />
                     </div>
                     <p className="text-zinc-400">Datos consolidados de Meta, Hotmart y Google Analytics 4.</p>

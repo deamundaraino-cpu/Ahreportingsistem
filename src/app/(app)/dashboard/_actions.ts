@@ -488,7 +488,7 @@ export async function getMirrorDashboardData(token: string, from?: string, to?: 
     const endStr = to || activeTabObj?.fecha_finalizacion || format(new Date(), 'yyyy-MM-dd')
 
     // Fetch all metrics + leads for that range (identical to getDashboardData)
-    const [metricsRes, leadsRes, conversionesRes, campaignGroupsRes, tabsRes] = await Promise.all([
+    const [metricsRes, leadsRes, conversionesRes, campaignGroupsRes, tabsRes, allLayoutsRes] = await Promise.all([
         supabase.from('metricas_diarias')
             .select('*')
             .eq('cliente_id', cliente.id)
@@ -511,9 +511,8 @@ export async function getMirrorDashboardData(token: string, from?: string, to?: 
             `)
             .eq('cliente_id', cliente.id)
             .order('nombre', { ascending: true }),
-        // We load other tabs but only for titles, NOT for mirror links directly? 
-        // Actually for mirror mirrors we only show the shared tab
-        supabase.from('cliente_tabs').select('id, nombre, orden').eq('cliente_id', cliente.id).order('orden', { ascending: true })
+        supabase.from('cliente_tabs').select('*').eq('cliente_id', cliente.id).order('position', { ascending: true }),
+        supabase.from('layouts_reporte').select('*').order('nombre'),
     ])
 
     const leadsMap = new Map((leadsRes.data || []).map((l: any) => [l.date, l]))
@@ -528,14 +527,26 @@ export async function getMirrorDashboardData(token: string, from?: string, to?: 
     if (cfg.ga_property_id) availablePlatforms.add('ga4')
     if (cfg.hotmart_token) availablePlatforms.add('hotmart')
 
+    // Filter tabs by public_tab_ids if configured on client token
+    let allTabs = tabsRes.data || []
+    let defaultActiveTabId: string = activeTabObj?.id || 'general'
+    if (!activeTabObj) {
+        const publicConfig = cliente.layout_publico as any
+        if (publicConfig?.type === 'tab_mirror' && Array.isArray(publicConfig?.tab_ids) && publicConfig.tab_ids.length > 0) {
+            allTabs = allTabs.filter((t: any) => publicConfig.tab_ids.includes(t.id))
+            if (allTabs.length > 0) defaultActiveTabId = allTabs[0].id
+        }
+    }
+
     return {
         data: {
             cliente,
             metrics: metrics || [],
             weeks,
             layout,
-            tabs: tabsRes.data || [],
-            activeTabId: activeTabObj?.id || 'general',
+            tabs: allTabs,
+            activeTabId: defaultActiveTabId,
+            allLayouts: allLayoutsRes.data || [],
             conversionesCatalogo: conversionesRes.data || [],
             availablePlatforms: Array.from(availablePlatforms),
             campaignGroups: campaignGroupsRes.data || [],
@@ -543,6 +554,18 @@ export async function getMirrorDashboardData(token: string, from?: string, to?: 
         },
         error: null
     }
+}
+
+export async function savePublicTabConfig(clienteId: string, tabIds: string[]) {
+    const supabase = await createAdminClient()
+    const payload = tabIds.length > 0 ? { type: 'tab_mirror', tab_ids: tabIds } : null
+    const { error } = await supabase
+        .from('clientes')
+        .update({ layout_publico: payload })
+        .eq('id', clienteId)
+    if (error) return { error: error.message }
+    revalidatePath(`/dashboard/${clienteId}`)
+    return { success: true }
 }
 
 export async function getOrCreatePublicToken(id: string, type: 'client' | 'tab') {
