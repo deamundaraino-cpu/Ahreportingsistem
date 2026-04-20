@@ -13,7 +13,8 @@ import {
     Menu,
     X,
     Shield,
-    FileText
+    FileText,
+    Key
 } from 'lucide-react'
 
 export function AppSidebar({ initialRole = 'viewer' }: { initialRole?: string }) {
@@ -78,6 +79,7 @@ export function AppSidebar({ initialRole = 'viewer' }: { initialRole?: string })
         { name: 'Constructor de Layouts', href: '/admin/layouts', icon: Users },
         { name: 'Reportes Mensuales', href: '/admin/reports', icon: FileText },
         { name: 'Gestión de Usuarios', href: '/admin/users', icon: Shield },
+        { name: 'API & Integraciones', href: '/admin/api-tokens', icon: Key },
     ]
 
     const isActive = (path: string) => pathname?.startsWith(path)
