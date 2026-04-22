@@ -266,7 +266,6 @@ export async function POST(request: NextRequest) {
   let id: unknown = null;
 
   try {
-    const ctx = await authenticateApiToken(request);
     const body = await request.json();
     id = body.id ?? null;
 
@@ -276,7 +275,11 @@ export async function POST(request: NextRequest) {
 
     const { method, params } = body;
 
-    // ── initialize ────────────────────────────────────────────────
+    // ── unauthenticated methods ───────────────────────────────────
+    if (method === 'ping') {
+      return rpcResult(id, {});
+    }
+
     if (method === 'initialize') {
       return rpcResult(id, {
         protocolVersion: '2024-11-05',
@@ -284,6 +287,13 @@ export async function POST(request: NextRequest) {
         serverInfo: { name: 'adshouse-reporting', version: '1.0.0' },
       });
     }
+
+    if (method === 'notifications/initialized') {
+      return rpcResult(id, {});
+    }
+
+    // ── authenticated methods ─────────────────────────────────────
+    const ctx = await authenticateApiToken(request);
 
     // ── tools/list ────────────────────────────────────────────────
     if (method === 'tools/list') {

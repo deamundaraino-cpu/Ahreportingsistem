@@ -45,15 +45,12 @@ export function generateApiToken(): { token: string; hash: string; prefix: strin
 /** Validate a Bearer token from the request and return its context. */
 export async function authenticateApiToken(request: NextRequest): Promise<TokenContext> {
   const authHeader = request.headers.get('authorization');
-
-  if (!authHeader?.startsWith('Bearer ')) {
-    throw new ApiError('UNAUTHORIZED', 'Missing or invalid Authorization header. Expected: Bearer <token>', 401);
-  }
-
-  const token = authHeader.slice(7);
+  const token = authHeader?.replace('Bearer ', '')
+    || (request.url && new URL(request.url, 'https://base').searchParams.get('token'))
+    || '';
 
   if (!token.startsWith('ads_')) {
-    throw new ApiError('UNAUTHORIZED', 'Invalid token format. Expected token starting with ads_', 401);
+    throw new ApiError('UNAUTHORIZED', 'Missing or invalid token. Use Authorization: Bearer <token> header or ?token=<token> query param', 401);
   }
 
   const tokenHash = createHash('sha256').update(token).digest('hex');
