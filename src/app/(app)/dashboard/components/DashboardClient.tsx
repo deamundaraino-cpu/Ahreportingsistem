@@ -11,7 +11,7 @@ import { evaluateFormula, aggregateFormula, formatValue } from '@/lib/formula-en
 import { LayoutConfigModal } from './LayoutConfigModal'
 import { TabConfigModal } from './TabConfigModal'
 import { MetricCharts } from './MetricCharts'
-import { LayoutDashboard, Settings2, Plus, Edit2, CalendarDays, Timer, BadgeDollarSign, Wallet, GripVertical, Search, X, Puzzle, Type, AlignLeft, AlignCenter, AlignRight, Trash2, Save, Loader2 } from 'lucide-react'
+import { LayoutDashboard, Settings2, Plus, Edit2, CalendarDays, Timer, BadgeDollarSign, Wallet, GripVertical, Search, X, Puzzle, Type, AlignLeft, AlignCenter, AlignRight, Trash2, Save, Loader2, Minus } from 'lucide-react'
 import type { ColDef, CardDef, ReportLayout, ChartDef, MetricDef, TextBlockDef } from '@/lib/layout-types'
 import { updateManualMetric, getTabTotalSpend, saveClienteLayout, saveTabOverrides, updateLayoutPuzzleState } from '../_actions'
 import { SortableCard, SortableChart, SortableTable, SortableText } from './PuzzleComponents'
@@ -386,13 +386,27 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                     columnas: activeTabObj.columnas,
                     tarjetas: activeTabObj.tarjetas,
                     graficos: activeTabObj.graficos,
+                    text_blocks: activeTabObj.text_blocks ?? undefined,
+                    blocks_order: activeTabObj.blocks_order ?? undefined,
+                    custom_metrics: activeTabObj.custom_metrics ?? undefined,
                 }
                 customized = true
             } else if (activeTabObj.plantilla_id) {
                 const found = allLayouts.find((l: any) => l.id === activeTabObj.plantilla_id)
                 if (found) {
-                    layout = found
+                    layout = {
+                        ...found,
+                        text_blocks: activeTabObj.text_blocks ?? found.text_blocks,
+                        blocks_order: activeTabObj.blocks_order ?? found.blocks_order,
+                    }
                     customized = false
+                }
+            } else {
+                // Tab sin columnas propias ni plantilla — usa layout del cliente pero aplica puzzle state del tab
+                layout = {
+                    ...initialLayout,
+                    text_blocks: activeTabObj.text_blocks ?? initialLayout.text_blocks,
+                    blocks_order: activeTabObj.blocks_order ?? initialLayout.blocks_order,
                 }
             }
         }
@@ -453,7 +467,16 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
             setIsSavingLayout(true)
             await updateLayoutPuzzleState(cliente.id, activeTabId, {
                 blocks_order: orderedBlocks,
-                text_blocks: activeLayout.text_blocks || []
+                text_blocks: activeLayout.text_blocks || [],
+                // Necesario para crear fila en clientes_layouts si no existe aún
+                full_layout: activeTabId === 'general' ? {
+                    nombre: activeLayout.nombre,
+                    columnas: activeLayout.columnas,
+                    tarjetas: activeLayout.tarjetas,
+                    graficos: activeLayout.graficos,
+                    custom_metrics: activeLayout.custom_metrics,
+                    attribution_strategy: activeLayout.attribution_strategy,
+                } : undefined,
             })
             setIsSavingLayout(false)
             setIsPuzzleMode(false)
@@ -461,16 +484,47 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
     }
 
     function handleRemoveBlock(blockId: string) {
-        setOrderedBlocks(orderedBlocks.filter(id => id !== blockId))
+        const newOrder = orderedBlocks.filter(id => id !== blockId)
+        setOrderedBlocks(newOrder)
+
+        const updates: Partial<ReportLayout> = { blocks_order: newOrder }
+        if (blockId.startsWith('text:')) {
+            const textId = blockId.replace('text:', '')
+            updates.text_blocks = (activeLayout.text_blocks || []).filter((b: TextBlockDef) => b.id !== textId)
+        }
+        setTabLayoutOverrides(prev => ({
+            ...prev,
+            [activeTabId]: { ...(prev[activeTabId] || activeLayout), ...updates }
+        }))
+    }
+
+    function handleAddBlock(blockType: 'text' | 'separator') {
+        const newId = crypto.randomUUID()
+        const newBlock: TextBlockDef = blockType === 'separator'
+            ? { id: newId, blockType: 'separator', content: '', style: 'p', colSpan: 4, separatorStyle: 'line', color: 'zinc' }
+            : { id: newId, blockType: 'text', content: 'Nueva sección', style: 'h2', align: 'left', color: 'white', colSpan: 4 }
+        const newOrder = [...orderedBlocks, `text:${newId}`]
+        setTabLayoutOverrides(prev => {
+            const base = prev[activeTabId] || activeLayout
+            return {
+                ...prev,
+                [activeTabId]: {
+                    ...base,
+                    text_blocks: [...(base.text_blocks || []), newBlock],
+                    blocks_order: newOrder,
+                }
+            }
+        })
     }
 
     function handleUpdateTextBlock(blockId: string, updates: Partial<TextBlockDef>) {
-        const currentLayout = tabLayoutOverrides[activeTabId] || activeLayout
-        const newTextBlocks = (currentLayout.text_blocks || []).map(b => 
+        const newTextBlocks = (activeLayout.text_blocks || []).map((b: TextBlockDef) =>
             b.id === blockId.replace('text:', '') ? { ...b, ...updates } : b
         )
-        const updatedLayout = { ...currentLayout, text_blocks: newTextBlocks }
-        setTabLayoutOverrides({ ...tabLayoutOverrides, [activeTabId]: updatedLayout })
+        setTabLayoutOverrides(prev => ({
+            ...prev,
+            [activeTabId]: { ...(prev[activeTabId] || activeLayout), text_blocks: newTextBlocks }
+        }))
     }
 
 
@@ -795,15 +849,35 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                         </Button>
                         
                         {isPuzzleMode && (
-                            <Button
-                                size="sm"
-                                onClick={handleTogglePuzzleMode}
-                                disabled={isSavingLayout}
-                                className="gap-1.5 text-xs bg-indigo-600 hover:bg-indigo-700 text-white border-transparent shadow-[0_0_15px_rgba(79,70,229,0.4)] transition-all animate-in zoom-in-95 duration-200"
-                            >
-                                {isSavingLayout ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
-                                {isSavingLayout ? 'Guardando...' : 'Guardar Visualización'}
-                            </Button>
+                            <>
+                                <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => handleAddBlock('text')}
+                                    className="gap-1.5 text-xs border-indigo-500/40 text-indigo-400 hover:bg-indigo-500/10 animate-in zoom-in-95 duration-200"
+                                >
+                                    <Type className="w-3.5 h-3.5" />
+                                    + Sección
+                                </Button>
+                                <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => handleAddBlock('separator')}
+                                    className="gap-1.5 text-xs border-zinc-600 text-zinc-400 hover:bg-zinc-800 animate-in zoom-in-95 duration-200"
+                                >
+                                    <Minus className="w-3.5 h-3.5" />
+                                    + Separador
+                                </Button>
+                                <Button
+                                    size="sm"
+                                    onClick={handleTogglePuzzleMode}
+                                    disabled={isSavingLayout}
+                                    className="gap-1.5 text-xs bg-indigo-600 hover:bg-indigo-700 text-white border-transparent shadow-[0_0_15px_rgba(79,70,229,0.4)] transition-all animate-in zoom-in-95 duration-200"
+                                >
+                                    {isSavingLayout ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+                                    {isSavingLayout ? 'Guardando...' : 'Guardar Visualización'}
+                                </Button>
+                            </>
                         )}
 
 {activeTabId === 'general' ? (

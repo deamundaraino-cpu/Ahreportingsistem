@@ -60,6 +60,7 @@ export interface ChartDef {
 
 export interface TextBlockDef {
     id: string
+    blockType?: 'text' | 'separator'
     content: string
     style: 'h1' | 'h2' | 'h3' | 'p'
     align?: 'left' | 'center' | 'right'
@@ -69,6 +70,8 @@ export interface TextBlockDef {
     colSpan?: number // 1 to 4
     backgroundColor?: string // 'transparent', 'indigo', 'etc' or hex
     borderRadius?: 'none' | 'sm' | 'md' | 'lg' | 'xl' | '2xl' | 'full'
+    separatorStyle?: 'line' | 'dashed' | 'dots' | 'space'
+    separatorWidth?: 'full' | 'half' | 'small'
 }
 
 export interface MetricDef {

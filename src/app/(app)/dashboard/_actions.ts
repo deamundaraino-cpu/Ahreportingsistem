@@ -284,21 +284,77 @@ export async function saveTabOverrides(clienteId: string, tabId: string, payload
     return { success: true }
 }
 
-export async function updateLayoutPuzzleState(clienteId: string, tabId: string, payload: { blocks_order: string[], text_blocks: any[] }) {
+export async function updateLayoutPuzzleState(
+    clienteId: string,
+    tabId: string,
+    payload: {
+        blocks_order: string[]
+        text_blocks: any[]
+        full_layout?: {
+            nombre: string
+            columnas: any[]
+            tarjetas: any[]
+            graficos?: any[]
+            custom_metrics?: any[]
+            attribution_strategy?: string
+        }
+    }
+) {
+    const supabase = await createAdminClient()
+
     if (tabId && tabId !== 'general') {
-        return saveTabOverrides(clienteId, tabId, {
-            columnas: undefined as any, // don't override columns
-            tarjetas: undefined as any,
-            graficos: undefined as any,
-            ...payload
-        })
-    } else {
-        const supabase = await createAdminClient()
+        // Tab específico: solo actualizar puzzle state — no tocar columnas/tarjetas/graficos
         const { error } = await supabase
-            .from('clientes_layouts')
-            .update({ ...payload, updated_at: new Date().toISOString() })
+            .from('cliente_tabs')
+            .update({
+                blocks_order: payload.blocks_order,
+                text_blocks: payload.text_blocks,
+                updated_at: new Date().toISOString(),
+            })
+            .eq('id', tabId)
             .eq('cliente_id', clienteId)
         if (error) return { error: error.message }
+        revalidatePath(`/dashboard/${clienteId}`)
+        return { success: true }
+    } else {
+        // General tab: verificar si ya existe fila en clientes_layouts
+        const { data: existing } = await supabase
+            .from('clientes_layouts')
+            .select('id')
+            .eq('cliente_id', clienteId)
+            .maybeSingle()
+
+        if (existing) {
+            // Fila existe: solo actualizar puzzle state
+            const { error } = await supabase
+                .from('clientes_layouts')
+                .update({
+                    blocks_order: payload.blocks_order,
+                    text_blocks: payload.text_blocks,
+                    updated_at: new Date().toISOString(),
+                })
+                .eq('cliente_id', clienteId)
+            if (error) return { error: error.message }
+        } else if (payload.full_layout) {
+            // No existe fila: crear una copiando el layout activo + puzzle state
+            const { error } = await supabase
+                .from('clientes_layouts')
+                .insert({
+                    cliente_id: clienteId,
+                    nombre: payload.full_layout.nombre || 'Dashboard',
+                    columnas: payload.full_layout.columnas || [],
+                    tarjetas: payload.full_layout.tarjetas || [],
+                    graficos: payload.full_layout.graficos || null,
+                    custom_metrics: payload.full_layout.custom_metrics || null,
+                    attribution_strategy: payload.full_layout.attribution_strategy || null,
+                    blocks_order: payload.blocks_order,
+                    text_blocks: payload.text_blocks,
+                })
+            if (error) return { error: error.message }
+        } else {
+            return { error: 'No se pudo guardar: layout base no disponible' }
+        }
+
         revalidatePath(`/dashboard/${clienteId}`)
         return { success: true }
     }
