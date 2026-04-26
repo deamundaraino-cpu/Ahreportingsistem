@@ -71,13 +71,17 @@ export async function GET(request: Request) {
         const platformLogs = { meta: 'Saltado', hotmart: 'Saltado', ga4: 'Saltado' }
 
         let hotmartAccessToken: string | null = null
-        if (config.hotmart_basic) {
+        const hotmartBasic = config.hotmart_basic ||
+            (config.hotmart_client_id && config.hotmart_client_secret
+                ? Buffer.from(`${config.hotmart_client_id}:${config.hotmart_client_secret}`).toString('base64')
+                : null)
+        if (hotmartBasic) {
             try {
                 const tokenRes = await fetch('https://api-sec-vlc.hotmart.com/security/oauth/token?grant_type=client_credentials', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/x-www-form-urlencoded',
-                        'Authorization': `Basic ${config.hotmart_basic}`
+                        'Authorization': `Basic ${hotmartBasic}`
                     }
                 })
                 const tokenData = await tokenRes.json()
@@ -94,7 +98,67 @@ export async function GET(request: Request) {
                 platformLogs.hotmart = 'Fallo Critico'
             }
         } else {
-            log(`[Cliente ${cliente.nombre}] No tiene config.hotmart_basic definida.`)
+            log(`[Cliente ${cliente.nombre}] No tiene hotmart_basic ni hotmart_client_id/secret definidos.`)
+        }
+
+        // ─── Cargar funnels Hotmart configurados por pestaña ────────────────────
+        // Cada cliente_tab puede tener hotmart_funnel = { enabled, principal_names[], bump_names[], upsell_names[], payment_page_url, upsell_page_url }
+        type FunnelConfig = {
+            tab_id: string
+            principal_patterns: string[]
+            bump_patterns: string[]
+            upsell_patterns: string[]
+            landing_page_urls: string[]
+            payment_page_url?: string
+            upsell_page_url?: string
+            principal_price_usd?: number
+        }
+        const hotmartFunnels: FunnelConfig[] = []
+        if (hotmartAccessToken) {
+            const { data: tabsData } = await adminSupabase
+                .from('cliente_tabs')
+                .select('id, hotmart_funnel')
+                .eq('cliente_id', cliente.id)
+            const cleanList = (arr: any): string[] => Array.isArray(arr)
+                ? arr.map((s: any) => String(s || '').toLowerCase().trim()).filter(Boolean)
+                : []
+            for (const tab of (tabsData || [])) {
+                const f = tab.hotmart_funnel as any
+                if (!f || !f.enabled) continue
+                hotmartFunnels.push({
+                    tab_id: tab.id,
+                    principal_patterns: cleanList(f.principal_names),
+                    bump_patterns: cleanList(f.bump_names),
+                    upsell_patterns: cleanList(f.upsell_names),
+                    landing_page_urls: Array.isArray(f.landing_page_urls) ? f.landing_page_urls.map((s: any) => String(s).trim()).filter(Boolean) : [],
+                    payment_page_url: f.payment_page_url || undefined,
+                    upsell_page_url: f.upsell_page_url || undefined,
+                    principal_price_usd: f.principal_price_usd ? Number(f.principal_price_usd) : undefined,
+                })
+            }
+            if (hotmartFunnels.length > 0) {
+                log(`[Cliente ${cliente.nombre}] ${hotmartFunnels.length} funnel(s) Hotmart configurados`)
+            }
+        }
+
+        // Match SQL LIKE: % = .*, _ = .  case-insensitive
+        function matchesAny(name: string, patterns: string[]): boolean {
+            if (!patterns.length) return false
+            const lower = name.toLowerCase()
+            for (const p of patterns) {
+                if (!p) continue
+                if (!p.includes('%') && !p.includes('_')) {
+                    if (lower === p) return true
+                } else {
+                    const regexStr = p
+                        .replace(/[.+^${}()|[\]\\]/g, '\\$&')
+                        .replace(/%/g, '.*')
+                        .replace(/_/g, '.')
+                    const re = new RegExp(`^${regexStr}$`, 'i')
+                    if (re.test(lower)) return true
+                }
+            }
+            return false
         }
 
         // ─── Helper: Fetch campaign targeting location from Meta ────────────────
@@ -157,7 +221,7 @@ export async function GET(request: Request) {
 
         // ─── Helper: Fetch Meta Ads for a single account+date ───────────────
         async function fetchMetaSingleAccount(targetDate: string, rawAccountId: string, token: string) {
-            const record = { spend: 0, impressions: 0, clicks: 0, campaigns: [] as any[] }
+            const record = { spend: 0, impressions: 0, clicks: 0, account_reach: 0, campaigns: [] as any[] }
             try {
                 const actId = rawAccountId.startsWith('act_') ? rawAccountId : `act_${rawAccountId}`
                 const url = new URL(`https://graph.facebook.com/v19.0/${actId}/insights`)
@@ -328,6 +392,21 @@ export async function GET(request: Request) {
                     record.impressions = totalImpr
                     record.clicks = totalClicks
                     record.campaigns = dedupedCampaigns
+
+                    // Reach deduplicado a nivel de cuenta (una query separada con level=account)
+                    try {
+                        const reachUrl = new URL(`https://graph.facebook.com/v19.0/${actId}/insights`)
+                        reachUrl.searchParams.append('access_token', token)
+                        reachUrl.searchParams.append('time_range', JSON.stringify({ since: targetDate, until: targetDate }))
+                        reachUrl.searchParams.append('fields', 'reach')
+                        reachUrl.searchParams.append('level', 'account')
+                        const reachRes = await fetch(reachUrl.toString())
+                        const reachData = await reachRes.json()
+                        if (reachData.data?.[0]?.reach) {
+                            record.account_reach = parseInt(reachData.data[0].reach || '0')
+                        }
+                    } catch (_e) { /* non-critical */ }
+
                 } else if (data.error) {
                     log(`[Meta] ${targetDate} [${rawAccountId}] Error de API: ${JSON.stringify(data.error)}`)
                 } else {
@@ -341,7 +420,7 @@ export async function GET(request: Request) {
 
         // ─── Helper: Fetch Meta Ads for a single date (multi-account) ────────
         async function fetchMeta(targetDate: string) {
-            const record = { spend: 0, impressions: 0, clicks: 0, campaigns: [] as any[] }
+            const record = { spend: 0, impressions: 0, clicks: 0, account_reach: 0, campaigns: [] as any[] }
 
             // Build account list — multi-account if configured, legacy fallback otherwise
             let accountsToFetch: { account_id: string; token: string }[] = []
@@ -369,7 +448,13 @@ export async function GET(request: Request) {
                 record.spend += r.spend
                 record.impressions += r.impressions
                 record.clicks += r.clicks
-                record.campaigns.push(...r.campaigns)
+                record.account_reach += r.account_reach  // suma de reach deduplicado por cuenta
+                // Inyectar account_reach en cada campaña para poder filtrarlo en el dashboard
+                const campaignsWithReach = r.campaigns.map((c: any) => ({
+                    ...c,
+                    account_reach: r.account_reach,
+                }))
+                record.campaigns.push(...campaignsWithReach)
                 if (r.campaigns.length > 0 || r.spend > 0) anySuccess = true
             }
 
@@ -429,25 +514,67 @@ export async function GET(request: Request) {
         }
 
         // ─── Helper: Fetch Hotmart for a single date ────────────────────────
-        async function fetchHotmart(targetDate: string) {
-            const record = { principal: 0, bump: 0, upsell: 0, pagos_iniciados: 0, ventas_count: 0 }
+        // Devuelve totales globales + desglose por funnel (tab) + extras.
+        // Pagos iniciados se mide desde GA4 (no se consulta WAITING_PAYMENT).
+        type FunnelBreakdown = {
+            principal: { count: number; gross: number; net: number }
+            bump:      { count: number; gross: number; net: number }
+            upsell:    { count: number; gross: number; net: number; page_visits: number }
+            pagos_iniciados: number
+            landing_sessions: number
+        }
+        type HotmartRecord = {
+            // Totales globales (suma de todos los funnels + extras)
+            principal: number          // neto producto principal
+            bump: number               // neto bump
+            upsell: number             // neto upsell
+            principal_count: number
+            bump_count: number
+            upsell_count: number
+            principal_bruto: number    // bruto producto principal
+            bump_bruto: number         // bruto order bump
+            upsell_bruto: number       // bruto upsell
+            ventas_count: number       // total transacciones procesadas
+            // Desglose JSON
+            by_tab: Record<string, FunnelBreakdown>
+            extras: Array<{ product_name: string; count: number; gross: number; net: number }>
+        }
+        function emptyFunnelBreakdown(): FunnelBreakdown {
+            return {
+                principal: { count: 0, gross: 0, net: 0 },
+                bump:      { count: 0, gross: 0, net: 0 },
+                upsell:    { count: 0, gross: 0, net: 0, page_visits: 0 },
+                pagos_iniciados: 0,
+                landing_sessions: 0,
+            }
+        }
+
+        async function fetchHotmart(targetDate: string): Promise<HotmartRecord> {
+            const record: HotmartRecord = {
+                principal: 0, bump: 0, upsell: 0,
+                principal_count: 0, bump_count: 0, upsell_count: 0,
+                principal_bruto: 0, bump_bruto: 0, upsell_bruto: 0, ventas_count: 0,
+                by_tab: {},
+                extras: [],
+            }
+            // Inicializar breakdown por cada funnel configurado
+            for (const f of hotmartFunnels) {
+                record.by_tab[f.tab_id] = emptyFunnelBreakdown()
+            }
+
             if (!hotmartAccessToken) {
                 log(`[Hotmart] Sin accessToken generado.`)
                 return record
             }
             try {
-                const clean = (str: string) => (str || '').toLowerCase().split(',').map(s => s.trim()).filter(s => s)
-                const principalNames = clean(config.hotmart_principal_names)
-                const bumpNames = clean(config.hotmart_bump_names)
-                const upsellNames = clean(config.hotmart_upsell_names)
-
                 const dayStart = new Date(`${targetDate}T00:00:00.000-05:00`).getTime()
                 const dayEnd = new Date(`${targetDate}T23:59:59.999-05:00`).getTime()
 
-                // PASO 1: Transacciones válidas aprobadas
+                // PASO 1: Transacciones válidas aprobadas + capturar gross (purchase.price.value)
                 let pageToken = ""
                 let hasNext = true
-                const validTransactions = new Set<string>()
+                // transaction_id → { gross_value, currency }
+                const txInfo = new Map<string, { gross: number; currency: string }>()
 
                 while (hasNext) {
                     const url = new URL('https://developers.hotmart.com/payments/api/v1/sales/history')
@@ -472,8 +599,11 @@ export async function GET(request: Request) {
 
                     if (data.items) {
                         data.items.forEach((item: any) => {
-                            if (item.purchase?.transaction) {
-                                validTransactions.add(item.purchase.transaction)
+                            const txId = item.purchase?.transaction
+                            if (txId) {
+                                const grossVal = Number(item.purchase?.price?.value ?? 0) || 0
+                                const grossCur = String(item.purchase?.price?.currency_code ?? '')
+                                txInfo.set(txId, { gross: grossVal, currency: grossCur })
                             }
                         })
                     }
@@ -481,10 +611,13 @@ export async function GET(request: Request) {
                     hasNext = !!pageToken
                 }
 
-                // PASO 2: Comisiones exactas (USD) de transacciones validadas
+                // PASO 2: Comisiones exactas (USD) de transacciones validadas + clasificar por funnel
                 pageToken = ""
                 hasNext = true
                 let totalItemsProcessed = 0
+
+                // Acumulador temporal de extras: productName → {count, gross, net}
+                const extrasMap = new Map<string, { count: number; gross: number; net: number }>()
 
                 while (hasNext) {
                     const url2 = new URL('https://developers.hotmart.com/payments/api/v1/sales/commissions')
@@ -500,30 +633,69 @@ export async function GET(request: Request) {
 
                     if (data2.items) {
                         data2.items.forEach((item: any) => {
-                            if (validTransactions.has(item.transaction)) {
-                                totalItemsProcessed++
-                                record.ventas_count++
-                                let netUSD = 0
+                            const tx = item.transaction
+                            if (!txInfo.has(tx)) return
+                            totalItemsProcessed++
+                            record.ventas_count++
 
-                                if (item.commissions && Array.isArray(item.commissions)) {
-                                    item.commissions.forEach((c: any) => {
-                                        if (c.source === 'PRODUCER' && c.commission?.currency_code === 'USD') {
-                                            netUSD += c.commission.value
-                                        }
-                                    })
+                            let netUSD = 0
+                            if (item.commissions && Array.isArray(item.commissions)) {
+                                item.commissions.forEach((c: any) => {
+                                    if (c.source === 'PRODUCER' && c.commission?.currency_code === 'USD') {
+                                        netUSD += c.commission.value
+                                    }
+                                })
+                            }
+
+                            const prodName = String(item.product?.name || '').trim()
+                            const txMeta = txInfo.get(tx)!
+                            const grossVal = txMeta.currency === 'USD' ? txMeta.gross : 0
+
+                            // Buscar a qué funnel pertenece este producto y en qué rol
+                            let matched = false
+                            for (const f of hotmartFunnels) {
+                                if (matchesAny(prodName, f.principal_patterns)) {
+                                    // Bruto: si hay precio configurado, usar precio × 1; si no, caer al valor de la API (solo USD)
+                                    const principalGross = f.principal_price_usd ?? grossVal
+                                    record.by_tab[f.tab_id].principal.count++
+                                    record.by_tab[f.tab_id].principal.net   += netUSD
+                                    record.by_tab[f.tab_id].principal.gross += principalGross
+                                    record.principal       += netUSD
+                                    record.principal_count += 1
+                                    record.principal_bruto += principalGross
+                                    matched = true
+                                    break
                                 }
-
-                                const prodName = (item.product?.name || '').toLowerCase().trim()
-
-                                if (principalNames.includes(prodName)) {
-                                    record.principal += netUSD
-                                } else if (bumpNames.includes(prodName)) {
-                                    record.bump += netUSD
-                                } else if (upsellNames.includes(prodName)) {
-                                    record.upsell += netUSD
-                                } else {
-                                    record.principal += netUSD
+                                if (matchesAny(prodName, f.bump_patterns)) {
+                                    record.by_tab[f.tab_id].bump.count++
+                                    record.by_tab[f.tab_id].bump.net   += netUSD
+                                    record.by_tab[f.tab_id].bump.gross += grossVal
+                                    record.bump       += netUSD
+                                    record.bump_count += 1
+                                    record.bump_bruto += grossVal
+                                    matched = true
+                                    break
                                 }
+                                if (matchesAny(prodName, f.upsell_patterns)) {
+                                    record.by_tab[f.tab_id].upsell.count++
+                                    record.by_tab[f.tab_id].upsell.net   += netUSD
+                                    record.by_tab[f.tab_id].upsell.gross += grossVal
+                                    record.upsell        += netUSD
+                                    record.upsell_count  += 1
+                                    record.upsell_bruto  += grossVal
+                                    matched = true
+                                    break
+                                }
+                            }
+
+                            if (!matched) {
+                                // Producto extra → acumular en extras
+                                const key = prodName || '(Sin nombre)'
+                                const cur = extrasMap.get(key) || { count: 0, gross: 0, net: 0 }
+                                cur.count += 1
+                                cur.net   += netUSD
+                                cur.gross += grossVal
+                                extrasMap.set(key, cur)
                             }
                         })
                     }
@@ -531,29 +703,12 @@ export async function GET(request: Request) {
                     hasNext = !!pageToken
                 }
 
-                // PASO 3: Contar pagos iniciados (WAITING_PAYMENT)
-                pageToken = ""
-                hasNext = true
-                while (hasNext) {
-                    const url3 = new URL('https://developers.hotmart.com/payments/api/v1/sales/history')
-                    url3.searchParams.append('start_date', dayStart.toString())
-                    url3.searchParams.append('end_date', dayEnd.toString())
-                    url3.searchParams.append('max_results', '100')
-                    url3.searchParams.append('transaction_status', 'WAITING_PAYMENT')
-                    if (pageToken) url3.searchParams.append('page_token', pageToken)
-
-                    const res3 = await fetch(url3.toString(), {
-                        headers: { 'Authorization': `Bearer ${hotmartAccessToken}` }
-                    })
-                    const data3 = await res3.json()
-                    if (data3.items) {
-                        record.pagos_iniciados += data3.items.length
-                    }
-                    pageToken = data3.page_info?.next_page_token
-                    hasNext = !!pageToken
+                // Volcar extras del map al array final
+                for (const [product_name, vals] of extrasMap.entries()) {
+                    record.extras.push({ product_name, ...vals })
                 }
 
-                log(`[Hotmart] ${targetDate} Procesados ${totalItemsProcessed} registros. Ventas: ${record.ventas_count}. Pagos iniciados: ${record.pagos_iniciados}. USD: ${record.principal.toFixed(2)}`)
+                log(`[Hotmart] ${targetDate} Procesados ${totalItemsProcessed} reg. Funnels: ${hotmartFunnels.length}, Extras: ${record.extras.length}, Principal USD: ${record.principal.toFixed(2)}, Bruto: ${record.principal_bruto.toFixed(2)}`)
                 platformLogs.hotmart = 'Conectado OK'
             } catch (e: any) {
                 log(`[Hotmart] Catch Error: ${e.message}`)
@@ -563,8 +718,16 @@ export async function GET(request: Request) {
         }
 
         // ─── Fetch GA4 ───
-        async function fetchGA4(targetDate: string) {
-            const record = { sessions: 0, bounceRate: 0, avgSessionDuration: 0 }
+        // Devuelve métricas globales + page views por funnel (payment_page + upsell_page).
+        type GARecord = {
+            sessions: number
+            bounceRate: number
+            avgSessionDuration: number
+            // Por tab_id: { payment_page_views, upsell_page_views, landing_sessions }
+            funnel_pages: Record<string, { payment_page_views: number; upsell_page_views: number; landing_sessions: number }>
+        }
+        async function fetchGA4(targetDate: string): Promise<GARecord> {
+            const record: GARecord = { sessions: 0, bounceRate: 0, avgSessionDuration: 0, funnel_pages: {} }
             if (!config.ga_property_id || !config.ga_client_email || !config.ga_private_key) {
                 platformLogs.ga4 = 'Sin configurar'
                 return record
@@ -579,8 +742,8 @@ export async function GET(request: Request) {
                     }
                 })
 
-                const propertyName = config.ga_property_id.startsWith('properties/') 
-                    ? config.ga_property_id 
+                const propertyName = config.ga_property_id.startsWith('properties/')
+                    ? config.ga_property_id
                     : `properties/${config.ga_property_id}`
 
                 const [response] = await client.runReport({
@@ -599,6 +762,91 @@ export async function GET(request: Request) {
                     record.bounceRate = parseFloat(vals[1]?.value || '0')
                     record.avgSessionDuration = parseFloat(vals[2]?.value || '0')
                 }
+
+                // ─── Page views por funnel (payment + upsell) ──────────────
+                // Recolectar todas las URLs únicas a consultar, mapeadas a su tab+rol
+                type PageQuery = { url: string; tab_id: string; role: 'payment' | 'upsell' | 'landing' }
+                const queries: PageQuery[] = []
+                for (const f of hotmartFunnels) {
+                    for (const url of f.landing_page_urls) queries.push({ url, tab_id: f.tab_id, role: 'landing' })
+                    if (f.payment_page_url) queries.push({ url: f.payment_page_url, tab_id: f.tab_id, role: 'payment' })
+                    if (f.upsell_page_url)  queries.push({ url: f.upsell_page_url,  tab_id: f.tab_id, role: 'upsell'  })
+                    record.funnel_pages[f.tab_id] = { payment_page_views: 0, upsell_page_views: 0, landing_sessions: 0 }
+                }
+
+                if (queries.length > 0) {
+                    // Separar por rol y por tipo de filtro (path vs título)
+                    const landingQueries  = queries.filter(q => q.role === 'landing')
+                    const pageviewQueries = queries.filter(q => q.role !== 'landing')
+
+                    // Helper: GA4 query genérica
+                    const ga4Query = async (dimension: string, metric: string, values: string[]) => {
+                        const [resp] = await client.runReport({
+                            property: propertyName,
+                            dateRanges: [{ startDate: targetDate, endDate: targetDate }],
+                            dimensions: [{ name: dimension }],
+                            metrics: [{ name: metric }],
+                            dimensionFilter: {
+                                filter: {
+                                    fieldName: dimension,
+                                    inListFilter: { values, caseSensitive: false }
+                                }
+                            }
+                        })
+                        const map = new Map<string, number>()
+                        for (const row of (resp.rows || [])) {
+                            const key = row.dimensionValues?.[0]?.value || ''
+                            const v = parseInt(row.metricValues?.[0]?.value || '0')
+                            map.set(key, (map.get(key) || 0) + v)
+                        }
+                        return map
+                    }
+
+                    // ── Landing page views (screenPageViews, igual que el informe de Páginas de GA4) ──
+                    // path → pagePath + screenPageViews
+                    // título → pageTitle + screenPageViews
+                    const landingByPath  = new Map<string, number>()
+                    const landingByTitle = new Map<string, number>()
+                    const landingPathVals  = Array.from(new Set(landingQueries.filter(q => q.url.startsWith('/')).map(q => q.url)))
+                    const landingTitleVals = Array.from(new Set(landingQueries.filter(q => !q.url.startsWith('/')).map(q => q.url)))
+                    if (landingPathVals.length > 0) {
+                        const m = await ga4Query('pagePath', 'screenPageViews', landingPathVals)
+                        m.forEach((v, k) => landingByPath.set(k, v))
+                    }
+                    if (landingTitleVals.length > 0) {
+                        const m = await ga4Query('pageTitle', 'screenPageViews', landingTitleVals)
+                        m.forEach((v, k) => landingByTitle.set(k, v))
+                    }
+
+                    // ── Pageviews para payment / upsell ──
+                    const viewsByPath  = new Map<string, number>()
+                    const viewsByTitle = new Map<string, number>()
+                    const pvPathVals   = Array.from(new Set(pageviewQueries.filter(q => q.url.startsWith('/')).map(q => q.url)))
+                    const pvTitleVals  = Array.from(new Set(pageviewQueries.filter(q => !q.url.startsWith('/')).map(q => q.url)))
+                    if (pvPathVals.length > 0) {
+                        const m = await ga4Query('pagePath', 'screenPageViews', pvPathVals)
+                        m.forEach((v, k) => viewsByPath.set(k, v))
+                    }
+                    if (pvTitleVals.length > 0) {
+                        const m = await ga4Query('pageTitle', 'screenPageViews', pvTitleVals)
+                        m.forEach((v, k) => viewsByTitle.set(k, v))
+                    }
+
+                    // Asignar a cada funnel/rol
+                    for (const q of queries) {
+                        if (q.role === 'landing') {
+                            const map = q.url.startsWith('/') ? landingByPath : landingByTitle
+                            record.funnel_pages[q.tab_id].landing_sessions += map.get(q.url) || 0
+                        } else if (q.role === 'payment') {
+                            const map = q.url.startsWith('/') ? viewsByPath : viewsByTitle
+                            record.funnel_pages[q.tab_id].payment_page_views = map.get(q.url) || 0
+                        } else {
+                            const map = q.url.startsWith('/') ? viewsByPath : viewsByTitle
+                            record.funnel_pages[q.tab_id].upsell_page_views = map.get(q.url) || 0
+                        }
+                    }
+                }
+
                 platformLogs.ga4 = 'Conectado OK'
             } catch (e: any) {
                 log(`[GA4] Error: ${e.message}`)
@@ -654,6 +902,24 @@ export async function GET(request: Request) {
                     continue
                 }
 
+                // ─── Merge funnel breakdown: Hotmart sales + GA4 page views per tab ───
+                // Total pagos_iniciados (suma de payment_page_views de todos los funnels)
+                let totalPagosIniciados = 0
+                const byTabFinal: Record<string, any> = {}
+                for (const tabId of Object.keys(hotmartRecord.by_tab)) {
+                    const fb = hotmartRecord.by_tab[tabId]
+                    const gp = gaRecord.funnel_pages[tabId] || { payment_page_views: 0, upsell_page_views: 0, landing_sessions: 0 }
+                    fb.upsell.page_visits = gp.upsell_page_views
+                    fb.pagos_iniciados = gp.payment_page_views
+                    fb.landing_sessions = gp.landing_sessions
+                    totalPagosIniciados += gp.payment_page_views
+                    byTabFinal[tabId] = fb
+                }
+                const funnelDataPayload = {
+                    by_tab: byTabFinal,
+                    extras: hotmartRecord.extras,
+                }
+
                 // Compute payload hash for idempotency
                 const hashPayload = { meta: metaRecord, hotmart: hotmartRecord, ga: gaRecord }
                 const payloadHash = computeSyncHash(hashPayload)
@@ -671,19 +937,29 @@ export async function GET(request: Request) {
                     meta_impressions: metaRecord.impressions,
                     meta_clicks: metaRecord.clicks,
                     meta_campaigns: metaRecord.campaigns,
+                    // Hotmart totales globales (suma de funnels + extras)
                     ventas_principal: hotmartRecord.principal,
                     ventas_bump: hotmartRecord.bump,
                     ventas_upsell: hotmartRecord.upsell,
-                    hotmart_pagos_iniciados: hotmartRecord.pagos_iniciados,
+                    ventas_principal_count: hotmartRecord.principal_count,
+                    ventas_bump_count: hotmartRecord.bump_count,
+                    ventas_upsell_count: hotmartRecord.upsell_count,
+                    ventas_principal_bruto: hotmartRecord.principal_bruto,
+                    ventas_bump_bruto: hotmartRecord.bump_bruto,
+                    ventas_upsell_bruto: hotmartRecord.upsell_bruto,
+                    // Pagos iniciados ahora viene de GA4 (suma de payment_page_views por funnel)
+                    hotmart_pagos_iniciados: totalPagosIniciados,
+                    // Desglose granular por funnel
+                    hotmart_funnel_data: funnelDataPayload,
                     ga_sessions: gaRecord.sessions,
                     ga_bounce_rate: gaRecord.bounceRate,
                     ga_avg_session_duration: gaRecord.avgSessionDuration
                 });
-                
+
                 results.push({
                     cliente_id: cliente.id,
                     date: targetDate,
-                    localLog: `Principal: ${hotmartRecord.principal}, Bump: ${hotmartRecord.bump}, Upsell: ${hotmartRecord.upsell}`,
+                    localLog: `Principal: ${hotmartRecord.principal} (${hotmartRecord.principal_count}), Bump: ${hotmartRecord.bump} (${hotmartRecord.bump_count}), Upsell: ${hotmartRecord.upsell} (${hotmartRecord.upsell_count}), Bruto: ${hotmartRecord.principal_bruto}, Pagos: ${totalPagosIniciados}`,
                     platform_status: { ...platformLogs }
                 } as any);
             }

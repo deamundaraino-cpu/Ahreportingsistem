@@ -82,10 +82,30 @@ const FIELD_MAP: Record<string, string> = {
     hotmart_pagos_iniciados: 'hotmart_pagos_iniciados',
     hotmart_clics_link: 'hotmart_clics_link',
 
-    // ── Ventas ────────────────────────────────────────────────────────────
+    // ── Ventas (totales globales — suma de todos los funnels + extras) ───
     ventas_principal: 'ventas_principal',
     ventas_bump: 'ventas_bump',
     ventas_upsell: 'ventas_upsell',
+    ventas_principal_count: 'ventas_principal_count',
+    ventas_bump_count: 'ventas_bump_count',
+    ventas_upsell_count: 'ventas_upsell_count',
+    ventas_principal_bruto: 'ventas_principal_bruto',
+    ventas_bump_bruto:      'ventas_bump_bruto',
+    ventas_upsell_bruto:    'ventas_upsell_bruto',
+
+    // ── Funnel actual (inyectado por DashboardClient desde hotmart_funnel_data.by_tab[activeTabId]) ──
+    funnel_principal_count: 'funnel_principal_count',
+    funnel_principal_neto:  'funnel_principal_neto',
+    funnel_principal_bruto: 'funnel_principal_bruto',
+    funnel_principal_price: 'funnel_principal_price',  // precio público USD configurado en el tab
+    funnel_bump_count:      'funnel_bump_count',
+    funnel_bump_neto:       'funnel_bump_neto',
+    funnel_bump_bruto:      'funnel_bump_bruto',
+    funnel_upsell_count:    'funnel_upsell_count',
+    funnel_upsell_neto:     'funnel_upsell_neto',
+    funnel_upsell_bruto:    'funnel_upsell_bruto',
+    funnel_upsell_visits:   'funnel_upsell_visits',
+    funnel_pagos_iniciados: 'funnel_pagos_iniciados',
 
     // ── Manual ────────────────────────────────────────────────────────────
     leads_registrados: 'leads_registrados',
@@ -119,6 +139,33 @@ const MACRO_MAP: Record<string, string> = {
     meta_cost_per_messaging_conversation: 'meta_spend / meta_messaging_conversations_started',
     meta_cost_per_result: 'meta_spend / meta_results',
     meta_roas: '(ventas_principal + ventas_bump + ventas_upsell) / meta_spend',
+
+    // ── Funnel: macros derivadas (replicando estructura del Excel) ──────
+    // Bruta = precio público fijo × nº ventas principal (19 USD × 5 = 95).
+    // Requiere que el tab tenga principal_price_usd configurado; si no, devuelve 0.
+    funnel_facturacion_bruta:   'funnel_principal_price * funnel_principal_count',
+    // Neta = sum de comisiones reales que llegan a la cuenta (principal + bump + upsell).
+    funnel_facturacion_neta:    'funnel_principal_neto + funnel_bump_neto + funnel_upsell_neto',
+    funnel_roas:                '(funnel_principal_neto + funnel_bump_neto + funnel_upsell_neto) / meta_spend',
+    funnel_roi:                 '((funnel_principal_neto + funnel_bump_neto + funnel_upsell_neto) - meta_spend) / meta_spend',
+    funnel_dinero_bolsa:        '(funnel_principal_neto + funnel_bump_neto + funnel_upsell_neto) - meta_spend',
+    funnel_costo_compra:        'meta_spend / funnel_principal_count',
+    funnel_pct_pagos_compras:   '(funnel_principal_count / funnel_pagos_iniciados) * 100',
+    funnel_pct_conversion:      '(funnel_principal_count / meta_link_clicks) * 100',
+    funnel_pct_conv_order:      '(funnel_bump_count / funnel_principal_count) * 100',
+    funnel_pct_conv_upsell:     '(funnel_upsell_count / funnel_upsell_visits) * 100',
+    funnel_costo_pago:          'meta_spend / funnel_pagos_iniciados',
+    funnel_pct_visitas_pagos:   '(funnel_pagos_iniciados / ga_sessions) * 100',
+    funnel_costo_visita:        'meta_spend / ga_sessions',
+    funnel_pct_clics_visitas:   '(ga_sessions / meta_link_clicks) * 100',
+
+    // ── Panel General: macros derivadas usando totales globales ─────────
+    total_facturacion_neta:     'ventas_principal + ventas_bump + ventas_upsell',
+    total_facturacion_bruta:    'ventas_principal_bruto',
+    total_roas:                 '(ventas_principal + ventas_bump + ventas_upsell) / meta_spend',
+    total_roi:                  '((ventas_principal + ventas_bump + ventas_upsell) - meta_spend) / meta_spend',
+    total_dinero_bolsa:         '(ventas_principal + ventas_bump + ventas_upsell) - meta_spend',
+    total_costo_compra:         'meta_spend / ventas_principal_count',
 }
 
 // ── Semantic Aliases ─────────────────────────────────────────────────────────
@@ -149,6 +196,24 @@ export const SEMANTIC_ALIASES: Record<string, { label: string; defaultSource: st
     '$facturacion_upsell': { label: 'Facturación Upsell',   defaultSource: 'ventas_upsell', options: [
         { value: 'ventas_upsell',  label: 'Hotmart — Ventas Upsell' },
     ]},
+
+    // ── Aliases del Funnel actual (resueltos según la pestaña activa) ────
+    // Estos campos los inyecta DashboardClient en cada row leyendo
+    // hotmart_funnel_data.by_tab[activeTabId]. En tabs sin funnel quedan en 0.
+    '$funnel.principal_count':  { label: 'Funnel — Compras (Principal)',      defaultSource: 'funnel_principal_count',  options: [{ value: 'funnel_principal_count',  label: 'Funnel — # Ventas Principal' }] },
+    '$funnel.principal_neto':   { label: 'Funnel — Neto Principal',           defaultSource: 'funnel_principal_neto',   options: [{ value: 'funnel_principal_neto',   label: 'Funnel — Neto Principal (USD)' }] },
+    '$funnel.principal_bruto':  { label: 'Funnel — Bruto Principal',          defaultSource: 'funnel_principal_bruto',  options: [{ value: 'funnel_principal_bruto',  label: 'Funnel — Bruto Principal (USD)' }] },
+    '$funnel.bump_count':       { label: 'Funnel — # Order Bumps',            defaultSource: 'funnel_bump_count',       options: [{ value: 'funnel_bump_count',       label: 'Funnel — # Order Bumps' }] },
+    '$funnel.bump_neto':        { label: 'Funnel — Neto Order Bump',          defaultSource: 'funnel_bump_neto',        options: [{ value: 'funnel_bump_neto',        label: 'Funnel — Neto Order Bump (USD)' }] },
+    '$funnel.upsell_count':     { label: 'Funnel — # Upsells',                defaultSource: 'funnel_upsell_count',     options: [{ value: 'funnel_upsell_count',     label: 'Funnel — # Upsells' }] },
+    '$funnel.upsell_neto':      { label: 'Funnel — Neto Upsell',              defaultSource: 'funnel_upsell_neto',      options: [{ value: 'funnel_upsell_neto',      label: 'Funnel — Neto Upsell (USD)' }] },
+    '$funnel.upsell_visits':    { label: 'Funnel — Visitas Pág. Upsell',      defaultSource: 'funnel_upsell_visits',    options: [{ value: 'funnel_upsell_visits',    label: 'GA4 — Visitas pág. upsell' }] },
+    '$funnel.pagos_iniciados':  { label: 'Funnel — Pagos Iniciados (GA4)',    defaultSource: 'funnel_pagos_iniciados',  options: [{ value: 'funnel_pagos_iniciados',  label: 'GA4 — Visitas pág. de pago' }] },
+    '$funnel.facturacion_neta': { label: 'Funnel — Facturación Neta',         defaultSource: 'funnel_facturacion_neta', options: [{ value: 'funnel_facturacion_neta', label: 'Funnel — Neto (Principal + Bump + Upsell)' }] },
+    '$funnel.facturacion_bruta':{ label: 'Funnel — Facturación Bruta',        defaultSource: 'funnel_facturacion_bruta',options: [{ value: 'funnel_facturacion_bruta',label: 'Funnel — Precio × Ventas Principal' }] },
+    '$funnel.roas':             { label: 'Funnel — ROAS',                     defaultSource: 'funnel_roas',             options: [{ value: 'funnel_roas',             label: 'Funnel — Neto / Spend' }] },
+    '$funnel.roi':              { label: 'Funnel — ROI',                      defaultSource: 'funnel_roi',              options: [{ value: 'funnel_roi',              label: 'Funnel — (Neto - Spend) / Spend' }] },
+    '$funnel.dinero_bolsa':     { label: 'Funnel — Dinero en la Bolsa',       defaultSource: 'funnel_dinero_bolsa',     options: [{ value: 'funnel_dinero_bolsa',     label: 'Funnel — Neto - Spend' }] },
 }
 
 /**
@@ -158,9 +223,10 @@ export const SEMANTIC_ALIASES: Record<string, { label: string; defaultSource: st
  */
 export function resolveAliases(formula: string, mapping: Record<string, string> = {}): string {
     let expr = formula
-    for (const [alias, config] of Object.entries(SEMANTIC_ALIASES)) {
+    // Sort by length descending so longer aliases ($funnel.facturacion_neta) replace before shorter prefixes
+    const sortedAliases = Object.entries(SEMANTIC_ALIASES).sort(([a], [b]) => b.length - a.length)
+    for (const [alias, config] of sortedAliases) {
         const replacement = mapping[alias] || config.defaultSource
-        // Use replaceAll to ensure all references are replaced
         expr = expr.replaceAll(alias, replacement)
     }
     return expr
@@ -181,7 +247,8 @@ export function resolveAliasesWithFallback(
     availablePlatforms: Set<string> = new Set(['meta'])
 ): string {
     let expr = formula
-    for (const [alias, config] of Object.entries(SEMANTIC_ALIASES)) {
+    const sortedAliases = Object.entries(SEMANTIC_ALIASES).sort(([a], [b]) => b.length - a.length)
+    for (const [alias, config] of sortedAliases) {
         let selected = mapping[alias] || config.defaultSource
 
         // Fallback: if selected source requires unavailable platform, use Meta alternative

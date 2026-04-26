@@ -204,21 +204,34 @@ export async function saveClienteTab(clienteId: string, payload: {
     fecha_inicio?: string;
     fecha_finalizacion?: string;
     presupuesto_objetivo?: number;
+    hotmart_funnel?: {
+        enabled?: boolean
+        principal_names?: string[]
+        bump_names?: string[]
+        upsell_names?: string[]
+        payment_page_url?: string
+        upsell_page_url?: string
+    } | null;
 }) {
     const supabase = await createAdminClient()
+
+    // hotmart_funnel: undefined = no tocar (solo en edición); null o objeto = setear (incluyendo "deshabilitar")
+    const baseFields: Record<string, any> = {
+        nombre: payload.nombre,
+        keyword_meta: payload.keyword_meta,
+        plantilla_id: payload.plantilla_id || null,
+        fecha_inicio: payload.fecha_inicio || null,
+        fecha_finalizacion: payload.fecha_finalizacion || null,
+        presupuesto_objetivo: payload.presupuesto_objetivo || null,
+    }
+    if (payload.hotmart_funnel !== undefined) {
+        baseFields.hotmart_funnel = payload.hotmart_funnel
+    }
 
     if (payload.id) {
         const { error } = await supabase
             .from('cliente_tabs')
-            .update({
-                nombre: payload.nombre,
-                keyword_meta: payload.keyword_meta,
-                plantilla_id: payload.plantilla_id || null,
-                fecha_inicio: payload.fecha_inicio || null,
-                fecha_finalizacion: payload.fecha_finalizacion || null,
-                presupuesto_objetivo: payload.presupuesto_objetivo || null,
-                updated_at: new Date().toISOString()
-            })
+            .update({ ...baseFields, updated_at: new Date().toISOString() })
             .eq('id', payload.id)
             .eq('cliente_id', clienteId)
         if (error) return { error: error.message }
@@ -227,12 +240,7 @@ export async function saveClienteTab(clienteId: string, payload: {
             .from('cliente_tabs')
             .insert({
                 cliente_id: clienteId,
-                nombre: payload.nombre,
-                keyword_meta: payload.keyword_meta,
-                plantilla_id: payload.plantilla_id || null,
-                fecha_inicio: payload.fecha_inicio || null,
-                fecha_finalizacion: payload.fecha_finalizacion || null,
-                presupuesto_objetivo: payload.presupuesto_objetivo || null,
+                ...baseFields,
                 orden: payload.orden || 0,
             })
         if (error) return { error: error.message }

@@ -159,10 +159,14 @@ const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean
     async function handleSave() {
         setLoading(true)
         setError(null)
+        const computedBasic = !config.hotmart_basic && config.hotmart_client_id && config.hotmart_client_secret
+            ? btoa(`${config.hotmart_client_id}:${config.hotmart_client_secret}`)
+            : config.hotmart_basic
         const finalConfig = {
             ...config,
             meta_accounts: metaAccounts,
-meta_account_id: metaAccounts[0]?.account_id || config.meta_account_id || '',
+            meta_account_id: metaAccounts[0]?.account_id || config.meta_account_id || '',
+            hotmart_basic: computedBasic || config.hotmart_basic || '',
         }
         const { success, error: updateError } = await updateClienteConfig(cliente.id, finalConfig)
         if (!success) {
@@ -459,36 +463,11 @@ meta_account_id: metaAccounts[0]?.account_id || config.meta_account_id || '',
                         />
                     </div>
 
-                    <div className="pt-4 border-t border-zinc-800 space-y-4">
-                        <h4 className="font-semibold text-lg text-zinc-100">Filtros de Productos</h4>
-                        <p className="text-zinc-400 text-sm">Separar nombres de productos por comas si hay múltiples (ej. "Curso Inicial, Libro PDF").</p>
-                        <div className="space-y-2">
-                            <Label htmlFor="hotmart_principal" className="text-zinc-300">Nombres Producto Principal</Label>
-                            <Input
-                                id="hotmart_principal"
-                                placeholder="Nombre exacto del producto en Hotmart"
-                                value={config.hotmart_principal_names || ''}
-                                onChange={(e) => setConfig({ ...config, hotmart_principal_names: e.target.value })}
-                                className="bg-zinc-950 border-zinc-700"
-                            />
-                        </div>
-                        <div className="space-y-2">
-                            <Label htmlFor="hotmart_bump" className="text-zinc-300">Nombres Order Bump</Label>
-                            <Input
-                                id="hotmart_bump"
-                                value={config.hotmart_bump_names || ''}
-                                onChange={(e) => setConfig({ ...config, hotmart_bump_names: e.target.value })}
-                                className="bg-zinc-950 border-zinc-700"
-                            />
-                        </div>
-                        <div className="space-y-2">
-                            <Label htmlFor="hotmart_upsell" className="text-zinc-300">Nombres Upsell</Label>
-                            <Input
-                                id="hotmart_upsell"
-                                value={config.hotmart_upsell_names || ''}
-                                onChange={(e) => setConfig({ ...config, hotmart_upsell_names: e.target.value })}
-                                className="bg-zinc-950 border-zinc-700"
-                            />
+                    <div className="pt-4 border-t border-zinc-800">
+                        <div className="bg-orange-500/5 border border-orange-500/20 rounded-lg p-3">
+                            <p className="text-xs text-orange-300/90 leading-relaxed">
+                                <strong className="text-orange-400">Filtros de productos por funnel</strong> — La configuración de productos (Principal / Order Bump / Upsell) y URLs de página ahora se hace <strong>por pestaña</strong> desde el dashboard del cliente. Cada pestaña representa un funnel independiente con sus propias métricas, lo que permite medir varios productos del mismo cliente por separado.
+                            </p>
                         </div>
                     </div>
                 </CardContent>

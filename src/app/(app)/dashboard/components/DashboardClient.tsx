@@ -248,6 +248,81 @@ function SortableTab({ tab, isActive, onSelect, onEdit, isPublic, hasOverride }:
     )
 }
 
+// ─── Extras Panel: productos Hotmart sin funnel asignado ───────────────────
+// Aparece en Vista General y agrega los productos "extras" del rango filtrado.
+// Se nutre de hotmart_funnel_data.extras[] de cada metricas_diarias del rango.
+function ExtrasPanel({ filteredMetrics }: { filteredMetrics: any[] }) {
+    const aggregated = useMemo(() => {
+        const map = new Map<string, { count: number; gross: number; net: number }>()
+        for (const row of filteredMetrics) {
+            const extras = (row.hotmart_funnel_data as any)?.extras
+            if (!Array.isArray(extras)) continue
+            for (const e of extras) {
+                const name = e.product_name || '(Sin nombre)'
+                const cur = map.get(name) || { count: 0, gross: 0, net: 0 }
+                cur.count += Number(e.count) || 0
+                cur.gross += Number(e.gross) || 0
+                cur.net   += Number(e.net)   || 0
+                map.set(name, cur)
+            }
+        }
+        return Array.from(map.entries())
+            .map(([name, v]) => ({ name, ...v }))
+            .sort((a, b) => b.net - a.net)
+    }, [filteredMetrics])
+
+    if (aggregated.length === 0) return null
+
+    const totalCount = aggregated.reduce((s, r) => s + r.count, 0)
+    const totalNet   = aggregated.reduce((s, r) => s + r.net,   0)
+    const totalGross = aggregated.reduce((s, r) => s + r.gross, 0)
+
+    return (
+        <Card className="bg-zinc-900 border-zinc-800 overflow-hidden">
+            <CardHeader className="border-b border-zinc-800 bg-zinc-950/30 py-3">
+                <div className="flex items-center justify-between">
+                    <CardTitle className="text-white text-base flex items-center gap-2">
+                        <span className="text-orange-400">⚡</span>
+                        Productos Extras
+                        <span className="text-xs font-normal text-zinc-500">(no asignados a ningún funnel)</span>
+                    </CardTitle>
+                    <div className="text-xs text-zinc-400">
+                        {aggregated.length} producto{aggregated.length !== 1 ? 's' : ''} · <span className="text-emerald-400 font-mono">${totalNet.toFixed(2)}</span> neto
+                    </div>
+                </div>
+            </CardHeader>
+            <CardContent className="p-0 overflow-x-auto custom-scrollbar">
+                <Table className="whitespace-nowrap">
+                    <TableHeader>
+                        <TableRow className="border-zinc-800 bg-zinc-950 *:text-zinc-300 *:font-semibold *:text-xs">
+                            <TableHead className="pl-4">Producto</TableHead>
+                            <TableHead className="text-right">Ventas</TableHead>
+                            <TableHead className="text-right">Bruto (USD)</TableHead>
+                            <TableHead className="text-right pr-4">Neto (USD)</TableHead>
+                        </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                        {aggregated.map(r => (
+                            <TableRow key={r.name} className="border-zinc-800 hover:bg-zinc-950/50">
+                                <TableCell className="pl-4 text-zinc-200">{r.name}</TableCell>
+                                <TableCell className="text-right font-mono text-zinc-300">{r.count}</TableCell>
+                                <TableCell className="text-right font-mono text-zinc-400">${r.gross.toFixed(2)}</TableCell>
+                                <TableCell className="text-right pr-4 font-mono text-emerald-400">${r.net.toFixed(2)}</TableCell>
+                            </TableRow>
+                        ))}
+                        <TableRow className="border-zinc-700 bg-zinc-950/60 font-semibold">
+                            <TableCell className="pl-4 text-zinc-200">Total</TableCell>
+                            <TableCell className="text-right font-mono text-zinc-200">{totalCount}</TableCell>
+                            <TableCell className="text-right font-mono text-zinc-200">${totalGross.toFixed(2)}</TableCell>
+                            <TableCell className="text-right pr-4 font-mono text-emerald-400">${totalNet.toFixed(2)}</TableCell>
+                        </TableRow>
+                    </TableBody>
+                </Table>
+            </CardContent>
+        </Card>
+    )
+}
+
 // ─── Dynamic Dashboard ────────────────────────────────────────────────────────
 
 function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initialTabId = 'general', initialKeyword = '' }: {
@@ -536,7 +611,37 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
         if (activeTabObj?.fecha_finalizacion) {
             rows = rows.filter((m: any) => m.fecha <= activeTabObj.fecha_finalizacion)
         }
-        return rows.map((m: any) => enrichMetaRow(m, effectiveKeyword, data.campaignGroups))
+        const enriched = rows.map((m: any) => enrichMetaRow(m, effectiveKeyword, data.campaignGroups))
+
+        // Inyectar campos del funnel actual desde hotmart_funnel_data.by_tab[activeTabId]
+        // Esto permite que las fórmulas usen $funnel.* / funnel_principal_count / funnel_bump_neto, etc.
+        const tabId = activeTabObj?.id
+        if (tabId) {
+            return enriched.map((row: any) => {
+                const data = (row.hotmart_funnel_data as any) || {}
+                const fb = data.by_tab?.[tabId] || null
+                const landingSessions = fb?.landing_sessions ?? 0
+                return {
+                    ...row,
+                    // Si hay landing pages configuradas, reemplazar ga_sessions con las sesiones del funnel
+                    ...(landingSessions > 0 ? { ga_sessions: landingSessions } : {}),
+                    funnel_principal_count: fb?.principal?.count ?? 0,
+                    funnel_principal_neto:  fb?.principal?.net   ?? 0,
+                    funnel_principal_bruto: fb?.principal?.gross ?? 0,
+                    // Precio público configurado en el funnel del tab (para calcular bruta = precio × count)
+                    funnel_principal_price: Number(activeTabObj?.hotmart_funnel?.principal_price_usd ?? 0),
+                    funnel_bump_count:      fb?.bump?.count      ?? 0,
+                    funnel_bump_neto:       fb?.bump?.net        ?? 0,
+                    funnel_bump_bruto:      fb?.bump?.gross      ?? 0,
+                    funnel_upsell_count:    fb?.upsell?.count    ?? 0,
+                    funnel_upsell_neto:     fb?.upsell?.net      ?? 0,
+                    funnel_upsell_bruto:    fb?.upsell?.gross    ?? 0,
+                    funnel_upsell_visits:   fb?.upsell?.page_visits ?? 0,
+                    funnel_pagos_iniciados: fb?.pagos_iniciados  ?? 0,
+                }
+            })
+        }
+        return enriched
     }, [metrics, effectiveKeyword, activeTabObj, data.campaignGroups])
 
     const visibleCols = useMemo(() => {
@@ -903,6 +1008,11 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
             {/* Budget/Time Cards */}
             {budgetCards}
 
+            {/* Productos Extras: solo en Vista General, agrega productos sin funnel mapeado */}
+            {activeTabId === 'general' && (
+                <ExtrasPanel filteredMetrics={filteredMetrics} />
+            )}
+
             <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDashboardDragEnd}>
                 <SortableContext items={orderedBlocks} strategy={verticalListSortingStrategy}>
                     <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -1136,6 +1246,7 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                     clienteId={cliente.id}
                     allLayouts={allLayouts}
                     tabToEdit={tabToEdit}
+                    clienteHasHotmart={platformSet.has('hotmart')}
                 />
             )}
 
@@ -1194,8 +1305,8 @@ const DEFAULT_MEGALAYOUT: ReportLayout = {
         { id: "c_fn_bump", label: "Facturación neta Order bump", formula: "ventas_bump", prefix: "$", decimals: 2, align: "right" },
         { id: "c_upsell", label: "UPSell", formula: "meta_custom_upsell", align: "right" },
         { id: "c_fn_upsell", label: "Facturacion neta UPSELL", formula: "ventas_upsell", prefix: "$", decimals: 2, align: "right" },
-        { id: "c_fb", label: "Facturación bruta", formula: "ventas_principal + ventas_bump + ventas_upsell", prefix: "$", decimals: 2, align: "right" },
-        { id: "c_fn", label: "Facturación neta", formula: "ventas_principal + ventas_bump + ventas_upsell", prefix: "$", decimals: 2, align: "right" },
+        { id: "c_fb", label: "Facturación bruta", formula: "total_facturacion_bruta", prefix: "$", decimals: 2, align: "right" },
+        { id: "c_fn", label: "Facturación neta", formula: "total_facturacion_neta", prefix: "$", decimals: 2, align: "right" },
         { id: "c_roas", label: "ROAS", formula: "meta_roas", suffix: "x", decimals: 2, align: "right", highlight: true },
         { id: "c_roi", label: "ROI", formula: "(((ventas_principal + ventas_bump + ventas_upsell) - meta_spend) / meta_spend) * 100", suffix: "%", decimals: 1, align: "right", highlight: true },
         { id: "c_dinero", label: "Dinero en la bolsa", formula: "(ventas_principal + ventas_bump + ventas_upsell) - meta_spend", prefix: "$", decimals: 2, align: "right" },

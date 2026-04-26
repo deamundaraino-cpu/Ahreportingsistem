@@ -220,15 +220,21 @@ export async function testMetaConnection(token: string, accountId: string) {
 export async function testHotmartConnection(config: any) {
     let accessToken = config.hotmart_token
 
+    // Auto-compute Basic Auth from client_id + client_secret if not explicitly set
+    const hotmartBasic = config.hotmart_basic ||
+        (config.hotmart_client_id && config.hotmart_client_secret
+            ? Buffer.from(`${config.hotmart_client_id}:${config.hotmart_client_secret}`).toString('base64')
+            : null)
+
     try {
-        if (config.hotmart_basic) {
+        if (hotmartBasic) {
             const params = new URLSearchParams()
             params.append('grant_type', 'client_credentials')
 
             const res = await fetch('https://api-sec-vlc.hotmart.com/security/oauth/token', {
                 method: 'POST',
                 headers: {
-                    'Authorization': `Basic ${config.hotmart_basic}`,
+                    'Authorization': `Basic ${hotmartBasic}`,
                     'Content-Type': 'application/x-www-form-urlencoded'
                 },
                 body: params.toString()
@@ -238,13 +244,21 @@ export async function testHotmartConnection(config: any) {
             accessToken = data.access_token
         }
 
-        if (!accessToken) return { error: 'No hay token disponible' }
+        if (!accessToken) return { error: 'No hay token disponible. Configura Client ID y Client Secret.' }
 
-        const res = await fetch('https://developers.hotmart.com/payments/api/v1/sales/history?page_size=1', {
+        // Hotmart requires start_date and end_date; use last 7 days as a probe
+        const now = Date.now()
+        const sevenDaysAgo = now - 7 * 24 * 60 * 60 * 1000
+        const url = new URL('https://developers.hotmart.com/payments/api/v1/sales/history')
+        url.searchParams.set('start_date', sevenDaysAgo.toString())
+        url.searchParams.set('end_date', now.toString())
+        url.searchParams.set('max_results', '1')
+
+        const res = await fetch(url.toString(), {
             headers: { 'Authorization': `Bearer ${accessToken}` }
         })
         const data = await res.json()
-        if (res.status !== 200) return { error: data.error_description || 'Error de conexión' }
+        if (res.status !== 200) return { error: data.message || data.error_description || 'Error de conexión' }
 
         return { success: true }
     } catch (err: any) {
