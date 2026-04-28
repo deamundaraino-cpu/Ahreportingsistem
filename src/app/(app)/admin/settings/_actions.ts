@@ -6,8 +6,46 @@ import { headers } from 'next/headers'
 import { BetaAnalyticsDataClient } from '@google-analytics/data'
 
 export async function getClientes() {
-    const supabase = await createAdminClient()
-    const { data: clientes, error } = await supabase.from('clientes').select('*, layout:layouts_reporte(id, nombre)').order('created_at', { ascending: false })
+    const supabase = await createClient()
+    const { data: { user } } = await supabase.auth.getUser()
+
+    const adminSupabase = await createAdminClient()
+
+    if (user) {
+        const { data: profile } = await supabase
+            .from('user_profiles')
+            .select('role')
+            .eq('id', user.id)
+            .single()
+
+        const role = profile?.role ?? 'viewer'
+
+        if (role === 'trafficker') {
+            // Only return clients assigned to this user
+            const { data: assignments } = await adminSupabase
+                .from('user_client_assignments')
+                .select('client_id')
+                .eq('user_id', user.id)
+
+            const clientIds = (assignments ?? []).map((a: { client_id: string }) => a.client_id)
+
+            if (clientIds.length === 0) return []
+
+            const { data: clientes, error } = await adminSupabase
+                .from('clientes')
+                .select('*, layout:layouts_reporte(id, nombre)')
+                .in('id', clientIds)
+                .order('created_at', { ascending: false })
+
+            if (error) return []
+            return clientes
+        }
+    }
+
+    const { data: clientes, error } = await adminSupabase
+        .from('clientes')
+        .select('*, layout:layouts_reporte(id, nombre)')
+        .order('created_at', { ascending: false })
 
     if (error) {
         console.error('Error fetching clients:', error)

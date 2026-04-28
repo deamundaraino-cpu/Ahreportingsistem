@@ -7,7 +7,9 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
     const { data: { user } } = await supabase.auth.getUser()
     
     let role = 'viewer'
+    let userId = ''
     if (user) {
+        userId = user.id
         const { data: profile } = await supabase
             .from('user_profiles')
             .select('role')
@@ -28,7 +30,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
                      style={{ background: '#1E6AB5' }} />
             </div>
 
-            <AppSidebar initialRole={role} />
+            <AppSidebar initialRole={role} userId={userId} />
 
             {/* Main Content Area */}
             <div className="flex-1 flex flex-col relative w-full transition-all duration-300 ease-in-out lg:ml-64">

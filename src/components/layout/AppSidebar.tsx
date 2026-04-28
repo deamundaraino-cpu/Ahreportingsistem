@@ -17,7 +17,7 @@ import {
     Key
 } from 'lucide-react'
 
-export function AppSidebar({ initialRole = 'viewer' }: { initialRole?: string }) {
+export function AppSidebar({ initialRole = 'viewer', userId = '' }: { initialRole?: string; userId?: string }) {
     const pathname = usePathname()
     const [isOpen, setIsOpen] = useState(false)
     const [role, setRole] = useState<string | null>(initialRole)
@@ -70,17 +70,22 @@ export function AppSidebar({ initialRole = 'viewer' }: { initialRole?: string })
         }
     }, [supabase])
 
+    const isSuperAdmin = role === 'superadmin'
+    const isAdmin = role === 'admin'
+    const isTrafficker = role === 'trafficker'
+    const hasAdminAccess = isSuperAdmin || isAdmin
+
     const navigation = [
         { name: 'General Overview', href: '/dashboard', icon: LayoutDashboard },
     ]
 
     const settingsNavigation = [
-        { name: 'Ajustes de Sistema', href: '/admin/settings', icon: Settings },
-        { name: 'Constructor de Layouts', href: '/admin/layouts', icon: Users },
-        { name: 'Reportes Mensuales', href: '/admin/reports', icon: FileText },
-        { name: 'Gestión de Usuarios', href: '/admin/users', icon: Shield },
-        { name: 'API & Integraciones', href: '/admin/api-tokens', icon: Key },
-    ]
+        { name: 'Ajustes de Sistema', href: '/admin/settings', icon: Settings, show: true },
+        { name: 'Constructor de Layouts', href: '/admin/layouts', icon: Users, show: true },
+        { name: 'Reportes Mensuales', href: '/admin/reports', icon: FileText, show: hasAdminAccess },
+        { name: 'Gestión de Usuarios', href: '/admin/users', icon: Shield, show: hasAdminAccess },
+        { name: 'API & Integraciones', href: '/admin/api-tokens', icon: Key, show: hasAdminAccess },
+    ].filter(item => item.show)
 
     const isActive = (path: string) => pathname?.startsWith(path)
 
@@ -229,8 +234,23 @@ export function AppSidebar({ initialRole = 'viewer' }: { initialRole?: string })
                     </div>
                 </nav>
 
-                {/* Logout */}
-                <div className="p-3 border-t border-zinc-200 dark:border-white/[0.06]">
+                {/* Role badge + Logout */}
+                <div className="p-3 border-t border-zinc-200 dark:border-white/[0.06] space-y-2">
+                    {role && (
+                        <div className="px-3 py-2 rounded-lg bg-zinc-50 dark:bg-white/[0.04] flex items-center gap-2">
+                            <Shield className="h-3.5 w-3.5 flex-shrink-0 text-zinc-400 dark:text-zinc-500" />
+                            <span className={`text-xs font-semibold capitalize ${
+                                role === 'superadmin' ? 'text-amber-500 dark:text-amber-400' :
+                                role === 'admin'      ? 'text-purple-500 dark:text-purple-400' :
+                                role === 'trafficker' ? 'text-blue-500 dark:text-blue-400' :
+                                'text-zinc-400 dark:text-zinc-500'
+                            }`}>
+                                {role === 'superadmin' ? 'Super Admin' :
+                                 role === 'admin'      ? 'Admin' :
+                                 role === 'trafficker' ? 'Trafficker' : 'Viewer'}
+                            </span>
+                        </div>
+                    )}
                     <form action="/auth/signout" method="post" className="w-full">
                         <button className="
                             flex w-full items-center px-3 py-2.5 text-sm font-medium rounded-lg

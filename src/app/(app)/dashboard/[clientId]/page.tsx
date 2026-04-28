@@ -5,6 +5,8 @@ import { GoogleSheetsLeadsCard } from "../components/GoogleSheetsLeadsCard"
 import { CopyLinkButton } from "../components/CopyLinkButton"
 import { PublicLinkButton } from "../components/PublicLinkButton"
 import { format, subDays } from "date-fns"
+import { createClient, createAdminClient } from "@/utils/supabase/server"
+import { redirect } from "next/navigation"
 
 export default async function DashboardPage(props: {
     params: Promise<{ clientId: string }>
@@ -12,6 +14,29 @@ export default async function DashboardPage(props: {
 }) {
     const params = await props.params;
     const clientId = params.clientId;
+
+    // Guard: traffickers can only access assigned clients
+    const supabase = await createClient()
+    const { data: { user } } = await supabase.auth.getUser()
+    if (user) {
+        const { data: profile } = await supabase
+            .from('user_profiles')
+            .select('role')
+            .eq('id', user.id)
+            .single()
+
+        if (profile?.role === 'trafficker') {
+            const adminSupabase = await createAdminClient()
+            const { data: assignment } = await adminSupabase
+                .from('user_client_assignments')
+                .select('id')
+                .eq('user_id', user.id)
+                .eq('client_id', clientId)
+                .maybeSingle()
+
+            if (!assignment) redirect('/dashboard')
+        }
+    }
     const searchParams = await props.searchParams;
     const now = new Date()
     const fallbackFrom = format(subDays(now, 30), 'yyyy-MM-dd')

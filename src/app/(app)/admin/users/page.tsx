@@ -1,25 +1,28 @@
-import { getUsers } from './_actions'
+import { getUsers, getAllClients } from './_actions'
 import { UserManagementClient } from './UserManagementClient'
 import { createClient } from '@/utils/supabase/server'
 import { redirect } from 'next/navigation'
 import { Users as UsersIcon } from 'lucide-react'
 
 export default async function AdminUsersPage() {
-    // Check role again on server for page access
     const supabase = await createClient()
     const { data: { user } } = await supabase.auth.getUser()
-    
-    if (!user) {
-        redirect('/')
-    }
 
-    // TODO: Implement role-based access control
-    // const { data: profile } = await supabase.from('user_profiles').select('role').eq('id', user.id).single()
-    // if (profile?.role !== 'admin') {
-    //     redirect('/dashboard') // Or some error page
-    // }
+    if (!user) redirect('/')
 
-    const initialUsers = await getUsers()
+    const { data: profile } = await supabase
+        .from('user_profiles')
+        .select('role')
+        .eq('id', user.id)
+        .single()
+
+    const role = profile?.role ?? 'viewer'
+    if (!['superadmin', 'admin'].includes(role)) redirect('/dashboard')
+
+    const [initialUsers, allClients] = await Promise.all([
+        getUsers(),
+        getAllClients(),
+    ])
 
     return (
         <div className="space-y-6">
@@ -32,8 +35,13 @@ export default async function AdminUsersPage() {
                     <p className="text-zinc-400 text-sm">Administra los roles y accesos de tu equipo.</p>
                 </div>
             </div>
-            
-            <UserManagementClient initialUsers={initialUsers} />
+
+            <UserManagementClient
+                initialUsers={initialUsers}
+                allClients={allClients}
+                currentRole={role}
+                currentUserId={user.id}
+            />
         </div>
     )
 }
