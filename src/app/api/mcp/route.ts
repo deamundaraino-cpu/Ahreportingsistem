@@ -309,7 +309,7 @@ async function handleGetSummary(ctx: TokenContext, args: Record<string, string>)
   if (keyword) {
     const { data, error } = await supabase
       .from('metricas_diarias')
-      .select('fecha, meta_campaigns, ventas_cerradas')
+      .select('fecha, meta_campaigns, metricas_manuales')
       .eq('cliente_id', client_id)
       .gte('fecha', fromDate)
       .lte('fecha', toDate);
@@ -326,7 +326,8 @@ async function handleGetSummary(ctx: TokenContext, args: Record<string, string>)
     const custom_conversions_total: Record<string, number> = {};
 
     for (const row of data ?? []) {
-      total_ventas_cerradas += Number(row.ventas_cerradas ?? 0);
+      const manuales = (row.metricas_manuales as Record<string, number>) ?? {};
+      total_ventas_cerradas += Number(manuales['VENTAS_CERRADAS'] ?? 0);
 
       const campaigns = ((row.meta_campaigns as any[]) ?? []).filter(c =>
         (c.name ?? '').toLowerCase().includes(kw)
@@ -378,7 +379,7 @@ async function handleGetSummary(ctx: TokenContext, args: Record<string, string>)
   const { data, error } = await supabase
     .from('metricas_diarias')
     .select(
-      'meta_spend, meta_clicks, meta_impressions, ga_sessions, ventas_principal, ventas_bump, ventas_upsell, ventas_cerradas'
+      'meta_spend, meta_clicks, meta_impressions, ga_sessions, ventas_principal, ventas_bump, ventas_upsell, metricas_manuales'
     )
     .eq('cliente_id', client_id)
     .gte('fecha', fromDate)
@@ -387,22 +388,27 @@ async function handleGetSummary(ctx: TokenContext, args: Record<string, string>)
   if (error) throw new Error(error.message);
 
   const totals = (data ?? []).reduce(
-    (acc, row) => ({
-      total_spend: acc.total_spend + Number(row.meta_spend ?? 0),
-      total_clicks: acc.total_clicks + Number(row.meta_clicks ?? 0),
-      total_impressions: acc.total_impressions + Number(row.meta_impressions ?? 0),
-      total_sessions: acc.total_sessions + Number(row.ga_sessions ?? 0),
-      total_revenue:
-        acc.total_revenue +
-        Number(row.ventas_principal ?? 0) +
-        Number(row.ventas_bump ?? 0) +
-        Number(row.ventas_upsell ?? 0) +
-        Number(row.ventas_cerradas ?? 0),
-    }),
-    { total_spend: 0, total_clicks: 0, total_impressions: 0, total_sessions: 0, total_revenue: 0 }
+    (acc, row) => {
+      const manuales = (row.metricas_manuales as Record<string, number>) ?? {};
+      const ventas_cerradas = Number(manuales['VENTAS_CERRADAS'] ?? 0);
+      return {
+        total_spend: acc.total_spend + Number(row.meta_spend ?? 0),
+        total_clicks: acc.total_clicks + Number(row.meta_clicks ?? 0),
+        total_impressions: acc.total_impressions + Number(row.meta_impressions ?? 0),
+        total_sessions: acc.total_sessions + Number(row.ga_sessions ?? 0),
+        total_revenue:
+          acc.total_revenue +
+          Number(row.ventas_principal ?? 0) +
+          Number(row.ventas_bump ?? 0) +
+          Number(row.ventas_upsell ?? 0) +
+          ventas_cerradas,
+        total_ventas_cerradas: acc.total_ventas_cerradas + ventas_cerradas,
+      };
+    },
+    { total_spend: 0, total_clicks: 0, total_impressions: 0, total_sessions: 0, total_revenue: 0, total_ventas_cerradas: 0 }
   );
 
-  const total_ventas_cerradas = (data ?? []).reduce((sum, row) => sum + Number(row.ventas_cerradas ?? 0), 0);
+  const total_ventas_cerradas = totals.total_ventas_cerradas;
 
   const roas = totals.total_spend > 0 ? totals.total_revenue / totals.total_spend : 0;
   const ctr =
