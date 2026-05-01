@@ -398,6 +398,8 @@ async function handleGetSummary(ctx: TokenContext, args: Record<string, string>)
     { total_spend: 0, total_clicks: 0, total_impressions: 0, total_sessions: 0, total_revenue: 0 }
   );
 
+  const total_ventas_cerradas = (data ?? []).reduce((sum, row) => sum + Number(row.ventas_cerradas ?? 0), 0);
+
   const roas = totals.total_spend > 0 ? totals.total_revenue / totals.total_spend : 0;
   const ctr =
     totals.total_impressions > 0
@@ -410,6 +412,7 @@ async function handleGetSummary(ctx: TokenContext, args: Record<string, string>)
     period: { from: fromDate, to: toDate, days: data?.length ?? 0 },
     totals: {
       ...totals,
+      ventas_cerradas: total_ventas_cerradas,
       roas: Math.round(roas * 100) / 100,
       ctr: Math.round(ctr * 100) / 100,
       cpc: Math.round(cpc * 100) / 100,
