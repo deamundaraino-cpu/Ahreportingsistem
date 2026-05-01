@@ -92,6 +92,7 @@ const FIELD_MAP: Record<string, string> = {
     ventas_principal_bruto: 'ventas_principal_bruto',
     ventas_bump_bruto:      'ventas_bump_bruto',
     ventas_upsell_bruto:    'ventas_upsell_bruto',
+    ventas_cerradas:        'ventas_cerradas',
 
     // ── Funnel actual (inyectado por DashboardClient desde hotmart_funnel_data.by_tab[activeTabId]) ──
     funnel_principal_count: 'funnel_principal_count',

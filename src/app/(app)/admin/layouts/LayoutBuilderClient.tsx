@@ -138,6 +138,7 @@ const METRIC_CATALOG = [
             { id: 'ventas_principal',        label: 'Neto Principal',         desc: 'Ingresos netos del producto principal' },
             { id: 'ventas_bump',             label: 'Neto Bump',              desc: 'Ingresos netos de order bump' },
             { id: 'ventas_upsell',           label: 'Neto Upsell',            desc: 'Ingresos netos de upsell' },
+            { id: 'ventas_cerradas',         label: 'Ventas Cerradas',        desc: 'Entrada manual de ventas (asesorías, etc)' },
             { id: 'ventas_principal_bruto',  label: 'Bruto Principal',        desc: 'Precio de venta × compras del principal' },
             { id: 'ventas_bump_bruto',       label: 'Bruto Bump',             desc: 'Precio de venta × compras del bump' },
             { id: 'ventas_upsell_bruto',     label: 'Bruto Upsell',           desc: 'Precio de venta × compras del upsell' },

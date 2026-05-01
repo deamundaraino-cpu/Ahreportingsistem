@@ -271,7 +271,7 @@ async function handleGetMetrics(ctx: TokenContext, args: Record<string, string>)
   const { data, error } = await supabase
     .from('metricas_diarias')
     .select(
-      'fecha, meta_spend, meta_impressions, meta_clicks, ga_sessions, hotmart_pagos_iniciados, ventas_principal, ventas_bump, ventas_upsell'
+      'fecha, meta_spend, meta_impressions, meta_clicks, ga_sessions, hotmart_pagos_iniciados, ventas_principal, ventas_bump, ventas_upsell, ventas_cerradas'
     )
     .eq('cliente_id', client_id)
     .gte('fecha', fromDate)
@@ -374,7 +374,7 @@ async function handleGetSummary(ctx: TokenContext, args: Record<string, string>)
   const { data, error } = await supabase
     .from('metricas_diarias')
     .select(
-      'meta_spend, meta_clicks, meta_impressions, ga_sessions, ventas_principal, ventas_bump, ventas_upsell'
+      'meta_spend, meta_clicks, meta_impressions, ga_sessions, ventas_principal, ventas_bump, ventas_upsell, ventas_cerradas'
     )
     .eq('cliente_id', client_id)
     .gte('fecha', fromDate)
@@ -392,7 +392,8 @@ async function handleGetSummary(ctx: TokenContext, args: Record<string, string>)
         acc.total_revenue +
         Number(row.ventas_principal ?? 0) +
         Number(row.ventas_bump ?? 0) +
-        Number(row.ventas_upsell ?? 0),
+        Number(row.ventas_upsell ?? 0) +
+        Number(row.ventas_cerradas ?? 0),
     }),
     { total_spend: 0, total_clicks: 0, total_impressions: 0, total_sessions: 0, total_revenue: 0 }
   );
