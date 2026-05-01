@@ -309,7 +309,7 @@ async function handleGetSummary(ctx: TokenContext, args: Record<string, string>)
   if (keyword) {
     const { data, error } = await supabase
       .from('metricas_diarias')
-      .select('fecha, meta_campaigns')
+      .select('fecha, meta_campaigns, ventas_cerradas')
       .eq('cliente_id', client_id)
       .gte('fecha', fromDate)
       .lte('fecha', toDate);
@@ -322,9 +322,12 @@ async function handleGetSummary(ctx: TokenContext, args: Record<string, string>)
     let total_impressions = 0;
     let total_link_clicks = 0;
     let total_clicks = 0;
+    let total_ventas_cerradas = 0;
     const custom_conversions_total: Record<string, number> = {};
 
     for (const row of data ?? []) {
+      total_ventas_cerradas += Number(row.ventas_cerradas ?? 0);
+
       const campaigns = ((row.meta_campaigns as any[]) ?? []).filter(c =>
         (c.name ?? '').toLowerCase().includes(kw)
       );
@@ -362,6 +365,7 @@ async function handleGetSummary(ctx: TokenContext, args: Record<string, string>)
         total_impressions,
         total_link_clicks,
         total_clicks,
+        ventas_cerradas: total_ventas_cerradas,
         ctr,
         cpc,
         custom_conversions: custom_conversions_total,
