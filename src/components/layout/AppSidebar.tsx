@@ -14,8 +14,11 @@ import {
     X,
     Shield,
     FileText,
-    Key
+    Key,
+    ArrowLeftRight
 } from 'lucide-react'
+
+const REPORT_UTM_ENABLED = process.env.NEXT_PUBLIC_REPORT_UTM_ENABLED === 'true'
 
 export function AppSidebar({ initialRole = 'viewer', userId = '' }: { initialRole?: string; userId?: string }) {
     const pathname = usePathname()
@@ -143,6 +146,21 @@ export function AppSidebar({ initialRole = 'viewer', userId = '' }: { initialRol
                         </div>
                     </div>
                 </div>
+
+                {/* Workspace switcher (solo admin/superadmin + flag local) */}
+                {REPORT_UTM_ENABLED && hasAdminAccess && (
+                    <Link
+                        href="/report-utm"
+                        className="mx-3 mt-3 flex items-center gap-2 px-3 py-2 text-xs font-medium rounded-lg
+                                   text-emerald-600 dark:text-emerald-400
+                                   border border-dashed border-emerald-300 dark:border-emerald-500/30
+                                   hover:bg-emerald-50 dark:hover:bg-emerald-500/10
+                                   transition-colors"
+                    >
+                        <ArrowLeftRight className="h-3.5 w-3.5" />
+                        Ir a Report-UTM
+                    </Link>
+                )}
 
                 {/* Navigation */}
                 <nav className="flex-1 space-y-6 px-3 py-6 overflow-y-auto custom-scrollbar">
