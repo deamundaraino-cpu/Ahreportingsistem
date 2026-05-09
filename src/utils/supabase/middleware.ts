@@ -49,9 +49,12 @@ export async function updateSession(request: NextRequest) {
   const isApiPage = pathname.startsWith('/api/')
   const isReportPage = pathname.startsWith('/report/')
   const isMirrorPage = pathname.startsWith('/p/')
+  // report-utm: tracking links públicos + pixel JS estático
+  const isTrackingLink = pathname.startsWith('/t/')
+  const isPixelScript = pathname === '/report-utm-pixel.js'
 
   // 1. Redirect unauthenticated users to login
-  if (!user && !isLoginPage && !isApiPage && !isReportPage && !isMirrorPage) {
+  if (!user && !isLoginPage && !isApiPage && !isReportPage && !isMirrorPage && !isTrackingLink && !isPixelScript) {
     const url = request.nextUrl.clone()
     url.pathname = '/login'
     return NextResponse.redirect(url)
