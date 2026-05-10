@@ -4,6 +4,42 @@ import { createAdminClient } from '@/utils/supabase/server'
 import { getWeeksInRange } from '@/lib/date-utils'
 import { revalidatePath } from 'next/cache'
 import { format, addDays } from 'date-fns'
+import { headers } from 'next/headers'
+
+export async function triggerWorkerSync(clientId: string, from: string, to: string) {
+    if (!clientId || !from || !to) {
+        return { ok: false, error: 'Parámetros inválidos', platform_status: null }
+    }
+
+    const secret = process.env.CRON_SECRET
+    if (!secret) {
+        return { ok: false, error: 'CRON_SECRET no configurado en el servidor', platform_status: null }
+    }
+
+    const h = await headers()
+    const host = h.get('host')
+    const proto = h.get('x-forwarded-proto') || (host?.startsWith('localhost') ? 'http' : 'https')
+    if (!host) {
+        return { ok: false, error: 'No se pudo determinar el host', platform_status: null }
+    }
+
+    const url = `${proto}://${host}/api/worker?start=${encodeURIComponent(from)}&end=${encodeURIComponent(to)}&client_id=${encodeURIComponent(clientId)}`
+
+    try {
+        const res = await fetch(url, {
+            headers: { Authorization: `Bearer ${secret}` },
+            cache: 'no-store',
+        })
+        const data = await res.json().catch(() => ({}))
+        if (!res.ok) {
+            return { ok: false, error: data?.error || `HTTP ${res.status}`, platform_status: null }
+        }
+        const firstResult = Array.isArray(data?.results) ? data.results[0] : null
+        return { ok: true, platform_status: firstResult?.platform_status ?? null }
+    } catch (err: any) {
+        return { ok: false, error: err?.message || 'Error de red', platform_status: null }
+    }
+}
 
 export async function getLeadsDiarios(clientId: string) {
     const supabase = await createAdminClient()

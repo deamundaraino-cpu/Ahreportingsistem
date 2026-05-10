@@ -7,6 +7,7 @@ import { es } from 'date-fns/locale'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Loader2, RefreshCcw, CheckCircle2, AlertCircle } from 'lucide-react'
+import { triggerWorkerSync } from '../_actions'
 
 export function DateRangeSelector({ basePath = '/dashboard', isPublic = false }: { basePath?: string, isPublic?: boolean }) {
     const router = useRouter()
@@ -37,18 +38,14 @@ export function DateRangeSelector({ basePath = '/dashboard', isPublic = false }:
         setSyncLogs({})
 
         try {
-            const res = await fetch(`/api/worker?start=${from}&end=${to}&client_id=${clientId}`, {
-                headers: { 'Authorization': `Bearer ${process.env.NEXT_PUBLIC_CRON_SECRET || ''}` }
-            })
-            const resData = await res.json()
+            const result = await triggerWorkerSync(clientId, from, to)
 
-            if (!res.ok) {
-                throw new Error(resData.error || 'Failed to sync')
+            if (!result.ok) {
+                throw new Error(result.error || 'Failed to sync')
             }
 
-            // The worker will return statuses for each platform it attempted to run
-            if (resData.platform_status) {
-                setSyncLogs(resData.platform_status)
+            if (result.platform_status) {
+                setSyncLogs(result.platform_status)
             } else {
                 setSyncLogs({ meta: 'Sincronizado', hotmart: 'Sincronizado', ga4: 'Sincronizado' })
             }
