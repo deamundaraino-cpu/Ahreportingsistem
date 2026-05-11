@@ -147,8 +147,8 @@ export function AppSidebar({ initialRole = 'viewer', userId = '' }: { initialRol
                     </div>
                 </div>
 
-                {/* Workspace switcher (solo admin/superadmin + flag local) */}
-                {REPORT_UTM_ENABLED && hasAdminAccess && (
+                {/* Workspace switcher (todos los roles + flag local) */}
+                {REPORT_UTM_ENABLED && (
                     <Link
                         href="/report-utm"
                         className="mx-3 mt-3 flex items-center gap-2 px-3 py-2 text-xs font-medium rounded-lg

@@ -22,11 +22,6 @@ export default async function ReportUtmLayout({ children }: { children: ReactNod
 
     const role = profile?.role ?? 'viewer'
 
-    // Solo admin / superadmin acceden al módulo (los clientes no).
-    if (role !== 'admin' && role !== 'superadmin') {
-        redirect('/dashboard')
-    }
-
     return (
         <div className="flex min-h-screen bg-background text-foreground font-sans selection:bg-emerald-500/20">
             {/* Ambient glow distinto al reporting para diferenciar visualmente */}
