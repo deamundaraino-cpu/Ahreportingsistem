@@ -8,8 +8,14 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Badge } from "@/components/ui/badge"
 import { Plus, Search, AlertCircle, Clock, CheckCircle2, User, Calendar, MessageSquare, History } from 'lucide-react'
 import { createSoporteTicket, getSoporteTickets } from '../_actions'
-import { format } from 'date-fns'
+import { format, isValid } from 'date-fns'
 import { es } from 'date-fns/locale'
+
+function safeFormatDate(value: string | null | undefined, fmt: string): string {
+    if (!value) return 'Sin fecha'
+    const d = new Date(value)
+    return isValid(d) ? format(d, fmt, { locale: es }) : 'Sin fecha'
+}
 
 interface Ticket {
     id: string
@@ -254,7 +260,7 @@ export function SupportModule({ clientId }: { clientId: string }) {
                                                         <span className="text-zinc-200 font-medium">{ticket.nombre_solicitante}</span>
                                                         <span className="text-zinc-500 text-[10px] flex items-center gap-1">
                                                             <Calendar className="w-3 h-3" />
-                                                            {format(new Date(ticket.fecha_solicitud), 'dd MMM yyyy', { locale: es })}
+                                                            {safeFormatDate(ticket.fecha_solicitud, 'dd MMM yyyy')}
                                                         </span>
                                                     </div>
                                                 </TableCell>
@@ -283,7 +289,7 @@ export function SupportModule({ clientId }: { clientId: string }) {
                                                         {ticket.fecha_entrega && (
                                                             <span className="text-emerald-500/80 text-[10px] mt-1 font-semibold flex items-center gap-1">
                                                                 <Clock className="w-3 h-3" />
-                                                                Est: {format(new Date(ticket.fecha_entrega), 'dd MMM yyyy', { locale: es })}
+                                                                Est: {safeFormatDate(ticket.fecha_entrega, 'dd MMM yyyy')}
                                                             </span>
                                                         )}
                                                     </div>
