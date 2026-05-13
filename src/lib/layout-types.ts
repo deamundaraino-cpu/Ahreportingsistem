@@ -23,6 +23,7 @@ export interface ColDef {
     highlight?: boolean
     hidden?: boolean
     isManual?: boolean
+    campaignFilter?: { type: 'group' | 'keyword'; value: string }
 }
 
 export interface CardDef {
@@ -33,6 +34,7 @@ export interface CardDef {
     suffix?: string
     decimals?: number
     color?: CardColor
+    campaignFilter?: { type: 'group' | 'keyword'; value: string }
 }
 
 export type ChartType =
@@ -56,6 +58,7 @@ export interface ChartDef {
     valueFormulas: string[]   // e.g. ["meta_spend", "meta_leads"]
     colors?: string[]         // e.g. ["amber", "cyan"]
     height?: number
+    campaignFilter?: { type: 'group' | 'keyword'; value: string }
 }
 
 export interface TextBlockDef {
