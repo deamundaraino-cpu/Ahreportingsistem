@@ -5,8 +5,8 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Button } from '@/components/ui/button'
-import { Trash2, ChevronDown, ChevronRight, Zap } from 'lucide-react'
-import { saveClienteTab, deleteClienteTab } from '../_actions'
+import { Trash2, ChevronDown, ChevronRight, Zap, Copy } from 'lucide-react'
+import { saveClienteTab, deleteClienteTab, duplicateClienteTab } from '../_actions'
 
 type HotmartFunnel = {
     enabled?: boolean
@@ -61,6 +61,16 @@ export function TabConfigModal({
     const [upsellPageUrl, setUpsellPageUrl] = useState<string>(initialFunnel.upsell_page_url || '')
 
     const [saving, setSaving] = useState(false)
+    const [duplicating, setDuplicating] = useState(false)
+
+    async function handleDuplicate() {
+        if (!tabToEdit?.id) return
+        setDuplicating(true)
+        const res = await duplicateClienteTab(clienteId, tabToEdit.id)
+        setDuplicating(false)
+        if (res.error) { alert('Error al duplicar: ' + res.error); return }
+        onClose()
+    }
 
     const handleSave = async () => {
         if (!nombre || !keyword) return
@@ -313,6 +323,18 @@ export function TabConfigModal({
                         >
                             <Trash2 className="w-3.5 h-3.5 mr-1.5" />
                             Eliminar
+                        </Button>
+                    )}
+                    {tabToEdit && (
+                        <Button
+                            type="button"
+                            variant="outline"
+                            onClick={handleDuplicate}
+                            disabled={duplicating || saving}
+                            className="border-zinc-700 text-zinc-300 hover:bg-zinc-800 gap-2"
+                        >
+                            <Copy className="w-4 h-4" />
+                            {duplicating ? 'Duplicando...' : 'Duplicar Pestaña'}
                         </Button>
                     )}
                     <Button variant="outline" onClick={onClose} disabled={saving} className="bg-zinc-900 border-zinc-700 hover:bg-zinc-800">
