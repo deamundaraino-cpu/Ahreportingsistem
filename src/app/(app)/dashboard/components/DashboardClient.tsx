@@ -35,6 +35,13 @@ function safeFmt(dateStr: string | null | undefined, fmt: string): string {
     } catch { return '...' }
 }
 
+function resolveFilter(
+    campaignFilter: { type: 'group' | 'keyword'; value: string } | undefined,
+    fallback: string
+): string {
+    return campaignFilter?.value ?? fallback
+}
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 const COLOR_MAP: Record<string, string> = {
@@ -198,13 +205,14 @@ function ExtrasPanel({ filteredMetrics }: { filteredMetrics: any[] }) {
 
 // ─── Dynamic Dashboard ────────────────────────────────────────────────────────
 
-function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initialTabId = 'general', initialKeyword = '' }: {
+function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initialTabId = 'general', initialKeyword = '', userRole = 'viewer' }: {
     data: any
     initialLayout: ReportLayout
     isCustomized: boolean
     isPublic?: boolean
     initialTabId?: string
     initialKeyword?: string
+    userRole?: string
 }) {
     const { cliente, metrics, weeks, allLayouts, tabs: initialTabs = [], conversionesCatalogo = [], availablePlatforms: availablePlatformsArr = ['meta'] } = data
     const platformSet = useMemo(() => new Set<string>(availablePlatformsArr), [availablePlatformsArr])
@@ -476,7 +484,8 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
     }
 
 
-    const filteredMetrics = useMemo(() => {
+    // Step 1: date-filter only (no campaign enrichment)
+    const baseRows = useMemo(() => {
         let rows = metrics
         if (activeTabObj?.fecha_inicio) {
             rows = rows.filter((m: any) => m.fecha >= activeTabObj.fecha_inicio)
@@ -484,7 +493,12 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
         if (activeTabObj?.fecha_finalizacion) {
             rows = rows.filter((m: any) => m.fecha <= activeTabObj.fecha_finalizacion)
         }
-        const enriched = rows.map((m: any) => enrichMetaRow(m, effectiveKeyword, data.campaignGroups))
+        return rows
+    }, [metrics, activeTabObj])
+
+    // Step 2: campaign-enrich with global tab filter + funnel injection (existing behavior)
+    const filteredMetrics = useMemo(() => {
+        const enriched = baseRows.map((m: any) => enrichMetaRow(m, effectiveKeyword, data.campaignGroups))
 
         // Inyectar campos del funnel actual desde hotmart_funnel_data.by_tab[activeTabId]
         // Esto permite que las fórmulas usen $funnel.* / funnel_principal_count / funnel_bump_neto, etc.
@@ -515,7 +529,7 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
             })
         }
         return enriched
-    }, [metrics, effectiveKeyword, activeTabObj, data.campaignGroups])
+    }, [baseRows, effectiveKeyword, activeTabObj, data.campaignGroups])
 
     const visibleCols = useMemo(() => {
         return activeLayout.columnas.filter((c: ColDef) => !c.hidden)
@@ -562,13 +576,19 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
     // Extract source mapping for semantic alias resolution
     const sourceMapping = useMemo(() => activeLayout.source_mapping || {}, [activeLayout.source_mapping])
 
-    // Summary cards — aggregate formula over all filtered rows
+    // Summary cards — aggregate formula over all filtered rows (per-card filter aware)
     const tarjetaValues = useMemo(() => {
-        return activeLayout.tarjetas.map((t: CardDef) => ({
-            ...t,
-            value: aggregateFormula(t.formula, filteredMetrics, varContext, sourceMapping, platformSet, layoutCustomMetrics),
-        }))
-    }, [activeLayout.tarjetas, filteredMetrics, varContext, sourceMapping, platformSet, layoutCustomMetrics])
+        return activeLayout.tarjetas.map((t: CardDef) => {
+            const filter = resolveFilter(t.campaignFilter, effectiveKeyword)
+            const rows = filter === effectiveKeyword
+                ? filteredMetrics
+                : baseRows.map((m: any) => enrichMetaRow(m, filter, data.campaignGroups))
+            return {
+                ...t,
+                value: aggregateFormula(t.formula, rows, varContext, sourceMapping, platformSet, layoutCustomMetrics),
+            }
+        })
+    }, [activeLayout.tarjetas, filteredMetrics, baseRows, effectiveKeyword, varContext, sourceMapping, platformSet, layoutCustomMetrics, data.campaignGroups])
 
     // Determine formulas for Gasto and Leads based on visible columns
     const { gastoFormula, leadsFormula } = useMemo(() => {
@@ -789,7 +809,7 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
 
             {/* Soporte Tab Content */}
             {activeTabId === 'soporte' && (
-                <SupportModule clientId={cliente.id} />
+                <SupportModule clientId={cliente.id} userRole={userRole} />
             )}
 
             {/* Toolbar + Dashboard Content */}
@@ -1015,7 +1035,14 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                                                                                     </TableCell>
                                                                                 )
                                                                             }
-                                                                            const val = evaluateFormula(col.formula, raw, varContext, sourceMapping, platformSet, layoutCustomMetrics)
+                                                                            const filter = resolveFilter(col.campaignFilter, effectiveKeyword)
+                                                                            const rowForCol = filter === effectiveKeyword
+                                                                                ? raw
+                                                                                : (() => {
+                                                                                    const base = baseRows.find((m: any) => m.fecha === dayStr)
+                                                                                    return base ? enrichMetaRow(base, filter, data.campaignGroups) : raw
+                                                                                })()
+                                                                            const val = evaluateFormula(col.formula, rowForCol, varContext, sourceMapping, platformSet, layoutCustomMetrics)
                                                                             const hl = highlightClass(val, col)
                                                                             if (col.isManual) {
                                                                                 return (
@@ -1094,6 +1121,9 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                                     metrics={filteredMetrics}
                                     weeks={weeks}
                                     varContext={varContext}
+                                    rawMetrics={baseRows}
+                                    campaignGroups={data.campaignGroups}
+                                    effectiveKeyword={effectiveKeyword}
                                 />
                             </div>
                         )}
@@ -1137,6 +1167,7 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                     allLayouts={allLayouts || []}
                     isCustomized={layoutIsCustomized}
                     conversionesCatalogo={conversionesCatalogo}
+                    campaignGroups={data.campaignGroups || []}
                     onClose={() => setShowModal(false)}
                     onLayoutApplied={(newLayout) => {
                         if (newLayout) {
@@ -1280,6 +1311,9 @@ function ExecutiveDashboard({ data, layout }: { data: any, layout: { tarjetas: C
                         metrics={filteredMetrics}
                         weeks={weeks}
                         varContext={varContext}
+                        rawMetrics={metrics}
+                        campaignGroups={data.campaignGroups}
+                        effectiveKeyword={campaignFilter}
                     />
                 </div>
             )}
@@ -1300,12 +1334,13 @@ function ExecutiveDashboard({ data, layout }: { data: any, layout: { tarjetas: C
 
 // ─── Main Export ─────────────────────────────────────────────────────────────
 
-export function DashboardClient({ 
-    data, 
+export function DashboardClient({
+    data,
     isPublic = false,
     initialTabId = 'general',
-    initialKeyword = ''
-}: { data: any, isPublic?: boolean, initialTabId?: string, initialKeyword?: string }) {
+    initialKeyword = '',
+    userRole = 'viewer',
+}: { data: any; isPublic?: boolean; initialTabId?: string; initialKeyword?: string; userRole?: string }) {
     const { cliente, layout, clienteLayoutId } = data
 
     if (!cliente) {
@@ -1326,6 +1361,7 @@ export function DashboardClient({
             isPublic={isPublic}
             initialTabId={initialTabId}
             initialKeyword={initialKeyword}
+            userRole={userRole}
         />
     )
 }
