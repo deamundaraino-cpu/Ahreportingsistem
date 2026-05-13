@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef, useCallback } from 'react'
+import { useState, useRef, useCallback, useEffect } from 'react'
 import { cloneLayoutForCliente, saveClienteLayout, resetClienteLayout, saveTabOverrides } from '../_actions'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -277,7 +277,7 @@ function MetricTypeSelector({ prefix, suffix, onChange }: {
 // ─── DnD Column Row ───────────────────────────────────────────────────────────
 
 function DraggableColumnRow({
-    col, index, onDragStart, onDragOver, onDrop, onUpdate, onRemove, availableMetrics, campaignGroups = []
+    col, index, onDragStart, onDragOver, onDrop, onUpdate, onRemove, availableMetrics, campaignGroups = [], campaignNames = []
 }: {
     col: ColDef
     index: number
@@ -288,6 +288,7 @@ function DraggableColumnRow({
     onRemove: () => void
     availableMetrics?: { id: string; label: string }[]
     campaignGroups?: { id: string; nombre: string }[]
+    campaignNames?: string[]
 }) {
     return (
         <div
@@ -345,6 +346,7 @@ function DraggableColumnRow({
                     value={col.campaignFilter}
                     onChange={v => onUpdate({ ...col, campaignFilter: v })}
                     campaignGroups={campaignGroups}
+                    campaignNames={campaignNames}
                 />
 
                 {/* Manual indicator */}
@@ -380,7 +382,7 @@ const COLOR_OPTIONS: { val: CardColor; bg: string }[] = [
 ]
 
 function DraggableCardRow({
-    card, index, onDragStart, onDragOver, onDrop, onUpdate, onRemove, availableMetrics, campaignGroups = []
+    card, index, onDragStart, onDragOver, onDrop, onUpdate, onRemove, availableMetrics, campaignGroups = [], campaignNames = []
 }: {
     card: CardDef
     index: number
@@ -391,6 +393,7 @@ function DraggableCardRow({
     onRemove: () => void
     availableMetrics?: { id: string; label: string }[]
     campaignGroups?: { id: string; nombre: string }[]
+    campaignNames?: string[]
 }) {
     return (
         <div
@@ -435,6 +438,7 @@ function DraggableCardRow({
                 value={card.campaignFilter}
                 onChange={v => onUpdate({ ...card, campaignFilter: v })}
                 campaignGroups={campaignGroups}
+                campaignNames={campaignNames}
             />
 
             <button onClick={onRemove} className="flex-shrink-0 text-zinc-700 hover:text-red-400 transition ml-1">
@@ -470,7 +474,7 @@ const CHART_COLOR_OPTIONS = [
 ]
 
 function DraggableChartRow({
-    chart, index, onDragStart, onDragOver, onDrop, onUpdate, onRemove, availableMetrics, campaignGroups = []
+    chart, index, onDragStart, onDragOver, onDrop, onUpdate, onRemove, availableMetrics, campaignGroups = [], campaignNames = []
 }: {
     chart: ChartDef
     index: number
@@ -481,6 +485,7 @@ function DraggableChartRow({
     onRemove: () => void
     availableMetrics?: { id: string; label: string }[]
     campaignGroups?: { id: string; nombre: string }[]
+    campaignNames?: string[]
 }) {
     const isCircular = chart.type === 'donut' || chart.type === 'pie' || chart.type === 'radial' || chart.type === 'funnel'
     const maxMetrics = chart.type === 'scatter' ? 2 : isCircular ? 6 : 5
@@ -596,6 +601,7 @@ function DraggableChartRow({
                         value={chart.campaignFilter}
                         onChange={v => onUpdate({ ...chart, campaignFilter: v })}
                         campaignGroups={campaignGroups}
+                        campaignNames={campaignNames}
                     />
                 </div>
             </div>
@@ -625,11 +631,24 @@ function CampaignFilterPicker({
     value,
     onChange,
     campaignGroups,
+    campaignNames = [],
 }: {
     value?: { type: 'group' | 'keyword'; value: string }
     onChange: (v: { type: 'group' | 'keyword'; value: string } | undefined) => void
     campaignGroups: { id: string; nombre: string }[]
+    campaignNames?: string[]
 }) {
+    const [kwSearch, setKwSearch] = useState(value?.type === 'keyword' ? value.value : '')
+    const [showSuggestions, setShowSuggestions] = useState(false)
+
+    useEffect(() => {
+        if (value?.type !== 'keyword') setKwSearch('')
+    }, [value])
+
+    const suggestions = campaignNames.filter(n =>
+        kwSearch === '' || n.toLowerCase().includes(kwSearch.toLowerCase())
+    )
+
     return (
         <div className="flex items-center gap-1 flex-shrink-0" title="Filtro de campaña (opcional)">
             {campaignGroups.length > 0 && (
@@ -647,18 +666,42 @@ function CampaignFilterPicker({
                     ))}
                 </select>
             )}
-            <Input
-                value={value?.type === 'keyword' ? value.value : ''}
-                onChange={e => {
-                    if (e.target.value) onChange({ type: 'keyword', value: e.target.value })
-                    else if (value?.type === 'keyword') onChange(undefined)
-                }}
-                placeholder="keyword..."
-                className="h-6 text-xs bg-zinc-950 border-zinc-700 text-zinc-300 w-20"
-            />
+            <div className="relative">
+                <Input
+                    value={kwSearch}
+                    onChange={e => {
+                        setKwSearch(e.target.value)
+                        if (e.target.value) onChange({ type: 'keyword', value: e.target.value })
+                        else if (value?.type === 'keyword') onChange(undefined)
+                        setShowSuggestions(true)
+                    }}
+                    onFocus={() => setShowSuggestions(true)}
+                    onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
+                    placeholder="keyword..."
+                    className="h-6 text-xs bg-zinc-950 border-zinc-700 text-zinc-300 w-28"
+                />
+                {showSuggestions && suggestions.length > 0 && (
+                    <div className="absolute top-7 left-0 z-[120] bg-zinc-900 border border-zinc-800 rounded shadow-lg max-h-48 overflow-y-auto w-56 custom-scrollbar">
+                        {suggestions.map(name => (
+                            <button
+                                key={name}
+                                onMouseDown={e => e.preventDefault()}
+                                onClick={() => {
+                                    setKwSearch(name)
+                                    onChange({ type: 'keyword', value: name })
+                                    setShowSuggestions(false)
+                                }}
+                                className="w-full text-left px-2 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 transition truncate block"
+                            >
+                                {name}
+                            </button>
+                        ))}
+                    </div>
+                )}
+            </div>
             {value && (
                 <button
-                    onClick={() => onChange(undefined)}
+                    onClick={() => { onChange(undefined); setKwSearch('') }}
                     title="Limpiar filtro de campaña"
                     className="text-zinc-600 hover:text-red-400 transition"
                 >
@@ -681,6 +724,7 @@ export function LayoutConfigModal({
     tabId,
     conversionesCatalogo = [],
     campaignGroups = [],
+    campaignNames = [],
 }: {
     clienteId: string
     currentLayout: ReportLayout | null
@@ -691,6 +735,7 @@ export function LayoutConfigModal({
     tabId?: string
     conversionesCatalogo?: { conversion_key: string; label: string; field_id: string }[]
     campaignGroups?: { id: string; nombre: string }[]
+    campaignNames?: string[]
 }) {
     const availableMetrics = buildAvailableMetrics(conversionesCatalogo)
     const [step, setStep] = useState<'select' | 'edit'>(currentLayout ? 'edit' : 'select')
@@ -1057,6 +1102,7 @@ export function LayoutConfigModal({
                                                 onRemove={() => removeCol(i)}
                                                 availableMetrics={availableMetrics}
                                                 campaignGroups={campaignGroups}
+                                                campaignNames={campaignNames}
                                             />
                                         </div>
                                     ))}
@@ -1099,6 +1145,7 @@ export function LayoutConfigModal({
                                                 onRemove={() => removeCard(i)}
                                                 availableMetrics={availableMetrics}
                                                 campaignGroups={campaignGroups}
+                                                campaignNames={campaignNames}
                                             />
                                         </div>
                                     ))}
@@ -1148,6 +1195,7 @@ export function LayoutConfigModal({
                                         onRemove={() => removeChart(i)}
                                         availableMetrics={availableMetrics}
                                         campaignGroups={campaignGroups}
+                                        campaignNames={campaignNames}
                                     />
                                 ))}
                                 {(!workingLayout.graficos || workingLayout.graficos.length === 0) && (

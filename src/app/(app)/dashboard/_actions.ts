@@ -322,7 +322,7 @@ export async function duplicateClienteTab(clienteId: string, tabId: string) {
     const maxOrden = (allTabs?.[0]?.orden ?? 0) as number
 
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const { id, created_at, updated_at, ...rest } = source
+    const { id, created_at, updated_at, public_token, ...rest } = source
 
     const { error: insertError } = await supabase
         .from('cliente_tabs')

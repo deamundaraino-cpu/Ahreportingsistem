@@ -496,6 +496,18 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
         return rows
     }, [metrics, activeTabObj])
 
+    const allCampaignNames = useMemo(() => {
+        const names = new Set<string>()
+        for (const row of baseRows) {
+            if (Array.isArray((row as any).meta_campaigns)) {
+                for (const c of (row as any).meta_campaigns) {
+                    if (c.name) names.add(c.name)
+                }
+            }
+        }
+        return Array.from(names).sort()
+    }, [baseRows])
+
     // Step 2: campaign-enrich with global tab filter + funnel injection (existing behavior)
     const filteredMetrics = useMemo(() => {
         const enriched = baseRows.map((m: any) => enrichMetaRow(m, effectiveKeyword, data.campaignGroups))
@@ -1168,6 +1180,7 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                     isCustomized={layoutIsCustomized}
                     conversionesCatalogo={conversionesCatalogo}
                     campaignGroups={data.campaignGroups || []}
+                    campaignNames={allCampaignNames}
                     onClose={() => setShowModal(false)}
                     onLayoutApplied={(newLayout) => {
                         if (newLayout) {
