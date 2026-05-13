@@ -14,9 +14,10 @@ import {
     ResponsiveContainer, Legend
 } from 'recharts'
 import { evaluateFormula } from '@/lib/formula-engine'
-import { format, parseISO } from 'date-fns'
+import { format, parseISO, isValid } from 'date-fns'
 import { es } from 'date-fns/locale'
 import type { ChartDef } from '@/lib/layout-types'
+import { enrichMetaRow } from '@/lib/campaign-filter'
 
 // ─── Palette ──────────────────────────────────────────────────────────────────
 const PALETTE: Record<string, string> = {
@@ -55,7 +56,7 @@ function fmt(n: number): string {
 // ─── Daily data builder ───────────────────────────────────────────────────────
 function buildDailyData(metrics: any[], formulas: string[], varContext: Record<string, number> = {}): Array<Record<string, any>> {
     return metrics
-        .filter((r: any) => r.fecha)
+        .filter((r: any) => { if (!r.fecha) return false; const d = parseISO(r.fecha); return isValid(d) })
         .map((row: any) => {
             const pt: Record<string, any> = {
                 date: format(parseISO(row.fecha), 'dd MMM', { locale: es }),
@@ -115,10 +116,15 @@ interface MetricChartsProps {
     metrics: any[]
     weeks?: any[]
     varContext?: Record<string, number>
+    rawMetrics?: any[]
+    campaignGroups?: any[]
+    effectiveKeyword?: string
 }
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
-export function MetricCharts({ charts, metrics, varContext = {} }: MetricChartsProps) {
+export function MetricCharts({
+    charts, metrics, varContext = {}, rawMetrics, campaignGroups = [], effectiveKeyword = ''
+}: MetricChartsProps) {
     if (!charts?.length) return null
 
     return (
@@ -131,7 +137,11 @@ export function MetricCharts({ charts, metrics, varContext = {} }: MetricChartsP
                 const colors = (chart.colors?.length ? chart.colors : DEFAULT_COLORS)
                     .slice(0, categories.length).map(hex)
 
-                const data     = buildDailyData(metrics, formulas, varContext)
+                const filter = chart.campaignFilter?.value
+                const chartMetrics = (filter && rawMetrics)
+                    ? rawMetrics.map((r: any) => enrichMetaRow(r, filter, campaignGroups))
+                    : metrics
+                const data     = buildDailyData(chartMetrics, formulas, varContext)
                 const lastRow  = data[data.length - 1] ?? {}
 
                 // Pie / donut / funnel / radial use aggregated totals per metric
