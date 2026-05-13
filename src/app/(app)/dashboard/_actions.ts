@@ -298,6 +298,46 @@ export async function deleteClienteTab(clienteId: string, tabId: string) {
 }
 
 /**
+ * Duplicate a client tab.
+ */
+export async function duplicateClienteTab(clienteId: string, tabId: string) {
+    const supabase = await createAdminClient()
+
+    const { data: source, error: fetchError } = await supabase
+        .from('cliente_tabs')
+        .select('*')
+        .eq('id', tabId)
+        .eq('cliente_id', clienteId)
+        .single()
+
+    if (fetchError || !source) return { error: fetchError?.message || 'Tab no encontrada' }
+
+    const { data: allTabs } = await supabase
+        .from('cliente_tabs')
+        .select('orden')
+        .eq('cliente_id', clienteId)
+        .order('orden', { ascending: false })
+        .limit(1)
+
+    const maxOrden = (allTabs?.[0]?.orden ?? 0) as number
+
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { id, created_at, updated_at, ...rest } = source
+
+    const { error: insertError } = await supabase
+        .from('cliente_tabs')
+        .insert({
+            ...rest,
+            nombre: `${source.nombre} (copia)`,
+            orden: maxOrden + 1,
+        })
+
+    if (insertError) return { error: insertError.message }
+    revalidatePath(`/dashboard/${clienteId}`)
+    return { success: true }
+}
+
+/**
  * Save layout overrides (columns, cards) strictly for one tab.
  */
 export async function saveTabOverrides(clienteId: string, tabId: string, payload: {
@@ -514,6 +554,8 @@ export async function updateSoporteTicket(ticketId: string, clienteId: string, p
     prioridad?: number
     estado?: string
     observaciones?: string
+    nombre_solicitante?: string
+    requerimiento?: string
 }) {
     const supabase = await createAdminClient()
     const { error } = await supabase
