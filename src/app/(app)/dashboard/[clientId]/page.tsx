@@ -18,12 +18,15 @@ export default async function DashboardPage(props: {
     // Guard: traffickers can only access assigned clients
     const supabase = await createClient()
     const { data: { user } } = await supabase.auth.getUser()
+    let userRole = 'viewer'
     if (user) {
         const { data: profile } = await supabase
             .from('user_profiles')
             .select('role')
             .eq('id', user.id)
             .single()
+
+        if (profile?.role) userRole = profile.role
 
         if (profile?.role === 'trafficker') {
             const adminSupabase = await createAdminClient()
@@ -69,7 +72,7 @@ export default async function DashboardPage(props: {
             </div>
 
             <div className="pt-4">
-                <DashboardClient data={dashboardData || { cliente: null, metrics: [], weeks: [] }} />
+                <DashboardClient data={dashboardData || { cliente: null, metrics: [], weeks: [] }} userRole={userRole} />
             </div>
 
             {/* Google Sheets Leads Section — only show if enabled */}
