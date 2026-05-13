@@ -3,15 +3,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react'
 import { format, parseISO, addDays, getDay, differenceInDays, isValid } from 'date-fns'
 import { es } from 'date-fns/locale'
-
-function safeFmt(dateStr: string | null | undefined, fmt: string): string {
-    if (!dateStr) return '...'
-    try {
-        const d = parseISO(dateStr)
-        if (!isValid(d)) return '...'
-        return format(d, fmt, { locale: es })
-    } catch { return '...' }
-}
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Input } from "@/components/ui/input"
@@ -33,7 +24,16 @@ import { SortableContext, horizontalListSortingStrategy, verticalListSortingStra
 import { CSS } from '@dnd-kit/utilities'
 import { enrichMetaRow } from '@/lib/campaign-filter'
 
-// Types imported from @/lib/layout-types
+// ─── Helper Functions ────────────────────────────────────────────────────────
+
+function safeFmt(dateStr: string | null | undefined, fmt: string): string {
+    if (!dateStr) return '...'
+    try {
+        const d = parseISO(dateStr)
+        if (!isValid(d)) return '...'
+        return format(d, fmt, { locale: es })
+    } catch { return '...' }
+}
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
