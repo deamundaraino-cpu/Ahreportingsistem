@@ -277,7 +277,7 @@ function MetricTypeSelector({ prefix, suffix, onChange }: {
 // ─── DnD Column Row ───────────────────────────────────────────────────────────
 
 function DraggableColumnRow({
-    col, index, onDragStart, onDragOver, onDrop, onUpdate, onRemove, availableMetrics
+    col, index, onDragStart, onDragOver, onDrop, onUpdate, onRemove, availableMetrics, campaignGroups = []
 }: {
     col: ColDef
     index: number
@@ -287,6 +287,7 @@ function DraggableColumnRow({
     onUpdate: (col: ColDef) => void
     onRemove: () => void
     availableMetrics?: { id: string; label: string }[]
+    campaignGroups?: { id: string; nombre: string }[]
 }) {
     return (
         <div
@@ -340,6 +341,12 @@ function DraggableColumnRow({
                     ✦
                 </button>
 
+                <CampaignFilterPicker
+                    value={col.campaignFilter}
+                    onChange={v => onUpdate({ ...col, campaignFilter: v })}
+                    campaignGroups={campaignGroups}
+                />
+
                 {/* Manual indicator */}
                 {col.isManual && (
                     <span className="flex-shrink-0 text-[9px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 px-1.5 py-0.5 rounded font-bold uppercase tracking-wide">
@@ -373,7 +380,7 @@ const COLOR_OPTIONS: { val: CardColor; bg: string }[] = [
 ]
 
 function DraggableCardRow({
-    card, index, onDragStart, onDragOver, onDrop, onUpdate, onRemove, availableMetrics
+    card, index, onDragStart, onDragOver, onDrop, onUpdate, onRemove, availableMetrics, campaignGroups = []
 }: {
     card: CardDef
     index: number
@@ -383,6 +390,7 @@ function DraggableCardRow({
     onUpdate: (card: CardDef) => void
     onRemove: () => void
     availableMetrics?: { id: string; label: string }[]
+    campaignGroups?: { id: string; nombre: string }[]
 }) {
     return (
         <div
@@ -423,6 +431,12 @@ function DraggableCardRow({
                 onChange={vals => onUpdate({ ...card, ...vals })}
             />
 
+            <CampaignFilterPicker
+                value={card.campaignFilter}
+                onChange={v => onUpdate({ ...card, campaignFilter: v })}
+                campaignGroups={campaignGroups}
+            />
+
             <button onClick={onRemove} className="flex-shrink-0 text-zinc-700 hover:text-red-400 transition ml-1">
                 <X className="w-3.5 h-3.5" />
             </button>
@@ -456,7 +470,7 @@ const CHART_COLOR_OPTIONS = [
 ]
 
 function DraggableChartRow({
-    chart, index, onDragStart, onDragOver, onDrop, onUpdate, onRemove, availableMetrics
+    chart, index, onDragStart, onDragOver, onDrop, onUpdate, onRemove, availableMetrics, campaignGroups = []
 }: {
     chart: ChartDef
     index: number
@@ -466,6 +480,7 @@ function DraggableChartRow({
     onUpdate: (chart: ChartDef) => void
     onRemove: () => void
     availableMetrics?: { id: string; label: string }[]
+    campaignGroups?: { id: string; nombre: string }[]
 }) {
     const isCircular = chart.type === 'donut' || chart.type === 'pie' || chart.type === 'radial' || chart.type === 'funnel'
     const maxMetrics = chart.type === 'scatter' ? 2 : isCircular ? 6 : 5
@@ -573,6 +588,16 @@ function DraggableChartRow({
                 {chart.type === 'scatter' && chart.valueFormulas.length < 2 && (
                     <p className="text-[9px] text-zinc-600 mt-0.5">El gráfico de dispersión necesita exactamente 2 métricas (eje X e Y).</p>
                 )}
+
+                {/* Campaign filter */}
+                <div className="flex items-center gap-2 mt-1">
+                    <span className="text-[10px] text-zinc-600 flex-shrink-0">Filtro campaña:</span>
+                    <CampaignFilterPicker
+                        value={chart.campaignFilter}
+                        onChange={v => onUpdate({ ...chart, campaignFilter: v })}
+                        campaignGroups={campaignGroups}
+                    />
+                </div>
             </div>
         </div>
     )
@@ -594,6 +619,56 @@ const PRESETS: { label: string; formula: string; prefix?: string; suffix?: strin
     { label: 'Checkouts', formula: 'hotmart_pagos_iniciados' },
 ]
 
+// ─── Campaign Filter Picker ───────────────────────────────────────────────────
+
+function CampaignFilterPicker({
+    value,
+    onChange,
+    campaignGroups,
+}: {
+    value?: { type: 'group' | 'keyword'; value: string }
+    onChange: (v: { type: 'group' | 'keyword'; value: string } | undefined) => void
+    campaignGroups: { id: string; nombre: string }[]
+}) {
+    return (
+        <div className="flex items-center gap-1 flex-shrink-0" title="Filtro de campaña (opcional)">
+            {campaignGroups.length > 0 && (
+                <select
+                    value={value?.type === 'group' ? value.value : ''}
+                    onChange={e => {
+                        if (e.target.value) onChange({ type: 'group', value: e.target.value })
+                        else if (value?.type === 'group') onChange(undefined)
+                    }}
+                    className="h-6 text-xs bg-zinc-950 border border-zinc-700 text-zinc-300 rounded px-1.5 max-w-[100px]"
+                >
+                    <option value="">Grupo...</option>
+                    {campaignGroups.map(g => (
+                        <option key={g.id} value={g.id}>{g.nombre}</option>
+                    ))}
+                </select>
+            )}
+            <Input
+                value={value?.type === 'keyword' ? value.value : ''}
+                onChange={e => {
+                    if (e.target.value) onChange({ type: 'keyword', value: e.target.value })
+                    else if (value?.type === 'keyword') onChange(undefined)
+                }}
+                placeholder="keyword..."
+                className="h-6 text-xs bg-zinc-950 border-zinc-700 text-zinc-300 w-20"
+            />
+            {value && (
+                <button
+                    onClick={() => onChange(undefined)}
+                    title="Limpiar filtro de campaña"
+                    className="text-zinc-600 hover:text-red-400 transition"
+                >
+                    <X className="w-3 h-3" />
+                </button>
+            )}
+        </div>
+    )
+}
+
 // ─── Main Modal ───────────────────────────────────────────────────────────────
 
 export function LayoutConfigModal({
@@ -605,6 +680,7 @@ export function LayoutConfigModal({
     onLayoutApplied,
     tabId,
     conversionesCatalogo = [],
+    campaignGroups = [],
 }: {
     clienteId: string
     currentLayout: ReportLayout | null
@@ -614,6 +690,7 @@ export function LayoutConfigModal({
     onLayoutApplied: (layout: ReportLayout) => void
     tabId?: string
     conversionesCatalogo?: { conversion_key: string; label: string; field_id: string }[]
+    campaignGroups?: { id: string; nombre: string }[]
 }) {
     const availableMetrics = buildAvailableMetrics(conversionesCatalogo)
     const [step, setStep] = useState<'select' | 'edit'>(currentLayout ? 'edit' : 'select')
@@ -979,6 +1056,7 @@ export function LayoutConfigModal({
                                                 onUpdate={v => updateCol(i, v)}
                                                 onRemove={() => removeCol(i)}
                                                 availableMetrics={availableMetrics}
+                                                campaignGroups={campaignGroups}
                                             />
                                         </div>
                                     ))}
@@ -1020,6 +1098,7 @@ export function LayoutConfigModal({
                                                 onUpdate={v => updateCard(i, v)}
                                                 onRemove={() => removeCard(i)}
                                                 availableMetrics={availableMetrics}
+                                                campaignGroups={campaignGroups}
                                             />
                                         </div>
                                     ))}
@@ -1068,6 +1147,7 @@ export function LayoutConfigModal({
                                         onUpdate={v => updateChart(i, v)}
                                         onRemove={() => removeChart(i)}
                                         availableMetrics={availableMetrics}
+                                        campaignGroups={campaignGroups}
                                     />
                                 ))}
                                 {(!workingLayout.graficos || workingLayout.graficos.length === 0) && (
