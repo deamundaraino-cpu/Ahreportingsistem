@@ -401,47 +401,54 @@ function DraggableCardRow({
             onDragStart={() => onDragStart(index)}
             onDragOver={(e) => { e.preventDefault(); onDragOver(e, index) }}
             onDrop={() => onDrop(index)}
-            className="flex items-center gap-2 bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2.5 group transition cursor-grab active:cursor-grabbing select-none hover:border-zinc-600"
+            className="flex items-start gap-2 bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2.5 group transition cursor-grab active:cursor-grabbing select-none hover:border-zinc-600"
         >
-            <GripVertical className="w-4 h-4 text-zinc-600 flex-shrink-0 group-hover:text-zinc-400 transition" />
+            <GripVertical className="w-4 h-4 text-zinc-600 flex-shrink-0 group-hover:text-zinc-400 transition mt-1.5" />
 
-            <div className="flex gap-1 flex-shrink-0 mr-1">
-                {COLOR_OPTIONS.map(opt => (
-                    <button
-                        key={opt.val}
-                        onClick={() => onUpdate({ ...card, color: opt.val })}
-                        className={`w-3 h-3 rounded-full ${opt.bg} transition ${card.color === opt.val ? 'ring-2 ring-white ring-offset-2 ring-offset-zinc-900 scale-110' : 'opacity-40 hover:opacity-100'}`}
+            <div className="flex flex-col gap-1.5 flex-1 min-w-0">
+                {/* Row 1: label + formula */}
+                <div className="flex items-center gap-2">
+                    <div className="flex gap-1 flex-shrink-0">
+                        {COLOR_OPTIONS.map(opt => (
+                            <button
+                                key={opt.val}
+                                onClick={() => onUpdate({ ...card, color: opt.val })}
+                                className={`w-3 h-3 rounded-full ${opt.bg} transition ${card.color === opt.val ? 'ring-2 ring-white ring-offset-2 ring-offset-zinc-900 scale-110' : 'opacity-40 hover:opacity-100'}`}
+                            />
+                        ))}
+                    </div>
+
+                    <Input
+                        value={card.label}
+                        onChange={e => onUpdate({ ...card, label: e.target.value })}
+                        className="h-7 text-xs bg-zinc-950 border-zinc-700 text-zinc-200 w-28 flex-shrink-0"
+                        placeholder="Etiqueta"
                     />
-                ))}
+
+                    <FormulaInput
+                        value={card.formula}
+                        onChange={val => onUpdate({ ...card, formula: val.trim() })}
+                        availableMetrics={availableMetrics}
+                    />
+                </div>
+
+                {/* Row 2: type selector + campaign filter */}
+                <div className="flex items-center gap-2">
+                    <MetricTypeSelector
+                        prefix={card.prefix}
+                        suffix={card.suffix}
+                        onChange={vals => onUpdate({ ...card, ...vals })}
+                    />
+                    <CampaignFilterPicker
+                        value={card.campaignFilter}
+                        onChange={v => onUpdate({ ...card, campaignFilter: v })}
+                        campaignGroups={campaignGroups}
+                        campaignNames={campaignNames}
+                    />
+                </div>
             </div>
 
-            <Input
-                value={card.label}
-                onChange={e => onUpdate({ ...card, label: e.target.value })}
-                className="h-7 text-xs bg-zinc-950 border-zinc-700 text-zinc-200 w-32 flex-shrink-0"
-                placeholder="Etiqueta"
-            />
-
-            <FormulaInput
-                value={card.formula}
-                onChange={val => onUpdate({ ...card, formula: val.trim() })}
-                availableMetrics={availableMetrics}
-            />
-
-            <MetricTypeSelector
-                prefix={card.prefix}
-                suffix={card.suffix}
-                onChange={vals => onUpdate({ ...card, ...vals })}
-            />
-
-            <CampaignFilterPicker
-                value={card.campaignFilter}
-                onChange={v => onUpdate({ ...card, campaignFilter: v })}
-                campaignGroups={campaignGroups}
-                campaignNames={campaignNames}
-            />
-
-            <button onClick={onRemove} className="flex-shrink-0 text-zinc-700 hover:text-red-400 transition ml-1">
+            <button onClick={onRemove} className="flex-shrink-0 text-zinc-700 hover:text-red-400 transition mt-1.5">
                 <X className="w-3.5 h-3.5" />
             </button>
         </div>
@@ -650,7 +657,8 @@ function CampaignFilterPicker({
     )
 
     return (
-        <div className="flex items-center gap-1 flex-shrink-0" title="Filtro de campaña (opcional)">
+        <div className="flex items-center gap-1.5 flex-shrink-0" title="Filtro de campaña (opcional)">
+            <span className="text-[10px] text-zinc-600 flex-shrink-0">Campaña:</span>
             {campaignGroups.length > 0 && (
                 <select
                     value={value?.type === 'group' ? value.value : ''}
@@ -658,7 +666,7 @@ function CampaignFilterPicker({
                         if (e.target.value) onChange({ type: 'group', value: e.target.value })
                         else if (value?.type === 'group') onChange(undefined)
                     }}
-                    className="h-6 text-xs bg-zinc-950 border border-zinc-700 text-zinc-300 rounded px-1.5 max-w-[100px]"
+                    className="h-6 text-xs bg-zinc-950 border border-zinc-700 text-zinc-300 rounded px-1.5 max-w-[110px]"
                 >
                     <option value="">Grupo...</option>
                     {campaignGroups.map(g => (
@@ -677,8 +685,8 @@ function CampaignFilterPicker({
                     }}
                     onFocus={() => setShowSuggestions(true)}
                     onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
-                    placeholder="keyword..."
-                    className="h-6 text-xs bg-zinc-950 border-zinc-700 text-zinc-300 w-28"
+                    placeholder="Buscar campaña..."
+                    className="h-6 text-xs bg-zinc-950 border-zinc-700 text-zinc-300 w-44"
                 />
                 {showSuggestions && suggestions.length > 0 && (
                     <div className="absolute top-7 left-0 z-[120] bg-zinc-900 border border-zinc-800 rounded shadow-lg max-h-48 overflow-y-auto w-56 custom-scrollbar">
