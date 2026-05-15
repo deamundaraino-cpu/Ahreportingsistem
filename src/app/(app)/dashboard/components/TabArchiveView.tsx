@@ -65,12 +65,15 @@ export function TabArchiveView({
     const [togglingId, setTogglingId] = useState<string | null>(null)
     const [archiveMetrics, setArchiveMetrics] = useState<any[]>(metrics)
     const [isLoadingArchive, setIsLoadingArchive] = useState(true)
+    const [archiveError, setArchiveError] = useState(false)
     const [tabDateOverrides, setTabDateOverrides] = useState<Record<string, { from: string; to: string }>>({})
 
     useEffect(() => {
         setIsLoadingArchive(true)
+        setArchiveError(false)
         getArchiveMetrics(clientId).then(result => {
             if (result?.metrics) setArchiveMetrics(result.metrics)
+            else setArchiveError(true)
         }).finally(() => setIsLoadingArchive(false))
     }, [clientId])
 
@@ -247,6 +250,8 @@ export function TabArchiveView({
                                     <Loader2 className="w-4 h-4 animate-spin" />
                                     Cargando historial completo…
                                 </div>
+                            ) : archiveError ? (
+                                <div className="text-xs text-amber-600">No se pudo cargar el historial completo. Mostrando datos del período seleccionado.</div>
                             ) : groupedSelected.map(group => {
                                 const tab = tabs.find(t => t.id === group.tabId)
                                 return (

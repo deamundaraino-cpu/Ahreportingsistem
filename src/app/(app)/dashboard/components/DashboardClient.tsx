@@ -734,6 +734,7 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                 campaignGroups={data.campaignGroups || []}
                 allLayouts={allLayouts || []}
                 initialLayout={initialLayout}
+                clientId={cliente.id}
                 onClose={() => setShowArchive(false)}
                 onToggleArchived={handleToggleArchived}
                 isTeam={isTeam}
