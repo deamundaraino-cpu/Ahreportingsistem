@@ -105,19 +105,19 @@ export async function getDashboardData(clientId: string, startStr: string, endSt
     const layout = clienteLayoutRes.data || cliente.global_layout || null
 
     // Fetch all metrics + leads for that range
-    const [metricsRes, leadsRes] = await Promise.all([
-        supabase.from('metricas_diarias')
-            .select('*')
-            .eq('cliente_id', cliente.id)
-            .gte('fecha', startStr)
-            .lte('fecha', endStr)
-            .order('fecha', { ascending: true }),
-        supabase.from('leads_diarios')
-            .select('*')
-            .eq('client_id', cliente.id)
-            .gte('date', startStr)
-            .lte('date', endStr)
-    ])
+    let metricsQuery = supabase.from('metricas_diarias')
+        .select('*')
+        .eq('cliente_id', cliente.id)
+    if (startStr !== 'all') metricsQuery = metricsQuery.gte('fecha', startStr)
+    metricsQuery = metricsQuery.lte('fecha', endStr).order('fecha', { ascending: true })
+
+    let leadsQuery = supabase.from('leads_diarios')
+        .select('*')
+        .eq('client_id', cliente.id)
+    if (startStr !== 'all') leadsQuery = leadsQuery.gte('date', startStr)
+    leadsQuery = leadsQuery.lte('date', endStr)
+
+    const [metricsRes, leadsRes] = await Promise.all([metricsQuery, leadsQuery])
 
     // Merge leads data into metrics by date
     const leadsMap = new Map((leadsRes.data || []).map((l: any) => [l.date, l]))
@@ -138,7 +138,8 @@ export async function getDashboardData(clientId: string, startStr: string, endSt
     // Fetch all global layouts so the selector modal has them available
     const { data: allLayouts } = await supabase.from('layouts_reporte').select('*').order('nombre')
 
-    const weeks = getWeeksInRange(startStr, endStr)
+    const effectiveStart = startStr === 'all' ? '2020-01-01' : startStr
+    const weeks = getWeeksInRange(effectiveStart, endStr)
 
     return {
         cliente,
@@ -645,18 +646,21 @@ export async function getMirrorDashboardData(token: string, from?: string, to?: 
     const endStr = to || activeTabObj?.fecha_finalizacion || format(new Date(), 'yyyy-MM-dd')
 
     // Fetch all metrics + leads for that range (identical to getDashboardData)
+    let mirrorMetricsQuery = supabase.from('metricas_diarias')
+        .select('*')
+        .eq('cliente_id', cliente.id)
+    if (startStr !== 'all') mirrorMetricsQuery = mirrorMetricsQuery.gte('fecha', startStr)
+    mirrorMetricsQuery = mirrorMetricsQuery.lte('fecha', endStr).order('fecha', { ascending: true })
+
+    let mirrorLeadsQuery = supabase.from('leads_diarios')
+        .select('*')
+        .eq('client_id', cliente.id)
+    if (startStr !== 'all') mirrorLeadsQuery = mirrorLeadsQuery.gte('date', startStr)
+    mirrorLeadsQuery = mirrorLeadsQuery.lte('date', endStr)
+
     const [metricsRes, leadsRes, conversionesRes, campaignGroupsRes, tabsRes, allLayoutsRes] = await Promise.all([
-        supabase.from('metricas_diarias')
-            .select('*')
-            .eq('cliente_id', cliente.id)
-            .gte('fecha', startStr)
-            .lte('fecha', endStr)
-            .order('fecha', { ascending: true }),
-        supabase.from('leads_diarios')
-            .select('*')
-            .eq('client_id', cliente.id)
-            .gte('date', startStr)
-            .lte('date', endStr),
+        mirrorMetricsQuery,
+        mirrorLeadsQuery,
         supabase.from('meta_conversiones_catalogo')
             .select('conversion_key, label, field_id')
             .eq('cliente_id', cliente.id)
@@ -678,7 +682,8 @@ export async function getMirrorDashboardData(token: string, from?: string, to?: 
         return leadDay ? { ...m, ...leadDay } : m
     })
 
-    const weeks = getWeeksInRange(startStr, endStr)
+    const effectiveStart = startStr === 'all' ? '2020-01-01' : startStr
+    const weeks = getWeeksInRange(effectiveStart, endStr)
     const availablePlatforms = new Set<string>(['meta'])
     const cfg = (cliente.config_api as any) || {}
     if (cfg.ga_property_id) availablePlatforms.add('ga4')
