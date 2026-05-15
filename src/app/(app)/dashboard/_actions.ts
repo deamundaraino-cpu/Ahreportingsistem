@@ -298,6 +298,21 @@ export async function deleteClienteTab(clienteId: string, tabId: string) {
 }
 
 /**
+ * Toggle the archived status of a client tab.
+ */
+export async function toggleTabArchived(clienteId: string, tabId: string, archived: boolean) {
+    const supabase = await createAdminClient()
+    const { error } = await supabase
+        .from('cliente_tabs')
+        .update({ archived })
+        .eq('id', tabId)
+        .eq('cliente_id', clienteId)
+    if (error) return { error: error.message }
+    revalidatePath(`/dashboard/${clienteId}`)
+    return { success: true }
+}
+
+/**
  * Duplicate a client tab.
  */
 export async function duplicateClienteTab(clienteId: string, tabId: string) {
