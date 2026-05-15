@@ -11,13 +11,14 @@ import { evaluateFormula, aggregateFormula, formatValue } from '@/lib/formula-en
 import { LayoutConfigModal } from './LayoutConfigModal'
 import { TabConfigModal } from './TabConfigModal'
 import { MetricCharts } from './MetricCharts'
-import { LayoutDashboard, Settings2, Plus, Edit2, CalendarDays, Timer, BadgeDollarSign, Wallet, GripVertical, Search, X, Puzzle, Type, AlignLeft, AlignCenter, AlignRight, Trash2, Save, Loader2, Minus } from 'lucide-react'
+import { LayoutDashboard, Settings2, Plus, Edit2, CalendarDays, Timer, BadgeDollarSign, Wallet, GripVertical, Search, X, Puzzle, Type, AlignLeft, AlignCenter, AlignRight, Trash2, Save, Loader2, Minus, Archive } from 'lucide-react'
 import type { ColDef, CardDef, ReportLayout, ChartDef, MetricDef, TextBlockDef } from '@/lib/layout-types'
-import { updateManualMetric, getTabTotalSpend, saveClienteLayout, saveTabOverrides, updateLayoutPuzzleState } from '../_actions'
+import { updateManualMetric, getTabTotalSpend, saveClienteLayout, saveTabOverrides, updateLayoutPuzzleState, toggleTabArchived } from '../_actions'
 import { SortableCard, SortableChart, SortableTable, SortableText } from './PuzzleComponents'
 import { CountryBreakdown } from './CountryBreakdown'
 import { MonthlyReportTab } from './MonthlyReportTab'
 import { SupportModule } from './SupportModule'
+import { TabArchiveView } from './TabArchiveView'
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, DragEndEvent, DragStartEvent, DragOverlay, defaultDropAnimationSideEffects } from '@dnd-kit/core'
 import { SortableContext, horizontalListSortingStrategy, verticalListSortingStrategy, useSortable, arrayMove } from '@dnd-kit/sortable'
 
@@ -277,6 +278,8 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
 
     // Use sortedTabs as the canonical tabs list
     const tabs = sortedTabs
+    const visibleTabs = tabs.filter((t: any) => !t.archived)
+    const archivedCount = tabs.filter((t: any) => t.archived).length
 
     // Tab Modals
     const [showTabModal, setShowTabModal] = useState(false)
@@ -285,6 +288,13 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
     // Fallback manual filter for general tab
     const [keywordFilter, setKeywordFilter] = useState(initialKeyword)
     const [showModal, setShowModal] = useState(false)
+    const [showArchive, setShowArchive] = useState(false)
+    const isTeam = ['superadmin', 'admin', 'trafficker'].includes(userRole ?? '')
+
+    const handleToggleArchived = useCallback(async (tabId: string, archived: boolean) => {
+        setSortedTabs(prev => prev.map((t: any) => t.id === tabId ? { ...t, archived } : t))
+        await toggleTabArchived(cliente.id, tabId, archived)
+    }, [cliente.id])
 
     // Global spend for budget cards
     const [globalSpend, setGlobalSpend] = useState<number | null>(null)
@@ -716,12 +726,27 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
         )
     }
 
+    if (showArchive) {
+        return (
+            <TabArchiveView
+                tabs={tabs}
+                metrics={metrics}
+                campaignGroups={data.campaignGroups || []}
+                allLayouts={allLayouts || []}
+                initialLayout={initialLayout}
+                onClose={() => setShowArchive(false)}
+                onToggleArchived={handleToggleArchived}
+                isTeam={isTeam}
+            />
+        )
+    }
+
     return (
         <div className="space-y-6">
             {/* Public Tabs Bar — simplified, no drag, no edit */}
-            {isPublic && tabs.length > 0 && (
+            {isPublic && visibleTabs.length > 0 && (
                 <div className="flex items-center gap-2 overflow-x-auto pb-2 custom-scrollbar border-b border-zinc-800">
-                    {tabs.map((tab: any) => (
+                    {visibleTabs.map((tab: any) => (
                         <button
                             key={tab.id}
                             onClick={() => setActiveTabId(tab.id)}
@@ -748,7 +773,7 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                     </button>
                     {/* Draggable custom tabs — only rendered client-side to avoid dnd-kit hydration mismatch */}
                     {!isMounted ? (
-                        tabs.map((tab: any) => (
+                        visibleTabs.map((tab: any) => (
                             <button
                                 key={tab.id}
                                 onClick={() => setActiveTabId(tab.id)}
@@ -764,8 +789,8 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                             onDragStart={handleDragStart}
                             onDragEnd={handleDragEnd}
                         >
-                            <SortableContext items={tabs.map((t: any) => t.id)} strategy={horizontalListSortingStrategy}>
-                                {tabs.map((tab: any) => (
+                            <SortableContext items={visibleTabs.map((t: any) => t.id)} strategy={horizontalListSortingStrategy}>
+                                {visibleTabs.map((tab: any) => (
                                     <SortableTab
                                         key={tab.id}
                                         tab={tab}
@@ -793,6 +818,20 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                         >
                             <Plus className="w-3.5 h-3.5" />
                             Nueva Pestaña
+                        </button>
+                    )}
+                    {isTeam && (
+                        <button
+                            onClick={() => setShowArchive(true)}
+                            title="Archivo de pestañas"
+                            className="ml-1 px-2.5 py-1.5 text-xs font-medium text-zinc-400 hover:text-zinc-200 bg-zinc-900 border border-zinc-700 hover:border-zinc-500 rounded flex items-center gap-1.5 transition relative"
+                        >
+                            <Archive className="w-3.5 h-3.5" />
+                            {archivedCount > 0 && (
+                                <span className="absolute -top-1.5 -right-1.5 text-[9px] bg-indigo-500 text-white rounded-full w-4 h-4 flex items-center justify-center font-bold">
+                                    {archivedCount}
+                                </span>
+                            )}
                         </button>
                     )}
                     {/* Pestaña fija de Reporte Mensual */}
