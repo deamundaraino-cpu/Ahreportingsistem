@@ -71,10 +71,13 @@ export function TabArchiveView({
     useEffect(() => {
         setIsLoadingArchive(true)
         setArchiveError(false)
-        getArchiveMetrics(clientId).then(result => {
-            if (result?.metrics) setArchiveMetrics(result.metrics)
-            else setArchiveError(true)
-        }).finally(() => setIsLoadingArchive(false))
+        getArchiveMetrics(clientId)
+            .then(result => {
+                if (result?.metrics) setArchiveMetrics(result.metrics)
+                else setArchiveError(true)
+            })
+            .catch(() => setArchiveError(true))
+            .finally(() => setIsLoadingArchive(false))
     }, [clientId])
 
     function toggleExpand(tabId: string) {
