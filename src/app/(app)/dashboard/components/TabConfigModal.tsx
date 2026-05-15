@@ -313,37 +313,41 @@ export function TabConfigModal({
                     )}
                 </div>
 
-                <DialogFooter className="gap-2 sm:gap-0">
-                    {tabToEdit && (
-                        <Button
-                            variant="destructive"
-                            onClick={handleDelete}
-                            disabled={saving}
-                            className="mr-auto text-xs h-9 bg-red-900/30 text-red-400 hover:bg-red-900/50 hover:text-red-300"
-                        >
-                            <Trash2 className="w-3.5 h-3.5 mr-1.5" />
-                            Eliminar
+                <div className="flex items-center justify-between gap-2 pt-2 border-t border-zinc-800 mt-2">
+                    <div className="flex items-center gap-2">
+                        {tabToEdit && (
+                            <Button
+                                variant="destructive"
+                                onClick={handleDelete}
+                                disabled={saving}
+                                className="text-xs h-8 px-3 bg-red-900/30 text-red-400 hover:bg-red-900/50 hover:text-red-300"
+                            >
+                                <Trash2 className="w-3.5 h-3.5 mr-1" />
+                                Eliminar
+                            </Button>
+                        )}
+                        {tabToEdit && (
+                            <Button
+                                type="button"
+                                variant="outline"
+                                onClick={handleDuplicate}
+                                disabled={duplicating || saving}
+                                className="text-xs h-8 px-3 border-zinc-700 text-zinc-300 hover:bg-zinc-800 gap-1.5"
+                            >
+                                <Copy className="w-3.5 h-3.5" />
+                                {duplicating ? 'Duplicando...' : 'Duplicar'}
+                            </Button>
+                        )}
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <Button variant="outline" onClick={onClose} disabled={saving} className="text-xs h-8 px-3 bg-zinc-900 border-zinc-700 hover:bg-zinc-800">
+                            Cancelar
                         </Button>
-                    )}
-                    {tabToEdit && (
-                        <Button
-                            type="button"
-                            variant="outline"
-                            onClick={handleDuplicate}
-                            disabled={duplicating || saving}
-                            className="border-zinc-700 text-zinc-300 hover:bg-zinc-800 gap-2"
-                        >
-                            <Copy className="w-4 h-4" />
-                            {duplicating ? 'Duplicando...' : 'Duplicar Pestaña'}
+                        <Button onClick={handleSave} disabled={saving || !nombre || !keyword} className="text-xs h-8 px-3 bg-blue-600 hover:bg-blue-700 text-white">
+                            {saving ? 'Guardando...' : 'Guardar Pestaña'}
                         </Button>
-                    )}
-                    <Button variant="outline" onClick={onClose} disabled={saving} className="bg-zinc-900 border-zinc-700 hover:bg-zinc-800">
-                        Cancelar
-                    </Button>
-                    <Button onClick={handleSave} disabled={saving || !nombre || !keyword} className="bg-blue-600 hover:bg-blue-700 text-white">
-                        {saving ? 'Guardando...' : 'Guardar Pestaña'}
-                    </Button>
-                </DialogFooter>
+                    </div>
+                </div>
             </DialogContent>
         </Dialog>
     )
