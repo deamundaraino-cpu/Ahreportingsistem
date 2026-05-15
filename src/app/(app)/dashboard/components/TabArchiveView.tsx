@@ -241,16 +241,13 @@ export function TabArchiveView({
                         </div>
                     ) : (
                         <div className="space-y-8">
-                            <div className="flex items-center gap-3">
-                                <p className="text-xs text-zinc-500 uppercase tracking-wider font-medium">Vista Comparativa</p>
-                                {isLoadingArchive && (
-                                    <span className="flex items-center gap-1.5 text-xs text-zinc-600">
-                                        <Loader2 className="w-3 h-3 animate-spin" />
-                                        Cargando historial completo…
-                                    </span>
-                                )}
-                            </div>
-                            {groupedSelected.map(group => {
+                            <p className="text-xs text-zinc-500 uppercase tracking-wider font-medium">Vista Comparativa</p>
+                            {isLoadingArchive ? (
+                                <div className="flex items-center gap-2 text-sm text-zinc-600">
+                                    <Loader2 className="w-4 h-4 animate-spin" />
+                                    Cargando historial completo…
+                                </div>
+                            ) : groupedSelected.map(group => {
                                 const tab = tabs.find(t => t.id === group.tabId)
                                 return (
                                     <div key={group.tabId}>
