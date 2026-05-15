@@ -298,66 +298,70 @@ function DraggableColumnRow({
             onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); onDragOver(e, index) }}
             onDrop={(e) => { e.preventDefault(); e.stopPropagation(); onDrop(index) }}
         >
-            {/* Scrollable row content */}
             <div
-                className={`flex items-center gap-2 bg-zinc-900 border rounded-l-lg px-3 py-2.5 transition cursor-grab active:cursor-grabbing select-none flex-1 min-w-0 overflow-x-auto ${col.hidden ? 'border-zinc-800 border-r-0 opacity-50' : 'border-zinc-700 border-r-0 hover:border-zinc-600'}`}
+                className={`flex flex-col gap-1.5 bg-zinc-900 border rounded-l-lg px-3 py-2.5 transition cursor-grab active:cursor-grabbing select-none flex-1 min-w-0 ${col.hidden ? 'border-zinc-800 border-r-0 opacity-50' : 'border-zinc-700 border-r-0 hover:border-zinc-600'}`}
             >
-                <GripVertical className="w-4 h-4 text-zinc-600 flex-shrink-0 group-hover/row:text-zinc-400 transition" />
+                {/* Row 1: grip + eye + label + formula */}
+                <div className="flex items-center gap-2">
+                    <GripVertical className="w-4 h-4 text-zinc-600 flex-shrink-0 group-hover/row:text-zinc-400 transition" />
 
-                <button
-                    onClick={() => onUpdate({ ...col, hidden: !col.hidden })}
-                    className="flex-shrink-0 text-zinc-500 hover:text-zinc-200 transition"
-                    title={col.hidden ? 'Mostrar columna' : 'Ocultar columna'}
-                >
-                    {col.hidden ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                </button>
+                    <button
+                        onClick={() => onUpdate({ ...col, hidden: !col.hidden })}
+                        className="flex-shrink-0 text-zinc-500 hover:text-zinc-200 transition"
+                        title={col.hidden ? 'Mostrar columna' : 'Ocultar columna'}
+                    >
+                        {col.hidden ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                    </button>
 
-                <Input
-                    value={col.label}
-                    onChange={e => onUpdate({ ...col, label: e.target.value })}
-                    className="h-7 text-xs bg-zinc-950 border-zinc-700 text-zinc-200 w-28 flex-shrink-0"
-                    placeholder="Etiqueta"
-                />
-
-                <FormulaInput
-                    value={col.formula}
-                    onChange={val => onUpdate({ ...col, formula: val.trim() })}
-                    disabled={col.formula === 'fecha'}
-                    availableMetrics={availableMetrics}
-                />
-
-                {col.formula !== 'fecha' && (
-                    <MetricTypeSelector
-                        prefix={col.prefix}
-                        suffix={col.suffix}
-                        onChange={vals => onUpdate({ ...col, ...vals })}
+                    <Input
+                        value={col.label}
+                        onChange={e => onUpdate({ ...col, label: e.target.value })}
+                        className="h-7 text-xs bg-zinc-950 border-zinc-700 text-zinc-200 w-28 flex-shrink-0"
+                        placeholder="Etiqueta"
                     />
-                )}
 
-                <button
-                    onClick={() => onUpdate({ ...col, highlight: !col.highlight })}
-                    title="Colorear según impacto"
-                    className={`flex-shrink-0 w-6 h-7 rounded border text-xs transition ${col.highlight ? 'bg-indigo-500/20 border-indigo-500/40 text-indigo-400' : 'bg-zinc-900 border-zinc-700 text-zinc-600 hover:text-zinc-400'}`}
-                >
-                    ✦
-                </button>
+                    <FormulaInput
+                        value={col.formula}
+                        onChange={val => onUpdate({ ...col, formula: val.trim() })}
+                        disabled={col.formula === 'fecha'}
+                        availableMetrics={availableMetrics}
+                    />
+                </div>
 
-                <CampaignFilterPicker
-                    value={col.campaignFilter}
-                    onChange={v => onUpdate({ ...col, campaignFilter: v })}
-                    campaignGroups={campaignGroups}
-                    campaignNames={campaignNames}
-                />
+                {/* Row 2: type + highlight + campaign filter (only for non-fecha columns) */}
+                {col.formula !== 'fecha' && (
+                    <div className="flex items-center gap-2 pl-6">
+                        <MetricTypeSelector
+                            prefix={col.prefix}
+                            suffix={col.suffix}
+                            onChange={vals => onUpdate({ ...col, ...vals })}
+                        />
 
-                {/* Manual indicator */}
-                {col.isManual && (
-                    <span className="flex-shrink-0 text-[9px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 px-1.5 py-0.5 rounded font-bold uppercase tracking-wide">
-                        Manual
-                    </span>
+                        <button
+                            onClick={() => onUpdate({ ...col, highlight: !col.highlight })}
+                            title="Colorear según impacto"
+                            className={`flex-shrink-0 w-6 h-7 rounded border text-xs transition ${col.highlight ? 'bg-indigo-500/20 border-indigo-500/40 text-indigo-400' : 'bg-zinc-900 border-zinc-700 text-zinc-600 hover:text-zinc-400'}`}
+                        >
+                            ✦
+                        </button>
+
+                        <CampaignFilterPicker
+                            value={col.campaignFilter}
+                            onChange={v => onUpdate({ ...col, campaignFilter: v })}
+                            campaignGroups={campaignGroups}
+                            campaignNames={campaignNames}
+                        />
+
+                        {col.isManual && (
+                            <span className="flex-shrink-0 text-[9px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 px-1.5 py-0.5 rounded font-bold uppercase tracking-wide">
+                                Manual
+                            </span>
+                        )}
+                    </div>
                 )}
             </div>
 
-            {/* Sticky delete button — always visible */}
+            {/* Sticky delete button */}
             {col.formula !== 'fecha' && (
                 <button
                     onClick={onRemove}
