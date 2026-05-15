@@ -3,16 +3,18 @@
 import React, { useState } from 'react'
 import { useRouter, useSearchParams, useParams } from 'next/navigation'
 import {
-    format, subDays,
+    format, subDays, subYears, parseISO,
     startOfWeek, endOfWeek, subWeeks,
     startOfMonth, endOfMonth, subMonths,
 } from 'date-fns'
+import { es } from 'date-fns/locale'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Loader2, RefreshCcw, CheckCircle2, AlertCircle, ChevronDown, CalendarDays } from 'lucide-react'
 import { triggerWorkerSync } from '../_actions'
 
 const fmt = (d: Date) => format(d, 'yyyy-MM-dd')
+const fmtDisplay = (d: Date) => format(d, 'd MMM yyyy', { locale: es })
 
 type Preset = { id: string; label: string; getRange: () => { from: string; to: string } }
 
@@ -69,6 +71,9 @@ export function DateRangeSelector({ basePath = '/dashboard', isPublic = false }:
 
     const activePresetId = getActivePreset(fromParam, toParam)
     const activeLabel = PRESETS.find(p => p.id === activePresetId)?.label ?? 'Personalizado'
+    const buttonLabel = activePresetId === 'all'
+        ? `Máximo: ${fmtDisplay(subYears(new Date(), 3))} – ${fmtDisplay(new Date())}`
+        : `${activeLabel}: ${fmtDisplay(parseISO(fromParam))} – ${fmtDisplay(parseISO(toParam))}`
 
     const navigate = (from: string, to: string) => {
         const id = isPublic ? token : clientId
@@ -132,7 +137,7 @@ export function DateRangeSelector({ basePath = '/dashboard', isPublic = false }:
                         className="h-8 gap-2 border-zinc-700 bg-zinc-800 text-zinc-100 hover:bg-zinc-700 hover:text-zinc-100"
                     >
                         <CalendarDays className="h-4 w-4 text-zinc-400" />
-                        {activeLabel}
+                        {buttonLabel}
                         <ChevronDown className="h-4 w-4 text-zinc-400" />
                     </Button>
                 </PopoverTrigger>
