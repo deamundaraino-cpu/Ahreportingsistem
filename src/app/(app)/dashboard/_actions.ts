@@ -753,3 +753,36 @@ export async function getOrCreatePublicToken(id: string, type: 'client' | 'tab')
     if (error) return { error: error.message }
     return { token: newToken }
 }
+
+export async function getArchiveMetrics(clientId: string) {
+    const supabase = await createAdminClient()
+
+    const [metricsRes, leadsRes] = await Promise.all([
+        supabase.from('metricas_diarias')
+            .select('*')
+            .eq('cliente_id', clientId)
+            .order('fecha', { ascending: true }),
+        supabase.from('leads_diarios')
+            .select('*')
+            .eq('client_id', clientId),
+    ])
+
+    if (metricsRes.error) return null
+
+    const leadsMap = new Map((leadsRes.data || []).map((l: any) => [l.date, l]))
+    const metrics = (metricsRes.data || []).map((m: any) => {
+        const leadDay = leadsMap.get(m.fecha)
+        if (leadDay) {
+            return {
+                ...m,
+                leads_totales: leadDay.leads_totales,
+                leads_calificados: leadDay.leads_calificados,
+                leads_no_calificados: leadDay.leads_no_calificados,
+                tasa_calificacion: leadDay.tasa_calificacion,
+            }
+        }
+        return m
+    })
+
+    return { metrics }
+}
