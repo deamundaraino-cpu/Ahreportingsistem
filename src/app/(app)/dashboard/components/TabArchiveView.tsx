@@ -30,8 +30,8 @@ function computeCardValue(
     dateOverride?: { from: string; to: string }
 ): number | null {
     let rows = metrics
-    const from = dateOverride?.from || tab.fecha_inicio
-    const to = dateOverride?.to || tab.fecha_finalizacion
+    const from = dateOverride !== undefined ? dateOverride.from : tab.fecha_inicio
+    const to = dateOverride !== undefined ? dateOverride.to : tab.fecha_finalizacion
     if (from) rows = rows.filter((m: any) => m.fecha >= from)
     if (to) rows = rows.filter((m: any) => m.fecha <= to)
     const keyword = card.campaignFilter?.value ?? tab.keyword_meta ?? ''

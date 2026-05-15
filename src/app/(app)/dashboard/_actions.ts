@@ -761,10 +761,14 @@ export async function getArchiveMetrics(clientId: string): Promise<{ metrics: an
         supabase.from('metricas_diarias')
             .select('*')
             .eq('cliente_id', clientId)
-            .order('fecha', { ascending: true }),
+            .gte('fecha', '2020-01-01')
+            .order('fecha', { ascending: true })
+            .range(0, 9999),
         supabase.from('leads_diarios')
             .select('*')
-            .eq('client_id', clientId),
+            .eq('client_id', clientId)
+            .gte('date', '2020-01-01')
+            .range(0, 9999),
     ])
 
     if (metricsRes.error || leadsRes.error) return null
