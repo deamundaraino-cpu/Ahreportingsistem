@@ -754,7 +754,7 @@ export async function getOrCreatePublicToken(id: string, type: 'client' | 'tab')
     return { token: newToken }
 }
 
-export async function getArchiveMetrics(clientId: string) {
+export async function getArchiveMetrics(clientId: string): Promise<{ metrics: any[] } | null> {
     const supabase = await createAdminClient()
 
     const [metricsRes, leadsRes] = await Promise.all([
@@ -767,7 +767,7 @@ export async function getArchiveMetrics(clientId: string) {
             .eq('client_id', clientId),
     ])
 
-    if (metricsRes.error) return null
+    if (metricsRes.error || leadsRes.error) return null
 
     const leadsMap = new Map((leadsRes.data || []).map((l: any) => [l.date, l]))
     const metrics = (metricsRes.data || []).map((m: any) => {
