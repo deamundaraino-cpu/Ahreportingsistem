@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input'
 import {
     LayoutDashboard, X, GripVertical, ChevronRight,
     RotateCcw, Save, Loader2, Check,
-    ChevronLeft, Eye, EyeOff, LayoutPanelTop, Plus, Database, BarChart3
+    ChevronLeft, Eye, EyeOff, LayoutPanelTop, Plus, Database, BarChart3, Copy
 } from 'lucide-react'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import type { ColDef, CardDef, ChartDef, ChartType, ReportLayout, CardColor } from '@/lib/layout-types'
@@ -950,6 +950,20 @@ export function LayoutConfigModal({
         setWorkingLayout({ ...workingLayout, text_blocks: newBlocks })
     }
 
+    function duplicateTextBlock(index: number) {
+        if (!workingLayout) return
+        const source = (workingLayout.text_blocks || [])[index]
+        if (!source) return
+        const copy = { ...source, id: crypto.randomUUID() }
+        const newBlocks = [...(workingLayout.text_blocks || [])]
+        newBlocks.splice(index + 1, 0, copy)
+        const newOrder = [...(workingLayout.blocks_order || [])]
+        const sourceKey = `text:${source.id}`
+        const pos = newOrder.indexOf(sourceKey)
+        newOrder.splice(pos + 1, 0, `text:${copy.id}`)
+        setWorkingLayout({ ...workingLayout, text_blocks: newBlocks, blocks_order: newOrder })
+    }
+
     function removeTextBlock(index: number) {
         if (!workingLayout) return
         const newBlocks = [...(workingLayout.text_blocks || [])]
@@ -1335,7 +1349,10 @@ export function LayoutConfigModal({
                                                     </select>
                                                 </div>
                                             </div>
-                                            <button onClick={() => removeTextBlock(i)} className="text-zinc-600 hover:text-red-400 p-1.5 rounded bg-zinc-950 border border-zinc-800 transition flex-shrink-0">
+                                            <button onClick={() => duplicateTextBlock(i)} title="Duplicar título" className="text-zinc-600 hover:text-purple-400 p-1.5 rounded bg-zinc-950 border border-zinc-800 transition flex-shrink-0">
+                                                <Copy className="w-4 h-4" />
+                                            </button>
+                                            <button onClick={() => removeTextBlock(i)} title="Eliminar título" className="text-zinc-600 hover:text-red-400 p-1.5 rounded bg-zinc-950 border border-zinc-800 transition flex-shrink-0">
                                                 <X className="w-4 h-4" />
                                             </button>
                                         </div>
