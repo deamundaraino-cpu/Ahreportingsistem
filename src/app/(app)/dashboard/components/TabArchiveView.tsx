@@ -1,10 +1,11 @@
 'use client'
 
-import React, { useState, useMemo } from 'react'
-import { ArrowLeft, Eye, EyeOff, ChevronDown, ChevronRight } from 'lucide-react'
+import React, { useState, useMemo, useEffect } from 'react'
+import { ArrowLeft, Eye, EyeOff, ChevronDown, ChevronRight, Loader2 } from 'lucide-react'
 import { enrichMetaRow } from '@/lib/campaign-filter'
 import { aggregateFormula, formatValue } from '@/lib/formula-engine'
 import type { CardDef } from '@/lib/layout-types'
+import { getArchiveMetrics } from '../_actions'
 
 type SelectedCard = {
     tabId: string
@@ -25,11 +26,14 @@ function computeCardValue(
     card: CardDef,
     tab: any,
     metrics: any[],
-    campaignGroups: any[]
+    campaignGroups: any[],
+    dateOverride?: { from: string; to: string }
 ): number | null {
     let rows = metrics
-    if (tab.fecha_inicio) rows = rows.filter((m: any) => m.fecha >= tab.fecha_inicio)
-    if (tab.fecha_finalizacion) rows = rows.filter((m: any) => m.fecha <= tab.fecha_finalizacion)
+    const from = dateOverride?.from || tab.fecha_inicio
+    const to = dateOverride?.to || tab.fecha_finalizacion
+    if (from) rows = rows.filter((m: any) => m.fecha >= from)
+    if (to) rows = rows.filter((m: any) => m.fecha <= to)
     const keyword = card.campaignFilter?.value ?? tab.keyword_meta ?? ''
     rows = rows.map((r: any) => enrichMetaRow(r, keyword, campaignGroups))
     return aggregateFormula(card.formula, rows, {}, {}, new Set(['meta']), {})
@@ -41,6 +45,7 @@ export function TabArchiveView({
     campaignGroups,
     allLayouts,
     initialLayout,
+    clientId,
     onClose,
     onToggleArchived,
     isTeam,
@@ -50,6 +55,7 @@ export function TabArchiveView({
     campaignGroups: any[]
     allLayouts: any[]
     initialLayout: any
+    clientId: string
     onClose: () => void
     onToggleArchived: (tabId: string, archived: boolean) => Promise<void>
     isTeam: boolean
@@ -57,6 +63,16 @@ export function TabArchiveView({
     const [expandedTabIds, setExpandedTabIds] = useState<Set<string>>(new Set())
     const [selectedCards, setSelectedCards] = useState<SelectedCard[]>([])
     const [togglingId, setTogglingId] = useState<string | null>(null)
+    const [archiveMetrics, setArchiveMetrics] = useState<any[]>(metrics)
+    const [isLoadingArchive, setIsLoadingArchive] = useState(true)
+    const [tabDateOverrides, setTabDateOverrides] = useState<Record<string, { from: string; to: string }>>({})
+
+    useEffect(() => {
+        setIsLoadingArchive(true)
+        getArchiveMetrics(clientId).then(result => {
+            if (result?.metrics) setArchiveMetrics(result.metrics)
+        }).finally(() => setIsLoadingArchive(false))
+    }, [clientId])
 
     function toggleExpand(tabId: string) {
         setExpandedTabIds(prev => {
@@ -84,6 +100,16 @@ export function TabArchiveView({
         setTogglingId(tab.id)
         await onToggleArchived(tab.id, !tab.archived)
         setTogglingId(null)
+    }
+
+    function setTabOverride(tabId: string, field: 'from' | 'to', value: string, tab: any) {
+        setTabDateOverrides(prev => ({
+            ...prev,
+            [tabId]: {
+                from: field === 'from' ? value : (prev[tabId]?.from ?? tab.fecha_inicio ?? ''),
+                to: field === 'to' ? value : (prev[tabId]?.to ?? tab.fecha_finalizacion ?? ''),
+            }
+        }))
     }
 
     const groupedSelected = useMemo(() => {
@@ -122,6 +148,7 @@ export function TabArchiveView({
                     {sortedTabs.map(tab => {
                         const cards = resolveTabCards(tab, allLayouts, initialLayout)
                         const expanded = expandedTabIds.has(tab.id)
+                        const override = tabDateOverrides[tab.id]
                         return (
                             <div key={tab.id} className={`rounded-lg border transition ${tab.archived ? 'border-zinc-800 opacity-60' : 'border-zinc-700'} bg-zinc-900`}>
                                 {/* Tab header row */}
@@ -145,11 +172,22 @@ export function TabArchiveView({
                                                 <span className="text-[10px] bg-zinc-800 px-1.5 py-0.5 rounded text-zinc-500">oculta</span>
                                             )}
                                         </div>
-                                        {(tab.fecha_inicio || tab.fecha_finalizacion) && (
-                                            <p className="text-[10px] text-zinc-600 mt-0.5">
-                                                {tab.fecha_inicio ?? '—'} → {tab.fecha_finalizacion ?? '—'}
-                                            </p>
-                                        )}
+                                        {/* Inline date overrides */}
+                                        <div className="flex items-center gap-1 mt-1">
+                                            <input
+                                                type="date"
+                                                value={override?.from ?? tab.fecha_inicio ?? ''}
+                                                onChange={e => setTabOverride(tab.id, 'from', e.target.value, tab)}
+                                                className="text-[10px] bg-zinc-800 text-zinc-400 border-none rounded px-1 py-0.5 w-[100px] cursor-pointer"
+                                            />
+                                            <span className="text-[10px] text-zinc-600">→</span>
+                                            <input
+                                                type="date"
+                                                value={override?.to ?? tab.fecha_finalizacion ?? ''}
+                                                onChange={e => setTabOverride(tab.id, 'to', e.target.value, tab)}
+                                                className="text-[10px] bg-zinc-800 text-zinc-400 border-none rounded px-1 py-0.5 w-[100px] cursor-pointer"
+                                            />
+                                        </div>
                                     </div>
 
                                     {isTeam && (
@@ -203,7 +241,15 @@ export function TabArchiveView({
                         </div>
                     ) : (
                         <div className="space-y-8">
-                            <p className="text-xs text-zinc-500 uppercase tracking-wider font-medium">Vista Comparativa</p>
+                            <div className="flex items-center gap-3">
+                                <p className="text-xs text-zinc-500 uppercase tracking-wider font-medium">Vista Comparativa</p>
+                                {isLoadingArchive && (
+                                    <span className="flex items-center gap-1.5 text-xs text-zinc-600">
+                                        <Loader2 className="w-3 h-3 animate-spin" />
+                                        Cargando historial completo…
+                                    </span>
+                                )}
+                            </div>
                             {groupedSelected.map(group => {
                                 const tab = tabs.find(t => t.id === group.tabId)
                                 return (
@@ -217,7 +263,13 @@ export function TabArchiveView({
                                         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
                                             {group.cards.map(sel => {
                                                 const value = tab
-                                                    ? computeCardValue(sel.card, tab, metrics, campaignGroups)
+                                                    ? computeCardValue(
+                                                        sel.card,
+                                                        tab,
+                                                        archiveMetrics,
+                                                        campaignGroups,
+                                                        tabDateOverrides[tab.id]
+                                                    )
                                                     : null
                                                 const formatted = formatValue(value, {
                                                     prefix: sel.card.prefix,
