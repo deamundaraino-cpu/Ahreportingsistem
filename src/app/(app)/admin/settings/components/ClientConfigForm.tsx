@@ -1,7 +1,7 @@
 'use client'
 
-import { useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { useState, useEffect } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -100,9 +100,20 @@ function MetaAccountRow({ account, sharedToken, testStatus, onChange, onRemove, 
 
 export function ClientConfigForm({ cliente, layouts = [], isAdmin = false }: { cliente: any; layouts?: any[]; isAdmin?: boolean }) {
     const router = useRouter()
+    const searchParams = useSearchParams()
     const [loading, setLoading] = useState(false)
     const [error, setError] = useState<string | null>(null)
     const [config, setConfig] = useState(cliente.config_api || {})
+    const [tiktokOAuthStatus, setTiktokOAuthStatus] = useState<{ success?: boolean; error?: string } | null>(null)
+
+    useEffect(() => {
+        if (searchParams.get('tiktok_connected')) {
+            setTiktokOAuthStatus({ success: true })
+            setConfig((prev: any) => ({ ...prev }))
+        } else if (searchParams.get('tiktok_error')) {
+            setTiktokOAuthStatus({ error: decodeURIComponent(searchParams.get('tiktok_error')!) })
+        }
+    }, [searchParams])
 const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean, success?: boolean, error?: string, message?: string } }>({})
     const [layoutSaving, setLayoutSaving] = useState(false)
     const [selectedLayoutId, setSelectedLayoutId] = useState<string>(cliente.layout_id || '')
@@ -570,37 +581,54 @@ const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean
                             variant="outline"
                             size="sm"
                             onClick={() => runTest('tiktok', () => testTikTokConnection(config.tiktok_access_token, config.tiktok_advertiser_id))}
-                            disabled={testStatus.tiktok?.loading}
+                            disabled={testStatus.tiktok?.loading || !config.tiktok_access_token}
                         >
                             {testStatus.tiktok?.loading ? <RefreshCw className="w-3 h-3 animate-spin mr-2" /> : <RefreshCw className="w-3 h-3 mr-2" />}
                             Probar Conexión
                         </Button>
                     </div>
-                    <CardDescription>Conecta tu cuenta de TikTok Ads ingresando el Access Token y el Advertiser ID.</CardDescription>
+                    <CardDescription>Conecta tu cuenta de TikTok Ads usando OAuth o ingresando el token manualmente.</CardDescription>
+                    {tiktokOAuthStatus?.success && <p className="text-green-500 text-xs flex items-center mt-2"><CheckCircle2 className="w-3 h-3 mr-1" /> Cuenta TikTok conectada exitosamente</p>}
+                    {tiktokOAuthStatus?.error && <p className="text-red-500 text-xs flex items-center mt-2"><AlertCircle className="w-3 h-3 mr-1" /> {tiktokOAuthStatus.error}</p>}
                     {testStatus.tiktok?.success && <p className="text-green-500 text-xs flex items-center mt-2"><CheckCircle2 className="w-3 h-3 mr-1" /> Conexión Exitosa</p>}
                     {testStatus.tiktok?.error && <p className="text-red-500 text-xs flex items-center mt-2"><AlertCircle className="w-3 h-3 mr-1" /> {testStatus.tiktok.error}</p>}
                 </CardHeader>
                 <CardContent className="space-y-4">
-                    <div className="space-y-2">
-                        <Label htmlFor="tiktok_access_token" className="text-zinc-300">Access Token</Label>
-                        <Input
-                            id="tiktok_access_token"
-                            type="password"
-                            placeholder="Tu TikTok Marketing API Access Token"
-                            value={config.tiktok_access_token || ''}
-                            onChange={(e) => setConfig({ ...config, tiktok_access_token: e.target.value })}
-                            className="bg-zinc-950 border-zinc-700"
-                        />
+                    {/* OAuth Button */}
+                    <div className="flex flex-col gap-2">
+                        <a href={`/api/auth/tiktok?client_id=${cliente.id}`}>
+                            <Button variant="default" size="sm" className="w-full bg-[#ff2d55] hover:bg-[#e0003a] text-white">
+                                {config.tiktok_access_token ? '🔄 Reconectar con TikTok Ads' : '🔗 Conectar con TikTok Ads'}
+                            </Button>
+                        </a>
+                        {config.tiktok_access_token && (
+                            <p className="text-green-500 text-xs flex items-center gap-1"><CheckCircle2 className="w-3 h-3" /> Token guardado — cuenta conectada</p>
+                        )}
                     </div>
-                    <div className="space-y-2">
-                        <Label htmlFor="tiktok_advertiser_id" className="text-zinc-300">Advertiser ID</Label>
-                        <Input
-                            id="tiktok_advertiser_id"
-                            placeholder="1234567890123456789"
-                            value={config.tiktok_advertiser_id || ''}
-                            onChange={(e) => setConfig({ ...config, tiktok_advertiser_id: e.target.value })}
-                            className="bg-zinc-950 border-zinc-700"
-                        />
+
+                    <div className="border-t border-zinc-800 pt-4 space-y-4">
+                        <p className="text-zinc-500 text-xs">O ingresa el token manualmente:</p>
+                        <div className="space-y-2">
+                            <Label htmlFor="tiktok_access_token" className="text-zinc-300">Access Token</Label>
+                            <Input
+                                id="tiktok_access_token"
+                                type="password"
+                                placeholder="Tu TikTok Marketing API Access Token"
+                                value={config.tiktok_access_token || ''}
+                                onChange={(e) => setConfig({ ...config, tiktok_access_token: e.target.value })}
+                                className="bg-zinc-950 border-zinc-700"
+                            />
+                        </div>
+                        <div className="space-y-2">
+                            <Label htmlFor="tiktok_advertiser_id" className="text-zinc-300">Advertiser ID</Label>
+                            <Input
+                                id="tiktok_advertiser_id"
+                                placeholder="1234567890123456789"
+                                value={config.tiktok_advertiser_id || ''}
+                                onChange={(e) => setConfig({ ...config, tiktok_advertiser_id: e.target.value })}
+                                className="bg-zinc-950 border-zinc-700"
+                            />
+                        </div>
                     </div>
                 </CardContent>
             </Card>
