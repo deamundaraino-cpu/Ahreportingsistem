@@ -501,6 +501,69 @@ export async function getPublicLayout(clienteId: string) {
 
 // ─── Google Sheets Sync ────────────────────────────────────────────────────
 
+// ─── Budget Alerts ────────────────────────────────────────────────────────────
+
+export interface ActiveAlert {
+  tabId: string
+  tabNombre: string
+  clienteId: string
+  clienteNombre: string
+  presupuestoObjetivo: number
+  level: 90 | 100
+  sentAt: string
+}
+
+export async function getActiveAlerts(): Promise<ActiveAlert[]> {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+
+  const adminSupabase = await createAdminClient()
+
+  let allowedClientIds: string[] | null = null
+
+  if (user) {
+    const { data: profile } = await supabase
+      .from('user_profiles')
+      .select('role')
+      .eq('id', user.id)
+      .single()
+
+    if (profile?.role === 'trafficker') {
+      const { data: assignments } = await adminSupabase
+        .from('user_client_assignments')
+        .select('client_id')
+        .eq('user_id', user.id)
+      allowedClientIds = (assignments ?? []).map((a: { client_id: string }) => a.client_id)
+      if (allowedClientIds.length === 0) return []
+    }
+  }
+
+  let query = adminSupabase
+    .from('cliente_tabs')
+    .select('id, nombre, cliente_id, presupuesto_objetivo, alert_sent_at_90, alert_sent_at_100, clientes(nombre)')
+    .eq('archived', false)
+    .not('presupuesto_objetivo', 'is', null)
+    .or('alert_sent_at_90.not.is.null,alert_sent_at_100.not.is.null')
+
+  if (allowedClientIds) {
+    query = query.in('cliente_id', allowedClientIds)
+  }
+
+  const { data, error } = await query.order('alert_sent_at_100', { ascending: false, nullsFirst: false })
+
+  if (error || !data) return []
+
+  return data.map((row: any) => ({
+    tabId: row.id,
+    tabNombre: row.nombre,
+    clienteId: row.cliente_id,
+    clienteNombre: (row.clientes as any)?.nombre ?? row.cliente_id,
+    presupuestoObjetivo: row.presupuesto_objetivo,
+    level: row.alert_sent_at_100 ? 100 : 90,
+    sentAt: row.alert_sent_at_100 ?? row.alert_sent_at_90,
+  }))
+}
+
 export async function syncGoogleSheets(clienteId: string) {
     try {
         const headersList = await headers()

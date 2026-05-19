@@ -1,4 +1,4 @@
-import { getClientes } from "../admin/settings/_actions"
+import { getClientes, getActiveAlerts, type ActiveAlert } from "../admin/settings/_actions"
 import {
   BarChart3,
   ArrowRight,
@@ -12,10 +12,12 @@ import {
   ShoppingCart,
   Activity,
   ChevronRight,
+  AlertTriangle,
+  Bell,
 } from "lucide-react"
 
 export default async function DashboardHomePage() {
-  const clientes = await getClientes()
+  const [clientes, activeAlerts] = await Promise.all([getClientes(), getActiveAlerts()])
 
   const totalClientes = clientes?.length ?? 0
   const totalIntegrations = (clientes ?? []).reduce((acc: number, c: any) => {
@@ -68,7 +70,7 @@ export default async function DashboardHomePage() {
       </div>
 
       {/* ── Stats Row ── */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard
           icon={<Users className="h-5 w-5" />}
           label="Clientes Totales"
@@ -88,7 +90,19 @@ export default async function DashboardHomePage() {
           suffix={`/ 3`}
           color="emerald"
         />
+        <StatCard
+          icon={<Bell className="h-5 w-5" />}
+          label="Alertas Activas"
+          value={activeAlerts.length}
+          color={activeAlerts.length > 0 ? "red" : "zinc"}
+          pulse={activeAlerts.length > 0}
+        />
       </div>
+
+      {/* ── Active Alerts Panel ── */}
+      {activeAlerts.length > 0 && (
+        <AlertsPanel alerts={activeAlerts} />
+      )}
 
       {/* ── Clients Section ── */}
       <section className="space-y-4">
@@ -165,28 +179,45 @@ function StatCard({
   value,
   suffix,
   color,
+  pulse,
 }: {
   icon: React.ReactNode
   label: string
   value: number
   suffix?: string
-  color: "blue" | "amber" | "emerald"
+  color: "blue" | "amber" | "emerald" | "red" | "zinc"
+  pulse?: boolean
 }) {
   const colorMap = {
     blue: {
       bg: "bg-[#1E6AB5]/10",
       icon: "text-[#5a9fd4]",
       ring: "ring-[#1E6AB5]/20",
+      value: "text-zinc-50",
     },
     amber: {
       bg: "bg-amber-500/10",
       icon: "text-amber-400",
       ring: "ring-amber-500/20",
+      value: "text-zinc-50",
     },
     emerald: {
       bg: "bg-emerald-500/10",
       icon: "text-emerald-400",
       ring: "ring-emerald-500/20",
+      value: "text-zinc-50",
+    },
+    red: {
+      bg: "bg-red-500/10",
+      icon: "text-red-400",
+      ring: "ring-red-500/20",
+      value: "text-red-400",
+    },
+    zinc: {
+      bg: "bg-zinc-700/40",
+      icon: "text-zinc-500",
+      ring: "ring-zinc-700/40",
+      value: "text-zinc-50",
     },
   }
   const c = colorMap[color]
@@ -198,7 +229,7 @@ function StatCard({
           <p className="text-xs font-medium uppercase tracking-wider text-zinc-500">
             {label}
           </p>
-          <p className="mt-2 text-3xl font-bold tabular-nums text-zinc-50">
+          <p className={`mt-2 text-3xl font-bold tabular-nums ${c.value}`}>
             {value}
             {suffix && (
               <span className="ml-1 text-lg font-normal text-zinc-500">
@@ -207,7 +238,12 @@ function StatCard({
             )}
           </p>
         </div>
-        <div className={`rounded-lg p-2.5 ring-1 ${c.bg} ${c.ring}`}>
+        <div className={`relative rounded-lg p-2.5 ring-1 ${c.bg} ${c.ring}`}>
+          {pulse && (
+            <span className="absolute -right-1 -top-1 h-2.5 w-2.5 rounded-full bg-red-500">
+              <span className="absolute inset-0 animate-ping rounded-full bg-red-400 opacity-75" />
+            </span>
+          )}
           <span className={c.icon}>{icon}</span>
         </div>
       </div>
@@ -311,6 +347,113 @@ function EmptyClients() {
         para agregar tu primer cliente.
       </p>
     </div>
+  )
+}
+
+function AlertsPanel({ alerts }: { alerts: ActiveAlert[] }) {
+  const critical = alerts.filter(a => a.level === 100)
+  const warning = alerts.filter(a => a.level === 90)
+
+  return (
+    <section className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-red-500/15">
+            <Bell className="h-4 w-4 text-red-400" />
+          </div>
+          <div>
+            <h2 className="text-lg font-semibold text-zinc-100">Alertas de Presupuesto</h2>
+            <p className="text-sm text-zinc-500">
+              {alerts.length} {alerts.length === 1 ? "pestaña" : "pestañas"} con alertas activas
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          {critical.length > 0 && (
+            <span className="rounded-full border border-red-500/30 bg-red-500/10 px-2.5 py-1 text-xs font-semibold text-red-400">
+              {critical.length} crítica{critical.length !== 1 ? "s" : ""}
+            </span>
+          )}
+          {warning.length > 0 && (
+            <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 text-xs font-semibold text-amber-400">
+              {warning.length} advertencia{warning.length !== 1 ? "s" : ""}
+            </span>
+          )}
+        </div>
+      </div>
+
+      <div className="overflow-hidden rounded-xl border border-white/[0.06] bg-zinc-900">
+        {alerts.map((alert, i) => (
+          <AlertRow key={alert.tabId} alert={alert} isLast={i === alerts.length - 1} />
+        ))}
+      </div>
+    </section>
+  )
+}
+
+function AlertRow({ alert, isLast }: { alert: ActiveAlert; isLast: boolean }) {
+  const isCritical = alert.level === 100
+  const sentDate = new Date(alert.sentAt).toLocaleDateString("es-CO", {
+    day: "numeric",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  })
+  const budgetFormatted = new Intl.NumberFormat("es-CO", {
+    style: "currency",
+    currency: "COP",
+    maximumFractionDigits: 0,
+  }).format(alert.presupuestoObjetivo)
+
+  return (
+    <a
+      href={`/dashboard/${alert.clienteId}`}
+      className={`group flex items-center gap-4 px-5 py-4 transition-colors hover:bg-zinc-800/60 ${
+        !isLast ? "border-b border-white/[0.04]" : ""
+      }`}
+    >
+      {/* Level badge */}
+      <div
+        className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${
+          isCritical
+            ? "bg-red-500/15 ring-1 ring-red-500/30"
+            : "bg-amber-500/15 ring-1 ring-amber-500/30"
+        }`}
+      >
+        <AlertTriangle
+          className={`h-4 w-4 ${isCritical ? "text-red-400" : "text-amber-400"}`}
+        />
+      </div>
+
+      {/* Info */}
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+          <span className="font-medium text-zinc-100 group-hover:text-[#5a9fd4] transition-colors">
+            {alert.tabNombre}
+          </span>
+          <span className="text-zinc-500">·</span>
+          <span className="text-sm text-zinc-400">{alert.clienteNombre}</span>
+        </div>
+        <div className="mt-0.5 flex items-center gap-3">
+          <span className="text-xs text-zinc-500">{budgetFormatted} presupuesto</span>
+          <span className="text-xs text-zinc-600">Alerta enviada {sentDate}</span>
+        </div>
+      </div>
+
+      {/* Level pill */}
+      <div className="flex shrink-0 items-center gap-3">
+        <span
+          className={`rounded-full px-2.5 py-1 text-xs font-bold ${
+            isCritical
+              ? "bg-red-500/15 text-red-400"
+              : "bg-amber-500/15 text-amber-400"
+          }`}
+        >
+          {isCritical ? "100% — Crítico" : "90% — Advertencia"}
+        </span>
+        <ChevronRight className="h-4 w-4 text-zinc-600 transition-transform group-hover:translate-x-0.5 group-hover:text-zinc-400" />
+      </div>
+    </a>
   )
 }
 
