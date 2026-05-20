@@ -100,6 +100,7 @@ export async function getDashboardData(clientId: string, startStr: string, endSt
     const availablePlatforms = new Set<string>(['meta'])
     if (cfg.ga_property_id && cfg.ga_client_email) availablePlatforms.add('ga4')
     if (cfg.hotmart_basic || cfg.hotmart_token) availablePlatforms.add('hotmart')
+    if (cfg.tiktok_advertiser_id && cfg.tiktok_access_token) availablePlatforms.add('tiktok')
 
     // Priority: client-specific layout → global assigned layout → null (classic)
     const layout = clienteLayoutRes.data || cliente.global_layout || null
@@ -688,6 +689,7 @@ export async function getMirrorDashboardData(token: string, from?: string, to?: 
     const cfg = (cliente.config_api as any) || {}
     if (cfg.ga_property_id) availablePlatforms.add('ga4')
     if (cfg.hotmart_token) availablePlatforms.add('hotmart')
+    if (cfg.tiktok_access_token) availablePlatforms.add('tiktok')
 
     // Filter tabs by public_tab_ids if configured on client token
     let allTabs = tabsRes.data || []

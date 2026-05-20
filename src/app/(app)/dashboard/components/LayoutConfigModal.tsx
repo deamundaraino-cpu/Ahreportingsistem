@@ -143,6 +143,16 @@ const AVAILABLE_METRICS = [
     { id: 'ga_bounce_rate',           label: 'GA4: Tasa de Rebote' },
     { id: 'ga_avg_session_duration',  label: 'GA4: Duración Media Sesión' },
 
+    // ── TikTok Ads ────────────────────────────────────────────────────────────
+    { id: 'tiktok_spend',             label: 'TikTok: Gasto' },
+    { id: 'tiktok_impressions',       label: 'TikTok: Impresiones' },
+    { id: 'tiktok_clicks',            label: 'TikTok: Clics' },
+    { id: 'tiktok_conversions',       label: 'TikTok: Conversiones' },
+    { id: 'tiktok_cpc',               label: 'TikTok: CPC' },
+    { id: 'tiktok_cpm',               label: 'TikTok: CPM' },
+    { id: 'tiktok_ctr',               label: 'TikTok: CTR (%)' },
+    { id: 'tiktok_cpa',               label: 'TikTok: CPA' },
+
     // ── Manual ────────────────────────────────────────────────────────────────
     { id: 'leads_registrados', label: 'Leads Registrados (Manual)' },
 
@@ -172,6 +182,7 @@ function FormulaInput({ value, onChange, disabled, availableMetrics }: {
 }) {
     const inputRef = useRef<HTMLInputElement>(null)
     const [search, setSearch] = useState('')
+    const [activeTab, setActiveTab] = useState<'all' | 'meta' | 'tiktok' | 'ventas' | 'ga4'>('all')
     const metrics = availableMetrics || AVAILABLE_METRICS
 
     const insertMetric = (metricId: string) => {
@@ -181,7 +192,16 @@ function FormulaInput({ value, onChange, disabled, availableMetrics }: {
         setSearch('')
     }
 
-    const filteredMetrics = metrics.filter(m => m.label.toLowerCase().includes(search.toLowerCase()) || m.id.toLowerCase().includes(search.toLowerCase()))
+    const filteredMetrics = metrics.filter(m => {
+        const matchesSearch = m.label.toLowerCase().includes(search.toLowerCase()) || m.id.toLowerCase().includes(search.toLowerCase())
+        if (!matchesSearch) return false
+        if (activeTab === 'all') return true
+        if (activeTab === 'meta') return m.id.startsWith('meta_')
+        if (activeTab === 'tiktok') return m.id.startsWith('tiktok_')
+        if (activeTab === 'ventas') return m.id.startsWith('ventas_') || m.id.startsWith('total_') || m.id.startsWith('funnel_')
+        if (activeTab === 'ga4') return m.id.startsWith('ga_')
+        return true
+    })
 
     return (
         <div className="flex-1 flex relative items-center min-w-0">
@@ -208,6 +228,18 @@ function FormulaInput({ value, onChange, disabled, availableMetrics }: {
                                 onChange={e => setSearch(e.target.value)}
                                 className="h-8 text-xs bg-zinc-900 border-zinc-800 focus-visible:ring-indigo-500/50"
                             />
+                        </div>
+                        <div className="flex gap-1 p-1 bg-zinc-950 border-b border-zinc-800 text-[9px] overflow-x-auto custom-scrollbar">
+                            {(['all', 'meta', 'tiktok', 'ventas', 'ga4'] as const).map(tab => (
+                                <button
+                                    key={tab}
+                                    type="button"
+                                    onClick={() => setActiveTab(tab)}
+                                    className={`px-1.5 py-0.5 rounded transition whitespace-nowrap flex-shrink-0 ${activeTab === tab ? 'bg-indigo-600 text-white font-semibold' : 'text-zinc-400 hover:text-zinc-200'}`}
+                                >
+                                    {tab === 'all' ? 'Todos' : tab === 'ventas' ? 'Ventas' : tab === 'ga4' ? 'GA4' : tab === 'tiktok' ? 'TikTok' : 'Meta'}
+                                </button>
+                            ))}
                         </div>
                         <div className="max-h-48 overflow-y-auto custom-scrollbar p-1">
                             {filteredMetrics.map(m => (
@@ -500,16 +532,29 @@ function DraggableChartRow({
 }) {
     const isCircular = chart.type === 'donut' || chart.type === 'pie' || chart.type === 'radial' || chart.type === 'funnel'
     const maxMetrics = chart.type === 'scatter' ? 2 : isCircular ? 6 : 5
+    const isCartesian = ['area', 'stacked_area', 'bar', 'stacked_bar', 'line', 'composed'].includes(chart.type)
 
     function addMetric() {
         if (chart.valueFormulas.length >= maxMetrics) return
-        onUpdate({ ...chart, valueFormulas: [...chart.valueFormulas, ''], colors: [...(chart.colors || []), 'blue'] })
+        onUpdate({
+            ...chart,
+            valueFormulas: [...chart.valueFormulas, ''],
+            colors: [...(chart.colors || []), 'blue'],
+            yAxes: chart.yAxes ? [...chart.yAxes, 'left'] : undefined,
+            types: chart.types ? [...chart.types, ''] : undefined,
+            strokeWidths: chart.strokeWidths ? [...chart.strokeWidths, 2] : undefined,
+            units: chart.units ? [...chart.units, 'number'] : undefined
+        })
     }
 
     function removeMetric(i: number) {
         const newF = chart.valueFormulas.filter((_, idx) => idx !== i)
         const newC = (chart.colors || []).filter((_, idx) => idx !== i)
-        onUpdate({ ...chart, valueFormulas: newF, colors: newC })
+        const newY = chart.yAxes ? chart.yAxes.filter((_, idx) => idx !== i) : undefined
+        const newT = chart.types ? chart.types.filter((_, idx) => idx !== i) : undefined
+        const newW = chart.strokeWidths ? chart.strokeWidths.filter((_, idx) => idx !== i) : undefined
+        const newU = chart.units ? chart.units.filter((_, idx) => idx !== i) : undefined
+        onUpdate({ ...chart, valueFormulas: newF, colors: newC, yAxes: newY, types: newT, strokeWidths: newW, units: newU })
     }
 
     function updateMetric(i: number, val: string) {
@@ -559,35 +604,134 @@ function DraggableChartRow({
             </div>
 
             {/* Row 2: metrics list */}
-            <div className="pl-6 space-y-1.5">
+            <div className="pl-6 space-y-2">
                 {chart.valueFormulas.map((formula, i) => (
-                    <div key={i} className="flex items-center gap-1.5">
-                        {/* Color dot picker */}
-                        <select
-                            value={(chart.colors || [])[i] || 'amber'}
-                            onChange={(e) => updateColor(i, e.target.value)}
-                            className="h-6 w-6 text-[0px] rounded-full border-0 cursor-pointer flex-shrink-0 overflow-hidden"
-                            style={{ background: CHART_COLOR_OPTIONS.find(c => c.val === ((chart.colors || [])[i] || 'amber'))?.hex ?? '#f59e0b' }}
-                            title="Color de serie"
-                        >
-                            {CHART_COLOR_OPTIONS.map(c => (
-                                <option key={c.val} value={c.val}>{c.val}</option>
-                            ))}
-                        </select>
+                    <div key={i} className="space-y-1.5 p-2 bg-zinc-950/40 rounded-lg border border-zinc-800/60">
+                        <div className="flex items-center gap-1.5">
+                            {/* Color dot picker */}
+                            <select
+                                value={(chart.colors || [])[i] || 'amber'}
+                                onChange={(e) => updateColor(i, e.target.value)}
+                                className="h-6 w-6 text-[0px] rounded-full border-0 cursor-pointer flex-shrink-0 overflow-hidden"
+                                style={{ background: CHART_COLOR_OPTIONS.find(c => c.val === ((chart.colors || [])[i] || 'amber'))?.hex ?? '#f59e0b' }}
+                                title="Color de serie"
+                            >
+                                {CHART_COLOR_OPTIONS.map(c => (
+                                    <option key={c.val} value={c.val}>{c.val}</option>
+                                ))}
+                            </select>
 
-                        <div className="flex-1">
-                            <FormulaInput
-                                value={formula}
-                                onChange={(val) => updateMetric(i, val)}
-                                availableMetrics={availableMetrics}
-                            />
+                            <div className="flex-1">
+                                <FormulaInput
+                                    value={formula}
+                                    onChange={(val) => updateMetric(i, val)}
+                                    availableMetrics={availableMetrics}
+                                />
+                            </div>
+
+                            {chart.valueFormulas.length > 1 && (
+                                <button onClick={() => removeMetric(i)} className="text-zinc-700 hover:text-red-400 transition flex-shrink-0">
+                                    <X className="w-3 h-3" />
+                                </button>
+                            )}
                         </div>
 
-                        {chart.valueFormulas.length > 1 && (
-                            <button onClick={() => removeMetric(i)} className="text-zinc-700 hover:text-red-400 transition flex-shrink-0">
-                                <X className="w-3 h-3" />
-                            </button>
-                        )}
+                        {/* Series overrides */}
+                        <div className="pl-7 mt-1.5 w-full">
+                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-zinc-950/45 p-2 rounded-lg border border-zinc-800/30 text-[9px] text-zinc-400 w-full min-w-0">
+                                <div className="flex flex-col gap-1">
+                                    <span className="text-zinc-600 font-medium">Unidad</span>
+                                    <div className="flex gap-1 flex-shrink-0">
+                                        {[
+                                            { type: 'number' as const, icon: '#', label: 'Número', active: 'bg-zinc-600 text-white border-zinc-500', inactive: 'bg-zinc-900 text-zinc-500 border-zinc-700 hover:border-zinc-500 hover:text-zinc-300' },
+                                            { type: 'currency' as const, icon: '$', label: 'Moneda', active: 'bg-emerald-600/30 text-emerald-300 border-emerald-500/60', inactive: 'bg-zinc-900 text-zinc-500 border-zinc-700 hover:border-emerald-500/40 hover:text-emerald-400' },
+                                            { type: 'percent' as const, icon: '%', label: 'Porcentaje', active: 'bg-blue-600/30 text-blue-300 border-blue-500/60', inactive: 'bg-zinc-900 text-zinc-500 border-zinc-700 hover:border-blue-500/40 hover:text-blue-400' },
+                                        ].map(t => {
+                                            const currentUnit = chart.units?.[i] || 'number'
+                                            const isActive = currentUnit === t.type
+                                            return (
+                                                <button
+                                                    key={t.type}
+                                                    type="button"
+                                                    onClick={() => {
+                                                        const newUnits: ('number' | 'currency' | 'percent')[] = [...(chart.units || [])]
+                                                        while (newUnits.length < chart.valueFormulas.length) newUnits.push('number')
+                                                        newUnits[i] = t.type
+                                                        onUpdate({ ...chart, units: newUnits })
+                                                    }}
+                                                    title={t.label}
+                                                    className={`w-6 h-6 rounded border text-[11px] font-bold transition flex-shrink-0 flex items-center justify-center ${isActive ? t.active : t.inactive}`}
+                                                >
+                                                    {t.icon}
+                                                </button>
+                                            )
+                                        })}
+                                    </div>
+                                </div>
+
+                                {isCartesian ? (
+                                    <>
+                                        <div className="flex flex-col gap-1 min-w-0">
+                                            <span className="text-zinc-600 font-medium">Tipo</span>
+                                            <select
+                                                value={chart.types?.[i] || ''}
+                                                onChange={(e) => {
+                                                    const newTypes: ('line' | 'bar' | 'area' | '')[] = [...(chart.types || [])]
+                                                    while (newTypes.length < chart.valueFormulas.length) newTypes.push('')
+                                                    newTypes[i] = e.target.value as 'line' | 'bar' | 'area' | ''
+                                                    onUpdate({ ...chart, types: newTypes })
+                                                }}
+                                                className="bg-zinc-900 border border-zinc-800 text-zinc-300 rounded px-1 py-0.5 outline-none cursor-pointer h-6 text-[10px] w-full min-w-0"
+                                            >
+                                                <option value="">Por defecto</option>
+                                                <option value="line">Línea</option>
+                                                <option value="bar">Barras</option>
+                                                <option value="area">Área</option>
+                                            </select>
+                                        </div>
+
+                                        <div className="flex flex-col gap-1 min-w-0">
+                                            <span className="text-zinc-600 font-medium">Eje Y</span>
+                                            <select
+                                                value={chart.yAxes?.[i] || 'left'}
+                                                onChange={(e) => {
+                                                    const newAxes = [...(chart.yAxes || [])]
+                                                    while (newAxes.length < chart.valueFormulas.length) newAxes.push('left')
+                                                    newAxes[i] = e.target.value as 'left' | 'right'
+                                                    onUpdate({ ...chart, yAxes: newAxes })
+                                                }}
+                                                className="bg-zinc-900 border border-zinc-800 text-zinc-300 rounded px-1 py-0.5 outline-none cursor-pointer h-6 text-[10px] w-full min-w-0"
+                                            >
+                                                <option value="left">Izq (Pral)</option>
+                                                <option value="right">Der (Sec)</option>
+                                            </select>
+                                        </div>
+
+                                        <div className="flex flex-col gap-1 min-w-0">
+                                            <span className="text-zinc-600 font-medium">Grosor</span>
+                                            <select
+                                                value={chart.strokeWidths?.[i] ?? 2}
+                                                onChange={(e) => {
+                                                    const newWidths = [...(chart.strokeWidths || [])]
+                                                    while (newWidths.length < chart.valueFormulas.length) newWidths.push(2)
+                                                    newWidths[i] = Number(e.target.value)
+                                                    onUpdate({ ...chart, strokeWidths: newWidths })
+                                                }}
+                                                className="bg-zinc-900 border border-zinc-800 text-zinc-300 rounded px-1 py-0.5 outline-none cursor-pointer h-6 text-[10px] w-full min-w-0"
+                                            >
+                                                <option value={1}>1px</option>
+                                                <option value={2}>2px</option>
+                                                <option value={3}>3px</option>
+                                                <option value={4}>4px</option>
+                                                <option value={5}>5px</option>
+                                            </select>
+                                        </div>
+                                    </>
+                                ) : (
+                                    <div className="col-span-3"></div>
+                                )}
+                            </div>
+                        </div>
                     </div>
                 ))}
 
@@ -595,25 +739,74 @@ function DraggableChartRow({
                 {chart.valueFormulas.length < maxMetrics && (
                     <button
                         onClick={addMetric}
-                        className="flex items-center gap-1 text-[10px] text-zinc-500 hover:text-amber-400 transition mt-1"
+                        className="flex items-center gap-1 text-[10px] text-zinc-500 hover:text-amber-400 transition mt-1 pl-1"
                     >
                         <Plus className="w-3 h-3" /> Añadir métrica
                     </button>
                 )}
 
                 {chart.type === 'scatter' && chart.valueFormulas.length < 2 && (
-                    <p className="text-[9px] text-zinc-600 mt-0.5">El gráfico de dispersión necesita exactamente 2 métricas (eje X e Y).</p>
+                    <p className="text-[9px] text-zinc-600 mt-0.5 pl-1">El gráfico de dispersión necesita exactamente 2 métricas (eje X e Y).</p>
                 )}
+            </div>
 
-                {/* Campaign filter */}
-                <div className="flex items-center gap-2 mt-1">
-                    <span className="text-[10px] text-zinc-600 flex-shrink-0">Filtro campaña:</span>
-                    <CampaignFilterPicker
-                        value={chart.campaignFilter}
-                        onChange={v => onUpdate({ ...chart, campaignFilter: v })}
-                        campaignGroups={campaignGroups}
-                        campaignNames={campaignNames}
-                    />
+            {/* Row 3: Global Chart Settings */}
+            <div className="pl-6 pt-2 border-t border-zinc-800/40 space-y-2 text-[10px]">
+                {/* Periodicity & Show Data Labels */}
+                <div className="flex flex-wrap items-center gap-4">
+                    {isCartesian && (
+                        <div className="flex flex-col gap-0.5">
+                            <span className="text-zinc-600 font-medium">Temporalidad por defecto:</span>
+                            <select
+                                value={chart.periodicity || 'day'}
+                                onChange={(e) => onUpdate({ ...chart, periodicity: e.target.value as any })}
+                                className="bg-zinc-950 border border-zinc-800 text-zinc-300 rounded px-1.5 py-0.5 outline-none hover:border-zinc-700 cursor-pointer text-[9px]"
+                            >
+                                <option value="day">Día</option>
+                                <option value="week">Semana</option>
+                                <option value="month">Mes</option>
+                                <option value="year">Año</option>
+                            </select>
+                        </div>
+                    )}
+
+                    <div className="flex items-center gap-1.5 mt-2">
+                        <input
+                            type="checkbox"
+                            id={`labels-${chart.id}`}
+                            checked={chart.showDataLabels || false}
+                            onChange={(e) => onUpdate({ ...chart, showDataLabels: e.target.checked })}
+                            className="rounded border-zinc-700 bg-zinc-950 text-amber-500 focus:ring-amber-500 w-3 h-3 cursor-pointer"
+                        />
+                        <label htmlFor={`labels-${chart.id}`} className="text-zinc-400 cursor-pointer">
+                            Etiquetas de datos
+                        </label>
+                    </div>
+                </div>
+
+                {/* Campaign filter & Height */}
+                <div className="flex items-center justify-between gap-2 mt-1">
+                    <div className="flex items-center gap-2">
+                        <CampaignFilterPicker
+                            value={chart.campaignFilter}
+                            onChange={v => onUpdate({ ...chart, campaignFilter: v })}
+                            campaignGroups={campaignGroups}
+                            campaignNames={campaignNames}
+                        />
+                    </div>
+                    
+                    <div className="flex items-center gap-1">
+                        <span className="text-zinc-600">Alto:</span>
+                        <input
+                            type="number"
+                            value={chart.height || 240}
+                            onChange={(e) => onUpdate({ ...chart, height: Math.max(100, Number(e.target.value)) })}
+                            className="w-12 h-6 text-xs text-center bg-zinc-950 border border-zinc-700 text-zinc-300 rounded outline-none"
+                            min={100}
+                            max={600}
+                        />
+                        <span className="text-zinc-700 text-[9px]">px</span>
+                    </div>
                 </div>
             </div>
         </div>

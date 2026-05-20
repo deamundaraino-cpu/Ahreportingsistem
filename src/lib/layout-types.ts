@@ -59,6 +59,12 @@ export interface ChartDef {
     colors?: string[]         // e.g. ["amber", "cyan"]
     height?: number
     campaignFilter?: { type: 'group' | 'keyword'; value: string }
+    yAxes?: ('left' | 'right')[]
+    types?: ('line' | 'bar' | 'area' | '')[]
+    strokeWidths?: number[]
+    showDataLabels?: boolean
+    periodicity?: 'day' | 'week' | 'month' | 'year'
+    units?: ('number' | 'currency' | 'percent')[]
 }
 
 export interface TextBlockDef {

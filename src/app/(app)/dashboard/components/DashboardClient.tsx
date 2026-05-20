@@ -464,6 +464,20 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
         }))
     }
 
+    const handleUpdateChart = useCallback((chartId: string, updatedChart: ChartDef) => {
+        setTabLayoutOverrides(prev => {
+            const currentLayout = prev[activeTabId] || activeLayout
+            const newGraficos = (currentLayout.graficos || []).map(g => g.id === chartId ? updatedChart : g)
+            return {
+                ...prev,
+                [activeTabId]: {
+                    ...currentLayout,
+                    graficos: newGraficos
+                }
+            }
+        })
+    }, [activeTabId, activeLayout])
+
     function handleAddBlock(blockType: 'text' | 'separator') {
         const newId = crypto.randomUUID()
         const newBlock: TextBlockDef = blockType === 'separator'
@@ -975,7 +989,20 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                             if (blockId.startsWith('chart:')) {
                                 const chart = activeLayout.graficos?.find((g: any) => `chart:${g.id}` === blockId)
                                 if (!chart) return null
-                                return <SortableChart key={blockId} id={blockId} chart={chart} isPuzzleMode={isPuzzleMode} metrics={filteredMetrics} weeks={weeks} varContext={varContext} onRemove={() => handleRemoveBlock(blockId)} />
+                                return <SortableChart
+                                    key={blockId}
+                                    id={blockId}
+                                    chart={chart}
+                                    isPuzzleMode={isPuzzleMode}
+                                    metrics={filteredMetrics}
+                                    weeks={weeks}
+                                    varContext={varContext}
+                                    sourceMapping={sourceMapping}
+                                    platformSet={platformSet}
+                                    layoutCustomMetrics={layoutCustomMetrics}
+                                    onRemove={() => handleRemoveBlock(blockId)}
+                                    onUpdateChart={handleUpdateChart}
+                                />
                             }
                             if (blockId.startsWith('text:')) {
                                 const txt = (tabLayoutOverrides[activeTabId]?.text_blocks || activeLayout.text_blocks)?.find((t: any) => `text:${t.id}` === blockId)
@@ -1176,6 +1203,9 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                                     rawMetrics={baseRows}
                                     campaignGroups={data.campaignGroups}
                                     effectiveKeyword={effectiveKeyword}
+                                    sourceMapping={sourceMapping}
+                                    platformSet={platformSet}
+                                    layoutCustomMetrics={layoutCustomMetrics}
                                 />
                             </div>
                         )}
@@ -1367,6 +1397,7 @@ function ExecutiveDashboard({ data, layout }: { data: any, layout: { tarjetas: C
                         rawMetrics={metrics}
                         campaignGroups={data.campaignGroups}
                         effectiveKeyword={campaignFilter}
+                        sourceMapping={sourceMapping}
                     />
                 </div>
             )}

@@ -45,7 +45,7 @@ export function SortableCard({ id, card, isPuzzleMode, onRemove }: { id: string,
     )
 }
 
-export function SortableChart({ id, chart, isPuzzleMode, metrics, weeks, varContext, onRemove }: any) {
+export function SortableChart({ id, chart, isPuzzleMode, metrics, weeks, varContext, sourceMapping, platformSet, layoutCustomMetrics, onRemove, onUpdateChart }: any) {
     const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id })
     const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.5 : 1, zIndex: isDragging ? 50 : 'auto' as any }
 
@@ -63,7 +63,16 @@ export function SortableChart({ id, chart, isPuzzleMode, metrics, weeks, varCont
                     )}
                 </div>
             )}
-            <MetricCharts charts={[chart]} metrics={metrics} weeks={weeks} varContext={varContext} />
+            <MetricCharts
+                charts={[chart]}
+                metrics={metrics}
+                weeks={weeks}
+                varContext={varContext}
+                sourceMapping={sourceMapping}
+                platformSet={platformSet}
+                layoutCustomMetrics={layoutCustomMetrics}
+                onUpdateChart={onUpdateChart}
+            />
         </div>
     )
 }

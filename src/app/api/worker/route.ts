@@ -68,7 +68,7 @@ export async function GET(request: Request) {
         const config = cliente.config_api as any
         if (!config) continue
 
-        const platformLogs = { meta: 'Saltado', hotmart: 'Saltado', ga4: 'Saltado' }
+        const platformLogs = { meta: 'Saltado', tiktok: 'Saltado', hotmart: 'Saltado', ga4: 'Saltado' }
 
         let hotmartAccessToken: string | null = null
         const hotmartBasic = config.hotmart_basic ||
@@ -513,6 +513,106 @@ export async function GET(request: Request) {
             return record
         }
 
+        // ─── Helper: Fetch TikTok Ads for a single date ──────────────────────
+        async function fetchTikTok(targetDate: string) {
+            // apiSuccess distinguishes "API worked but no data" from "API failed" —
+            // used to avoid overwriting valid DB data with zeros on transient failures.
+            const record = { spend: 0, impressions: 0, clicks: 0, conversions: 0, campaigns: [] as any[], apiSuccess: false }
+            if (!config.tiktok_access_token || !config.tiktok_advertiser_id) {
+                platformLogs.tiktok = 'Sin configurar'
+                log(`[TikTok] ${targetDate} Sin configurar — token: ${config.tiktok_access_token ? 'presente' : 'FALTA'}, advertiser_id: ${config.tiktok_advertiser_id ? config.tiktok_advertiser_id : 'FALTA'}`)
+                return record
+            }
+            log(`[TikTok] ${targetDate} Consultando advertiser_id: ${config.tiktok_advertiser_id}`)
+
+            try {
+                // First, fetch campaigns to map campaign_id to campaign_name
+                const campaignMap = new Map<string, string>()
+                try {
+                    const campUrl = new URL('https://business-api.tiktok.com/open_api/v1.3/campaign/get/')
+                    campUrl.searchParams.append('advertiser_id', config.tiktok_advertiser_id)
+                    const campRes = await fetch(campUrl.toString(), {
+                        headers: { 'Access-Token': config.tiktok_access_token }
+                    })
+                    const campData = await campRes.json()
+                    if (campData.code === 0 && campData.data && campData.data.list) {
+                        campData.data.list.forEach((c: any) => {
+                            if (c.campaign_id && c.campaign_name) {
+                                campaignMap.set(c.campaign_id.toString(), c.campaign_name)
+                            }
+                        })
+                    }
+                } catch (campErr: any) {
+                    log(`[TikTok] Warning: Error al obtener nombres de campañas: ${campErr.message}`)
+                }
+
+                // Fetch reports from TikTok Business API
+                const url = new URL('https://business-api.tiktok.com/open_api/v1.3/report/integrated/get/')
+                url.searchParams.append('advertiser_id', config.tiktok_advertiser_id)
+                url.searchParams.append('report_type', 'BASIC')
+                url.searchParams.append('data_level', 'AUCTION_CAMPAIGN')
+                url.searchParams.append('dimensions', JSON.stringify(['campaign_id']))
+                url.searchParams.append('metrics', JSON.stringify(['spend', 'impressions', 'clicks', 'conversion']))
+                url.searchParams.append('start_date', targetDate)
+                url.searchParams.append('end_date', targetDate)
+                url.searchParams.append('page_size', '100')
+
+                const res = await fetch(url.toString(), {
+                    headers: { 'Access-Token': config.tiktok_access_token }
+                })
+                const data = await res.json()
+
+                if (data.code === 0 && data.data && data.data.list) {
+                    if (data.data.list.length > 0) {
+                        log(`[TikTok] ${targetDate} RAW primer resultado: ${JSON.stringify(data.data.list[0])}`)
+                    }
+                    let totalSpend = 0, totalImpr = 0, totalClicks = 0, totalConv = 0
+                    const campaignsArr: any[] = []
+
+                    data.data.list.forEach((camp: any) => {
+                        const dims = camp.dimensions || {}
+                        const mets = camp.metrics || {}
+                        const cSpend = parseFloat(mets.spend || '0')
+                        const cImpr = parseInt(mets.impressions || '0')
+                        const cClicks = parseInt(mets.clicks || '0')
+                        const cConv = parseInt(mets.conversion || '0')
+
+                        totalSpend += cSpend
+                        totalImpr += cImpr
+                        totalClicks += cClicks
+                        totalConv += cConv
+
+                        const cId = (dims.campaign_id || '').toString()
+                        campaignsArr.push({
+                            campaign_id: cId || null,
+                            name: campaignMap.get(cId) || 'Desconocida',
+                            spend: cSpend,
+                            impressions: cImpr,
+                            clicks: cClicks,
+                            conversions: cConv
+                        })
+                    })
+
+                    record.spend = totalSpend
+                    record.impressions = totalImpr
+                    record.clicks = totalClicks
+                    record.conversions = totalConv
+                    record.campaigns = campaignsArr
+                    record.apiSuccess = true
+                    platformLogs.tiktok = campaignsArr.length > 0 || totalSpend > 0 ? 'Conectado OK' : 'Sin Datos'
+                    log(`[TikTok] ${targetDate} Spend: ${totalSpend}, Campañas: ${campaignsArr.length}`)
+                } else {
+                    const msg = data.message || 'Error API'
+                    log(`[TikTok] ${targetDate} Error de API: ${JSON.stringify(data)}`)
+                    platformLogs.tiktok = msg
+                }
+            } catch (e: any) {
+                log(`[TikTok] Catch Error: ${e.message}`)
+                platformLogs.tiktok = 'Error'
+            }
+            return record
+        }
+
         // ─── Helper: Fetch Hotmart for a single date ────────────────────────
         // Devuelve totales globales + desglose por funnel (tab) + extras.
         // Pagos iniciados se mide desde GA4 (no se consulta WAITING_PAYMENT).
@@ -876,31 +976,37 @@ export async function GET(request: Request) {
             
             const chunkResults = await Promise.all(
                 chunk.map(async (targetDate) => {
-                    // Fetch Meta, Hotmart and GA4 in parallel for this specific date
-                    const [metaRecord, hotmartRecord, gaRecord] = await Promise.all([
+                    // Fetch Meta, TikTok, Hotmart and GA4 in parallel for this specific date
+                    const [metaRecord, tiktokRecord, hotmartRecord, gaRecord] = await Promise.all([
                         fetchMeta(targetDate),
+                        fetchTikTok(targetDate),
                         fetchHotmart(targetDate),
                         fetchGA4(targetDate),
                     ]);
                     
-                    return { targetDate, metaRecord, hotmartRecord, gaRecord };
+                    return { targetDate, metaRecord, tiktokRecord, hotmartRecord, gaRecord };
                 })
             );
             
             // Collect the results for the mass upsert list
             for (const res of chunkResults) {
-                const { targetDate, metaRecord, hotmartRecord, gaRecord } = res;
+                const { targetDate, metaRecord, tiktokRecord, hotmartRecord, gaRecord } = res;
 
-                // Guard: skip empty Meta responses for dates older than 2 days
+                // Guard: skip empty responses for dates older than 2 days
                 // (prevents overwriting good data with stale empty API responses)
                 const daysAgo = differenceInDays(new Date(), parseISO(targetDate))
                 const isEmptyMeta = metaRecord.campaigns.length === 0 && metaRecord.spend === 0
-                const isAllEmpty = isEmptyMeta && hotmartRecord.principal === 0 && hotmartRecord.ventas_count === 0 && gaRecord.sessions === 0
+                const isEmptyTikTok = tiktokRecord.campaigns.length === 0 && tiktokRecord.spend === 0
+                const isAllEmpty = isEmptyMeta && isEmptyTikTok && hotmartRecord.principal === 0 && hotmartRecord.ventas_count === 0 && gaRecord.sessions === 0
                 if (isAllEmpty && daysAgo > 2 && existingHashMap.has(targetDate)) {
                     log(`[DB] Saltando ${targetDate} — respuesta vacía para fecha histórica con datos existentes`)
                     results.push({ cliente_id: cliente.id, date: targetDate, status: 'skipped_empty', platform_status: { ...platformLogs } } as any)
                     continue
                 }
+
+                // Per-platform guard: if TikTok API failed (not just zero spend, but actual API error),
+                // skip TikTok fields in the upsert to preserve previously-synced data in the DB.
+                const tiktokFailed = config.tiktok_access_token && !tiktokRecord.apiSuccess
 
                 // ─── Merge funnel breakdown: Hotmart sales + GA4 page views per tab ───
                 // Total pagos_iniciados (suma de payment_page_views de todos los funnels)
@@ -921,12 +1027,16 @@ export async function GET(request: Request) {
                 }
 
                 // Compute payload hash for idempotency
-                const hashPayload = { meta: metaRecord, hotmart: hotmartRecord, ga: gaRecord }
+                const hashPayload = { meta: metaRecord, tiktok: tiktokRecord, hotmart: hotmartRecord, ga: gaRecord }
                 const payloadHash = computeSyncHash(hashPayload)
                 if (existingHashMap.get(targetDate) === payloadHash) {
                     log(`[DB] Saltando ${targetDate} — sync_hash sin cambios`)
                     results.push({ cliente_id: cliente.id, date: targetDate, status: 'skipped_hash', platform_status: { ...platformLogs } } as any)
                     continue
+                }
+
+                if (tiktokFailed) {
+                    log(`[TikTok] ${targetDate} API falló — se omiten campos TikTok del upsert para preservar datos existentes`)
                 }
 
                 upsertPayloads.push({
@@ -937,6 +1047,15 @@ export async function GET(request: Request) {
                     meta_impressions: metaRecord.impressions,
                     meta_clicks: metaRecord.clicks,
                     meta_campaigns: metaRecord.campaigns,
+                    // Only include TikTok fields when the API call actually succeeded.
+                    // On failure, preserve whatever is already in the DB for these columns.
+                    ...(!tiktokFailed && {
+                        tiktok_spend: tiktokRecord.spend,
+                        tiktok_impressions: tiktokRecord.impressions,
+                        tiktok_clicks: tiktokRecord.clicks,
+                        tiktok_conversions: tiktokRecord.conversions,
+                        tiktok_campaigns: tiktokRecord.campaigns,
+                    }),
                     // Hotmart totales globales (suma de funnels + extras)
                     ventas_principal: hotmartRecord.principal,
                     ventas_bump: hotmartRecord.bump,

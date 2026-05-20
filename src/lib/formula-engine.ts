@@ -78,6 +78,16 @@ const FIELD_MAP: Record<string, string> = {
     ga_bounce_rate: 'ga_bounce_rate',
     ga_avg_session_duration: 'ga_avg_session_duration',
 
+    // ── TikTok Ads ────────────────────────────────────────────────────────
+    tiktok_spend: 'tiktok_spend',
+    tiktok_impressions: 'tiktok_impressions',
+    tiktok_clicks: 'tiktok_clicks',
+    tiktok_conversions: 'tiktok_conversions',
+    tiktok_cpc: 'tiktok_cpc',
+    tiktok_cpm: 'tiktok_cpm',
+    tiktok_ctr: 'tiktok_ctr',
+    tiktok_cpa: 'tiktok_cpa',
+
     // ── Hotmart ───────────────────────────────────────────────────────────
     hotmart_pagos_iniciados: 'hotmart_pagos_iniciados',
     hotmart_clics_link: 'hotmart_clics_link',
@@ -140,6 +150,12 @@ const MACRO_MAP: Record<string, string> = {
     meta_cost_per_messaging_conversation: 'meta_spend / meta_messaging_conversations_started',
     meta_cost_per_result: 'meta_spend / meta_results',
     meta_roas: '(ventas_principal + ventas_bump + ventas_upsell) / meta_spend',
+
+    // ── TikTok: macros derivadas ─────────────────────────────────────────
+    tiktok_cpc: 'tiktok_spend / tiktok_clicks',
+    tiktok_cpm: '(tiktok_spend / tiktok_impressions) * 1000',
+    tiktok_ctr: '(tiktok_clicks / tiktok_impressions) * 100',
+    tiktok_cpa: 'tiktok_spend / tiktok_conversions',
 
     // ── Funnel: macros derivadas (replicando estructura del Excel) ──────
     // Bruta = precio público fijo × nº ventas principal (19 USD × 5 = 95).

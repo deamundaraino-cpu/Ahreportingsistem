@@ -1,5 +1,6 @@
 'use client'
 
+import React, { useState, useMemo, useEffect } from 'react'
 import {
     AreaChart, Area,
     BarChart, Bar,
@@ -13,8 +14,8 @@ import {
     XAxis, YAxis, CartesianGrid, Tooltip,
     ResponsiveContainer, Legend
 } from 'recharts'
-import { evaluateFormula } from '@/lib/formula-engine'
-import { format, parseISO, isValid } from 'date-fns'
+import { evaluateFormula, aggregateFormula } from '@/lib/formula-engine'
+import { format, parseISO, isValid, startOfWeek, startOfMonth, startOfYear } from 'date-fns'
 import { es } from 'date-fns/locale'
 import type { ChartDef } from '@/lib/layout-types'
 import { enrichMetaRow } from '@/lib/campaign-filter'
@@ -53,20 +54,114 @@ function fmt(n: number): string {
     return n % 1 === 0 ? String(Math.round(n)) : n.toFixed(1)
 }
 
-// ─── Daily data builder ───────────────────────────────────────────────────────
-function buildDailyData(metrics: any[], formulas: string[], varContext: Record<string, number> = {}): Array<Record<string, any>> {
-    return metrics
-        .filter((r: any) => { if (!r.fecha) return false; const d = parseISO(r.fecha); return isValid(d) })
-        .map((row: any) => {
+function fmtVal(n: number, unit?: string): string {
+    if (unit === 'currency') {
+        return `$${n.toLocaleString('es-ES', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`
+    }
+    if (unit === 'percent') {
+        return `${n.toFixed(1)}%`
+    }
+    return fmt(n)
+}
+
+function fmtAxis(val: number, axisId: 'left' | 'right', yAxes?: ('left' | 'right')[], units?: string[]): string {
+    const seriesIndex = yAxes 
+        ? yAxes.findIndex((ax, idx) => {
+            const thisAxis = ax === 'right' ? 'right' : 'left'
+            return thisAxis === axisId
+          })
+        : (axisId === 'left' ? 0 : -1)
+
+    const unit = (seriesIndex !== -1 && units) ? units[seriesIndex] : undefined
+
+    if (unit === 'currency') {
+        if (Math.abs(val) >= 1_000_000) return `$${(val / 1_000_000).toFixed(1)}M`
+        if (Math.abs(val) >= 1_000)     return `$${(val / 1_000).toFixed(1)}k`
+        return `$${val}`
+    }
+    if (unit === 'percent') {
+        return `${val}%`
+    }
+    return fmt(val)
+}
+
+// ─── Grouped and Daily Data Builder ───────────────────────────────────────────
+function buildGroupedData(
+    metrics: any[],
+    formulas: string[],
+    periodicity: 'day' | 'week' | 'month' | 'year',
+    varContext: Record<string, number> = {},
+    sourceMapping: Record<string, string> = {},
+    availablePlatforms?: Set<string>,
+    customMetrics: Record<string, string> = {}
+): Array<Record<string, any>> {
+    const validRows = metrics.filter((r: any) => {
+        if (!r.fecha) return false
+        const d = parseISO(r.fecha)
+        return isValid(d)
+    })
+
+    if (periodicity === 'day') {
+        return validRows.map((row: any) => {
             const pt: Record<string, any> = {
                 date: format(parseISO(row.fecha), 'dd MMM', { locale: es }),
+                rawDate: row.fecha,
             }
             formulas.forEach(f => {
-                const v = evaluateFormula(f, row, varContext)
+                const v = evaluateFormula(f, row, varContext, sourceMapping, availablePlatforms, customMetrics)
                 pt[getLabel(f)] = v === null || isNaN(v as number) ? 0 : (v as number)
             })
             return pt
         })
+    }
+
+    // Group rows by interval
+    const groups: Record<string, { label: string; dateObj: Date; rows: any[] }> = {}
+
+    validRows.forEach(row => {
+        const d = parseISO(row.fecha)
+        let key = ''
+        let label = ''
+        let dateObj = d
+
+        if (periodicity === 'week') {
+            const start = startOfWeek(d, { weekStartsOn: 1 })
+            key = format(start, 'yyyy-MM-dd')
+            label = `Sem ${format(start, 'dd/MM', { locale: es })}`
+            dateObj = start
+        } else if (periodicity === 'month') {
+            const start = startOfMonth(d)
+            key = format(start, 'yyyy-MM')
+            label = format(start, 'MMM yy', { locale: es })
+            dateObj = start
+        } else if (periodicity === 'year') {
+            const start = startOfYear(d)
+            key = format(start, 'yyyy')
+            label = format(start, 'yyyy', { locale: es })
+            dateObj = start
+        }
+
+        if (!groups[key]) {
+            groups[key] = { label, dateObj, rows: [] }
+        }
+        groups[key].rows.push(row)
+    })
+
+    // Sort group keys to ensure chronological order
+    const sortedKeys = Object.keys(groups).sort()
+
+    return sortedKeys.map(key => {
+        const group = groups[key]
+        const pt: Record<string, any> = {
+            date: group.label,
+            rawDate: key,
+        }
+        formulas.forEach(f => {
+            const v = aggregateFormula(f, group.rows, varContext, sourceMapping, availablePlatforms, customMetrics)
+            pt[getLabel(f)] = v === null || isNaN(v as number) ? 0 : (v as number)
+        })
+        return pt
+    })
 }
 
 // ─── Shared axis / grid styles ────────────────────────────────────────────────
@@ -75,7 +170,7 @@ const GRID  = { stroke: 'rgba(255,255,255,0.05)', strokeDasharray: '3 3' }
 const CURVE = 'monotone' as const
 
 // ─── Custom tooltip ───────────────────────────────────────────────────────────
-function CustomTooltip({ active, payload, label }: any) {
+function CustomTooltip({ active, payload, label, categories, localUnits }: any) {
     if (!active || !payload?.length) return null
     return (
         <div style={{
@@ -89,15 +184,20 @@ function CustomTooltip({ active, payload, label }: any) {
                     {label}
                 </p>
             )}
-            {payload.map((e: any, i: number) => (
-                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                    <span style={{ width: 8, height: 8, borderRadius: '50%', background: e.color || e.fill, flexShrink: 0 }} />
-                    <span style={{ color: '#a1a1aa', fontSize: 11, flex: 1 }}>{e.name}</span>
-                    <span style={{ color: '#f4f4f5', fontSize: 12, fontWeight: 600, fontFamily: 'monospace' }}>
-                        {fmt(e.value)}
-                    </span>
-                </div>
-            ))}
+            {payload.map((e: any, i: number) => {
+                const val = e.value
+                const catIdx = categories ? categories.indexOf(e.name) : -1
+                const unit = (catIdx !== -1 && localUnits) ? localUnits[catIdx] : (e.unit || e.payload?.unit)
+                return (
+                    <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                        <span style={{ width: 8, height: 8, borderRadius: '50%', background: e.color || e.fill, flexShrink: 0 }} />
+                        <span style={{ color: '#a1a1aa', fontSize: 11, flex: 1 }}>{e.name}</span>
+                        <span style={{ color: '#f4f4f5', fontSize: 12, fontWeight: 600, fontFamily: 'monospace' }}>
+                            {fmtVal(val, unit)}
+                        </span>
+                    </div>
+                )
+            })}
         </div>
     )
 }
@@ -119,198 +219,351 @@ interface MetricChartsProps {
     rawMetrics?: any[]
     campaignGroups?: any[]
     effectiveKeyword?: string
+    sourceMapping?: Record<string, string>
+    platformSet?: Set<string>
+    layoutCustomMetrics?: Record<string, string>
+    onUpdateChart?: (chartId: string, updatedChart: ChartDef) => void
 }
 
-// ─── Main ─────────────────────────────────────────────────────────────────────
+// ─── Main Orchestrator ────────────────────────────────────────────────────────
 export function MetricCharts({
-    charts, metrics, varContext = {}, rawMetrics, campaignGroups = [], effectiveKeyword = ''
+    charts, metrics, varContext = {}, rawMetrics, campaignGroups = [], effectiveKeyword = '',
+    sourceMapping = {}, platformSet = new Set(['meta']), layoutCustomMetrics = {},
+    onUpdateChart
 }: MetricChartsProps) {
     if (!charts?.length) return null
 
     return (
         <div className="space-y-4 mb-6">
-            {charts.map(chart => {
-                const formulas = chart.valueFormulas.filter(Boolean)
-                if (!formulas.length) return null
-
-                const categories = formulas.map(getLabel)
-                const colors = (chart.colors?.length ? chart.colors : DEFAULT_COLORS)
-                    .slice(0, categories.length).map(hex)
-
-                const filter = chart.campaignFilter?.value
-                const chartMetrics = (filter && rawMetrics)
-                    ? rawMetrics.map((r: any) => enrichMetaRow(r, filter, campaignGroups))
-                    : metrics
-                const data     = buildDailyData(chartMetrics, formulas, varContext)
-                const lastRow  = data[data.length - 1] ?? {}
-
-                // Pie / donut / funnel / radial use aggregated totals per metric
-                const totalByCategory = categories.map((cat, i) => ({
-                    name: cat,
-                    value: data.reduce((s, r) => s + (r[cat] ?? 0), 0),
-                    color: colors[i],
-                }))
-
-                return (
-                    <div key={chart.id}
-                        className="rounded-xl border border-zinc-800 bg-zinc-900/80 p-5 shadow-lg">
-                        {/* Header */}
-                        <div className="flex items-start justify-between mb-4">
-                            <div>
-                                <h3 className="text-sm font-semibold text-zinc-100">{chart.title}</h3>
-                                <div className="flex flex-wrap gap-3 mt-1.5">
-                                    {categories.map((cat, i) => (
-                                        <span key={cat} className="flex items-center gap-1.5 text-[11px] text-zinc-400">
-                                            <span style={{ width: 8, height: 8, borderRadius: '50%', background: colors[i], display: 'inline-block', flexShrink: 0 }} />
-                                            {cat}
-                                        </span>
-                                    ))}
-                                </div>
-                            </div>
-                            <div className="flex items-center gap-2 flex-shrink-0 text-[10px] text-zinc-500">
-                                <span className="border border-zinc-800 px-2 py-0.5 rounded font-mono">
-                                    {TYPE_LABELS[chart.type] ?? chart.type}
-                                </span>
-                                <span>{data.length} días</span>
-                            </div>
-                        </div>
-
-                        {/* Chart */}
-                        <div className="chart-dark-wrapper">
-                            <ChartBody
-                                type={chart.type} data={data}
-                                categories={categories} colors={colors}
-                                totals={totalByCategory} chartId={chart.id}
-                            />
-                        </div>
-                    </div>
-                )
-            })}
+            {charts.map(chart => (
+                <SingleMetricChart
+                    key={chart.id}
+                    chart={chart}
+                    metrics={metrics}
+                    varContext={varContext}
+                    rawMetrics={rawMetrics}
+                    campaignGroups={campaignGroups}
+                    effectiveKeyword={effectiveKeyword}
+                    sourceMapping={sourceMapping}
+                    platformSet={platformSet}
+                    layoutCustomMetrics={layoutCustomMetrics}
+                    onUpdateChart={onUpdateChart}
+                />
+            ))}
         </div>
     )
 }
 
-// ─── Chart body switcher ──────────────────────────────────────────────────────
-function ChartBody({ type, data, categories, colors, totals, chartId }: {
-    type: string
+// ─── Single Metric Chart Component ───────────────────────────────────────────
+function SingleMetricChart({
+    chart, metrics, varContext, rawMetrics, campaignGroups,
+    sourceMapping, platformSet, layoutCustomMetrics, onUpdateChart
+}: {
+    chart: ChartDef
+    metrics: any[]
+    varContext: Record<string, number>
+    rawMetrics?: any[]
+    campaignGroups: any[]
+    effectiveKeyword: string
+    sourceMapping: Record<string, string>
+    platformSet: Set<string>
+    layoutCustomMetrics: Record<string, string>
+    onUpdateChart?: (chartId: string, updatedChart: ChartDef) => void
+}) {
+    // Local state for interactive periodicity selector
+    const [periodicity, setPeriodicity] = useState<'day' | 'week' | 'month' | 'year'>(chart.periodicity || 'day')
+
+    // Local state for series visualization overrides
+    const [localTypes, setLocalTypes] = useState<('line' | 'bar' | 'area' | '')[]>(chart.types || [])
+
+    // Keep localTypes in sync when chart.types changes externally
+    useEffect(() => {
+        setLocalTypes(chart.types || [])
+    }, [chart.types])
+
+    // Local state for series units
+    const [localUnits, setLocalUnits] = useState<('number' | 'currency' | 'percent')[]>(chart.units || [])
+
+    // Keep localUnits in sync when chart.units changes externally
+    useEffect(() => {
+        setLocalUnits(chart.units || [])
+    }, [chart.units])
+
+    // Filter rawMetrics / metrics based on campaign filter
+    const chartMetrics = useMemo(() => {
+        const filter = chart.campaignFilter?.value
+        return (filter && rawMetrics)
+            ? rawMetrics.map((r: any) => enrichMetaRow(r, filter, campaignGroups))
+            : metrics
+    }, [chart.campaignFilter, rawMetrics, metrics, campaignGroups])
+
+    // Formulas
+    const formulas = useMemo(() => chart.valueFormulas.filter(Boolean), [chart.valueFormulas])
+
+    // Build grouped data
+    const data = useMemo(() => {
+        return buildGroupedData(
+            chartMetrics,
+            formulas,
+            periodicity,
+            varContext,
+            sourceMapping,
+            platformSet,
+            layoutCustomMetrics
+        )
+    }, [chartMetrics, formulas, periodicity, varContext, sourceMapping, platformSet, layoutCustomMetrics])
+
+    if (!formulas.length) return null
+
+    const categories = formulas.map(getLabel)
+    const colors = (chart.colors?.length ? chart.colors : DEFAULT_COLORS)
+        .slice(0, categories.length).map(hex)
+
+    // Pie / donut / funnel / radial totals
+    const totalByCategory = categories.map((cat, i) => ({
+        name: cat,
+        value: data.reduce((s, r) => s + (r[cat] ?? 0), 0),
+        color: colors[i],
+        unit: localUnits[i] || 'number',
+    }))
+
+    const isCartesian = ['area', 'stacked_area', 'bar', 'stacked_bar', 'line', 'composed'].includes(chart.type)
+
+    return (
+        <div className="rounded-xl border border-zinc-800 bg-zinc-900/80 p-5 shadow-lg relative group/chart">
+            {/* Header */}
+            <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3 mb-4">
+                <div>
+                    <h3 className="text-sm font-semibold text-zinc-100">{chart.title}</h3>
+                    <div className="flex flex-wrap gap-2.5 mt-2">
+                        {categories.map((cat, i) => {
+                            if (!isCartesian) {
+                                return (
+                                    <span key={cat} className="flex items-center gap-1.5 text-[11px] text-zinc-400">
+                                        <span style={{ width: 8, height: 8, borderRadius: '50%', background: colors[i], display: 'inline-block', flexShrink: 0 }} />
+                                        {cat}
+                                    </span>
+                                )
+                            }
+                            const currentType = localTypes[i] || ''
+                            return (
+                                <div key={cat} className="flex items-center gap-1.5 bg-zinc-950/40 border border-zinc-800/80 px-2 py-0.5 rounded-lg text-[10px] text-zinc-400 hover:border-zinc-700 transition">
+                                    <span style={{ width: 6, height: 6, borderRadius: '50%', background: colors[i], display: 'inline-block', flexShrink: 0 }} />
+                                    <span className="font-medium text-zinc-300">{cat}</span>
+                                    <select
+                                        value={currentType}
+                                        onChange={(e) => {
+                                            const val = e.target.value as 'line' | 'bar' | 'area' | ''
+                                            const newTypes = [...localTypes]
+                                            while (newTypes.length < categories.length) newTypes.push('')
+                                            newTypes[i] = val
+                                            setLocalTypes(newTypes)
+                                            if (onUpdateChart) {
+                                                onUpdateChart(chart.id, { ...chart, types: newTypes })
+                                            }
+                                        }}
+                                        className="bg-zinc-900/60 border-none text-[9px] text-zinc-400 rounded px-1.5 py-0.5 outline-none hover:text-white cursor-pointer transition font-medium"
+                                    >
+                                        <option value="">Defecto</option>
+                                        <option value="line">Línea</option>
+                                        <option value="bar">Barra</option>
+                                        <option value="area">Área</option>
+                                    </select>
+                                </div>
+                            )
+                        })}
+                    </div>
+                </div>
+                
+                {/* Periodicity Selector & Info Badge */}
+                <div className="flex items-center gap-3 self-end sm:self-start">
+                    {isCartesian && (
+                        <div className="inline-flex bg-zinc-950 p-0.5 rounded-lg border border-zinc-800">
+                            {(['day', 'week', 'month', 'year'] as const).map(p => (
+                                <button
+                                    key={p}
+                                    onClick={() => setPeriodicity(p)}
+                                    className={`px-2.5 py-1 text-[10px] font-medium rounded-md transition ${periodicity === p ? 'bg-zinc-800 text-white' : 'text-zinc-400 hover:text-zinc-200'}`}
+                                >
+                                    {p === 'day' ? 'Día' : p === 'week' ? 'Semana' : p === 'month' ? 'Mes' : 'Año'}
+                                </button>
+                            ))}
+                        </div>
+                    )}
+                    
+                    <div className="flex items-center gap-2 text-[10px] text-zinc-500">
+                        <span className="border border-zinc-800 px-2 py-0.5 rounded font-mono">
+                            {TYPE_LABELS[chart.type] ?? chart.type}
+                        </span>
+                        <span>{data.length} {data.length === 1 ? 'punto' : 'puntos'}</span>
+                    </div>
+                </div>
+            </div>
+
+            {/* Chart Body */}
+            <div className="chart-dark-wrapper">
+                <ChartBody
+                    chart={chart}
+                    data={data}
+                    categories={categories}
+                    colors={colors}
+                    totals={totalByCategory}
+                    chartId={chart.id}
+                    localTypes={localTypes}
+                    localUnits={localUnits}
+                />
+            </div>
+        </div>
+    )
+}
+
+// ─── Chart Body Switcher ──────────────────────────────────────────────────────
+function ChartBody({ chart, data, categories, colors, totals, chartId, localTypes, localUnits }: {
+    chart: ChartDef
     data: Array<Record<string, any>>
     categories: string[]
     colors: string[]
-    totals: { name: string; value: number; color: string }[]
+    totals: { name: string; value: number; color: string; unit?: string }[]
     chartId: string
+    localTypes: string[]
+    localUnits: string[]
 }) {
-    const H = 240
+    const H = chart.height || 240
+    const type = chart.type
 
-    // Recharts does not always render children properly if they are wrapped in a Fragment,
-    // so we inline CartesianGrid, XAxis, YAxis, and Tooltip in each chart.
-    if (type === 'area') return (
-        <ResponsiveContainer width="100%" height={H}>
-            <AreaChart data={data} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
-                <defs>
-                    {categories.map((_, i) => (
-                        <linearGradient key={i} id={`ag-${chartId}-${i}`} x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%"  stopColor={colors[i]} stopOpacity={0.3} />
-                            <stop offset="95%" stopColor={colors[i]} stopOpacity={0.02} />
-                        </linearGradient>
-                    ))}
-                </defs>
-                <CartesianGrid {...GRID} vertical={false} />
-                <XAxis dataKey="date" tick={TICK} axisLine={false} tickLine={false} />
-                <YAxis tickFormatter={fmt} tick={TICK} axisLine={false} tickLine={false} width={52} />
-                <Tooltip content={<CustomTooltip />} cursor={{ stroke: 'rgba(255,255,255,0.08)', strokeWidth: 1 }} />
-                {categories.map((cat, i) => (
-                    <Area key={cat} type={CURVE} dataKey={cat} stroke={colors[i]} strokeWidth={2}
-                        fill={`url(#ag-${chartId}-${i})`} dot={false}
-                        activeDot={{ r: 4, fill: colors[i], strokeWidth: 0 }} />
-                ))}
-            </AreaChart>
-        </ResponsiveContainer>
-    )
+    // Helper to get series visualization type
+    const getSeriesType = (index: number, chartType: string, customTypes?: string[]) => {
+        if (customTypes?.[index]) return customTypes[index]
+        if (chartType === 'composed') {
+            return index === 0 ? 'bar' : 'line'
+        }
+        if (chartType === 'stacked_area') return 'area'
+        if (chartType === 'stacked_bar') return 'bar'
+        return chartType // 'area' | 'bar' | 'line'
+    }
 
-    if (type === 'stacked_area') return (
-        <ResponsiveContainer width="100%" height={H}>
-            <AreaChart data={data} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
-                <defs>
-                    {categories.map((_, i) => (
-                        <linearGradient key={i} id={`sag-${chartId}-${i}`} x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%"  stopColor={colors[i]} stopOpacity={0.5} />
-                            <stop offset="95%" stopColor={colors[i]} stopOpacity={0.1} />
-                        </linearGradient>
-                    ))}
-                </defs>
-                <CartesianGrid {...GRID} vertical={false} />
-                <XAxis dataKey="date" tick={TICK} axisLine={false} tickLine={false} />
-                <YAxis tickFormatter={fmt} tick={TICK} axisLine={false} tickLine={false} width={52} />
-                <Tooltip content={<CustomTooltip />} cursor={{ stroke: 'rgba(255,255,255,0.08)', strokeWidth: 1 }} />
-                {categories.map((cat, i) => (
-                    <Area key={cat} type={CURVE} dataKey={cat} stackId="s" stroke={colors[i]} strokeWidth={1.5}
-                        fill={`url(#sag-${chartId}-${i})`} dot={false}
-                        activeDot={{ r: 4, fill: colors[i], strokeWidth: 0 }} />
-                ))}
-            </AreaChart>
-        </ResponsiveContainer>
-    )
+    const isCartesian = ['area', 'stacked_area', 'bar', 'stacked_bar', 'line', 'composed'].includes(type)
 
-    if (type === 'bar') return (
-        <ResponsiveContainer width="100%" height={H}>
-            <BarChart data={data} margin={{ top: 4, right: 8, left: 0, bottom: 0 }} barGap={4}>
-                <CartesianGrid {...GRID} vertical={false} />
-                <XAxis dataKey="date" tick={TICK} axisLine={false} tickLine={false} />
-                <YAxis tickFormatter={fmt} tick={TICK} axisLine={false} tickLine={false} width={52} />
-                <Tooltip content={<CustomTooltip />} cursor={{ fill: 'rgba(255,255,255,0.04)' }} />
-                {categories.map((cat, i) => (
-                    <Bar key={cat} dataKey={cat} fill={colors[i]} radius={[3, 3, 0, 0]} maxBarSize={36} />
-                ))}
-            </BarChart>
-        </ResponsiveContainer>
-    )
+    if (isCartesian) {
+        const hasLeft = categories.some((_, i) => !chart.yAxes || chart.yAxes[i] !== 'right')
+        const hasRight = categories.some((_, i) => chart.yAxes?.[i] === 'right')
 
-    if (type === 'stacked_bar') return (
-        <ResponsiveContainer width="100%" height={H}>
-            <BarChart data={data} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
-                <CartesianGrid {...GRID} vertical={false} />
-                <XAxis dataKey="date" tick={TICK} axisLine={false} tickLine={false} />
-                <YAxis tickFormatter={fmt} tick={TICK} axisLine={false} tickLine={false} width={52} />
-                <Tooltip content={<CustomTooltip />} cursor={{ fill: 'rgba(255,255,255,0.04)' }} />
-                {categories.map((cat, i) => (
-                    <Bar key={cat} dataKey={cat} stackId="s" fill={colors[i]}
-                        radius={i === categories.length - 1 ? [3, 3, 0, 0] : [0,0,0,0]} maxBarSize={48} />
-                ))}
-            </BarChart>
-        </ResponsiveContainer>
-    )
+        return (
+            <ResponsiveContainer width="100%" height={H}>
+                <ComposedChart data={data} margin={{ top: 12, right: hasRight ? 8 : 12, left: hasLeft ? -10 : 8, bottom: 0 }}>
+                    <defs>
+                        {categories.map((_, i) => {
+                            const sType = getSeriesType(i, type, localTypes)
+                            if (sType !== 'area') return null
+                            return (
+                                <linearGradient key={i} id={`ag-${chartId}-${i}`} x1="0" y1="0" x2="0" y2="1">
+                                    <stop offset="5%" stopColor={colors[i]} stopOpacity={type === 'stacked_area' ? 0.5 : 0.3} />
+                                    <stop offset="95%" stopColor={colors[i]} stopOpacity={type === 'stacked_area' ? 0.1 : 0.02} />
+                                </linearGradient>
+                            )
+                        })}
+                    </defs>
+                    <CartesianGrid {...GRID} vertical={false} />
+                    <XAxis dataKey="date" tick={TICK} axisLine={false} tickLine={false} />
+                    {hasLeft && (
+                        <YAxis
+                            yAxisId="left"
+                            orientation="left"
+                            tickFormatter={(val) => fmtAxis(val, 'left', chart.yAxes, localUnits)}
+                            tick={TICK}
+                            axisLine={false}
+                            tickLine={false}
+                            width={52}
+                        />
+                    )}
+                    {hasRight && (
+                        <YAxis
+                            yAxisId="right"
+                            orientation="right"
+                            tickFormatter={(val) => fmtAxis(val, 'right', chart.yAxes, localUnits)}
+                            tick={TICK}
+                            axisLine={false}
+                            tickLine={false}
+                            width={52}
+                        />
+                    )}
+                    <Tooltip content={<CustomTooltip categories={categories} localUnits={localUnits} />} cursor={{ fill: 'rgba(255,255,255,0.04)' }} />
+                    {categories.map((cat, i) => {
+                        const sType = getSeriesType(i, type, localTypes)
+                        const yAxisId = chart.yAxes?.[i] === 'right' ? 'right' : 'left'
+                        const strokeWidth = chart.strokeWidths?.[i] ?? 2
+                        const color = colors[i]
+                        const unitVal = localUnits[i] || 'number'
 
-    if (type === 'line') return (
-        <ResponsiveContainer width="100%" height={H}>
-            <LineChart data={data} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
-                <CartesianGrid {...GRID} vertical={false} />
-                <XAxis dataKey="date" tick={TICK} axisLine={false} tickLine={false} />
-                <YAxis tickFormatter={fmt} tick={TICK} axisLine={false} tickLine={false} width={52} />
-                <Tooltip content={<CustomTooltip />} cursor={{ stroke: 'rgba(255,255,255,0.08)', strokeWidth: 1 }} />
-                {categories.map((cat, i) => (
-                    <Line key={cat} type={CURVE} dataKey={cat} stroke={colors[i]} strokeWidth={2}
-                        dot={false} activeDot={{ r: 4, fill: colors[i], strokeWidth: 0 }} />
-                ))}
-            </LineChart>
-        </ResponsiveContainer>
-    )
+                        const labelListElement = chart.showDataLabels && (
+                            <LabelList
+                                dataKey={cat}
+                                position="top"
+                                offset={10}
+                                style={{ fill: '#a1a1aa', fontSize: 9, fontFamily: 'monospace' }}
+                                formatter={(val: any) => typeof val === 'number' ? fmtVal(val, unitVal) : val}
+                            />
+                        )
 
-    if (type === 'composed') return (
-        <ResponsiveContainer width="100%" height={H}>
-            <ComposedChart data={data} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
-                <CartesianGrid {...GRID} vertical={false} />
-                <XAxis dataKey="date" tick={TICK} axisLine={false} tickLine={false} />
-                <YAxis tickFormatter={fmt} tick={TICK} axisLine={false} tickLine={false} width={52} />
-                <Tooltip content={<CustomTooltip />} cursor={{ fill: 'rgba(255,255,255,0.04)' }} />
-                {categories.map((cat, i) =>
-                    i === 0
-                        ? <Bar key={cat} dataKey={cat} fill={colors[i]} radius={[3, 3, 0, 0]} maxBarSize={36} opacity={0.85} />
-                        : <Line key={cat} type={CURVE} dataKey={cat} stroke={colors[i]} strokeWidth={2}
-                            dot={false} activeDot={{ r: 4, fill: colors[i], strokeWidth: 0 }} />
-                )}
-            </ComposedChart>
-        </ResponsiveContainer>
-    )
+                        if (sType === 'area') {
+                            return (
+                                <Area
+                                    key={cat}
+                                    type={CURVE}
+                                    dataKey={cat}
+                                    yAxisId={yAxisId}
+                                    stackId={type === 'stacked_area' ? 's' : undefined}
+                                    stroke={color}
+                                    strokeWidth={strokeWidth}
+                                    fill={`url(#ag-${chartId}-${i})`}
+                                    dot={false}
+                                    activeDot={{ r: 4, fill: color, strokeWidth: 0 }}
+                                    unit={unitVal}
+                                >
+                                    {labelListElement}
+                                </Area>
+                            )
+                        }
+
+                        if (sType === 'bar') {
+                            return (
+                                <Bar
+                                    key={cat}
+                                    dataKey={cat}
+                                    yAxisId={yAxisId}
+                                    stackId={type === 'stacked_bar' ? 's' : undefined}
+                                    fill={color}
+                                    opacity={0.85}
+                                    radius={type === 'stacked_bar' ? (i === categories.length - 1 ? [3, 3, 0, 0] : [0, 0, 0, 0]) : [3, 3, 0, 0]}
+                                    maxBarSize={type === 'stacked_bar' ? 48 : 36}
+                                    unit={unitVal}
+                                >
+                                    {labelListElement}
+                                </Bar>
+                            )
+                        }
+
+                        // default to line
+                        return (
+                            <Line
+                                key={cat}
+                                type={CURVE}
+                                dataKey={cat}
+                                yAxisId={yAxisId}
+                                stroke={color}
+                                strokeWidth={strokeWidth}
+                                dot={false}
+                                activeDot={{ r: 4, fill: color, strokeWidth: 0 }}
+                                unit={unitVal}
+                            >
+                                {labelListElement}
+                            </Line>
+                        )
+                    })}
+                </ComposedChart>
+            </ResponsiveContainer>
+        )
+    }
 
     if (type === 'donut' || type === 'pie') return (
         <ResponsiveContainer width="100%" height={H}>
@@ -322,12 +575,16 @@ function ChartBody({ type, data, categories, colors, totals, chartId }: {
                     outerRadius="78%"
                     dataKey="value" nameKey="name"
                     paddingAngle={type === 'donut' ? 3 : 1}
+                    label={chart.showDataLabels ? ({ name, value }) => {
+                        const item = totals.find(t => t.name === name)
+                        return `${name}: ${fmtVal(value, item?.unit)}`
+                    } : false}
                 >
                     {totals.map((t, i) => (
                         <Cell key={t.name} fill={colors[i]} stroke="transparent" />
                     ))}
                 </Pie>
-                <Tooltip content={<CustomTooltip />} />
+                <Tooltip content={<CustomTooltip categories={categories} localUnits={localUnits} />} />
                 <Legend
                     formatter={(v) => <span style={{ color: '#a1a1aa', fontSize: 11 }}>{v}</span>}
                     iconType="circle" iconSize={8}
@@ -345,8 +602,8 @@ function ChartBody({ type, data, categories, colors, totals, chartId }: {
             >
                 <PolarGrid gridType="circle" stroke="rgba(255,255,255,0.05)" />
                 <RadialBar dataKey="value" background={{ fill: 'rgba(255,255,255,0.03)' }}
-                    cornerRadius={4} label={false} />
-                <Tooltip content={<CustomTooltip />} />
+                    cornerRadius={4} label={chart.showDataLabels ? { fill: '#a1a1aa', fontSize: 10, formatter: (val: any, index: number) => fmtVal(val, totals[index]?.unit) } : false} />
+                <Tooltip content={<CustomTooltip categories={categories} localUnits={localUnits} />} />
                 <Legend
                     formatter={(v) => <span style={{ color: '#a1a1aa', fontSize: 11 }}>{v}</span>}
                     iconType="circle" iconSize={8}
@@ -357,16 +614,16 @@ function ChartBody({ type, data, categories, colors, totals, chartId }: {
 
     if (type === 'scatter') {
         const [catX, catY] = categories
-        const colX = colors[0], colY = colors[1] ?? colors[0]
+        const colX = colors[0]
         const scatterData = data.map(d => ({ x: d[catX] ?? 0, y: d[catY] ?? 0, date: d.date }))
         return (
             <ResponsiveContainer width="100%" height={H}>
                 <ScatterChart margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
                     <CartesianGrid {...GRID} />
-                    <XAxis dataKey="x" type="number" name={catX ?? 'X'} tickFormatter={fmt} tick={TICK} axisLine={false} tickLine={false} width={52} />
-                    <YAxis dataKey="y" type="number" name={catY ?? 'Y'} tickFormatter={fmt} tick={TICK} axisLine={false} tickLine={false} width={52} />
+                    <XAxis dataKey="x" type="number" name={catX ?? 'X'} tickFormatter={(val) => fmtVal(val, localUnits[0])} tick={TICK} axisLine={false} tickLine={false} width={52} />
+                    <YAxis dataKey="y" type="number" name={catY ?? 'Y'} tickFormatter={(val) => fmtVal(val, localUnits[1])} tick={TICK} axisLine={false} tickLine={false} width={52} />
                     <ZAxis range={[40, 40]} />
-                    <Tooltip content={<CustomTooltip />} cursor={{ strokeDasharray: '3 3', stroke: 'rgba(255,255,255,0.1)' }} />
+                    <Tooltip content={<CustomTooltip categories={categories} localUnits={localUnits} />} cursor={{ strokeDasharray: '3 3', stroke: 'rgba(255,255,255,0.1)' }} />
                     <Scatter data={scatterData} fill={colX} opacity={0.8} />
                 </ScatterChart>
             </ResponsiveContainer>
@@ -380,18 +637,20 @@ function ChartBody({ type, data, categories, colors, totals, chartId }: {
         return (
             <ResponsiveContainer width="100%" height={H}>
                 <FunnelChart>
-                    <Tooltip content={<CustomTooltip />} />
+                    <Tooltip content={<CustomTooltip categories={categories} localUnits={localUnits} />} />
                     <Funnel dataKey="value" data={funnelData} isAnimationActive>
                         {funnelData.map((d, i) => (
                             <Cell key={d.name} fill={colors[i]} stroke="transparent" />
                         ))}
-                        <LabelList position="center" content={({ value, x, y, width, height }: any) => (
-                            <text x={x + (width ?? 0) / 2} y={y + (height ?? 0) / 2 + 1}
-                                textAnchor="middle" dominantBaseline="middle"
-                                style={{ fill: '#fff', fontSize: 11, fontWeight: 600 }}>
-                                {fmt(value)}
-                            </text>
-                        )} />
+                        {chart.showDataLabels && (
+                            <LabelList position="center" content={({ value, x, y, width, height, index }: any) => (
+                                <text x={x + (width ?? 0) / 2} y={y + (height ?? 0) / 2 + 1}
+                                    textAnchor="middle" dominantBaseline="middle"
+                                    style={{ fill: '#fff', fontSize: 11, fontWeight: 600 }}>
+                                    {fmtVal(value, totals[index]?.unit)}
+                                </text>
+                            )} />
+                        )}
                     </Funnel>
                 </FunnelChart>
             </ResponsiveContainer>
