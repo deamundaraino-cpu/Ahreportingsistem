@@ -10,7 +10,7 @@ import {
     ChevronLeft, Eye, EyeOff, LayoutPanelTop, Plus, Database, BarChart3, Copy
 } from 'lucide-react'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import type { ColDef, CardDef, ChartDef, ChartType, ReportLayout, CardColor } from '@/lib/layout-types'
+import type { ColDef, CardDef, ChartDef, ChartType, ReportLayout, CardColor, CampaignFilterSpec, CampaignFilterOperator, RankingTableDef, RankingColumnDef } from '@/lib/layout-types'
 
 // ─── Available Metrics for Dropdown ──────────────────────────────────────────
 
@@ -831,39 +831,99 @@ const PRESETS: { label: string; formula: string; prefix?: string; suffix?: strin
 
 // ─── Campaign Filter Picker ───────────────────────────────────────────────────
 
+const FILTER_OPERATORS: { value: CampaignFilterOperator; label: string; multi: boolean }[] = [
+    { value: 'includes',    label: 'Incluye',         multi: false },
+    { value: 'excludes',    label: 'Excluye',         multi: false },
+    { value: 'exact',       label: 'Coincide con',    multi: false },
+    { value: 'not_exact',   label: 'No coincide con', multi: false },
+    { value: 'starts_with', label: 'Inicia con',      multi: false },
+    { value: 'ends_with',   label: 'Finaliza con',    multi: false },
+    { value: 'any_of',      label: 'Entre estas',     multi: true  },
+    { value: 'none_of',     label: 'Fuera de estas',  multi: true  },
+]
+
 function CampaignFilterPicker({
     value,
     onChange,
     campaignGroups,
     campaignNames = [],
 }: {
-    value?: { type: 'group' | 'keyword'; value: string }
-    onChange: (v: { type: 'group' | 'keyword'; value: string } | undefined) => void
+    value?: CampaignFilterSpec
+    onChange: (v: CampaignFilterSpec | undefined) => void
     campaignGroups: { id: string; nombre: string }[]
     campaignNames?: string[]
 }) {
-    const [kwSearch, setKwSearch] = useState(value?.type === 'keyword' ? value.value : '')
+    const currentOp: CampaignFilterOperator = (value?.type === 'keyword' && value.operator) ? value.operator : 'includes'
+    const isMulti = FILTER_OPERATORS.find(o => o.value === currentOp)?.multi ?? false
+
+    const [kwSearch, setKwSearch] = useState(
+        value?.type === 'keyword' && !isMulti && typeof value.value === 'string' ? value.value : ''
+    )
     const [showSuggestions, setShowSuggestions] = useState(false)
+    const [showMultiPanel, setShowMultiPanel] = useState(false)
+    const [multiSearch, setMultiSearch] = useState('')
+    const multiRef = useRef<HTMLDivElement>(null)
 
     useEffect(() => {
-        if (value?.type !== 'keyword') setKwSearch('')
-    }, [value])
+        if (value?.type !== 'keyword' || isMulti) setKwSearch('')
+    }, [value, isMulti])
+
+    // close multi panel on outside click
+    useEffect(() => {
+        if (!showMultiPanel) return
+        const handler = (e: MouseEvent) => {
+            if (multiRef.current && !multiRef.current.contains(e.target as Node)) {
+                setShowMultiPanel(false)
+                setMultiSearch('')
+            }
+        }
+        document.addEventListener('mousedown', handler)
+        return () => document.removeEventListener('mousedown', handler)
+    }, [showMultiPanel])
+
+    const selectedMulti: string[] = (value?.type === 'keyword' && Array.isArray(value.value)) ? value.value : []
 
     const suggestions = campaignNames.filter(n =>
         kwSearch === '' || n.toLowerCase().includes(kwSearch.toLowerCase())
     )
 
+    const filteredMultiNames = campaignNames.filter(n =>
+        multiSearch === '' || n.toLowerCase().includes(multiSearch.toLowerCase())
+    )
+
+    function handleOperatorChange(op: CampaignFilterOperator) {
+        const opDef = FILTER_OPERATORS.find(o => o.value === op)!
+        if (opDef.multi) {
+            onChange({ type: 'keyword', operator: op, value: selectedMulti })
+            setShowMultiPanel(true)
+        } else {
+            const currentVal = typeof kwSearch === 'string' && kwSearch ? kwSearch : ''
+            onChange(currentVal ? { type: 'keyword', operator: op, value: currentVal } : undefined)
+        }
+    }
+
+    function toggleMultiItem(name: string) {
+        const next = selectedMulti.includes(name)
+            ? selectedMulti.filter(n => n !== name)
+            : [...selectedMulti, name]
+        onChange(next.length > 0 ? { type: 'keyword', operator: currentOp, value: next } : undefined)
+    }
+
+    const hasFilter = value !== undefined
+
     return (
         <div className="flex items-center gap-1.5 flex-shrink-0" title="Filtro de campaña (opcional)">
             <span className="text-[10px] text-zinc-600 flex-shrink-0">Campaña:</span>
+
+            {/* Group selector */}
             {campaignGroups.length > 0 && (
                 <select
-                    value={value?.type === 'group' ? value.value : ''}
+                    value={value?.type === 'group' && typeof value.value === 'string' ? value.value : ''}
                     onChange={e => {
-                        if (e.target.value) onChange({ type: 'group', value: e.target.value })
+                        if (e.target.value) onChange({ type: 'group', operator: undefined, value: e.target.value })
                         else if (value?.type === 'group') onChange(undefined)
                     }}
-                    className="h-6 text-xs bg-zinc-950 border border-zinc-700 text-zinc-300 rounded px-1.5 max-w-[110px]"
+                    className="h-6 text-xs bg-zinc-950 border border-zinc-700 text-zinc-300 rounded px-1.5 max-w-[100px]"
                 >
                     <option value="">Grupo...</option>
                     {campaignGroups.map(g => (
@@ -871,44 +931,124 @@ function CampaignFilterPicker({
                     ))}
                 </select>
             )}
-            <div className="relative">
-                <Input
-                    value={kwSearch}
-                    onChange={e => {
-                        setKwSearch(e.target.value)
-                        if (e.target.value) onChange({ type: 'keyword', value: e.target.value })
-                        else if (value?.type === 'keyword') onChange(undefined)
-                        setShowSuggestions(true)
-                    }}
-                    onFocus={() => setShowSuggestions(true)}
-                    onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
-                    placeholder="Buscar campaña..."
-                    className="h-6 text-xs bg-zinc-950 border-zinc-700 text-zinc-300 w-44"
-                />
-                {showSuggestions && suggestions.length > 0 && (
-                    <div className="absolute top-7 left-0 z-[120] bg-zinc-900 border border-zinc-800 rounded shadow-lg max-h-48 overflow-y-auto w-56 custom-scrollbar">
-                        {suggestions.map(name => (
-                            <button
-                                key={name}
-                                onMouseDown={e => e.preventDefault()}
-                                onClick={() => {
-                                    setKwSearch(name)
-                                    onChange({ type: 'keyword', value: name })
-                                    setShowSuggestions(false)
-                                }}
-                                className="w-full text-left px-2 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 transition truncate block"
-                            >
-                                {name}
-                            </button>
-                        ))}
-                    </div>
-                )}
-            </div>
-            {value && (
+
+            {/* Operator selector */}
+            <select
+                value={currentOp}
+                onChange={e => handleOperatorChange(e.target.value as CampaignFilterOperator)}
+                className="h-6 text-xs bg-zinc-950 border border-zinc-700 text-zinc-300 rounded px-1.5 max-w-[120px]"
+            >
+                {FILTER_OPERATORS.map(op => (
+                    <option key={op.value} value={op.value}>{op.label}</option>
+                ))}
+            </select>
+
+            {/* Text input for single-value operators */}
+            {!isMulti && (
+                <div className="relative">
+                    <Input
+                        value={kwSearch}
+                        onChange={e => {
+                            setKwSearch(e.target.value)
+                            if (e.target.value) onChange({ type: 'keyword', operator: currentOp, value: e.target.value })
+                            else if (value?.type === 'keyword') onChange(undefined)
+                            setShowSuggestions(true)
+                        }}
+                        onFocus={() => setShowSuggestions(true)}
+                        onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
+                        placeholder="Buscar campaña..."
+                        className="h-6 text-xs bg-zinc-950 border-zinc-700 text-zinc-300 w-40"
+                    />
+                    {showSuggestions && suggestions.length > 0 && (
+                        <div className="absolute top-7 left-0 z-[120] bg-zinc-900 border border-zinc-800 rounded shadow-lg max-h-48 overflow-y-auto w-56 custom-scrollbar">
+                            {suggestions.map(name => (
+                                <button
+                                    key={name}
+                                    onMouseDown={e => e.preventDefault()}
+                                    onClick={() => {
+                                        setKwSearch(name)
+                                        onChange({ type: 'keyword', operator: currentOp, value: name })
+                                        setShowSuggestions(false)
+                                    }}
+                                    className="w-full text-left px-2 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 transition truncate block"
+                                >
+                                    {name}
+                                </button>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            )}
+
+            {/* Multi-select panel for any_of / none_of */}
+            {isMulti && (
+                <div className="relative" ref={multiRef}>
+                    <button
+                        onClick={() => { setShowMultiPanel(p => !p); setMultiSearch('') }}
+                        className={`h-6 px-2 text-xs rounded border transition flex items-center gap-1 ${
+                            selectedMulti.length > 0
+                                ? 'bg-indigo-500/20 border-indigo-500/40 text-indigo-300'
+                                : 'bg-zinc-950 border-zinc-700 text-zinc-400 hover:border-zinc-500'
+                        }`}
+                    >
+                        {selectedMulti.length > 0 ? `${selectedMulti.length} campaña${selectedMulti.length > 1 ? 's' : ''}` : 'Seleccionar...'}
+                        <ChevronRight className={`w-3 h-3 transition-transform ${showMultiPanel ? 'rotate-90' : ''}`} />
+                    </button>
+
+                    {showMultiPanel && (
+                        <div className="absolute top-8 left-0 z-[120] bg-zinc-900 border border-zinc-700 rounded-lg shadow-xl w-64">
+                            <div className="p-2 border-b border-zinc-800">
+                                <Input
+                                    value={multiSearch}
+                                    onChange={e => setMultiSearch(e.target.value)}
+                                    placeholder="Buscar campaña..."
+                                    className="h-6 text-xs bg-zinc-950 border-zinc-700 text-zinc-300 w-full"
+                                    autoFocus
+                                />
+                            </div>
+                            <div className="max-h-52 overflow-y-auto custom-scrollbar py-1">
+                                {filteredMultiNames.length === 0 ? (
+                                    <p className="px-3 py-2 text-xs text-zinc-600">Sin resultados</p>
+                                ) : filteredMultiNames.map(name => {
+                                    const checked = selectedMulti.includes(name)
+                                    return (
+                                        <button
+                                            key={name}
+                                            onClick={() => toggleMultiItem(name)}
+                                            className="w-full text-left px-3 py-1.5 text-xs flex items-center gap-2 hover:bg-zinc-800 transition"
+                                        >
+                                            <span className={`w-3.5 h-3.5 rounded border flex-shrink-0 flex items-center justify-center transition ${
+                                                checked ? 'bg-indigo-500 border-indigo-500' : 'border-zinc-600'
+                                            }`}>
+                                                {checked && <Check className="w-2.5 h-2.5 text-white" />}
+                                            </span>
+                                            <span className={`truncate ${checked ? 'text-indigo-300' : 'text-zinc-300'}`}>{name}</span>
+                                        </button>
+                                    )
+                                })}
+                            </div>
+                            {selectedMulti.length > 0 && (
+                                <div className="p-2 border-t border-zinc-800 flex justify-between items-center">
+                                    <span className="text-[10px] text-zinc-500">{selectedMulti.length} seleccionada{selectedMulti.length > 1 ? 's' : ''}</span>
+                                    <button
+                                        onClick={() => onChange(undefined)}
+                                        className="text-[10px] text-red-400 hover:text-red-300 transition"
+                                    >
+                                        Limpiar
+                                    </button>
+                                </div>
+                            )}
+                        </div>
+                    )}
+                </div>
+            )}
+
+            {/* Clear button */}
+            {hasFilter && (
                 <button
                     onClick={() => { onChange(undefined); setKwSearch('') }}
                     title="Limpiar filtro de campaña"
-                    className="text-zinc-600 hover:text-red-400 transition"
+                    className="text-zinc-600 hover:text-red-400 transition flex-shrink-0"
                 >
                     <X className="w-3 h-3" />
                 </button>
@@ -1019,7 +1159,8 @@ export function LayoutConfigModal({
             ...layout.tarjetas.map(t => `card:${t.id}`),
             ...(layout.graficos || []).map(g => `chart:${g.id}`),
             'table',
-            ...(layout.text_blocks || []).map(t => `text:${t.id}`)
+            ...(layout.text_blocks || []).map(t => `text:${t.id}`),
+            ...(layout.ranking_tables || []).map(r => `ranking:${r.id}`),
         ]
         const savedOrder = layout.blocks_order || []
         const validSaved = savedOrder.filter(id => availableBlockIds.includes(id))
@@ -1171,6 +1312,43 @@ export function LayoutConfigModal({
         })
     }
 
+    function addRankingTable() {
+        if (!workingLayout) return
+        const newTable: RankingTableDef = {
+            id: crypto.randomUUID(),
+            title: 'Nueva Tabla de Ranking',
+            dimension: 'campaigns',
+            columns: [
+                { formula: 'meta_spend', label: 'Gasto', prefix: '$', decimals: 2 },
+                { formula: 'meta_leads', label: 'Leads', decimals: 0 },
+                { formula: 'meta_spend / meta_leads', label: 'CPL', prefix: '$', decimals: 2 },
+            ],
+            topN: 10,
+            sortColumnIndex: 0,
+            sortOrder: 'desc',
+            showRank: true,
+        }
+        const newTables = [...(workingLayout.ranking_tables || []), newTable]
+        const newOrder = [...(workingLayout.blocks_order || []), `ranking:${newTable.id}`]
+        setWorkingLayout({ ...workingLayout, ranking_tables: newTables, blocks_order: newOrder })
+    }
+
+    function updateRankingTable(index: number, table: RankingTableDef) {
+        if (!workingLayout) return
+        const tables = [...(workingLayout.ranking_tables || [])]
+        tables[index] = table
+        setWorkingLayout({ ...workingLayout, ranking_tables: tables })
+    }
+
+    function removeRankingTable(index: number) {
+        if (!workingLayout) return
+        const table = (workingLayout.ranking_tables || [])[index]
+        if (!table) return
+        const tables = (workingLayout.ranking_tables || []).filter((_, i) => i !== index)
+        const newOrder = (workingLayout.blocks_order || []).filter(id => id !== `ranking:${table.id}`)
+        setWorkingLayout({ ...workingLayout, ranking_tables: tables, blocks_order: newOrder })
+    }
+
     // ── Actions ───────────────────────────────────────────────────────────────
 
     async function handleSave() {
@@ -1186,6 +1364,7 @@ export function LayoutConfigModal({
                 text_blocks: workingLayout.text_blocks,
                 custom_metrics: workingLayout.custom_metrics,
                 blocks_order: reconcileOrder(workingLayout),
+                ranking_tables: workingLayout.ranking_tables,
             })
         } else {
             res = await saveClienteLayout(clienteId, {
@@ -1195,6 +1374,7 @@ export function LayoutConfigModal({
                 text_blocks: workingLayout.text_blocks,
                 custom_metrics: workingLayout.custom_metrics,
                 blocks_order: reconcileOrder(workingLayout),
+                ranking_tables: workingLayout.ranking_tables,
             })
         }
 
@@ -1557,6 +1737,183 @@ export function LayoutConfigModal({
                                      </div>
                                 )}
                              </div>
+                        </div>
+                        {/* Rankings Section */}
+                        <div className="pt-8 border-t border-zinc-800 space-y-4">
+                            <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2">
+                                    <div className="w-1 h-4 bg-cyan-500 rounded-full" />
+                                    <h3 className="text-sm font-bold text-white uppercase tracking-wider">Tablas de Ranking</h3>
+                                </div>
+                                <button onClick={addRankingTable} className="text-[10px] text-cyan-400 hover:text-cyan-300 flex items-center gap-1 bg-cyan-500/10 px-2 py-1 rounded transition">
+                                    <Plus className="w-3 h-3" /> Agregar tabla
+                                </button>
+                            </div>
+
+                            <div className="space-y-4">
+                                {(workingLayout?.ranking_tables || []).map((table, ti) => (
+                                    <div key={table.id} className="bg-zinc-900 border border-zinc-700 rounded-xl p-4 space-y-3">
+                                        {/* Table header row */}
+                                        <div className="flex items-center gap-2">
+                                            <Input
+                                                value={table.title}
+                                                onChange={e => updateRankingTable(ti, { ...table, title: e.target.value })}
+                                                className="h-7 text-xs bg-zinc-950 border-zinc-700 text-white flex-1"
+                                                placeholder="Título de la tabla"
+                                            />
+                                            <button onClick={() => removeRankingTable(ti)} className="flex-shrink-0 text-zinc-700 hover:text-red-400 transition">
+                                                <X className="w-3.5 h-3.5" />
+                                            </button>
+                                        </div>
+
+                                        {/* Settings row */}
+                                        <div className="flex flex-wrap items-center gap-2 text-[10px]">
+                                            <div className="flex items-center gap-1">
+                                                <span className="text-zinc-500">Dimensión:</span>
+                                                <select
+                                                    value={table.dimension}
+                                                    onChange={e => updateRankingTable(ti, { ...table, dimension: e.target.value as any })}
+                                                    className="h-6 bg-zinc-950 border border-zinc-700 text-zinc-300 rounded px-1.5"
+                                                >
+                                                    <option value="campaigns">Campañas</option>
+                                                    <option value="ads">Anuncios</option>
+                                                    <option value="adsets">Conjuntos</option>
+                                                </select>
+                                            </div>
+                                            <div className="flex items-center gap-1">
+                                                <span className="text-zinc-500">Top:</span>
+                                                <select
+                                                    value={table.topN}
+                                                    onChange={e => updateRankingTable(ti, { ...table, topN: Number(e.target.value) })}
+                                                    className="h-6 bg-zinc-950 border border-zinc-700 text-zinc-300 rounded px-1.5"
+                                                >
+                                                    {[5, 10, 20, 50].map(n => <option key={n} value={n}>{n}</option>)}
+                                                </select>
+                                            </div>
+                                            <div className="flex items-center gap-1">
+                                                <span className="text-zinc-500">Orden:</span>
+                                                <select
+                                                    value={table.sortOrder}
+                                                    onChange={e => updateRankingTable(ti, { ...table, sortOrder: e.target.value as 'desc' | 'asc' })}
+                                                    className="h-6 bg-zinc-950 border border-zinc-700 text-zinc-300 rounded px-1.5"
+                                                >
+                                                    <option value="desc">Mayor → Menor</option>
+                                                    <option value="asc">Menor → Mayor</option>
+                                                </select>
+                                            </div>
+                                            <div className="flex items-center gap-1">
+                                                <span className="text-zinc-500">Columna de orden:</span>
+                                                <select
+                                                    value={table.sortColumnIndex}
+                                                    onChange={e => updateRankingTable(ti, { ...table, sortColumnIndex: Number(e.target.value) })}
+                                                    className="h-6 bg-zinc-950 border border-zinc-700 text-zinc-300 rounded px-1.5"
+                                                >
+                                                    {table.columns.map((col, ci) => (
+                                                        <option key={ci} value={ci}>{col.label || `Col ${ci + 1}`}</option>
+                                                    ))}
+                                                </select>
+                                            </div>
+                                            <label className="flex items-center gap-1 cursor-pointer">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={table.showRank !== false}
+                                                    onChange={e => updateRankingTable(ti, { ...table, showRank: e.target.checked })}
+                                                    className="w-3 h-3 accent-cyan-500"
+                                                />
+                                                <span className="text-zinc-400">Mostrar #</span>
+                                            </label>
+                                        </div>
+
+                                        {/* Campaign filter */}
+                                        <div className="pl-1">
+                                            <CampaignFilterPicker
+                                                value={table.campaignFilter}
+                                                onChange={v => updateRankingTable(ti, { ...table, campaignFilter: v })}
+                                                campaignGroups={campaignGroups}
+                                                campaignNames={campaignNames}
+                                            />
+                                        </div>
+
+                                        {/* Columns list */}
+                                        <div className="space-y-2 pt-1 border-t border-zinc-800">
+                                            <p className="text-[10px] text-zinc-500 font-medium uppercase">Columnas de métricas</p>
+                                            {table.columns.map((col, ci) => (
+                                                <div key={ci} className="flex items-center gap-1.5">
+                                                    <Input
+                                                        value={col.label}
+                                                        onChange={e => {
+                                                            const cols = [...table.columns]
+                                                            cols[ci] = { ...col, label: e.target.value }
+                                                            updateRankingTable(ti, { ...table, columns: cols })
+                                                        }}
+                                                        className="h-6 text-xs bg-zinc-950 border-zinc-700 text-zinc-200 w-24 flex-shrink-0"
+                                                        placeholder="Etiqueta"
+                                                    />
+                                                    <div className="flex-1">
+                                                        <FormulaInput
+                                                            value={col.formula}
+                                                            onChange={val => {
+                                                                const cols = [...table.columns]
+                                                                cols[ci] = { ...col, formula: val.trim() }
+                                                                updateRankingTable(ti, { ...table, columns: cols })
+                                                            }}
+                                                            availableMetrics={availableMetrics}
+                                                        />
+                                                    </div>
+                                                    <MetricTypeSelector
+                                                        prefix={col.prefix}
+                                                        suffix={col.suffix}
+                                                        onChange={vals => {
+                                                            const cols = [...table.columns]
+                                                            cols[ci] = { ...col, ...vals }
+                                                            updateRankingTable(ti, { ...table, columns: cols })
+                                                        }}
+                                                    />
+                                                    <button
+                                                        onClick={() => {
+                                                            const cols = [...table.columns]
+                                                            cols[ci] = { ...col, highlight: !col.highlight }
+                                                            updateRankingTable(ti, { ...table, columns: cols })
+                                                        }}
+                                                        title="Heatmap"
+                                                        className={`flex-shrink-0 w-6 h-6 rounded border text-xs transition ${col.highlight ? 'bg-indigo-500/20 border-indigo-500/40 text-indigo-400' : 'bg-zinc-900 border-zinc-700 text-zinc-600 hover:text-zinc-400'}`}
+                                                    >
+                                                        ✦
+                                                    </button>
+                                                    {table.columns.length > 1 && (
+                                                        <button
+                                                            onClick={() => {
+                                                                const cols = table.columns.filter((_, i) => i !== ci)
+                                                                const newSortIdx = table.sortColumnIndex >= cols.length
+                                                                    ? cols.length - 1
+                                                                    : table.sortColumnIndex
+                                                                updateRankingTable(ti, { ...table, columns: cols, sortColumnIndex: newSortIdx })
+                                                            }}
+                                                            className="flex-shrink-0 text-zinc-700 hover:text-red-400 transition"
+                                                        >
+                                                            <X className="w-3 h-3" />
+                                                        </button>
+                                                    )}
+                                                </div>
+                                            ))}
+                                            <button
+                                                onClick={() => {
+                                                    const cols = [...table.columns, { formula: 'meta_spend', label: 'Nueva', prefix: '$', decimals: 2 }]
+                                                    updateRankingTable(ti, { ...table, columns: cols })
+                                                }}
+                                                className="text-[10px] text-cyan-500 hover:text-cyan-400 flex items-center gap-1 mt-1"
+                                            >
+                                                <Plus className="w-3 h-3" /> Agregar columna
+                                            </button>
+                                        </div>
+                                    </div>
+                                ))}
+                                {(!workingLayout?.ranking_tables || workingLayout.ranking_tables.length === 0) && (
+                                    <div className="border border-zinc-800 border-dashed rounded-xl p-8 text-center bg-zinc-950/20">
+                                        <p className="text-xs text-zinc-600">No hay tablas de ranking. Haz clic en "Agregar tabla" para crear una.</p>
+                                    </div>
+                                )}
+                            </div>
                         </div>
                         </>
                     )}
