@@ -207,6 +207,7 @@ export async function saveClienteLayout(clienteId: string, payload: {
     text_blocks?: any[];
     custom_metrics?: any[];
     blocks_order?: string[];
+    ranking_tables?: any[];
 }) {
     const supabase = await createAdminClient()
 
@@ -364,6 +365,7 @@ export async function saveTabOverrides(clienteId: string, tabId: string, payload
     text_blocks?: any[] | null;
     custom_metrics?: any[] | null;
     blocks_order?: string[] | null;
+    ranking_tables?: any[] | null;
 }) {
     const supabase = await createAdminClient()
     const { error } = await supabase
@@ -375,6 +377,7 @@ export async function saveTabOverrides(clienteId: string, tabId: string, payload
             text_blocks: payload.text_blocks,
             custom_metrics: payload.custom_metrics,
             blocks_order: payload.blocks_order,
+            ranking_tables: payload.ranking_tables,
             updated_at: new Date().toISOString()
         })
         .eq('id', tabId)
