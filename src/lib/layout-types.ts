@@ -2,6 +2,23 @@
 
 export type CardColor = 'default' | 'emerald' | 'red' | 'blue' | 'amber'
 
+/** Operadores de filtro para nombre de campaña */
+export type CampaignFilterOperator =
+    | 'includes'    // Incluye
+    | 'excludes'    // Excluye
+    | 'exact'       // Coincide con
+    | 'not_exact'   // No coincide con
+    | 'starts_with' // Inicia con
+    | 'ends_with'   // Finaliza con
+    | 'any_of'      // Entre estas (multi-selección)
+    | 'none_of'     // Fuera de estas (multi-selección)
+
+export interface CampaignFilterSpec {
+    type: 'group' | 'keyword'
+    operator?: CampaignFilterOperator
+    value: string | string[]
+}
+
 /**
  * Attribution strategy presets for layouts.
  * Determines which data sources are used for semantic aliases ($visitas, $conversiones, etc.)
@@ -23,7 +40,7 @@ export interface ColDef {
     highlight?: boolean
     hidden?: boolean
     isManual?: boolean
-    campaignFilter?: { type: 'group' | 'keyword'; value: string }
+    campaignFilter?: CampaignFilterSpec
 }
 
 export interface CardDef {
@@ -34,7 +51,7 @@ export interface CardDef {
     suffix?: string
     decimals?: number
     color?: CardColor
-    campaignFilter?: { type: 'group' | 'keyword'; value: string }
+    campaignFilter?: CampaignFilterSpec
 }
 
 export type ChartType =
@@ -58,7 +75,7 @@ export interface ChartDef {
     valueFormulas: string[]   // e.g. ["meta_spend", "meta_leads"]
     colors?: string[]         // e.g. ["amber", "cyan"]
     height?: number
-    campaignFilter?: { type: 'group' | 'keyword'; value: string }
+    campaignFilter?: CampaignFilterSpec
     yAxes?: ('left' | 'right')[]
     types?: ('line' | 'bar' | 'area' | '')[]
     strokeWidths?: number[]
@@ -83,6 +100,27 @@ export interface TextBlockDef {
     separatorWidth?: 'full' | 'half' | 'small'
 }
 
+export interface RankingColumnDef {
+    formula: string
+    label: string
+    prefix?: string
+    suffix?: string
+    decimals?: number
+    highlight?: boolean
+}
+
+export interface RankingTableDef {
+    id: string
+    title: string
+    dimension: 'campaigns' | 'ads' | 'adsets'
+    columns: RankingColumnDef[]
+    topN: number
+    sortColumnIndex: number
+    sortOrder: 'desc' | 'asc'
+    showRank?: boolean
+    campaignFilter?: CampaignFilterSpec
+}
+
 export interface MetricDef {
     id: string
     label: string
@@ -102,5 +140,6 @@ export interface ReportLayout {
     blocks_order?: string[] // IDs or type-prefixed IDs like 'cards', 'chart:id', 'table', 'text:id'
     source_mapping?: Record<string, string>  // { "$visitas": "ga_sessions", "$pagos_iniciados": "hotmart_pagos_iniciados" }
     attribution_strategy?: AttributionStrategy
+    ranking_tables?: RankingTableDef[]
 }
 
