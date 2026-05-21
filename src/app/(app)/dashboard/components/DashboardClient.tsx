@@ -16,6 +16,7 @@ import type { ColDef, CardDef, ReportLayout, ChartDef, MetricDef, TextBlockDef }
 import { updateManualMetric, getTabTotalSpend, saveClienteLayout, saveTabOverrides, updateLayoutPuzzleState, toggleTabArchived } from '../_actions'
 import { SortableCard, SortableChart, SortableTable, SortableText } from './PuzzleComponents'
 import { CountryBreakdown } from './CountryBreakdown'
+import { RankingTableBlock } from './RankingTableBlock'
 import { MonthlyReportTab } from './MonthlyReportTab'
 import { SupportModule } from './SupportModule'
 import { TabArchiveView } from './TabArchiveView'
@@ -24,6 +25,7 @@ import { SortableContext, horizontalListSortingStrategy, verticalListSortingStra
 
 import { CSS } from '@dnd-kit/utilities'
 import { enrichMetaRow } from '@/lib/campaign-filter'
+import type { CampaignFilterSpec } from '@/lib/layout-types'
 
 // ─── Helper Functions ────────────────────────────────────────────────────────
 
@@ -37,10 +39,11 @@ function safeFmt(dateStr: string | null | undefined, fmt: string): string {
 }
 
 function resolveFilter(
-    campaignFilter: { type: 'group' | 'keyword'; value: string } | undefined,
+    campaignFilter: CampaignFilterSpec | undefined,
     fallback: string
-): string {
-    return campaignFilter?.value ?? fallback
+): CampaignFilterSpec | string {
+    if (campaignFilter) return campaignFilter
+    return fallback
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -355,6 +358,7 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                     text_blocks: activeTabObj.text_blocks ?? undefined,
                     blocks_order: activeTabObj.blocks_order ?? undefined,
                     custom_metrics: activeTabObj.custom_metrics ?? undefined,
+                    ranking_tables: activeTabObj.ranking_tables ?? undefined,
                 }
                 customized = true
             } else if (activeTabObj.plantilla_id) {
@@ -364,6 +368,7 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                         ...found,
                         text_blocks: activeTabObj.text_blocks ?? found.text_blocks,
                         blocks_order: activeTabObj.blocks_order ?? found.blocks_order,
+                        ranking_tables: activeTabObj.ranking_tables ?? found.ranking_tables,
                     }
                     customized = false
                 }
@@ -373,6 +378,7 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                     ...initialLayout,
                     text_blocks: activeTabObj.text_blocks ?? initialLayout.text_blocks,
                     blocks_order: activeTabObj.blocks_order ?? initialLayout.blocks_order,
+                    ranking_tables: activeTabObj.ranking_tables ?? initialLayout.ranking_tables,
                 }
             }
         }
@@ -386,7 +392,8 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
             ...activeLayout.tarjetas.map(t => `card:${t.id}`),
             ...(activeLayout.graficos || []).map(g => `chart:${g.id}`),
             'table',
-            ...(activeLayout.text_blocks || []).map(t => `text:${t.id}`)
+            ...(activeLayout.text_blocks || []).map(t => `text:${t.id}`),
+            ...(activeLayout.ranking_tables || []).map(r => `ranking:${r.id}`),
         ]
 
         // Reconcile with saved order: keep saved order but append new blocks, remove missing ones
@@ -1187,6 +1194,22 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                                             </CardContent>
                                         </Card>
                                     </SortableTable>
+                                )
+                            }
+                            if (blockId.startsWith('ranking:')) {
+                                const rankingId = blockId.replace('ranking:', '')
+                                const rankingDef = activeLayout.ranking_tables?.find(r => r.id === rankingId)
+                                if (!rankingDef) return null
+                                return (
+                                    <RankingTableBlock
+                                        key={blockId}
+                                        def={rankingDef}
+                                        metrics={filteredMetrics}
+                                        campaignGroups={data.campaignGroups || []}
+                                        sourceMapping={sourceMapping}
+                                        customMetrics={layoutCustomMetrics}
+                                        clienteId={cliente.id}
+                                    />
                                 )
                             }
                             return null
