@@ -221,9 +221,9 @@ export async function GET(request: Request) {
 
         // ─── Helper: Fetch Meta Ads for a single account+date ───────────────
         async function fetchMetaSingleAccount(targetDate: string, rawAccountId: string, token: string) {
-            const record = { spend: 0, impressions: 0, clicks: 0, account_reach: 0, campaigns: [] as any[] }
+            const record = { spend: 0, impressions: 0, clicks: 0, account_reach: 0, campaigns: [] as any[], meta_ads: [] as any[], meta_adsets: [] as any[] }
+            const actId = rawAccountId.startsWith('act_') ? rawAccountId : `act_${rawAccountId}`
             try {
-                const actId = rawAccountId.startsWith('act_') ? rawAccountId : `act_${rawAccountId}`
                 const url = new URL(`https://graph.facebook.com/v19.0/${actId}/insights`)
                 url.searchParams.append('access_token', token)
                 url.searchParams.append('time_range', JSON.stringify({ since: targetDate, until: targetDate }))
@@ -415,12 +415,176 @@ export async function GET(request: Request) {
             } catch (e: any) {
                 log(`[Meta] [${rawAccountId}] Catch Error: ${e.message}`)
             }
+
+        // ─── Helper: Fetch Meta at ad or adset level ───────────────────────────
+        async function fetchMetaAtLevel(level: 'ad' | 'adset'): Promise<any[]> {
+            try {
+                const idField   = level === 'ad' ? 'ad_id'      : 'adset_id'
+                const nameField = level === 'ad' ? 'ad_name'    : 'adset_name'
+                const extraIds  = level === 'ad'
+                    ? 'ad_id,ad_name,adset_id,adset_name,'
+                    : 'adset_id,adset_name,'
+
+                const levelUrl = new URL(`https://graph.facebook.com/v19.0/${actId}/insights`)
+                levelUrl.searchParams.append('access_token', token)
+                levelUrl.searchParams.append('time_range', JSON.stringify({ since: targetDate, until: targetDate }))
+                levelUrl.searchParams.append('fields', `${extraIds}campaign_id,campaign_name,spend,impressions,clicks,inline_link_clicks,reach,frequency,cpc,cpm,ctr,actions,conversions,video_thruplay_watched_actions`)
+                levelUrl.searchParams.append('level', level)
+                levelUrl.searchParams.append('limit', '500')
+
+                const res = await fetch(levelUrl.toString())
+                const data = await res.json()
+                if (!data.data) return []
+
+                const items: any[] = []
+                data.data.forEach((item: any) => {
+                    let iLeads = 0, iLeadsForm = 0, iPurchases = 0, iAddsToCart = 0, iInitiatesCheckout = 0
+                    let iLandingPageViews = 0, iVideoViews = 0, iVideoThruplay = 0, iVideo3s = 0
+                    let iCompleteRegistration = 0, iViewContent = 0, iSearch = 0, iAddToWishlist = 0
+                    let iContact = 0, iSchedule = 0, iStartTrial = 0, iSubmitApplication = 0
+                    let iSubscribe = 0, iFindLocation = 0, iCustomizeProduct = 0, iDonate = 0
+                    let iMessagingConversations = 0, iPageEngagement = 0, iPostEngagement = 0
+                    let iPostReactions = 0, iPostShares = 0, iPostSaves = 0, iPostComments = 0
+                    let iResults = 0
+                    let iNativeLeads = 0, iPixelLeads = 0
+                    let iNativePurchases = 0, iPixelPurchases = 0
+                    let iNativeCompleteReg = 0, iPixelCompleteReg = 0
+                    const iCustomConversions: Record<string, number> = {}
+
+                    if (item.actions) {
+                        item.actions.forEach((a: any) => {
+                            const val = parseInt(a.value || '0')
+                            const t = a.action_type || ''
+                            if (t === 'lead') iNativeLeads += val
+                            if (t === 'offsite_conversion.fb_pixel_lead') iPixelLeads += val
+                            if (t === 'purchase') iNativePurchases += val
+                            if (t === 'offsite_conversion.fb_pixel_purchase') iPixelPurchases += val
+                            if (t === 'complete_registration') iNativeCompleteReg += val
+                            if (t === 'offsite_conversion.fb_pixel_complete_registration') iPixelCompleteReg += val
+                            if (t === 'offsite_conversion.fb_pixel_add_to_cart') iAddsToCart += val
+                            if (t === 'offsite_conversion.fb_pixel_initiate_checkout') iInitiatesCheckout += val
+                            if (t === 'landing_page_view') iLandingPageViews += val
+                            if (t === 'video_view') iVideoViews += val
+                            if (t === 'offsite_conversion.fb_pixel_view_content' || t === 'view_content') iViewContent += val
+                            if (t === 'offsite_conversion.fb_pixel_search' || t === 'search') iSearch += val
+                            if (t === 'offsite_conversion.fb_pixel_add_to_wishlist' || t === 'add_to_wishlist') iAddToWishlist += val
+                            if (t === 'offsite_conversion.fb_pixel_customize_product' || t === 'customize_product') iCustomizeProduct += val
+                            if (t === 'offsite_conversion.fb_pixel_contact' || t === 'contact') iContact += val
+                            if (t === 'offsite_conversion.fb_pixel_schedule' || t === 'schedule') iSchedule += val
+                            if (t === 'offsite_conversion.fb_pixel_start_trial' || t === 'start_trial') iStartTrial += val
+                            if (t === 'offsite_conversion.fb_pixel_submit_application' || t === 'submit_application') iSubmitApplication += val
+                            if (t === 'offsite_conversion.fb_pixel_subscribe' || t === 'subscribe') iSubscribe += val
+                            if (t === 'offsite_conversion.fb_pixel_find_location' || t === 'find_location') iFindLocation += val
+                            if (t === 'offsite_conversion.fb_pixel_donate' || t === 'donate') iDonate += val
+                            if (t === 'onsite_conversion.messaging_conversation_started_7d') iMessagingConversations += val
+                            if (t === 'page_engagement') iPageEngagement += val
+                            if (t === 'post_engagement') iPostEngagement += val
+                            if (t === 'post_reaction') iPostReactions += val
+                            if (t === 'post_share' || t === 'post') iPostShares += val
+                            if (t === 'onsite_conversion.post_save') iPostSaves += val
+                            if (t === 'comment') iPostComments += val
+                        })
+                    }
+
+                    iLeads = (iNativeLeads > 0 && iPixelLeads > 0)
+                        ? Math.max(iNativeLeads, iPixelLeads) : iNativeLeads + iPixelLeads
+                    iLeadsForm = iNativeLeads
+                    iPurchases = (iNativePurchases > 0 && iPixelPurchases > 0)
+                        ? Math.max(iNativePurchases, iPixelPurchases) : iNativePurchases + iPixelPurchases
+                    iCompleteRegistration = (iNativeCompleteReg > 0 && iPixelCompleteReg > 0)
+                        ? Math.max(iNativeCompleteReg, iPixelCompleteReg) : iNativeCompleteReg + iPixelCompleteReg
+
+                    if (item.video_thruplay_watched_actions) {
+                        item.video_thruplay_watched_actions.forEach((a: any) => { iVideoThruplay += parseInt(a.value || '0') })
+                    }
+
+                    if (item.conversions) {
+                        item.conversions.forEach((cv: any) => {
+                            const type: string = cv.action_type || ''
+                            const val = parseInt(cv.value || '0')
+                            if (type.startsWith('offsite_conversion.fb_pixel_custom.')) {
+                                const key = type.replace('offsite_conversion.fb_pixel_custom.', '').toLowerCase()
+                                iCustomConversions[key] = (iCustomConversions[key] || 0) + val
+                            }
+                        })
+                    }
+
+                    iResults = iLeads + iPurchases + iInitiatesCheckout
+
+                    items.push({
+                        [idField]:     item[idField]     || null,
+                        [nameField]:   item[nameField]   || 'Desconocido',
+                        adset_id:      item.adset_id     || null,
+                        adset_name:    item.adset_name   || null,
+                        campaign_id:   item.campaign_id  || null,
+                        campaign_name: item.campaign_name || null,
+                        account_id:    rawAccountId,
+                        spend:              parseFloat(item.spend       || '0'),
+                        impressions:        parseInt(item.impressions   || '0'),
+                        clicks:             parseInt(item.clicks        || '0'),
+                        link_clicks:        parseInt(item.inline_link_clicks || '0'),
+                        reach:              parseInt(item.reach         || '0'),
+                        frequency:          parseFloat(item.frequency   || '0'),
+                        cpc:                parseFloat(item.cpc         || '0'),
+                        cpm:                parseFloat(item.cpm         || '0'),
+                        ctr:                parseFloat(item.ctr         || '0'),
+                        leads:              iLeads,
+                        leads_form:         iLeadsForm,
+                        purchases:          iPurchases,
+                        adds_to_cart:       iAddsToCart,
+                        initiates_checkout: iInitiatesCheckout,
+                        landing_page_views: iLandingPageViews,
+                        complete_registration: iCompleteRegistration,
+                        view_content:       iViewContent,
+                        search:             iSearch,
+                        add_to_wishlist:    iAddToWishlist,
+                        customize_product:  iCustomizeProduct,
+                        contact:            iContact,
+                        schedule:           iSchedule,
+                        start_trial:        iStartTrial,
+                        submit_application: iSubmitApplication,
+                        subscribe:          iSubscribe,
+                        find_location:      iFindLocation,
+                        donate:             iDonate,
+                        video_views:        iVideoViews,
+                        video_thruplay:     iVideoThruplay,
+                        video_3s:           iVideo3s,
+                        messaging_conversations: iMessagingConversations,
+                        page_engagement:    iPageEngagement,
+                        post_engagement:    iPostEngagement,
+                        post_reactions:     iPostReactions,
+                        post_shares:        iPostShares,
+                        post_saves:         iPostSaves,
+                        post_comments:      iPostComments,
+                        results:            iResults,
+                        custom_conversions: iCustomConversions,
+                    })
+                })
+
+                // Dedup by primary key
+                const deduped = new Map<string, any>()
+                for (const it of items) deduped.set(it[idField] || it[nameField], it)
+                return Array.from(deduped.values())
+            } catch (e: any) {
+                log(`[Meta] fetchMetaAtLevel(${level}) error: ${e.message}`)
+                return []
+            }
+        }
+
+        // ─── Fetch ads + adsets in parallel ───────────────────────────────────
+        const [adsResult, adsetsResult] = await Promise.all([
+            fetchMetaAtLevel('ad'),
+            fetchMetaAtLevel('adset'),
+        ])
+        record.meta_ads    = adsResult
+        record.meta_adsets = adsetsResult
+
             return record
         }
 
         // ─── Helper: Fetch Meta Ads for a single date (multi-account) ────────
         async function fetchMeta(targetDate: string) {
-            const record = { spend: 0, impressions: 0, clicks: 0, account_reach: 0, campaigns: [] as any[] }
+            const record = { spend: 0, impressions: 0, clicks: 0, account_reach: 0, campaigns: [] as any[], meta_ads: [] as any[], meta_adsets: [] as any[] }
 
             // Build account list — multi-account if configured, legacy fallback otherwise
             let accountsToFetch: { account_id: string; token: string }[] = []
@@ -455,6 +619,8 @@ export async function GET(request: Request) {
                     account_reach: r.account_reach,
                 }))
                 record.campaigns.push(...campaignsWithReach)
+                record.meta_ads.push(...(r.meta_ads || []))
+                record.meta_adsets.push(...(r.meta_adsets || []))
                 if (r.campaigns.length > 0 || r.spend > 0) anySuccess = true
             }
 
@@ -1047,6 +1213,8 @@ export async function GET(request: Request) {
                     meta_impressions: metaRecord.impressions,
                     meta_clicks: metaRecord.clicks,
                     meta_campaigns: metaRecord.campaigns,
+                    meta_ads:      metaRecord.meta_ads,
+                    meta_adsets:   metaRecord.meta_adsets,
                     // Only include TikTok fields when the API call actually succeeded.
                     // On failure, preserve whatever is already in the DB for these columns.
                     ...(!tiktokFailed && {
