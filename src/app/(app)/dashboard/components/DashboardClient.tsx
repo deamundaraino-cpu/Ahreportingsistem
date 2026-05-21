@@ -1201,15 +1201,16 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                                 const rankingDef = activeLayout.ranking_tables?.find(r => r.id === rankingId)
                                 if (!rankingDef) return null
                                 return (
-                                    <RankingTableBlock
-                                        key={blockId}
-                                        def={rankingDef}
-                                        metrics={filteredMetrics}
-                                        campaignGroups={data.campaignGroups || []}
-                                        sourceMapping={sourceMapping}
-                                        customMetrics={layoutCustomMetrics}
-                                        clienteId={cliente.id}
-                                    />
+                                    <SortableTable key={blockId} id={blockId} isPuzzleMode={isPuzzleMode}>
+                                        <RankingTableBlock
+                                            def={rankingDef}
+                                            metrics={filteredMetrics}
+                                            campaignGroups={data.campaignGroups || []}
+                                            sourceMapping={sourceMapping}
+                                            customMetrics={layoutCustomMetrics}
+                                            clienteId={cliente.id}
+                                        />
+                                    </SortableTable>
                                 )
                             }
                             return null
