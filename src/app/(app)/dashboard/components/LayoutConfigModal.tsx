@@ -1775,9 +1775,16 @@ export function LayoutConfigModal({
                                                     onChange={e => updateRankingTable(ti, { ...table, dimension: e.target.value as any })}
                                                     className="h-6 bg-zinc-950 border border-zinc-700 text-zinc-300 rounded px-1.5"
                                                 >
-                                                    <option value="campaigns">Campañas</option>
-                                                    <option value="ads">Anuncios</option>
-                                                    <option value="adsets">Conjuntos</option>
+                                                    <optgroup label="Meta">
+                                                        <option value="campaigns">Campañas</option>
+                                                        <option value="ads">Anuncios</option>
+                                                        <option value="adsets">Conjuntos</option>
+                                                    </optgroup>
+                                                    <optgroup label="TikTok">
+                                                        <option value="tiktok_campaigns">Campañas</option>
+                                                        <option value="tiktok_ads">Anuncios</option>
+                                                        <option value="tiktok_adgroups">Grupos</option>
+                                                    </optgroup>
                                                 </select>
                                             </div>
                                             <div className="flex items-center gap-1">
@@ -1824,15 +1831,17 @@ export function LayoutConfigModal({
                                             </label>
                                         </div>
 
-                                        {/* Campaign filter */}
-                                        <div className="pl-1">
-                                            <CampaignFilterPicker
-                                                value={table.campaignFilter}
-                                                onChange={v => updateRankingTable(ti, { ...table, campaignFilter: v })}
-                                                campaignGroups={campaignGroups}
-                                                campaignNames={campaignNames}
-                                            />
-                                        </div>
+                                        {/* Campaign filter — Meta only */}
+                                        {!table.dimension.startsWith('tiktok_') && (
+                                            <div className="pl-1">
+                                                <CampaignFilterPicker
+                                                    value={table.campaignFilter}
+                                                    onChange={v => updateRankingTable(ti, { ...table, campaignFilter: v })}
+                                                    campaignGroups={campaignGroups}
+                                                    campaignNames={campaignNames}
+                                                />
+                                            </div>
+                                        )}
 
                                         {/* Columns list */}
                                         <div className="space-y-2 pt-1 border-t border-zinc-800">

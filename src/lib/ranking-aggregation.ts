@@ -1,9 +1,11 @@
 import type { CampaignFilterSpec, CampaignFilterOperator } from './layout-types'
 
-export type RankingDimension = 'campaigns' | 'ads' | 'adsets'
+export type RankingDimension =
+    | 'campaigns' | 'ads' | 'adsets'
+    | 'tiktok_campaigns' | 'tiktok_ads' | 'tiktok_adgroups'
 
-// Maps raw array entry field names to meta_* formula keys (mirrors enrichMetaRow in campaign-filter.ts)
-const FIELD_MAP: { raw: string; meta: string; float?: boolean }[] = [
+// Maps raw entry fields → meta_* formula keys
+const META_FIELD_MAP: { raw: string; meta: string; float?: boolean }[] = [
     { raw: 'spend',                   meta: 'meta_spend',                           float: true },
     { raw: 'impressions',             meta: 'meta_impressions' },
     { raw: 'clicks',                  meta: 'meta_clicks' },
@@ -41,6 +43,14 @@ const FIELD_MAP: { raw: string; meta: string; float?: boolean }[] = [
     { raw: 'results',                 meta: 'meta_results' },
 ]
 
+// Maps TikTok raw entry fields → tiktok_* formula keys
+const TIKTOK_FIELD_MAP: { raw: string; meta: string; float?: boolean }[] = [
+    { raw: 'spend',       meta: 'tiktok_spend',       float: true },
+    { raw: 'impressions', meta: 'tiktok_impressions' },
+    { raw: 'clicks',      meta: 'tiktok_clicks' },
+    { raw: 'conversions', meta: 'tiktok_conversions' },
+]
+
 function matchesFilter(name: string, filter: CampaignFilterSpec): boolean {
     const op: CampaignFilterOperator = filter.operator ?? 'includes'
     const n = name.toLowerCase()
@@ -63,6 +73,13 @@ export function aggregateRankingRows(
     dimension: RankingDimension,
     campaignFilter?: CampaignFilterSpec,
 ): any[] {
+    const isTiktok = dimension.startsWith('tiktok_')
+
+    if (isTiktok) {
+        return aggregateTiktokRows(metrics, dimension as 'tiktok_campaigns' | 'tiktok_ads' | 'tiktok_adgroups', campaignFilter)
+    }
+
+    // ── Meta aggregation (original logic) ────────────────────────────────────
     const groupMap = new Map<string, any>()
 
     const arrayKey = dimension === 'campaigns' ? 'meta_campaigns'
@@ -77,7 +94,6 @@ export function aggregateRankingRows(
         : dimension === 'ads' ? 'ad_name'
         : 'adset_name'
 
-    // For ads/adsets, filter by the parent campaign_name field
     const filterKey = dimension === 'campaigns' ? 'name' : 'campaign_name'
 
     for (const row of metrics) {
@@ -98,12 +114,12 @@ export function aggregateRankingRows(
                     _campaign_id: String(entry.campaign_id || ''),
                     _adset_id: String(entry.adset_id || ''),
                 }
-                FIELD_MAP.forEach(f => { acc[f.meta] = 0 })
+                META_FIELD_MAP.forEach(f => { acc[f.meta] = 0 })
                 groupMap.set(pk, acc)
             }
 
             const acc = groupMap.get(pk)!
-            FIELD_MAP.forEach(f => {
+            META_FIELD_MAP.forEach(f => {
                 const parsed = f.float
                     ? parseFloat(String(entry[f.raw] ?? 0)) || 0
                     : parseInt(String(entry[f.raw] ?? 0)) || 0
@@ -115,6 +131,59 @@ export function aggregateRankingRows(
                     acc[`meta_custom_${k}`] = (acc[`meta_custom_${k}`] || 0) + (Number(v) || 0)
                 }
             }
+        }
+    }
+
+    return Array.from(groupMap.values())
+}
+
+function aggregateTiktokRows(
+    metrics: any[],
+    dimension: 'tiktok_campaigns' | 'tiktok_ads' | 'tiktok_adgroups',
+    campaignFilter?: CampaignFilterSpec,
+): any[] {
+    const groupMap = new Map<string, any>()
+
+    const arrayKey = dimension === 'tiktok_campaigns' ? 'tiktok_campaigns'
+        : dimension === 'tiktok_ads' ? 'tiktok_ads'
+        : 'tiktok_adgroups'
+
+    const idKey = dimension === 'tiktok_campaigns' ? 'campaign_id'
+        : dimension === 'tiktok_ads' ? 'ad_id'
+        : 'adgroup_id'
+
+    const nameKey = dimension === 'tiktok_campaigns' ? 'name'
+        : dimension === 'tiktok_ads' ? 'ad_name'
+        : 'adgroup_name'
+
+    for (const row of metrics) {
+        const entries: any[] = Array.isArray(row[arrayKey]) ? row[arrayKey] : []
+
+        for (const entry of entries) {
+            if (campaignFilter && campaignFilter.type === 'keyword') {
+                const nameToFilter = String(entry.campaign_name || entry.name || '')
+                if (!matchesFilter(nameToFilter, campaignFilter)) continue
+            }
+
+            const pk = String(entry[idKey] || entry[nameKey] || 'unknown')
+
+            if (!groupMap.has(pk)) {
+                const acc: any = {
+                    _name: String(entry[nameKey] || 'Desconocido'),
+                    _id: String(entry[idKey] || ''),
+                    _campaign_name: String(entry.campaign_name || ''),
+                }
+                TIKTOK_FIELD_MAP.forEach(f => { acc[f.meta] = 0 })
+                groupMap.set(pk, acc)
+            }
+
+            const acc = groupMap.get(pk)!
+            TIKTOK_FIELD_MAP.forEach(f => {
+                const parsed = f.float
+                    ? parseFloat(String(entry[f.raw] ?? 0)) || 0
+                    : parseInt(String(entry[f.raw] ?? 0)) || 0
+                acc[f.meta] += parsed
+            })
         }
     }
 

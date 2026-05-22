@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useEffect, useMemo, useCallback } from 'react'
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { format, parseISO, addDays, getDay, differenceInDays, isValid } from 'date-fns'
 import { es } from 'date-fns/locale'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
@@ -225,6 +225,44 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
     const [isPuzzleMode, setIsPuzzleMode] = useState(false)
     const [isSavingLayout, setIsSavingLayout] = useState(false)
     const [orderedBlocks, setOrderedBlocks] = useState<string[]>([])
+    const [collapsedBlocks, setCollapsedBlocks] = useState<Set<string>>(new Set())
+    const [tableColWidths, setTableColWidths] = useState<Record<string, number>>({})
+    const tableResizingRef = useRef<{ key: string; startX: number; startW: number } | null>(null)
+
+    useEffect(() => {
+        function onMove(e: MouseEvent) {
+            if (!tableResizingRef.current) return
+            const { key, startX, startW } = tableResizingRef.current
+            setTableColWidths(prev => ({ ...prev, [key]: Math.max(40, startW + (e.clientX - startX)) }))
+        }
+        function onUp() {
+            if (!tableResizingRef.current) return
+            tableResizingRef.current = null
+            document.body.style.cursor = ''
+            document.body.style.userSelect = ''
+        }
+        window.addEventListener('mousemove', onMove)
+        window.addEventListener('mouseup', onUp)
+        return () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp) }
+    }, [])
+
+    function startTableColResize(key: string, e: React.MouseEvent) {
+        e.preventDefault()
+        e.stopPropagation()
+        const th = (e.currentTarget as HTMLElement).closest('th') as HTMLTableCellElement
+        tableResizingRef.current = { key, startX: e.clientX, startW: th?.offsetWidth ?? 100 }
+        document.body.style.cursor = 'col-resize'
+        document.body.style.userSelect = 'none'
+    }
+
+    function toggleCollapse(blockId: string) {
+        setCollapsedBlocks(prev => {
+            const next = new Set(prev)
+            if (next.has(blockId)) next.delete(blockId)
+            else next.add(blockId)
+            return next
+        })
+    }
 
     // Sortable tabs state
     const [sortedTabs, setSortedTabs] = useState<any[]>(initialTabs)
@@ -400,7 +438,6 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
         const savedOrder = activeLayout.blocks_order || []
         const validSaved = savedOrder.filter(id => availableBlockIds.includes(id))
         const missingFromSaved = availableBlockIds.filter(id => !savedOrder.includes(id))
-        
         setOrderedBlocks([...validSaved, ...missingFromSaved])
     }, [activeLayout])
 
@@ -988,10 +1025,27 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                 <SortableContext items={orderedBlocks} strategy={verticalListSortingStrategy}>
                     <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                         {orderedBlocks.map(blockId => {
+                            if (blockId.startsWith('ranking:')) {
+                                const rankingId = blockId.replace('ranking:', '')
+                                const rankingDef = activeLayout.ranking_tables?.find(r => r.id === rankingId)
+                                if (!rankingDef) return null
+                                return (
+                                    <SortableTable key={blockId} id={blockId} isPuzzleMode={isPuzzleMode} title={rankingDef.title} isCollapsed={collapsedBlocks.has(blockId)} onToggleCollapse={() => toggleCollapse(blockId)}>
+                                        <RankingTableBlock
+                                            def={rankingDef}
+                                            metrics={filteredMetrics}
+                                            campaignGroups={data.campaignGroups || []}
+                                            sourceMapping={sourceMapping}
+                                            customMetrics={layoutCustomMetrics}
+                                            clienteId={cliente.id}
+                                        />
+                                    </SortableTable>
+                                )
+                            }
                             if (blockId.startsWith('card:')) {
                                 const card = tarjetaValues.find((t: any) => `card:${t.id}` === blockId)
                                 if (!card) return null
-                                return <SortableCard key={blockId} id={blockId} card={card} isPuzzleMode={isPuzzleMode} onRemove={() => handleRemoveBlock(blockId)} />
+                                return <SortableCard key={blockId} id={blockId} card={card} isPuzzleMode={isPuzzleMode} onRemove={() => handleRemoveBlock(blockId)} isCollapsed={collapsedBlocks.has(blockId)} onToggleCollapse={() => toggleCollapse(blockId)} />
                             }
                             if (blockId.startsWith('chart:')) {
                                 const chart = activeLayout.graficos?.find((g: any) => `chart:${g.id}` === blockId)
@@ -1009,23 +1063,27 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                                     layoutCustomMetrics={layoutCustomMetrics}
                                     onRemove={() => handleRemoveBlock(blockId)}
                                     onUpdateChart={handleUpdateChart}
+                                    isCollapsed={collapsedBlocks.has(blockId)}
+                                    onToggleCollapse={() => toggleCollapse(blockId)}
                                 />
                             }
                             if (blockId.startsWith('text:')) {
                                 const txt = (tabLayoutOverrides[activeTabId]?.text_blocks || activeLayout.text_blocks)?.find((t: any) => `text:${t.id}` === blockId)
                                 if (!txt) return null
-                                return <SortableText 
-                                    key={blockId} 
-                                    id={blockId} 
-                                    block={txt} 
-                                    isPuzzleMode={isPuzzleMode} 
-                                    onRemove={() => handleRemoveBlock(blockId)} 
+                                return <SortableText
+                                    key={blockId}
+                                    id={blockId}
+                                    block={txt}
+                                    isPuzzleMode={isPuzzleMode}
+                                    onRemove={() => handleRemoveBlock(blockId)}
                                     onUpdate={(updates: any) => handleUpdateTextBlock(blockId, updates)}
+                                    isCollapsed={collapsedBlocks.has(blockId)}
+                                    onToggleCollapse={() => toggleCollapse(blockId)}
                                 />
                             }
                             if (blockId === 'table') {
                                 return (
-                                    <SortableTable key={blockId} id={blockId} isPuzzleMode={isPuzzleMode}>
+                                    <SortableTable key={blockId} id={blockId} isPuzzleMode={isPuzzleMode} title="Vista de Embudo Diaria" isCollapsed={collapsedBlocks.has(blockId)} onToggleCollapse={() => toggleCollapse(blockId)}>
                                         <Card className="bg-zinc-900 border-zinc-800 overflow-hidden shadow-2xl">
                                             <CardHeader className="border-b border-zinc-800 bg-zinc-950/30">
                                                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -1085,10 +1143,18 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                                                             {visibleCols.map((col: ColDef) => (
                                                                 <TableHead
                                                                     key={col.id}
-                                                                    className={col.align === 'right' ? 'text-right' : ''}
-                                                                    style={col.id === visibleCols[0].id && col.formula === 'fecha' ? { width: '120px' } : {}}
+                                                                    className={`${col.align === 'right' ? 'text-right' : ''} relative`}
+                                                                    style={{
+                                                                        width: tableColWidths[col.id] || (col.id === visibleCols[0].id && col.formula === 'fecha' ? 120 : undefined),
+                                                                        position: 'relative',
+                                                                    }}
                                                                 >
                                                                     {col.label}
+                                                                    <div
+                                                                        onMouseDown={e => startTableColResize(col.id, e)}
+                                                                        onClick={e => e.stopPropagation()}
+                                                                        className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-indigo-400/30 transition-colors z-10"
+                                                                    />
                                                                 </TableHead>
                                                             ))}
                                                         </TableRow>
@@ -1193,23 +1259,6 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                                                 </Table>
                                             </CardContent>
                                         </Card>
-                                    </SortableTable>
-                                )
-                            }
-                            if (blockId.startsWith('ranking:')) {
-                                const rankingId = blockId.replace('ranking:', '')
-                                const rankingDef = activeLayout.ranking_tables?.find(r => r.id === rankingId)
-                                if (!rankingDef) return null
-                                return (
-                                    <SortableTable key={blockId} id={blockId} isPuzzleMode={isPuzzleMode}>
-                                        <RankingTableBlock
-                                            def={rankingDef}
-                                            metrics={filteredMetrics}
-                                            campaignGroups={data.campaignGroups || []}
-                                            sourceMapping={sourceMapping}
-                                            customMetrics={layoutCustomMetrics}
-                                            clienteId={cliente.id}
-                                        />
                                     </SortableTable>
                                 )
                             }

@@ -112,7 +112,8 @@ export interface RankingColumnDef {
 export interface RankingTableDef {
     id: string
     title: string
-    dimension: 'campaigns' | 'ads' | 'adsets'
+    platform?: 'meta' | 'tiktok'
+    dimension: 'campaigns' | 'ads' | 'adsets' | 'tiktok_campaigns' | 'tiktok_ads' | 'tiktok_adgroups'
     columns: RankingColumnDef[]
     topN: number
     sortColumnIndex: number

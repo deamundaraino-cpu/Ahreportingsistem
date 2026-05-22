@@ -3,6 +3,8 @@ import { NextResponse } from 'next/server'
 import { format, subDays, parseISO, isBefore, addDays, differenceInDays } from 'date-fns'
 import { createClient as createSSRClient } from '@/utils/supabase/server'
 
+export const maxDuration = 300 // 5 minutos — necesario para sincronizar rangos amplios
+
 /** Lightweight sync hash — detects payload changes without storing full JSON */
 function computeSyncHash(obj: any): string {
     const str = JSON.stringify(obj)
@@ -683,7 +685,7 @@ export async function GET(request: Request) {
         async function fetchTikTok(targetDate: string) {
             // apiSuccess distinguishes "API worked but no data" from "API failed" —
             // used to avoid overwriting valid DB data with zeros on transient failures.
-            const record = { spend: 0, impressions: 0, clicks: 0, conversions: 0, campaigns: [] as any[], apiSuccess: false }
+            const record = { spend: 0, impressions: 0, clicks: 0, conversions: 0, campaigns: [] as any[], tiktok_ads: [] as any[], tiktok_adgroups: [] as any[], apiSuccess: false }
             if (!config.tiktok_access_token || !config.tiktok_advertiser_id) {
                 platformLogs.tiktok = 'Sin configurar'
                 log(`[TikTok] ${targetDate} Sin configurar — token: ${config.tiktok_access_token ? 'presente' : 'FALTA'}, advertiser_id: ${config.tiktok_advertiser_id ? config.tiktok_advertiser_id : 'FALTA'}`)
@@ -710,6 +712,83 @@ export async function GET(request: Request) {
                     }
                 } catch (campErr: any) {
                     log(`[TikTok] Warning: Error al obtener nombres de campañas: ${campErr.message}`)
+                }
+
+                // ─── Helper: fetch ad or adgroup level report for this date ─────
+                async function fetchTikTokAtLevel(level: 'ad' | 'adgroup'): Promise<any[]> {
+                    try {
+                        const dataLevel = level === 'ad' ? 'AUCTION_AD' : 'AUCTION_ADGROUP'
+                        const idDim     = level === 'ad' ? 'ad_id'      : 'adgroup_id'
+                        const idKey     = level === 'ad' ? 'ad_id'      : 'adgroup_id'
+                        const nameKey   = level === 'ad' ? 'ad_name'    : 'adgroup_name'
+
+                        // Fetch name map for this level
+                        const nameMap = new Map<string, string>()
+                        try {
+                            const listPath = level === 'ad'
+                                ? 'https://business-api.tiktok.com/open_api/v1.3/ad/get/'
+                                : 'https://business-api.tiktok.com/open_api/v1.3/adgroup/get/'
+                            const listUrl = new URL(listPath)
+                            listUrl.searchParams.append('advertiser_id', config.tiktok_advertiser_id)
+                            const listRes = await fetch(listUrl.toString(), {
+                                headers: { 'Access-Token': config.tiktok_access_token }
+                            })
+                            const listData = await listRes.json()
+                            if (listData.code === 0 && listData.data?.list) {
+                                listData.data.list.forEach((item: any) => {
+                                    const id   = String(item[idKey]   || '').toString()
+                                    const name = item[nameKey]
+                                    if (id && name) nameMap.set(id, name)
+                                })
+                            }
+                        } catch (e: any) {
+                            log(`[TikTok] Warning: No se pudieron obtener nombres de ${level}: ${e.message}`)
+                        }
+
+                        const dims = level === 'ad' ? ['ad_id'] : ['adgroup_id']
+
+                        const rptUrl = new URL('https://business-api.tiktok.com/open_api/v1.3/report/integrated/get/')
+                        rptUrl.searchParams.append('advertiser_id', config.tiktok_advertiser_id)
+                        rptUrl.searchParams.append('report_type', 'BASIC')
+                        rptUrl.searchParams.append('data_level', dataLevel)
+                        rptUrl.searchParams.append('dimensions', JSON.stringify(dims))
+                        rptUrl.searchParams.append('metrics', JSON.stringify(['spend', 'impressions', 'clicks', 'conversion']))
+                        rptUrl.searchParams.append('start_date', targetDate)
+                        rptUrl.searchParams.append('end_date', targetDate)
+                        rptUrl.searchParams.append('page_size', '100')
+
+                        const rptRes  = await fetch(rptUrl.toString(), { headers: { 'Access-Token': config.tiktok_access_token } })
+                        const rptData = await rptRes.json()
+
+                        if (rptData.code !== 0 || !rptData.data?.list) {
+                            log(`[TikTok] fetchTikTokAtLevel(${level}) error: ${JSON.stringify(rptData)}`)
+                            return []
+                        }
+
+                        const items: any[] = []
+                        rptData.data.list.forEach((item: any) => {
+                            const d  = item.dimensions || {}
+                            const m  = item.metrics    || {}
+                            const id = String(d[idDim] || '')
+                            const out: any = {
+                                [idKey]:   id || null,
+                                [nameKey]: nameMap.get(id) || id || 'Desconocido',
+                                spend:         parseFloat(m.spend       || '0'),
+                                impressions:   parseInt(m.impressions   || '0'),
+                                clicks:        parseInt(m.clicks        || '0'),
+                                conversions:   parseInt(m.conversion    || '0'),
+                            }
+                            items.push(out)
+                        })
+
+                        const deduped = new Map<string, any>()
+                        for (const it of items) deduped.set(it[idKey] || it[nameKey], it)
+                        log(`[TikTok] ${targetDate} ${level}: ${deduped.size} registros`)
+                        return Array.from(deduped.values())
+                    } catch (e: any) {
+                        log(`[TikTok] fetchTikTokAtLevel(${level}) catch: ${e.message}`)
+                        return []
+                    }
                 }
 
                 // Fetch reports from TikTok Business API
@@ -767,6 +846,14 @@ export async function GET(request: Request) {
                     record.apiSuccess = true
                     platformLogs.tiktok = campaignsArr.length > 0 || totalSpend > 0 ? 'Conectado OK' : 'Sin Datos'
                     log(`[TikTok] ${targetDate} Spend: ${totalSpend}, Campañas: ${campaignsArr.length}`)
+
+                    // Fetch ad-level and adgroup-level breakdowns in parallel
+                    const [tiktokAdsResult, tiktokAdgroupsResult] = await Promise.all([
+                        fetchTikTokAtLevel('ad'),
+                        fetchTikTokAtLevel('adgroup'),
+                    ])
+                    record.tiktok_ads      = tiktokAdsResult
+                    record.tiktok_adgroups = tiktokAdgroupsResult
                 } else {
                     const msg = data.message || 'Error API'
                     log(`[TikTok] ${targetDate} Error de API: ${JSON.stringify(data)}`)
@@ -1223,6 +1310,8 @@ export async function GET(request: Request) {
                         tiktok_clicks: tiktokRecord.clicks,
                         tiktok_conversions: tiktokRecord.conversions,
                         tiktok_campaigns: tiktokRecord.campaigns,
+                        tiktok_ads:      tiktokRecord.tiktok_ads,
+                        tiktok_adgroups: tiktokRecord.tiktok_adgroups,
                     }),
                     // Hotmart totales globales (suma de funnels + extras)
                     ventas_principal: hotmartRecord.principal,

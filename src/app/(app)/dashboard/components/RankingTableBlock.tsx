@@ -1,7 +1,7 @@
 'use client'
 
-import React, { useMemo, useEffect, useState } from 'react'
-import { ExternalLink } from 'lucide-react'
+import React, { useMemo, useEffect, useState, useRef } from 'react'
+import { ExternalLink, ChevronUp, ChevronDown, ChevronsUpDown, Layers, X } from 'lucide-react'
 import type { RankingTableDef } from '@/lib/layout-types'
 import { evaluateFormula, formatValue } from '@/lib/formula-engine'
 import { aggregateRankingRows } from '@/lib/ranking-aggregation'
@@ -15,33 +15,96 @@ interface Props {
     clienteId: string
 }
 
+interface ConsolidateModal {
+    name: string
+    count: number
+    colValues: (number | null)[]
+}
+
 export function RankingTableBlock({ def, metrics, campaignGroups, sourceMapping, customMetrics, clienteId }: Props) {
-    const [thumbnailMap, setThumbnailMap] = useState<Record<string, string | null>>({})
+    const [adInfoMap, setAdInfoMap] = useState<Record<string, { thumbnail: string | null, previewUrl: string | null }>>({})
+    const [sortColIdx, setSortColIdx] = useState(def.sortColumnIndex)
+    const [sortDir, setSortDir] = useState<'asc' | 'desc'>(def.sortOrder)
+    const [hoverPreview, setHoverPreview] = useState<{ url: string, x: number, y: number } | null>(null)
+    const [colWidths, setColWidths] = useState<Record<string, number>>({})
+    const [consolidateModal, setConsolidateModal] = useState<ConsolidateModal | null>(null)
+    const resizingRef = useRef<{ key: string; startX: number; startW: number } | null>(null)
+
+    useEffect(() => {
+        function onMove(e: MouseEvent) {
+            if (!resizingRef.current) return
+            const { key, startX, startW } = resizingRef.current
+            setColWidths(prev => ({ ...prev, [key]: Math.max(40, startW + (e.clientX - startX)) }))
+        }
+        function onUp() {
+            if (!resizingRef.current) return
+            resizingRef.current = null
+            document.body.style.cursor = ''
+            document.body.style.userSelect = ''
+        }
+        window.addEventListener('mousemove', onMove)
+        window.addEventListener('mouseup', onUp)
+        return () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp) }
+    }, [])
+
+    function startColResize(key: string, e: React.MouseEvent) {
+        e.preventDefault()
+        e.stopPropagation()
+        const th = (e.currentTarget as HTMLElement).closest('th') as HTMLTableCellElement
+        resizingRef.current = { key, startX: e.clientX, startW: th?.offsetWidth ?? 100 }
+        document.body.style.cursor = 'col-resize'
+        document.body.style.userSelect = 'none'
+    }
+
+    function handleSortClick(idx: number) {
+        if (sortColIdx === idx) {
+            setSortDir(d => d === 'desc' ? 'asc' : 'desc')
+        } else {
+            setSortColIdx(idx)
+            setSortDir('desc')
+        }
+    }
+
+    // All aggregated rows (no topN limit) — needed for consolidation by name
+    const allAggregated = useMemo(() => {
+        return aggregateRankingRows(metrics, def.dimension, def.campaignFilter)
+    }, [metrics, def.dimension, def.campaignFilter])
+
+    // Count how many distinct entries share each name
+    const nameCount = useMemo(() => {
+        const counts: Record<string, number> = {}
+        for (const row of allAggregated) {
+            counts[row._name] = (counts[row._name] || 0) + 1
+        }
+        return counts
+    }, [allAggregated])
+
+    const isTikTok = def.dimension.startsWith('tiktok_')
 
     const rows = useMemo(() => {
-        const aggregated = aggregateRankingRows(metrics, def.dimension, def.campaignFilter)
-        const withValues = aggregated.map(row => {
+        const platforms = isTikTok ? new Set(['tiktok']) : new Set(['meta'])
+        const withValues = allAggregated.map(row => {
             const colValues = def.columns.map(col =>
-                evaluateFormula(col.formula, row, {}, sourceMapping, new Set(['meta']), customMetrics)
+                evaluateFormula(col.formula, row, {}, sourceMapping, platforms, customMetrics)
             )
-            const sortVal = colValues[def.sortColumnIndex] ?? null
+            const sortVal = colValues[sortColIdx] ?? null
             return { row, colValues, sortVal }
         })
         const sorted = withValues.sort((a, b) => {
             if (a.sortVal === null) return 1
             if (b.sortVal === null) return -1
-            return def.sortOrder === 'desc' ? b.sortVal - a.sortVal : a.sortVal - b.sortVal
+            return sortDir === 'desc' ? b.sortVal - a.sortVal : a.sortVal - b.sortVal
         })
         return sorted.slice(0, def.topN)
-    }, [metrics, def, sourceMapping, customMetrics])
+    }, [allAggregated, def, sourceMapping, customMetrics, sortColIdx, sortDir])
 
     useEffect(() => {
-        if (def.dimension !== 'ads') return
+        if (def.dimension !== 'ads') return // only Meta ads have thumbnails
         const ids = rows.map(r => r.row._id).filter(Boolean)
         if (ids.length === 0) return
         fetch(`/api/v1/ad-thumbnails?clienteId=${clienteId}&adIds=${ids.join(',')}`)
             .then(r => r.json())
-            .then(setThumbnailMap)
+            .then(setAdInfoMap)
             .catch(() => {})
     }, [def.dimension, rows, clienteId])
 
@@ -54,36 +117,200 @@ export function RankingTableBlock({ def, metrics, campaignGroups, sourceMapping,
         })
     }, [def.columns, rows])
 
+    function openConsolidate(name: string) {
+        const matching = allAggregated.filter(r => r._name === name)
+        if (matching.length === 0) return
+
+        // Merge by summing all numeric fields across all entries with this name
+        const merged: any = { _name: name, _id: '' }
+        for (const row of matching) {
+            for (const [k, v] of Object.entries(row)) {
+                if (typeof v === 'number') {
+                    merged[k] = (merged[k] ?? 0) + v
+                }
+            }
+        }
+
+        const platforms = isTikTok ? new Set(['tiktok']) : new Set(['meta'])
+        const colValues = def.columns.map(col =>
+            evaluateFormula(col.formula, merged, {}, sourceMapping, platforms, customMetrics)
+        )
+
+        setConsolidateModal({ name, count: matching.length, colValues })
+    }
+
+    // Days that had spend but no ad-level data — genuine sync gap (excludes no-activity days)
+    const { daysWithData, daysNeedingSync } = useMemo(() => {
+        const arrayKey = def.dimension === 'campaigns' ? 'meta_campaigns'
+            : def.dimension === 'ads' ? 'meta_ads'
+            : def.dimension === 'adsets' ? 'meta_adsets'
+            : def.dimension === 'tiktok_campaigns' ? 'tiktok_campaigns'
+            : def.dimension === 'tiktok_ads' ? 'tiktok_ads'
+            : 'tiktok_adgroups'
+        const spendKey = isTikTok ? 'tiktok_spend' : 'meta_spend'
+        let withData = 0
+        let needingSync = 0
+        for (const m of metrics) {
+            const hasAdData = Array.isArray(m[arrayKey]) && m[arrayKey].length > 0
+            const hadSpend = (m[spendKey] || 0) > 0
+            if (hasAdData) withData++
+            else if (hadSpend) needingSync++ // spent money but no breakdown = real gap
+        }
+        return { daysWithData: withData, daysNeedingSync: needingSync }
+    }, [metrics, def.dimension, isTikTok])
+
+    const totalDays = metrics.length
+
     if (rows.length === 0) {
-        const isNewDimension = def.dimension === 'ads' || def.dimension === 'adsets'
+        const needsSync = def.dimension === 'ads' || def.dimension === 'adsets'
+            || def.dimension === 'tiktok_ads' || def.dimension === 'tiktok_adgroups'
+        const dimLabel = def.dimension === 'ads' ? 'anuncios'
+            : def.dimension === 'adsets' ? 'conjuntos de anuncios'
+            : def.dimension === 'tiktok_ads' ? 'anuncios de TikTok'
+            : def.dimension === 'tiktok_adgroups' ? 'grupos de anuncios de TikTok'
+            : null
         return (
-            <div className="col-span-1 md:col-span-4 bg-zinc-900 border border-zinc-800 rounded-xl p-6 text-center text-sm text-zinc-500">
-                {isNewDimension
-                    ? 'Datos disponibles tras el próximo sync'
-                    : 'Sin datos para este rango'}
+            <div className="col-span-1 md:col-span-4 bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
+                <div className="px-4 py-3 border-b border-zinc-800 bg-zinc-950/40">
+                    <h3 className="text-sm font-semibold text-white">{def.title}</h3>
+                </div>
+                <div className="p-8 flex flex-col items-center gap-3 text-center">
+                    <div className="text-2xl">📅</div>
+                    {needsSync && dimLabel ? (
+                        <>
+                            <p className="text-sm text-zinc-300 font-medium">
+                                No hay datos de {dimLabel} para este rango de fechas
+                            </p>
+                            <p className="text-xs text-zinc-500 max-w-xs">
+                                El desglose por {dimLabel} requiere sincronizar el rango seleccionado.
+                                Usa el botón <span className="text-blue-400 font-medium">Sincronizar Datos</span> en la parte superior del dashboard para cargar los datos.
+                            </p>
+                            <div className="mt-1 text-[11px] text-zinc-600 bg-zinc-800/60 rounded-lg px-3 py-1.5">
+                                {totalDays} día{totalDays !== 1 ? 's' : ''} en el rango · {daysNeedingSync} con gasto sin sincronizar
+                            </div>
+                        </>
+                    ) : (
+                        <p className="text-sm text-zinc-500">Sin datos para este rango de fechas</p>
+                    )}
+                </div>
             </div>
         )
     }
 
     return (
         <div className="col-span-1 md:col-span-4 bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
+            {/* Popup de preview en hover — posición fija para no ser cortado por overflow */}
+            {hoverPreview && (
+                <div
+                    className="pointer-events-none"
+                    style={{
+                        position: 'fixed',
+                        left: Math.min(hoverPreview.x, window.innerWidth - 320),
+                        top: Math.max(8, Math.min(hoverPreview.y, window.innerHeight - 420)),
+                        zIndex: 9999,
+                    }}
+                >
+                    <img
+                        src={hoverPreview.url}
+                        alt=""
+                        className="w-72 rounded-2xl shadow-2xl border border-zinc-700 object-cover"
+                    />
+                </div>
+            )}
+
+            {/* Modal de métricas consolidadas por nombre */}
+            {consolidateModal && (
+                <div
+                    className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[9998] flex items-center justify-center"
+                    onClick={() => setConsolidateModal(null)}
+                >
+                    <div
+                        className="bg-zinc-900 border border-zinc-700 rounded-2xl shadow-2xl w-full max-w-md mx-4 overflow-hidden"
+                        onClick={e => e.stopPropagation()}
+                    >
+                        <div className="flex items-start justify-between px-5 py-4 border-b border-zinc-800 bg-zinc-950/50">
+                            <div>
+                                <div className="flex items-center gap-2 mb-1">
+                                    <Layers className="w-4 h-4 text-indigo-400" />
+                                    <span className="text-white font-semibold text-sm">Métricas consolidadas</span>
+                                </div>
+                                <p className="text-zinc-400 text-xs truncate max-w-[300px]" title={consolidateModal.name}>
+                                    {consolidateModal.name}
+                                </p>
+                                <p className="text-zinc-500 text-[11px] mt-0.5">
+                                    Suma de <span className="text-indigo-300 font-semibold">{consolidateModal.count}</span> anuncio{consolidateModal.count !== 1 ? 's' : ''} con este nombre
+                                </p>
+                            </div>
+                            <button
+                                onClick={() => setConsolidateModal(null)}
+                                className="text-zinc-500 hover:text-white transition mt-0.5"
+                            >
+                                <X className="w-4 h-4" />
+                            </button>
+                        </div>
+                        <div className="px-5 py-3 divide-y divide-zinc-800">
+                            {def.columns.map((col, i) => (
+                                <div key={col.label} className="flex items-center justify-between py-2.5">
+                                    <span className="text-zinc-400 text-xs">{col.label}</span>
+                                    <span className="text-white font-mono text-sm font-semibold">
+                                        {formatValue(consolidateModal.colValues[i], { prefix: col.prefix, suffix: col.suffix, decimals: col.decimals })}
+                                    </span>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                </div>
+            )}
+
             <div className="px-4 py-3 border-b border-zinc-800 bg-zinc-950/40">
-                <h3 className="text-sm font-semibold text-white">{def.title}</h3>
+                <div className="flex items-center justify-between gap-2">
+                    <h3 className="text-sm font-semibold text-white">{def.title}</h3>
+                    {(def.dimension === 'ads' || def.dimension === 'adsets' || def.dimension === 'tiktok_ads' || def.dimension === 'tiktok_adgroups') && daysNeedingSync > 0 && (
+                        <span
+                            className="text-[10px] text-amber-400/80 bg-amber-500/10 border border-amber-500/20 rounded px-2 py-0.5 cursor-help"
+                            title={`${daysNeedingSync} día(s) tuvieron gasto pero no tienen desglose. Sincroniza para completar.`}
+                        >
+                            ⚠ {daysNeedingSync} día{daysNeedingSync !== 1 ? 's' : ''} sin sincronizar · Sincroniza para completar
+                        </span>
+                    )}
+                </div>
             </div>
             <div className="overflow-x-auto custom-scrollbar">
                 <table className="w-full text-xs whitespace-nowrap">
                     <thead>
                         <tr className="border-b border-zinc-800 bg-zinc-950">
                             {def.showRank !== false && (
-                                <th className="px-3 py-2 text-left text-zinc-500 font-medium w-8">#</th>
+                                <th style={{ width: colWidths['rank'] || undefined, position: 'relative' }} className="px-3 py-2 text-left text-zinc-500 font-medium">
+                                    #
+                                    <div onMouseDown={e => startColResize('rank', e)} onClick={e => e.stopPropagation()} className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-indigo-400/30 transition-colors z-10" />
+                                </th>
                             )}
                             {def.dimension === 'ads' && (
-                                <th className="px-3 py-2 text-left text-zinc-500 font-medium w-14"></th>
+                                <th style={{ width: colWidths['thumb'] || 96, minWidth: 96, position: 'relative' }} className="px-3 py-2 text-left text-zinc-500 font-medium">
+                                    <div onMouseDown={e => startColResize('thumb', e)} onClick={e => e.stopPropagation()} className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-indigo-400/30 transition-colors z-10" />
+                                </th>
                             )}
-                            <th className="px-3 py-2 text-left text-zinc-500 font-medium">Nombre</th>
-                            {def.columns.map(col => (
-                                <th key={col.label} className="px-3 py-2 text-right text-zinc-500 font-medium">
-                                    {col.label}
+                            <th style={{ width: colWidths['name'] || undefined, position: 'relative' }} className="px-3 py-2 text-left text-zinc-500 font-medium">
+                                Nombre
+                                <div onMouseDown={e => startColResize('name', e)} onClick={e => e.stopPropagation()} className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-indigo-400/30 transition-colors z-10" />
+                            </th>
+                            {def.columns.map((col, i) => (
+                                <th
+                                    key={col.label}
+                                    style={{ width: colWidths[`col_${i}`] || undefined, position: 'relative' }}
+                                    className="px-3 py-2 text-right text-zinc-500 font-medium cursor-pointer select-none hover:text-zinc-300 transition-colors"
+                                    onClick={() => handleSortClick(i)}
+                                >
+                                    <span className="inline-flex items-center justify-end gap-1">
+                                        {col.label}
+                                        {sortColIdx === i
+                                            ? sortDir === 'desc'
+                                                ? <ChevronDown className="w-3 h-3 text-indigo-400" />
+                                                : <ChevronUp className="w-3 h-3 text-indigo-400" />
+                                            : <ChevronsUpDown className="w-3 h-3 opacity-30" />
+                                        }
+                                    </span>
+                                    <div onMouseDown={e => startColResize(`col_${i}`, e)} onClick={e => e.stopPropagation()} className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-indigo-400/30 transition-colors z-10" />
                                 </th>
                             ))}
                         </tr>
@@ -95,29 +322,47 @@ export function RankingTableBlock({ def, metrics, campaignGroups, sourceMapping,
                                     <td className="px-3 py-2 text-zinc-600 font-mono text-[10px]">#{idx + 1}</td>
                                 )}
                                 {def.dimension === 'ads' && (
-                                    <td className="px-3 py-1.5">
-                                        {thumbnailMap[row._id] ? (
+                                    <td className="px-2 py-1.5" style={{ minWidth: 96 }}>
+                                        {adInfoMap[row._id]?.thumbnail ? (
                                             <img
-                                                src={thumbnailMap[row._id]!}
+                                                src={adInfoMap[row._id].thumbnail!}
                                                 alt=""
-                                                className="w-10 h-10 rounded object-cover bg-zinc-800"
+                                                className="w-24 h-24 rounded-lg object-cover bg-zinc-800 flex-shrink-0 cursor-zoom-in"
                                                 onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
+                                                onMouseEnter={e => {
+                                                    const rect = (e.currentTarget as HTMLImageElement).getBoundingClientRect()
+                                                    const x = rect.right + 12
+                                                    const y = rect.top
+                                                    setHoverPreview({ url: adInfoMap[row._id].thumbnail!, x, y })
+                                                }}
+                                                onMouseLeave={() => setHoverPreview(null)}
                                             />
                                         ) : (
-                                            <div className="w-10 h-10 rounded bg-zinc-800 animate-pulse" />
+                                            <div className="w-24 h-24 rounded-lg bg-zinc-800 animate-pulse flex-shrink-0" />
                                         )}
                                     </td>
                                 )}
                                 <td className="px-3 py-2 text-zinc-200 max-w-[220px]">
                                     <div className="flex items-center gap-1.5">
                                         <span className="truncate">{row._name}</span>
+                                        {/* Consolidate button — only shown when multiple entries share this name */}
+                                        {nameCount[row._name] > 1 && (
+                                            <button
+                                                onClick={() => openConsolidate(row._name)}
+                                                title={`Consolidar ${nameCount[row._name]} anuncios con este nombre`}
+                                                className="flex-shrink-0 flex items-center gap-0.5 text-[10px] text-amber-400/70 hover:text-amber-300 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/20 rounded px-1 py-0.5 transition"
+                                            >
+                                                <Layers className="w-2.5 h-2.5" />
+                                                <span>{nameCount[row._name]}</span>
+                                            </button>
+                                        )}
                                         {def.dimension === 'ads' && row._id && (
                                             <a
-                                                href={`https://www.facebook.com/ads/library/?id=${row._id}`}
+                                                href={adInfoMap[row._id]?.previewUrl || `https://www.facebook.com/ads/library/?id=${row._id}`}
                                                 target="_blank"
                                                 rel="noopener noreferrer"
                                                 className="flex-shrink-0 text-zinc-500 hover:text-blue-400 transition"
-                                                title="Ver en Facebook Ad Library"
+                                                title={adInfoMap[row._id]?.previewUrl ? 'Ver preview del anuncio' : 'Ver en Facebook Ad Library'}
                                             >
                                                 <ExternalLink className="w-3 h-3" />
                                             </a>
