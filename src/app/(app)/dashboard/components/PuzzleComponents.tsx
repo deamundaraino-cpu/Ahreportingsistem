@@ -2,7 +2,7 @@ import React from 'react'
 import { Card, CardHeader, CardDescription, CardContent } from "@/components/ui/card"
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { GripVertical, Trash2, AlignLeft, AlignCenter, AlignRight } from 'lucide-react'
+import { GripVertical, Trash2, AlignLeft, AlignCenter, AlignRight, ChevronUp, ChevronRight } from 'lucide-react'
 import type { CardDef, ChartDef, TextBlockDef } from '@/lib/layout-types'
 import { MetricCharts } from './MetricCharts'
 import { formatValue } from '@/lib/formula-engine'
@@ -15,13 +15,29 @@ const COLOR_MAP: Record<string, string> = {
     default: 'text-white',
 }
 
-export function SortableCard({ id, card, isPuzzleMode, onRemove }: { id: string, card: CardDef & { value: number | null }, isPuzzleMode: boolean, onRemove?: () => void }) {
+export function SortableCard({ id, card, isPuzzleMode, onRemove, isCollapsed, onToggleCollapse }: {
+    id: string
+    card: CardDef & { value: number | null }
+    isPuzzleMode: boolean
+    onRemove?: () => void
+    isCollapsed?: boolean
+    onToggleCollapse?: () => void
+}) {
     const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id })
     const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.5 : 1, zIndex: isDragging ? 50 : 'auto' as any }
 
+    if (isCollapsed) {
+        return (
+            <div ref={setNodeRef} style={style} className="col-span-1 bg-zinc-900/50 border border-zinc-800/60 rounded-xl px-3 py-2 flex items-center gap-2 cursor-pointer hover:bg-zinc-800/50 hover:border-zinc-700 transition" onClick={onToggleCollapse}>
+                <ChevronRight className="w-3 h-3 text-zinc-600 flex-shrink-0" />
+                <span className="text-xs text-zinc-500 truncate">{card.label}</span>
+            </div>
+        )
+    }
+
     return (
         <Card ref={setNodeRef} style={style} className={`col-span-1 bg-zinc-900 border-zinc-800 transition relative group ${isPuzzleMode ? 'ring-1 ring-zinc-700/50 hover:border-zinc-500 hover:shadow-lg' : 'hover:border-zinc-700'}`}>
-            {isPuzzleMode && (
+            {isPuzzleMode ? (
                 <div className="absolute top-2 right-2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-10">
                     <button {...attributes} {...listeners} className="p-1 text-zinc-400 hover:text-white cursor-grab active:cursor-grabbing bg-zinc-800 rounded">
                         <GripVertical className="w-3.5 h-3.5" />
@@ -32,6 +48,10 @@ export function SortableCard({ id, card, isPuzzleMode, onRemove }: { id: string,
                         </button>
                     )}
                 </div>
+            ) : onToggleCollapse && (
+                <button onClick={onToggleCollapse} className="absolute top-2 right-2 p-1 text-zinc-700 hover:text-zinc-400 opacity-0 group-hover:opacity-100 transition-opacity z-10" title="Ocultar">
+                    <ChevronUp className="w-3 h-3" />
+                </button>
             )}
             <CardHeader className="pb-2">
                 <CardDescription className="text-zinc-400 font-medium pr-8">{card.label}</CardDescription>
@@ -45,23 +65,36 @@ export function SortableCard({ id, card, isPuzzleMode, onRemove }: { id: string,
     )
 }
 
-export function SortableChart({ id, chart, isPuzzleMode, metrics, weeks, varContext, sourceMapping, platformSet, layoutCustomMetrics, onRemove, onUpdateChart }: any) {
+export function SortableChart({ id, chart, isPuzzleMode, metrics, weeks, varContext, sourceMapping, platformSet, layoutCustomMetrics, onRemove, onUpdateChart, isCollapsed, onToggleCollapse }: any) {
     const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id })
     const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.5 : 1, zIndex: isDragging ? 50 : 'auto' as any }
 
+    if (isCollapsed) {
+        return (
+            <div ref={setNodeRef} style={style} className="col-span-1 md:col-span-4 bg-zinc-900/50 border border-zinc-800/60 rounded-xl px-4 py-2.5 flex items-center gap-2 cursor-pointer hover:bg-zinc-800/50 hover:border-zinc-700 transition" onClick={onToggleCollapse}>
+                <ChevronRight className="w-3.5 h-3.5 text-zinc-600 flex-shrink-0" />
+                <span className="text-sm text-zinc-500 truncate">{chart.title || 'Gráfica'}</span>
+            </div>
+        )
+    }
+
     return (
         <div ref={setNodeRef} style={style} className={`col-span-1 md:col-span-4 relative group ${isPuzzleMode ? 'ring-1 ring-zinc-700/50 p-1 rounded-xl hover:shadow-lg hover:border-zinc-500' : ''}`}>
-            {isPuzzleMode && (
+            {isPuzzleMode ? (
                 <div className="absolute top-4 right-4 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-20">
                     <button {...attributes} {...listeners} className="p-1.5 text-zinc-400 hover:text-white cursor-grab active:cursor-grabbing bg-zinc-900 border border-zinc-700 rounded shadow">
                         <GripVertical className="w-4 h-4" />
                     </button>
                     {onRemove && (
-                         <button onClick={onRemove} className="p-1.5 text-zinc-400 hover:text-red-400 bg-zinc-900 border border-zinc-700 rounded shadow">
+                        <button onClick={onRemove} className="p-1.5 text-zinc-400 hover:text-red-400 bg-zinc-900 border border-zinc-700 rounded shadow">
                             <Trash2 className="w-4 h-4" />
                         </button>
                     )}
                 </div>
+            ) : onToggleCollapse && (
+                <button onClick={onToggleCollapse} className="absolute top-3 right-3 p-1.5 text-zinc-700 hover:text-zinc-400 opacity-0 group-hover:opacity-100 transition-opacity z-20 bg-zinc-900/80 rounded border border-zinc-800" title="Ocultar">
+                    <ChevronUp className="w-3.5 h-3.5" />
+                </button>
             )}
             <MetricCharts
                 charts={[chart]}
@@ -79,12 +112,14 @@ export function SortableChart({ id, chart, isPuzzleMode, metrics, weeks, varCont
 
 // ─── SortableText ─────────────────────────────────────────────────────────────
 
-export function SortableText({ id, block, isPuzzleMode, onRemove, onUpdate }: {
+export function SortableText({ id, block, isPuzzleMode, onRemove, onUpdate, isCollapsed, onToggleCollapse }: {
     id: string
     block: TextBlockDef
     isPuzzleMode: boolean
     onRemove?: () => void
     onUpdate?: (updates: Partial<TextBlockDef>) => void
+    isCollapsed?: boolean
+    onToggleCollapse?: () => void
 }) {
     const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id })
     const style = {
@@ -294,6 +329,15 @@ export function SortableText({ id, block, isPuzzleMode, onRemove, onUpdate }: {
         </div>
     )
 
+    if (isCollapsed && !isSeparator && !isPuzzleMode) {
+        return (
+            <div ref={setNodeRef} style={style} className={`${colSpanClass} bg-zinc-900/40 border border-zinc-800/50 rounded-lg px-3 py-2 flex items-center gap-2 cursor-pointer hover:bg-zinc-800/40 hover:border-zinc-700 transition`} onClick={onToggleCollapse}>
+                <ChevronRight className="w-3 h-3 text-zinc-600 flex-shrink-0" />
+                <span className="text-xs text-zinc-500 truncate">{block.content || 'Sección'}</span>
+            </div>
+        )
+    }
+
     return (
         <div
             ref={setNodeRef}
@@ -308,24 +352,46 @@ export function SortableText({ id, block, isPuzzleMode, onRemove, onUpdate }: {
         >
             {isPuzzleMode
                 ? (isSeparator ? renderSeparatorPuzzle() : renderTextPuzzle())
-                : (isSeparator ? renderSeparatorView() : renderTextView())
+                : (isSeparator ? renderSeparatorView() : (
+                    <>
+                        {onToggleCollapse && (
+                            <button onClick={onToggleCollapse} className="absolute top-2 right-2 p-1 text-zinc-700 hover:text-zinc-400 opacity-0 group-hover:opacity-100 transition-opacity z-10" title="Ocultar">
+                                <ChevronUp className="w-3 h-3" />
+                            </button>
+                        )}
+                        {renderTextView()}
+                    </>
+                ))
             }
         </div>
     )
 }
 
-export function SortableTable({ id, isPuzzleMode, children }: any) {
+export function SortableTable({ id, isPuzzleMode, children, title, isCollapsed, onToggleCollapse }: any) {
     const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id })
     const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.5 : 1, zIndex: isDragging ? 50 : 'auto' as any }
 
+    if (isCollapsed) {
+        return (
+            <div ref={setNodeRef} style={style} className="col-span-1 md:col-span-4 bg-zinc-900/50 border border-zinc-800/60 rounded-xl px-4 py-2.5 flex items-center gap-2 cursor-pointer hover:bg-zinc-800/50 hover:border-zinc-700 transition" onClick={onToggleCollapse}>
+                <ChevronRight className="w-3.5 h-3.5 text-zinc-600 flex-shrink-0" />
+                <span className="text-sm text-zinc-500 truncate">{title || 'Tabla'}</span>
+            </div>
+        )
+    }
+
     return (
         <div ref={setNodeRef} style={style} className={`col-span-1 md:col-span-4 relative group ${isPuzzleMode ? 'ring-1 ring-zinc-700/50 p-1 rounded-xl hover:shadow-lg hover:border-zinc-500' : ''}`}>
-            {isPuzzleMode && (
+            {isPuzzleMode ? (
                 <div className="absolute top-4 right-4 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-20">
                     <button {...attributes} {...listeners} className="p-1.5 text-zinc-400 hover:text-white cursor-grab active:cursor-grabbing bg-zinc-900 border border-zinc-700 rounded shadow">
                         <GripVertical className="w-4 h-4" />
                     </button>
                 </div>
+            ) : onToggleCollapse && (
+                <button onClick={(e) => { e.stopPropagation(); onToggleCollapse() }} className="absolute top-4 right-4 p-1.5 text-zinc-700 hover:text-zinc-400 opacity-0 group-hover:opacity-100 transition-opacity z-20 bg-zinc-900/80 rounded border border-zinc-800" title="Ocultar">
+                    <ChevronUp className="w-3.5 h-3.5" />
+                </button>
             )}
             {children}
         </div>

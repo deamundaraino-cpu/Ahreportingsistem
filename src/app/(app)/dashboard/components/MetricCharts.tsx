@@ -291,8 +291,9 @@ function SingleMetricChart({
 
     // Filter rawMetrics / metrics based on campaign filter
     const chartMetrics = useMemo(() => {
-        const filter = chart.campaignFilter?.value
-        return (filter && rawMetrics)
+        const filter = chart.campaignFilter
+        const hasFilter = filter && (Array.isArray(filter.value) ? filter.value.length > 0 : filter.value !== '')
+        return (hasFilter && rawMetrics)
             ? rawMetrics.map((r: any) => enrichMetaRow(r, filter, campaignGroups))
             : metrics
     }, [chart.campaignFilter, rawMetrics, metrics, campaignGroups])

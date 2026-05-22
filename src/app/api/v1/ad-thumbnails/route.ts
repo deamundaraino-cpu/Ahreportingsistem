@@ -1,6 +1,11 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 
+export interface AdThumbnailInfo {
+    thumbnail: string | null
+    previewUrl: string | null
+}
+
 export async function GET(request: Request) {
     const { searchParams } = new URL(request.url)
     const clienteId = searchParams.get('clienteId')
@@ -20,7 +25,6 @@ export async function GET(request: Request) {
         return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    // Verify this client belongs to the authenticated user
     const { data: cliente, error: clienteErr } = await supabase
         .from('clientes')
         .select('id, config_api')
@@ -41,19 +45,39 @@ export async function GET(request: Request) {
         return NextResponse.json({ error: 'No Meta token configured' }, { status: 422 })
     }
 
-    // Batch fetch thumbnails from Meta Graph API
-    const result: Record<string, string | null> = {}
+    const result: Record<string, AdThumbnailInfo> = {}
 
     await Promise.all(adIds.map(async (adId) => {
         try {
             const url = new URL(`https://graph.facebook.com/v19.0/${adId}`)
-            url.searchParams.set('fields', 'creative{thumbnail_url}')
+            // Pedimos thumbnail + story ID de la publicación + preview_shareable_link
+            url.searchParams.set('fields', 'creative{thumbnail_url,effective_object_story_id},preview_shareable_link')
             url.searchParams.set('access_token', token)
             const res = await fetch(url.toString())
             const data = await res.json()
-            result[adId] = data?.creative?.thumbnail_url ?? null
+
+            const thumbnail: string | null = data?.creative?.thumbnail_url ?? null
+
+            // Mejor link disponible, en orden de preferencia
+            let previewUrl: string | null = null
+
+            // 1. preview_shareable_link (fb.me/adspreview/...)
+            if (data?.preview_shareable_link) {
+                previewUrl = data.preview_shareable_link
+            }
+
+            // 2. effective_object_story_id → permalink de la publicación en Facebook
+            if (!previewUrl && data?.creative?.effective_object_story_id) {
+                const storyId: string = data.creative.effective_object_story_id
+                const parts = storyId.split('_')
+                if (parts.length === 2) {
+                    previewUrl = `https://www.facebook.com/permalink.php?story_fbid=${parts[1]}&id=${parts[0]}`
+                }
+            }
+
+            result[adId] = { thumbnail, previewUrl }
         } catch {
-            result[adId] = null
+            result[adId] = { thumbnail: null, previewUrl: null }
         }
     }))
 

@@ -34,8 +34,8 @@ function computeCardValue(
     const to = dateOverride !== undefined ? dateOverride.to : tab.fecha_finalizacion
     if (from) rows = rows.filter((m: any) => m.fecha >= from)
     if (to) rows = rows.filter((m: any) => m.fecha <= to)
-    const keyword = card.campaignFilter?.value ?? tab.keyword_meta ?? ''
-    rows = rows.map((r: any) => enrichMetaRow(r, keyword, campaignGroups))
+    const filter = card.campaignFilter ?? tab.keyword_meta ?? ''
+    rows = rows.map((r: any) => enrichMetaRow(r, filter, campaignGroups))
     return aggregateFormula(card.formula, rows, {}, {}, new Set(['meta']), {})
 }
 

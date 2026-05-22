@@ -1,3 +1,5 @@
+import type { CampaignFilterOperator, CampaignFilterSpec } from './layout-types'
+
 // Helper: Verificar si una campaña coincide con el patrón del grupo
 function campaignMatchesPattern(
     campaign: any,
@@ -33,32 +35,82 @@ function campaignMatchesGroup(
     return false
 }
 
-export function enrichMetaRow(row: any, keywordFilter: string, campaignGroups?: any[]): any {
-    // Use original logic for campaign filtering
+// Helper: Aplicar operador de filtro al nombre de una campaña
+function campaignMatchesOperator(
+    name: string,
+    operator: CampaignFilterOperator,
+    value: string | string[]
+): boolean {
+    const n = name.toLowerCase()
+    switch (operator) {
+        case 'includes':
+            return typeof value === 'string' && n.includes(value.toLowerCase())
+        case 'excludes':
+            return typeof value === 'string' && !n.includes(value.toLowerCase())
+        case 'exact':
+            return typeof value === 'string' && n === value.toLowerCase()
+        case 'not_exact':
+            return typeof value === 'string' && n !== value.toLowerCase()
+        case 'starts_with':
+            return typeof value === 'string' && n.startsWith(value.toLowerCase())
+        case 'ends_with':
+            return typeof value === 'string' && n.endsWith(value.toLowerCase())
+        case 'any_of':
+            return Array.isArray(value) && value.some(v => v.toLowerCase() === n)
+        case 'none_of':
+            return Array.isArray(value) && !value.some(v => v.toLowerCase() === n)
+        default:
+            return true
+    }
+}
+
+export function enrichMetaRow(
+    row: any,
+    filter: string | CampaignFilterSpec | undefined,
+    campaignGroups?: any[]
+): any {
     if (!row.meta_campaigns || !Array.isArray(row.meta_campaigns)) return row
 
     let matching = row.meta_campaigns
 
-    // Si hay un ID de grupo válido, filtrar por ese grupo
-    if (keywordFilter && campaignGroups && campaignGroups.length > 0) {
-        const selectedGroup = campaignGroups.find(g => g.id === keywordFilter)
-        if (selectedGroup && selectedGroup.campaign_group_mappings) {
-            matching = row.meta_campaigns.filter((c: any) =>
-                campaignMatchesGroup(c, selectedGroup.campaign_group_mappings)
-            )
+    if (!filter || (typeof filter === 'string' && filter === '') ||
+        (typeof filter !== 'string' && (Array.isArray(filter.value) ? filter.value.length === 0 : filter.value === ''))) {
+        // Sin filtro activo
+    } else if (typeof filter === 'string') {
+        // Legado: string plano — intentar grupo, luego keyword includes
+        if (campaignGroups && campaignGroups.length > 0) {
+            const selectedGroup = campaignGroups.find(g => g.id === filter)
+            if (selectedGroup && selectedGroup.campaign_group_mappings) {
+                matching = row.meta_campaigns.filter((c: any) =>
+                    campaignMatchesGroup(c, selectedGroup.campaign_group_mappings)
+                )
+            } else {
+                const kw = filter.toLowerCase()
+                matching = row.meta_campaigns.filter((c: any) =>
+                    c.name?.toLowerCase().includes(kw)
+                )
+            }
         } else {
-            // Fallback: buscar por nombre si no es un ID de grupo válido
-            const kw = keywordFilter.toLowerCase()
+            const kw = filter.toLowerCase()
             matching = row.meta_campaigns.filter((c: any) =>
-                kw === '' || c.name?.toLowerCase().includes(kw)
+                c.name?.toLowerCase().includes(kw)
             )
         }
-    } else if (keywordFilter) {
-        // Original behavior: búsqueda por keyword en nombre
-        const kw = keywordFilter.toLowerCase()
-        matching = row.meta_campaigns.filter((c: any) =>
-            kw === '' || c.name?.toLowerCase().includes(kw)
-        )
+    } else {
+        // Spec completo con tipo y operador
+        if (filter.type === 'group' && typeof filter.value === 'string' && campaignGroups) {
+            const selectedGroup = campaignGroups.find(g => g.id === filter.value)
+            if (selectedGroup && selectedGroup.campaign_group_mappings) {
+                matching = row.meta_campaigns.filter((c: any) =>
+                    campaignMatchesGroup(c, selectedGroup.campaign_group_mappings)
+                )
+            }
+        } else {
+            const op: CampaignFilterOperator = filter.operator ?? 'includes'
+            matching = row.meta_campaigns.filter((c: any) =>
+                campaignMatchesOperator(c.name || '', op, filter.value)
+            )
+        }
     }
 
     // Reduce helper (inline to avoid breaking patterns)
