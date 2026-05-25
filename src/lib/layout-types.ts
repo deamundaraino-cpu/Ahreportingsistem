@@ -19,6 +19,14 @@ export interface CampaignFilterSpec {
     value: string | string[]
 }
 
+export type FormFilterField = 'form_id' | 'form_name'
+
+export interface FormFilterSpec {
+    field: FormFilterField
+    operator?: CampaignFilterOperator
+    value: string | string[]
+}
+
 /**
  * Attribution strategy presets for layouts.
  * Determines which data sources are used for semantic aliases ($visitas, $conversiones, etc.)
@@ -41,6 +49,7 @@ export interface ColDef {
     hidden?: boolean
     isManual?: boolean
     campaignFilter?: CampaignFilterSpec
+    formFilter?: FormFilterSpec
 }
 
 export interface CardDef {
@@ -52,6 +61,7 @@ export interface CardDef {
     decimals?: number
     color?: CardColor
     campaignFilter?: CampaignFilterSpec
+    formFilter?: FormFilterSpec
 }
 
 export type ChartType =
@@ -76,6 +86,7 @@ export interface ChartDef {
     colors?: string[]         // e.g. ["amber", "cyan"]
     height?: number
     campaignFilter?: CampaignFilterSpec
+    formFilter?: FormFilterSpec
     yAxes?: ('left' | 'right')[]
     types?: ('line' | 'bar' | 'area' | '')[]
     strokeWidths?: number[]
@@ -120,6 +131,7 @@ export interface RankingTableDef {
     sortOrder: 'desc' | 'asc'
     showRank?: boolean
     campaignFilter?: CampaignFilterSpec
+    formFilter?: FormFilterSpec
 }
 
 export interface MetricDef {
