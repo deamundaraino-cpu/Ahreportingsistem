@@ -10,7 +10,7 @@ import {
     ChevronLeft, Eye, EyeOff, LayoutPanelTop, Plus, Database, BarChart3, Copy
 } from 'lucide-react'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import type { ColDef, CardDef, ChartDef, ChartType, ReportLayout, CardColor, CampaignFilterSpec, CampaignFilterOperator, RankingTableDef, RankingColumnDef, FormFilterSpec, FormFilterField } from '@/lib/layout-types'
+import type { ColDef, CardDef, ChartDef, ChartType, ReportLayout, CardColor, CampaignFilterSpec, CampaignFilterOperator, RankingTableDef, RankingColumnDef } from '@/lib/layout-types'
 
 // ─── Available Metrics for Dropdown ──────────────────────────────────────────
 
@@ -309,7 +309,7 @@ function MetricTypeSelector({ prefix, suffix, onChange }: {
 // ─── DnD Column Row ───────────────────────────────────────────────────────────
 
 function DraggableColumnRow({
-    col, index, onDragStart, onDragOver, onDrop, onUpdate, onRemove, availableMetrics, campaignGroups = [], campaignNames = [], formNames = [], formIds = []
+    col, index, onDragStart, onDragOver, onDrop, onUpdate, onRemove, availableMetrics, campaignGroups = [], campaignNames = []
 }: {
     col: ColDef
     index: number
@@ -321,8 +321,6 @@ function DraggableColumnRow({
     availableMetrics?: { id: string; label: string }[]
     campaignGroups?: { id: string; nombre: string }[]
     campaignNames?: string[]
-    formNames?: string[]
-    formIds?: string[]
 }) {
     return (
         <div
@@ -394,12 +392,6 @@ function DraggableColumnRow({
                             )}
                         </div>
 
-                        <FormFilterPicker
-                            value={col.formFilter}
-                            onChange={v => onUpdate({ ...col, formFilter: v })}
-                            formNames={formNames}
-                            formIds={formIds}
-                        />
                     </div>
                 )}
             </div>
@@ -429,7 +421,7 @@ const COLOR_OPTIONS: { val: CardColor; bg: string }[] = [
 ]
 
 function DraggableCardRow({
-    card, index, onDragStart, onDragOver, onDrop, onUpdate, onRemove, availableMetrics, campaignGroups = [], campaignNames = [], formNames = [], formIds = []
+    card, index, onDragStart, onDragOver, onDrop, onUpdate, onRemove, availableMetrics, campaignGroups = [], campaignNames = []
 }: {
     card: CardDef
     index: number
@@ -441,8 +433,6 @@ function DraggableCardRow({
     availableMetrics?: { id: string; label: string }[]
     campaignGroups?: { id: string; nombre: string }[]
     campaignNames?: string[]
-    formNames?: string[]
-    formIds?: string[]
 }) {
     return (
         <div
@@ -496,12 +486,6 @@ function DraggableCardRow({
                             campaignNames={campaignNames}
                         />
                     </div>
-                    <FormFilterPicker
-                        value={card.formFilter}
-                        onChange={v => onUpdate({ ...card, formFilter: v })}
-                        formNames={formNames}
-                        formIds={formIds}
-                    />
                 </div>
             </div>
 
@@ -538,7 +522,7 @@ const CHART_COLOR_OPTIONS = [
 ]
 
 function DraggableChartRow({
-    chart, index, onDragStart, onDragOver, onDrop, onUpdate, onRemove, availableMetrics, campaignGroups = [], campaignNames = [], formNames = [], formIds = []
+    chart, index, onDragStart, onDragOver, onDrop, onUpdate, onRemove, availableMetrics, campaignGroups = [], campaignNames = []
 }: {
     chart: ChartDef
     index: number
@@ -550,8 +534,6 @@ function DraggableChartRow({
     availableMetrics?: { id: string; label: string }[]
     campaignGroups?: { id: string; nombre: string }[]
     campaignNames?: string[]
-    formNames?: string[]
-    formIds?: string[]
 }) {
     const isCircular = chart.type === 'donut' || chart.type === 'pie' || chart.type === 'radial' || chart.type === 'funnel'
     const maxMetrics = chart.type === 'scatter' ? 2 : isCircular ? 6 : 5
@@ -829,12 +811,6 @@ function DraggableChartRow({
                             <span className="text-zinc-700 text-[9px]">px</span>
                         </div>
                     </div>
-                    <FormFilterPicker
-                        value={chart.formFilter}
-                        onChange={v => onUpdate({ ...chart, formFilter: v })}
-                        formNames={formNames}
-                        formIds={formIds}
-                    />
                 </div>
             </div>
         </div>
@@ -1085,194 +1061,6 @@ function CampaignFilterPicker({
     )
 }
 
-// ─── Form Filter Picker ───────────────────────────────────────────────────────
-
-function FormFilterPicker({
-    value,
-    onChange,
-    formNames = [],
-    formIds = [],
-}: {
-    value?: FormFilterSpec
-    onChange: (v: FormFilterSpec | undefined) => void
-    formNames?: string[]
-    formIds?: string[]
-}) {
-    const [currentField, setCurrentField] = useState<FormFilterField>(value?.field ?? 'form_name')
-    const currentOp: CampaignFilterOperator = value?.operator ?? 'includes'
-    const isMulti = FILTER_OPERATORS.find(o => o.value === currentOp)?.multi ?? false
-    const suggestions = currentField === 'form_name' ? formNames : formIds
-
-    const [kwSearch, setKwSearch] = useState(
-        value && !isMulti && typeof value.value === 'string' ? value.value : ''
-    )
-    const [showSuggestions, setShowSuggestions] = useState(false)
-    const [showMultiPanel, setShowMultiPanel] = useState(false)
-    const [multiSearch, setMultiSearch] = useState('')
-    const multiRef = useRef<HTMLDivElement>(null)
-
-    useEffect(() => {
-        if (isMulti) setKwSearch('')
-    }, [value, isMulti])
-
-    useEffect(() => {
-        if (!showMultiPanel) return
-        const handler = (e: MouseEvent) => {
-            if (multiRef.current && !multiRef.current.contains(e.target as Node)) {
-                setShowMultiPanel(false)
-                setMultiSearch('')
-            }
-        }
-        document.addEventListener('mousedown', handler)
-        return () => document.removeEventListener('mousedown', handler)
-    }, [showMultiPanel])
-
-    const selectedMulti: string[] = (value && Array.isArray(value.value)) ? value.value : []
-    const filteredSuggestions = suggestions.filter(n =>
-        kwSearch === '' || n.toLowerCase().includes(kwSearch.toLowerCase())
-    )
-    const filteredMulti = suggestions.filter(n =>
-        multiSearch === '' || n.toLowerCase().includes(multiSearch.toLowerCase())
-    )
-
-    function handleFieldChange(field: FormFilterField) {
-        setCurrentField(field)
-        onChange(undefined)
-        setKwSearch('')
-    }
-
-    function handleOperatorChange(op: CampaignFilterOperator) {
-        const opDef = FILTER_OPERATORS.find(o => o.value === op)!
-        if (opDef.multi) {
-            onChange({ field: currentField, operator: op, value: selectedMulti })
-            setShowMultiPanel(true)
-        } else {
-            const currentVal = kwSearch || ''
-            onChange(currentVal ? { field: currentField, operator: op, value: currentVal } : undefined)
-        }
-    }
-
-    function toggleMultiItem(name: string) {
-        const next = selectedMulti.includes(name)
-            ? selectedMulti.filter(n => n !== name)
-            : [...selectedMulti, name]
-        onChange(next.length > 0 ? { field: currentField, operator: currentOp, value: next } : undefined)
-    }
-
-    const hasFilter = value !== undefined
-
-    return (
-        <div className="flex items-center gap-1.5 flex-shrink-0" title="Filtro de formulario (opcional)">
-            <span className="text-[10px] text-zinc-600 flex-shrink-0">Form:</span>
-
-            <select
-                value={currentField}
-                onChange={e => handleFieldChange(e.target.value as FormFilterField)}
-                className="h-6 text-xs bg-zinc-950 border border-zinc-700 text-zinc-300 rounded px-1.5 max-w-[80px]"
-            >
-                <option value="form_name">Nombre</option>
-                <option value="form_id">ID</option>
-            </select>
-
-            <select
-                value={currentOp}
-                onChange={e => handleOperatorChange(e.target.value as CampaignFilterOperator)}
-                className="h-6 text-xs bg-zinc-950 border border-zinc-700 text-zinc-300 rounded px-1.5 max-w-[120px]"
-            >
-                {FILTER_OPERATORS.map(op => (
-                    <option key={op.value} value={op.value}>{op.label}</option>
-                ))}
-            </select>
-
-            {!isMulti && (
-                <div className="relative">
-                    <Input
-                        value={kwSearch}
-                        onChange={e => {
-                            setKwSearch(e.target.value)
-                            if (e.target.value) onChange({ field: currentField, operator: currentOp, value: e.target.value })
-                            else if (value) onChange(undefined)
-                            setShowSuggestions(true)
-                        }}
-                        onFocus={() => setShowSuggestions(true)}
-                        onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
-                        placeholder={currentField === 'form_name' ? 'Buscar formulario...' : 'ID del formulario...'}
-                        className="h-6 text-xs bg-zinc-950 border-zinc-700 text-zinc-300 w-40"
-                    />
-                    {showSuggestions && filteredSuggestions.length > 0 && (
-                        <div className="absolute top-7 left-0 z-[120] bg-zinc-900 border border-zinc-800 rounded shadow-lg max-h-48 overflow-y-auto w-56 custom-scrollbar">
-                            {filteredSuggestions.map(name => (
-                                <button
-                                    key={name}
-                                    onMouseDown={e => e.preventDefault()}
-                                    onClick={() => {
-                                        setKwSearch(name)
-                                        onChange({ field: currentField, operator: currentOp, value: name })
-                                        setShowSuggestions(false)
-                                    }}
-                                    className="w-full text-left px-2 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 transition truncate block"
-                                >
-                                    {name}
-                                </button>
-                            ))}
-                        </div>
-                    )}
-                </div>
-            )}
-
-            {isMulti && (
-                <div className="relative" ref={multiRef}>
-                    <button
-                        onClick={() => setShowMultiPanel(v => !v)}
-                        className={`h-6 px-2 text-xs rounded border transition ${selectedMulti.length > 0 ? 'bg-indigo-500/20 border-indigo-500/40 text-indigo-300' : 'bg-zinc-950 border-zinc-700 text-zinc-400 hover:text-zinc-200'}`}
-                    >
-                        {selectedMulti.length > 0 ? `${selectedMulti.length} form${selectedMulti.length > 1 ? 's' : ''}` : 'Elegir…'}
-                    </button>
-                    {showMultiPanel && (
-                        <div className="absolute top-7 left-0 z-[120] bg-zinc-900 border border-zinc-800 rounded shadow-lg w-56 custom-scrollbar">
-                            <div className="p-1 border-b border-zinc-800">
-                                <Input
-                                    value={multiSearch}
-                                    onChange={e => setMultiSearch(e.target.value)}
-                                    placeholder="Buscar..."
-                                    className="h-6 text-xs bg-zinc-950 border-zinc-700 text-zinc-300"
-                                    autoFocus
-                                />
-                            </div>
-                            <div className="max-h-48 overflow-y-auto">
-                                {filteredMulti.map(name => (
-                                    <label key={name} className="flex items-center gap-2 px-2 py-1.5 hover:bg-zinc-800 cursor-pointer">
-                                        <input
-                                            type="checkbox"
-                                            checked={selectedMulti.includes(name)}
-                                            onChange={() => toggleMultiItem(name)}
-                                            className="accent-indigo-500"
-                                        />
-                                        <span className="text-xs text-zinc-300 truncate">{name}</span>
-                                    </label>
-                                ))}
-                                {filteredMulti.length === 0 && (
-                                    <p className="text-xs text-zinc-600 px-2 py-2">Sin resultados</p>
-                                )}
-                            </div>
-                        </div>
-                    )}
-                </div>
-            )}
-
-            {hasFilter && (
-                <button
-                    onClick={() => { onChange(undefined); setKwSearch('') }}
-                    className="text-zinc-600 hover:text-red-400 transition flex-shrink-0"
-                    title="Quitar filtro de formulario"
-                >
-                    <X className="w-3 h-3" />
-                </button>
-            )}
-        </div>
-    )
-}
-
 // ─── Main Modal ───────────────────────────────────────────────────────────────
 
 export function LayoutConfigModal({
@@ -1286,8 +1074,6 @@ export function LayoutConfigModal({
     conversionesCatalogo = [],
     campaignGroups = [],
     campaignNames = [],
-    formNames = [],
-    formIds = [],
 }: {
     clienteId: string
     currentLayout: ReportLayout | null
@@ -1299,8 +1085,6 @@ export function LayoutConfigModal({
     conversionesCatalogo?: { conversion_key: string; label: string; field_id: string }[]
     campaignGroups?: { id: string; nombre: string }[]
     campaignNames?: string[]
-    formNames?: string[]
-    formIds?: string[]
 }) {
     const availableMetrics = buildAvailableMetrics(conversionesCatalogo)
     const [step, setStep] = useState<'select' | 'edit'>(currentLayout ? 'edit' : 'select')
@@ -1722,8 +1506,6 @@ export function LayoutConfigModal({
                                                 availableMetrics={availableMetrics}
                                                 campaignGroups={campaignGroups}
                                                 campaignNames={campaignNames}
-                                                formNames={formNames}
-                                                formIds={formIds}
                                             />
                                         </div>
                                     ))}
@@ -1767,8 +1549,6 @@ export function LayoutConfigModal({
                                                 availableMetrics={availableMetrics}
                                                 campaignGroups={campaignGroups}
                                                 campaignNames={campaignNames}
-                                                formNames={formNames}
-                                                formIds={formIds}
                                             />
                                         </div>
                                     ))}
@@ -1819,8 +1599,6 @@ export function LayoutConfigModal({
                                         availableMetrics={availableMetrics}
                                         campaignGroups={campaignGroups}
                                         campaignNames={campaignNames}
-                                        formNames={formNames}
-                                        formIds={formIds}
                                     />
                                 ))}
                                 {(!workingLayout.graficos || workingLayout.graficos.length === 0) && (
@@ -2069,15 +1847,7 @@ export function LayoutConfigModal({
                                             </div>
                                         )}
 
-                                        {/* Form filter */}
-                                        <div className="pl-1">
-                                            <FormFilterPicker
-                                                value={table.formFilter}
-                                                onChange={v => updateRankingTable(ti, { ...table, formFilter: v })}
-                                                formNames={formNames}
-                                                formIds={formIds}
-                                            />
-                                        </div>
+
 
                                         {/* Columns list */}
                                         <div className="space-y-2 pt-1 border-t border-zinc-800">

@@ -25,7 +25,6 @@ import { SortableContext, horizontalListSortingStrategy, verticalListSortingStra
 
 import { CSS } from '@dnd-kit/utilities'
 import { enrichMetaRow } from '@/lib/campaign-filter'
-import { enrichFormRow } from '@/lib/form-filter'
 import type { CampaignFilterSpec } from '@/lib/layout-types'
 
 // ─── Helper Functions ────────────────────────────────────────────────────────
@@ -577,30 +576,6 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
         return Array.from(names).sort()
     }, [baseRows])
 
-    const allFormNames = useMemo(() => {
-        const names = new Set<string>()
-        for (const row of baseRows) {
-            if (Array.isArray((row as any).meta_forms)) {
-                for (const f of (row as any).meta_forms) {
-                    if (f.form_name && f.form_name !== f.form_id) names.add(f.form_name)
-                }
-            }
-        }
-        return Array.from(names).sort()
-    }, [baseRows])
-
-    const allFormIds = useMemo(() => {
-        const ids = new Set<string>()
-        for (const row of baseRows) {
-            if (Array.isArray((row as any).meta_forms)) {
-                for (const f of (row as any).meta_forms) {
-                    if (f.form_id) ids.add(f.form_id)
-                }
-            }
-        }
-        return Array.from(ids).sort()
-    }, [baseRows])
-
     // Step 2: campaign-enrich with global tab filter + funnel injection (existing behavior)
     const filteredMetrics = useMemo(() => {
         const enriched = baseRows.map((m: any) => enrichMetaRow(m, effectiveKeyword, data.campaignGroups))
@@ -688,9 +663,6 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
             let rows = filter === effectiveKeyword
                 ? filteredMetrics
                 : baseRows.map((m: any) => enrichMetaRow(m, filter, data.campaignGroups))
-            if (t.formFilter) {
-                rows = rows.map((m: any) => enrichFormRow(m, t.formFilter))
-            }
             return {
                 ...t,
                 value: aggregateFormula(t.formula, rows, varContext, sourceMapping, platformSet, layoutCustomMetrics),
@@ -1222,9 +1194,6 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                                                                                     const base = baseRows.find((m: any) => m.fecha === dayStr)
                                                                                     return base ? enrichMetaRow(base, filter, data.campaignGroups) : raw
                                                                                 })()
-                                                                            if (col.formFilter) {
-                                                                                rowForCol = enrichFormRow(rowForCol, col.formFilter)
-                                                                            }
                                                                             const val = evaluateFormula(col.formula, rowForCol, varContext, sourceMapping, platformSet, layoutCustomMetrics)
                                                                             const hl = highlightClass(val, col)
                                                                             if (col.isManual) {
@@ -1355,8 +1324,6 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                     conversionesCatalogo={conversionesCatalogo}
                     campaignGroups={data.campaignGroups || []}
                     campaignNames={allCampaignNames}
-                    formNames={allFormNames}
-                    formIds={allFormIds}
                     onClose={() => setShowModal(false)}
                     onLayoutApplied={(newLayout) => {
                         if (newLayout) {
