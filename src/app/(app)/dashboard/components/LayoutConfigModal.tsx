@@ -364,27 +364,35 @@ function DraggableColumnRow({
 
                 {/* Row 2: type + highlight + campaign filter (only for non-fecha columns) */}
                 {col.formula !== 'fecha' && (
-                    <div className="flex items-center gap-2 pl-6">
-                        <MetricTypeSelector
-                            prefix={col.prefix}
-                            suffix={col.suffix}
-                            onChange={vals => onUpdate({ ...col, ...vals })}
-                        />
+                    <div className="flex flex-col gap-1 pl-6">
+                        <div className="flex items-center gap-2">
+                            <MetricTypeSelector
+                                prefix={col.prefix}
+                                suffix={col.suffix}
+                                onChange={vals => onUpdate({ ...col, ...vals })}
+                            />
 
-                        <button
-                            onClick={() => onUpdate({ ...col, highlight: !col.highlight })}
-                            title="Colorear según impacto"
-                            className={`flex-shrink-0 w-6 h-7 rounded border text-xs transition ${col.highlight ? 'bg-indigo-500/20 border-indigo-500/40 text-indigo-400' : 'bg-zinc-900 border-zinc-700 text-zinc-600 hover:text-zinc-400'}`}
-                        >
-                            ✦
-                        </button>
+                            <button
+                                onClick={() => onUpdate({ ...col, highlight: !col.highlight })}
+                                title="Colorear según impacto"
+                                className={`flex-shrink-0 w-6 h-7 rounded border text-xs transition ${col.highlight ? 'bg-indigo-500/20 border-indigo-500/40 text-indigo-400' : 'bg-zinc-900 border-zinc-700 text-zinc-600 hover:text-zinc-400'}`}
+                            >
+                                ✦
+                            </button>
 
-                        <CampaignFilterPicker
-                            value={col.campaignFilter}
-                            onChange={v => onUpdate({ ...col, campaignFilter: v })}
-                            campaignGroups={campaignGroups}
-                            campaignNames={campaignNames}
-                        />
+                            <CampaignFilterPicker
+                                value={col.campaignFilter}
+                                onChange={v => onUpdate({ ...col, campaignFilter: v })}
+                                campaignGroups={campaignGroups}
+                                campaignNames={campaignNames}
+                            />
+
+                            {col.isManual && (
+                                <span className="flex-shrink-0 text-[9px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 px-1.5 py-0.5 rounded font-bold uppercase tracking-wide">
+                                    Manual
+                                </span>
+                            )}
+                        </div>
 
                         <FormFilterPicker
                             value={col.formFilter}
@@ -392,12 +400,6 @@ function DraggableColumnRow({
                             formNames={formNames}
                             formIds={formIds}
                         />
-
-                        {col.isManual && (
-                            <span className="flex-shrink-0 text-[9px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 px-1.5 py-0.5 rounded font-bold uppercase tracking-wide">
-                                Manual
-                            </span>
-                        )}
                     </div>
                 )}
             </div>
@@ -480,18 +482,20 @@ function DraggableCardRow({
                 </div>
 
                 {/* Row 2: type selector + campaign filter */}
-                <div className="flex items-center gap-2">
-                    <MetricTypeSelector
-                        prefix={card.prefix}
-                        suffix={card.suffix}
-                        onChange={vals => onUpdate({ ...card, ...vals })}
-                    />
-                    <CampaignFilterPicker
-                        value={card.campaignFilter}
-                        onChange={v => onUpdate({ ...card, campaignFilter: v })}
-                        campaignGroups={campaignGroups}
-                        campaignNames={campaignNames}
-                    />
+                <div className="flex flex-col gap-1">
+                    <div className="flex items-center gap-2">
+                        <MetricTypeSelector
+                            prefix={card.prefix}
+                            suffix={card.suffix}
+                            onChange={vals => onUpdate({ ...card, ...vals })}
+                        />
+                        <CampaignFilterPicker
+                            value={card.campaignFilter}
+                            onChange={v => onUpdate({ ...card, campaignFilter: v })}
+                            campaignGroups={campaignGroups}
+                            campaignNames={campaignNames}
+                        />
+                    </div>
                     <FormFilterPicker
                         value={card.formFilter}
                         onChange={v => onUpdate({ ...card, formFilter: v })}
@@ -804,34 +808,33 @@ function DraggableChartRow({
                 </div>
 
                 {/* Campaign filter & Height */}
-                <div className="flex items-center justify-between gap-2 mt-1">
-                    <div className="flex items-center gap-2 flex-wrap">
+                <div className="flex flex-col gap-1 mt-1">
+                    <div className="flex items-center justify-between gap-2">
                         <CampaignFilterPicker
                             value={chart.campaignFilter}
                             onChange={v => onUpdate({ ...chart, campaignFilter: v })}
                             campaignGroups={campaignGroups}
                             campaignNames={campaignNames}
                         />
-                        <FormFilterPicker
-                            value={chart.formFilter}
-                            onChange={v => onUpdate({ ...chart, formFilter: v })}
-                            formNames={formNames}
-                            formIds={formIds}
-                        />
+                        <div className="flex items-center gap-1 flex-shrink-0">
+                            <span className="text-zinc-600">Alto:</span>
+                            <input
+                                type="number"
+                                value={chart.height || 240}
+                                onChange={(e) => onUpdate({ ...chart, height: Math.max(100, Number(e.target.value)) })}
+                                className="w-12 h-6 text-xs text-center bg-zinc-950 border border-zinc-700 text-zinc-300 rounded outline-none"
+                                min={100}
+                                max={600}
+                            />
+                            <span className="text-zinc-700 text-[9px]">px</span>
+                        </div>
                     </div>
-                    
-                    <div className="flex items-center gap-1">
-                        <span className="text-zinc-600">Alto:</span>
-                        <input
-                            type="number"
-                            value={chart.height || 240}
-                            onChange={(e) => onUpdate({ ...chart, height: Math.max(100, Number(e.target.value)) })}
-                            className="w-12 h-6 text-xs text-center bg-zinc-950 border border-zinc-700 text-zinc-300 rounded outline-none"
-                            min={100}
-                            max={600}
-                        />
-                        <span className="text-zinc-700 text-[9px]">px</span>
-                    </div>
+                    <FormFilterPicker
+                        value={chart.formFilter}
+                        onChange={v => onUpdate({ ...chart, formFilter: v })}
+                        formNames={formNames}
+                        formIds={formIds}
+                    />
                 </div>
             </div>
         </div>

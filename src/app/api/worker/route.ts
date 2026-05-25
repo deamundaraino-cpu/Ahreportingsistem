@@ -583,13 +583,30 @@ export async function GET(request: Request) {
 
             // ─── Lead form breakdown (Meta Lead Ads) ──────────────────────────
             try {
+                // 1) Fetch form names from account's leadgen_forms catalog
+                const nameMap = new Map<string, string>()
+                try {
+                    const catalogUrl = new URL(`https://graph.facebook.com/v19.0/${actId}/leadgen_forms`)
+                    catalogUrl.searchParams.append('access_token', token)
+                    catalogUrl.searchParams.append('fields', 'id,name')
+                    catalogUrl.searchParams.append('limit', '200')
+                    const catalogRes = await fetch(catalogUrl.toString())
+                    const catalogData = await catalogRes.json()
+                    if (catalogData.data && Array.isArray(catalogData.data)) {
+                        for (const f of catalogData.data) {
+                            if (f.id && f.name) nameMap.set(String(f.id), f.name)
+                        }
+                    }
+                } catch (_) { /* non-critical */ }
+
+                // 2) Fetch insights breakdown by leadgen_form_id (level=ad required by Meta)
                 const formUrl = new URL(`https://graph.facebook.com/v19.0/${actId}/insights`)
                 formUrl.searchParams.append('access_token', token)
                 formUrl.searchParams.append('time_range', JSON.stringify({ since: targetDate, until: targetDate }))
                 formUrl.searchParams.append('fields', 'leadgen_form_id,spend,impressions,clicks,actions')
                 formUrl.searchParams.append('breakdowns', 'leadgen_form_id')
-                formUrl.searchParams.append('level', 'account')
-                formUrl.searchParams.append('limit', '200')
+                formUrl.searchParams.append('level', 'ad')
+                formUrl.searchParams.append('limit', '500')
 
                 const formRes = await fetch(formUrl.toString())
                 const formData = await formRes.json()
@@ -603,7 +620,7 @@ export async function GET(request: Request) {
 
                         const existing = formsMap.get(formId) || {
                             form_id:     formId,
-                            form_name:   formId,
+                            form_name:   nameMap.get(formId) || formId,
                             leads:       0,
                             spend:       0,
                             impressions: 0,
