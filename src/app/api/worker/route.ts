@@ -223,7 +223,7 @@ export async function GET(request: Request) {
 
         // ─── Helper: Fetch Meta Ads for a single account+date ───────────────
         async function fetchMetaSingleAccount(targetDate: string, rawAccountId: string, token: string) {
-            const record = { spend: 0, impressions: 0, clicks: 0, account_reach: 0, campaigns: [] as any[], meta_ads: [] as any[], meta_adsets: [] as any[] }
+            const record = { spend: 0, impressions: 0, clicks: 0, account_reach: 0, campaigns: [] as any[], meta_ads: [] as any[], meta_adsets: [] as any[], forms: [] as any[] }
             const actId = rawAccountId.startsWith('act_') ? rawAccountId : `act_${rawAccountId}`
             try {
                 const url = new URL(`https://graph.facebook.com/v19.0/${actId}/insights`)
@@ -581,12 +581,62 @@ export async function GET(request: Request) {
         record.meta_ads    = adsResult
         record.meta_adsets = adsetsResult
 
+            // ─── Lead form breakdown (Meta Lead Ads) ──────────────────────────
+            try {
+                const formUrl = new URL(`https://graph.facebook.com/v19.0/${actId}/insights`)
+                formUrl.searchParams.append('access_token', token)
+                formUrl.searchParams.append('time_range', JSON.stringify({ since: targetDate, until: targetDate }))
+                formUrl.searchParams.append('fields', 'leadgen_form_id,spend,impressions,clicks,actions')
+                formUrl.searchParams.append('breakdowns', 'leadgen_form_id')
+                formUrl.searchParams.append('level', 'account')
+                formUrl.searchParams.append('limit', '200')
+
+                const formRes = await fetch(formUrl.toString())
+                const formData = await formRes.json()
+
+                if (formData.data && Array.isArray(formData.data)) {
+                    const formsMap = new Map<string, any>()
+
+                    for (const item of formData.data) {
+                        const formId: string = item.leadgen_form_id || ''
+                        if (!formId) continue
+
+                        const existing = formsMap.get(formId) || {
+                            form_id:     formId,
+                            form_name:   formId,
+                            leads:       0,
+                            spend:       0,
+                            impressions: 0,
+                            clicks:      0,
+                        }
+
+                        existing.spend       += parseFloat(item.spend || '0')
+                        existing.impressions += parseInt(item.impressions || '0')
+                        existing.clicks      += parseInt(item.clicks || '0')
+
+                        if (item.actions) {
+                            for (const a of item.actions) {
+                                if (a.action_type === 'lead') {
+                                    existing.leads += parseInt(a.value || '0')
+                                }
+                            }
+                        }
+
+                        formsMap.set(formId, existing)
+                    }
+
+                    record.forms = Array.from(formsMap.values())
+                }
+            } catch (err: any) {
+                log(`[Meta] Form breakdown fetch failed (non-critical): ${err?.message}`)
+            }
+
             return record
         }
 
         // ─── Helper: Fetch Meta Ads for a single date (multi-account) ────────
         async function fetchMeta(targetDate: string) {
-            const record = { spend: 0, impressions: 0, clicks: 0, account_reach: 0, campaigns: [] as any[], meta_ads: [] as any[], meta_adsets: [] as any[] }
+            const record = { spend: 0, impressions: 0, clicks: 0, account_reach: 0, campaigns: [] as any[], meta_ads: [] as any[], meta_adsets: [] as any[], forms: [] as any[] }
 
             // Build account list — multi-account if configured, legacy fallback otherwise
             let accountsToFetch: { account_id: string; token: string }[] = []
@@ -623,6 +673,18 @@ export async function GET(request: Request) {
                 record.campaigns.push(...campaignsWithReach)
                 record.meta_ads.push(...(r.meta_ads || []))
                 record.meta_adsets.push(...(r.meta_adsets || []))
+                // Merge forms: sum metrics for same form_id across accounts
+                for (const f of (r.forms || [])) {
+                    const existing = record.forms.find((x: any) => x.form_id === f.form_id)
+                    if (existing) {
+                        existing.leads       += f.leads || 0
+                        existing.spend       += f.spend || 0
+                        existing.impressions += f.impressions || 0
+                        existing.clicks      += f.clicks || 0
+                    } else {
+                        record.forms.push({ ...f })
+                    }
+                }
                 if (r.campaigns.length > 0 || r.spend > 0) anySuccess = true
             }
 
@@ -1302,6 +1364,7 @@ export async function GET(request: Request) {
                     meta_campaigns: metaRecord.campaigns,
                     meta_ads:      metaRecord.meta_ads,
                     meta_adsets:   metaRecord.meta_adsets,
+                    meta_forms:    metaRecord.forms,
                     // Only include TikTok fields when the API call actually succeeded.
                     // On failure, preserve whatever is already in the DB for these columns.
                     ...(!tiktokFailed && {
