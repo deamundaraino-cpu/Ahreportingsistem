@@ -2,7 +2,7 @@ import React from 'react'
 import { Card, CardHeader, CardDescription, CardContent } from "@/components/ui/card"
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { GripVertical, Trash2, AlignLeft, AlignCenter, AlignRight, ChevronUp, ChevronRight } from 'lucide-react'
+import { GripVertical, Trash2, AlignLeft, AlignCenter, AlignRight, ChevronUp, ChevronRight, Pencil, Copy } from 'lucide-react'
 import type { CardDef, ChartDef, TextBlockDef } from '@/lib/layout-types'
 import { MetricCharts } from './MetricCharts'
 import { formatValue } from '@/lib/formula-engine'
@@ -15,11 +15,13 @@ const COLOR_MAP: Record<string, string> = {
     default: 'text-white',
 }
 
-export function SortableCard({ id, card, isPuzzleMode, onRemove, isCollapsed, onToggleCollapse }: {
+export function SortableCard({ id, card, isPuzzleMode, onRemove, onQuickEdit, onDuplicate, isCollapsed, onToggleCollapse }: {
     id: string
     card: CardDef & { value: number | null }
     isPuzzleMode: boolean
     onRemove?: () => void
+    onQuickEdit?: () => void
+    onDuplicate?: () => void
     isCollapsed?: boolean
     onToggleCollapse?: () => void
 }) {
@@ -48,10 +50,24 @@ export function SortableCard({ id, card, isPuzzleMode, onRemove, isCollapsed, on
                         </button>
                     )}
                 </div>
-            ) : onToggleCollapse && (
-                <button onClick={onToggleCollapse} className="absolute top-2 right-2 p-1 text-zinc-700 hover:text-zinc-400 opacity-0 group-hover:opacity-100 transition-opacity z-10" title="Ocultar">
-                    <ChevronUp className="w-3 h-3" />
-                </button>
+            ) : (
+                <div className="absolute top-2 right-2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-10">
+                    {onDuplicate && (
+                        <button onClick={e => { e.stopPropagation(); onDuplicate() }} className="p-1 text-zinc-600 hover:text-emerald-400 bg-zinc-900/80 border border-zinc-800 hover:border-emerald-500/40 rounded transition" title="Duplicar">
+                            <Copy className="w-3 h-3" />
+                        </button>
+                    )}
+                    {onQuickEdit && (
+                        <button onClick={e => { e.stopPropagation(); onQuickEdit() }} className="p-1 text-zinc-600 hover:text-indigo-400 bg-zinc-900/80 border border-zinc-800 hover:border-indigo-500/40 rounded transition" title="Editar">
+                            <Pencil className="w-3 h-3" />
+                        </button>
+                    )}
+                    {onToggleCollapse && (
+                        <button onClick={onToggleCollapse} className="p-1 text-zinc-700 hover:text-zinc-400 bg-zinc-900/80 border border-zinc-800 rounded transition" title="Ocultar">
+                            <ChevronUp className="w-3 h-3" />
+                        </button>
+                    )}
+                </div>
             )}
             <CardHeader className="pb-2">
                 <CardDescription className="text-zinc-400 font-medium pr-8">{card.label}</CardDescription>
@@ -65,7 +81,7 @@ export function SortableCard({ id, card, isPuzzleMode, onRemove, isCollapsed, on
     )
 }
 
-export function SortableChart({ id, chart, isPuzzleMode, metrics, weeks, varContext, sourceMapping, platformSet, layoutCustomMetrics, onRemove, onUpdateChart, isCollapsed, onToggleCollapse }: any) {
+export function SortableChart({ id, chart, isPuzzleMode, metrics, weeks, varContext, sourceMapping, platformSet, layoutCustomMetrics, onRemove, onUpdateChart, onQuickEdit, onDuplicate, isCollapsed, onToggleCollapse }: any) {
     const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id })
     const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.5 : 1, zIndex: isDragging ? 50 : 'auto' as any }
 
@@ -91,10 +107,24 @@ export function SortableChart({ id, chart, isPuzzleMode, metrics, weeks, varCont
                         </button>
                     )}
                 </div>
-            ) : onToggleCollapse && (
-                <button onClick={onToggleCollapse} className="absolute top-3 right-3 p-1.5 text-zinc-700 hover:text-zinc-400 opacity-0 group-hover:opacity-100 transition-opacity z-20 bg-zinc-900/80 rounded border border-zinc-800" title="Ocultar">
-                    <ChevronUp className="w-3.5 h-3.5" />
-                </button>
+            ) : (
+                <div className="absolute top-3 right-3 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-20">
+                    {onDuplicate && (
+                        <button onClick={e => { e.stopPropagation(); onDuplicate() }} className="p-1.5 text-zinc-600 hover:text-emerald-400 bg-zinc-900/80 border border-zinc-800 hover:border-emerald-500/40 rounded transition" title="Duplicar">
+                            <Copy className="w-3.5 h-3.5" />
+                        </button>
+                    )}
+                    {onQuickEdit && (
+                        <button onClick={e => { e.stopPropagation(); onQuickEdit() }} className="p-1.5 text-zinc-600 hover:text-indigo-400 bg-zinc-900/80 border border-zinc-800 hover:border-indigo-500/40 rounded transition" title="Editar">
+                            <Pencil className="w-3.5 h-3.5" />
+                        </button>
+                    )}
+                    {onToggleCollapse && (
+                        <button onClick={onToggleCollapse} className="p-1.5 text-zinc-700 hover:text-zinc-400 bg-zinc-900/80 rounded border border-zinc-800 transition" title="Ocultar">
+                            <ChevronUp className="w-3.5 h-3.5" />
+                        </button>
+                    )}
+                </div>
             )}
             <MetricCharts
                 charts={[chart]}
@@ -112,12 +142,14 @@ export function SortableChart({ id, chart, isPuzzleMode, metrics, weeks, varCont
 
 // ─── SortableText ─────────────────────────────────────────────────────────────
 
-export function SortableText({ id, block, isPuzzleMode, onRemove, onUpdate, isCollapsed, onToggleCollapse }: {
+export function SortableText({ id, block, isPuzzleMode, onRemove, onUpdate, onQuickEdit, onDuplicate, isCollapsed, onToggleCollapse }: {
     id: string
     block: TextBlockDef
     isPuzzleMode: boolean
     onRemove?: () => void
     onUpdate?: (updates: Partial<TextBlockDef>) => void
+    onQuickEdit?: () => void
+    onDuplicate?: () => void
     isCollapsed?: boolean
     onToggleCollapse?: () => void
 }) {
@@ -354,11 +386,23 @@ export function SortableText({ id, block, isPuzzleMode, onRemove, onUpdate, isCo
                 ? (isSeparator ? renderSeparatorPuzzle() : renderTextPuzzle())
                 : (isSeparator ? renderSeparatorView() : (
                     <>
-                        {onToggleCollapse && (
-                            <button onClick={onToggleCollapse} className="absolute top-2 right-2 p-1 text-zinc-700 hover:text-zinc-400 opacity-0 group-hover:opacity-100 transition-opacity z-10" title="Ocultar">
-                                <ChevronUp className="w-3 h-3" />
-                            </button>
-                        )}
+                        <div className="absolute top-2 right-2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-10">
+                            {onDuplicate && (
+                                <button onClick={e => { e.stopPropagation(); onDuplicate() }} className="p-1 text-zinc-600 hover:text-emerald-400 bg-zinc-900/80 border border-zinc-800 hover:border-emerald-500/40 rounded transition" title="Duplicar">
+                                    <Copy className="w-3 h-3" />
+                                </button>
+                            )}
+                            {onQuickEdit && (
+                                <button onClick={e => { e.stopPropagation(); onQuickEdit() }} className="p-1 text-zinc-600 hover:text-indigo-400 bg-zinc-900/80 border border-zinc-800 hover:border-indigo-500/40 rounded transition" title="Editar">
+                                    <Pencil className="w-3 h-3" />
+                                </button>
+                            )}
+                            {onToggleCollapse && (
+                                <button onClick={onToggleCollapse} className="p-1 text-zinc-700 hover:text-zinc-400 bg-zinc-900/80 border border-zinc-800 rounded transition" title="Ocultar">
+                                    <ChevronUp className="w-3 h-3" />
+                                </button>
+                            )}
+                        </div>
                         {renderTextView()}
                     </>
                 ))
@@ -367,7 +411,7 @@ export function SortableText({ id, block, isPuzzleMode, onRemove, onUpdate, isCo
     )
 }
 
-export function SortableTable({ id, isPuzzleMode, children, title, isCollapsed, onToggleCollapse }: any) {
+export function SortableTable({ id, isPuzzleMode, children, title, onQuickEdit, onDuplicate, isCollapsed, onToggleCollapse }: any) {
     const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id })
     const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.5 : 1, zIndex: isDragging ? 50 : 'auto' as any }
 
@@ -388,10 +432,24 @@ export function SortableTable({ id, isPuzzleMode, children, title, isCollapsed, 
                         <GripVertical className="w-4 h-4" />
                     </button>
                 </div>
-            ) : onToggleCollapse && (
-                <button onClick={(e) => { e.stopPropagation(); onToggleCollapse() }} className="absolute top-4 right-4 p-1.5 text-zinc-700 hover:text-zinc-400 opacity-0 group-hover:opacity-100 transition-opacity z-20 bg-zinc-900/80 rounded border border-zinc-800" title="Ocultar">
-                    <ChevronUp className="w-3.5 h-3.5" />
-                </button>
+            ) : (
+                <div className="absolute top-4 right-4 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-20">
+                    {onDuplicate && (
+                        <button onClick={e => { e.stopPropagation(); onDuplicate() }} className="p-1.5 text-zinc-600 hover:text-emerald-400 bg-zinc-900/80 border border-zinc-800 hover:border-emerald-500/40 rounded transition" title="Duplicar">
+                            <Copy className="w-3.5 h-3.5" />
+                        </button>
+                    )}
+                    {onQuickEdit && (
+                        <button onClick={e => { e.stopPropagation(); onQuickEdit() }} className="p-1.5 text-zinc-600 hover:text-indigo-400 bg-zinc-900/80 border border-zinc-800 hover:border-indigo-500/40 rounded transition" title="Editar">
+                            <Pencil className="w-3.5 h-3.5" />
+                        </button>
+                    )}
+                    {onToggleCollapse && (
+                        <button onClick={(e) => { e.stopPropagation(); onToggleCollapse() }} className="p-1.5 text-zinc-700 hover:text-zinc-400 bg-zinc-900/80 rounded border border-zinc-800 transition" title="Ocultar">
+                            <ChevronUp className="w-3.5 h-3.5" />
+                        </button>
+                    )}
+                </div>
             )}
             {children}
         </div>

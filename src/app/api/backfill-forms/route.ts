@@ -83,8 +83,9 @@ export async function POST(request: Request) {
         // Build form name catalog (once per account)
         const nameMap = new Map<string, string>()
         for (const { account_id, token } of accounts) {
+            const actId = account_id.startsWith('act_') ? account_id : `act_${account_id}`
             try {
-                const url = new URL(`https://graph.facebook.com/v19.0/${account_id}/leadgen_forms`)
+                const url = new URL(`https://graph.facebook.com/v19.0/${actId}/leadgen_forms`)
                 url.searchParams.append('access_token', token)
                 url.searchParams.append('fields', 'id,name')
                 url.searchParams.append('limit', '200')
@@ -108,8 +109,9 @@ export async function POST(request: Request) {
             const formsMap = new Map<string, any>()
 
             for (const { account_id, token } of accounts) {
+                const actId = account_id.startsWith('act_') ? account_id : `act_${account_id}`
                 try {
-                    const url = new URL(`https://graph.facebook.com/v19.0/${account_id}/insights`)
+                    const url = new URL(`https://graph.facebook.com/v19.0/${actId}/insights`)
                     url.searchParams.append('access_token', token)
                     url.searchParams.append('time_range', JSON.stringify({ since: date, until: date }))
                     url.searchParams.append('fields', 'leadgen_form_id,spend,impressions,clicks,actions')

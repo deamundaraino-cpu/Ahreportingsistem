@@ -9,9 +9,11 @@ import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { evaluateFormula, aggregateFormula, formatValue } from '@/lib/formula-engine'
 import { LayoutConfigModal } from './LayoutConfigModal'
+import { QuickEditModal } from './QuickEditModal'
+import type { QuickEditTarget } from './QuickEditModal'
 import { TabConfigModal } from './TabConfigModal'
 import { MetricCharts } from './MetricCharts'
-import { LayoutDashboard, Settings2, Plus, Edit2, CalendarDays, Timer, BadgeDollarSign, Wallet, GripVertical, Search, X, Puzzle, Type, AlignLeft, AlignCenter, AlignRight, Trash2, Save, Loader2, Minus, Archive } from 'lucide-react'
+import { LayoutDashboard, Settings2, Plus, Edit2, CalendarDays, Timer, BadgeDollarSign, Wallet, GripVertical, Search, X, Puzzle, Type, AlignLeft, AlignCenter, AlignRight, Trash2, Save, Loader2, Minus, Archive, Copy } from 'lucide-react'
 import type { ColDef, CardDef, ReportLayout, ChartDef, MetricDef, TextBlockDef } from '@/lib/layout-types'
 import { updateManualMetric, getTabTotalSpend, saveClienteLayout, saveTabOverrides, updateLayoutPuzzleState, toggleTabArchived } from '../_actions'
 import { SortableCard, SortableChart, SortableTable, SortableText } from './PuzzleComponents'
@@ -329,6 +331,7 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
     // Fallback manual filter for general tab
     const [keywordFilter, setKeywordFilter] = useState(initialKeyword)
     const [showModal, setShowModal] = useState(false)
+    const [quickEditTarget, setQuickEditTarget] = useState<QuickEditTarget | null>(null)
     const [showArchive, setShowArchive] = useState(false)
     const isTeam = ['superadmin', 'admin', 'trafficker'].includes(userRole ?? '')
 
@@ -506,6 +509,64 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
             ...prev,
             [activeTabId]: { ...(prev[activeTabId] || activeLayout), ...updates }
         }))
+    }
+
+    async function handleDuplicateBlock(blockId: string) {
+        const layout = { ...activeLayout, blocks_order: orderedBlocks }
+        const currentOrder = [...orderedBlocks]
+        const insertAfterIdx = currentOrder.indexOf(blockId)
+        let updated: typeof layout | null = null
+
+        if (blockId.startsWith('card:')) {
+            const origId = blockId.replace('card:', '')
+            const orig = layout.tarjetas.find((c: any) => c.id === origId)
+            if (!orig) return
+            const copy = { ...orig, id: crypto.randomUUID(), label: `${orig.label} (copia)` }
+            const newOrder = [...currentOrder]
+            newOrder.splice(insertAfterIdx + 1, 0, `card:${copy.id}`)
+            updated = { ...layout, tarjetas: [...layout.tarjetas, copy], blocks_order: newOrder }
+        } else if (blockId.startsWith('chart:')) {
+            const origId = blockId.replace('chart:', '')
+            const orig = (layout.graficos || []).find((g: any) => g.id === origId)
+            if (!orig) return
+            const copy = { ...orig, id: crypto.randomUUID(), title: `${orig.title} (copia)` }
+            const newOrder = [...currentOrder]
+            newOrder.splice(insertAfterIdx + 1, 0, `chart:${copy.id}`)
+            updated = { ...layout, graficos: [...(layout.graficos || []), copy], blocks_order: newOrder }
+        } else if (blockId.startsWith('text:')) {
+            const origId = blockId.replace('text:', '')
+            const orig = (layout.text_blocks || []).find((t: any) => t.id === origId)
+            if (!orig) return
+            const copy = { ...orig, id: crypto.randomUUID() }
+            const newOrder = [...currentOrder]
+            newOrder.splice(insertAfterIdx + 1, 0, `text:${copy.id}`)
+            updated = { ...layout, text_blocks: [...(layout.text_blocks || []), copy], blocks_order: newOrder }
+        } else if (blockId.startsWith('ranking:')) {
+            const origId = blockId.replace('ranking:', '')
+            const orig = (layout.ranking_tables || []).find((r: any) => r.id === origId)
+            if (!orig) return
+            const copy = { ...orig, id: crypto.randomUUID(), title: `${orig.title} (copia)`, columns: orig.columns.map((c: any) => ({ ...c })) }
+            const newOrder = [...currentOrder]
+            newOrder.splice(insertAfterIdx + 1, 0, `ranking:${copy.id}`)
+            updated = { ...layout, ranking_tables: [...(layout.ranking_tables || []), copy], blocks_order: newOrder }
+        }
+
+        if (!updated) return
+        setTabLayoutOverrides(prev => ({ ...prev, [activeTabId]: updated! }))
+        const payload = {
+            columnas: updated.columnas,
+            tarjetas: updated.tarjetas,
+            graficos: updated.graficos,
+            text_blocks: updated.text_blocks,
+            custom_metrics: updated.custom_metrics,
+            blocks_order: updated.blocks_order,
+            ranking_tables: updated.ranking_tables,
+        }
+        if (activeTabId && activeTabId !== 'general') {
+            await saveTabOverrides(cliente.id, activeTabId, payload)
+        } else {
+            await saveClienteLayout(cliente.id, payload)
+        }
     }
 
     const handleUpdateChart = useCallback((chartId: string, updatedChart: ChartDef) => {
@@ -1030,7 +1091,7 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                                 const rankingDef = activeLayout.ranking_tables?.find(r => r.id === rankingId)
                                 if (!rankingDef) return null
                                 return (
-                                    <SortableTable key={blockId} id={blockId} isPuzzleMode={isPuzzleMode} title={rankingDef.title} isCollapsed={collapsedBlocks.has(blockId)} onToggleCollapse={() => toggleCollapse(blockId)}>
+                                    <SortableTable key={blockId} id={blockId} isPuzzleMode={isPuzzleMode} title={rankingDef.title} onQuickEdit={() => setQuickEditTarget({ type: 'ranking', id: rankingId })} onDuplicate={() => handleDuplicateBlock(blockId)} isCollapsed={collapsedBlocks.has(blockId)} onToggleCollapse={() => toggleCollapse(blockId)}>
                                         <RankingTableBlock
                                             def={rankingDef}
                                             metrics={filteredMetrics}
@@ -1045,7 +1106,7 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                             if (blockId.startsWith('card:')) {
                                 const card = tarjetaValues.find((t: any) => `card:${t.id}` === blockId)
                                 if (!card) return null
-                                return <SortableCard key={blockId} id={blockId} card={card} isPuzzleMode={isPuzzleMode} onRemove={() => handleRemoveBlock(blockId)} isCollapsed={collapsedBlocks.has(blockId)} onToggleCollapse={() => toggleCollapse(blockId)} />
+                                return <SortableCard key={blockId} id={blockId} card={card} isPuzzleMode={isPuzzleMode} onRemove={() => handleRemoveBlock(blockId)} onQuickEdit={() => setQuickEditTarget({ type: 'card', id: card.id })} onDuplicate={() => handleDuplicateBlock(blockId)} isCollapsed={collapsedBlocks.has(blockId)} onToggleCollapse={() => toggleCollapse(blockId)} />
                             }
                             if (blockId.startsWith('chart:')) {
                                 const chart = activeLayout.graficos?.find((g: any) => `chart:${g.id}` === blockId)
@@ -1063,6 +1124,8 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                                     layoutCustomMetrics={layoutCustomMetrics}
                                     onRemove={() => handleRemoveBlock(blockId)}
                                     onUpdateChart={handleUpdateChart}
+                                    onQuickEdit={() => setQuickEditTarget({ type: 'chart', id: chart.id })}
+                                    onDuplicate={() => handleDuplicateBlock(blockId)}
                                     isCollapsed={collapsedBlocks.has(blockId)}
                                     onToggleCollapse={() => toggleCollapse(blockId)}
                                 />
@@ -1077,13 +1140,15 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                                     isPuzzleMode={isPuzzleMode}
                                     onRemove={() => handleRemoveBlock(blockId)}
                                     onUpdate={(updates: any) => handleUpdateTextBlock(blockId, updates)}
+                                    onQuickEdit={() => setQuickEditTarget({ type: 'text', id: txt.id })}
+                                    onDuplicate={() => handleDuplicateBlock(blockId)}
                                     isCollapsed={collapsedBlocks.has(blockId)}
                                     onToggleCollapse={() => toggleCollapse(blockId)}
                                 />
                             }
                             if (blockId === 'table') {
                                 return (
-                                    <SortableTable key={blockId} id={blockId} isPuzzleMode={isPuzzleMode} title="Vista de Embudo Diaria" isCollapsed={collapsedBlocks.has(blockId)} onToggleCollapse={() => toggleCollapse(blockId)}>
+                                    <SortableTable key={blockId} id={blockId} isPuzzleMode={isPuzzleMode} title="Vista de Embudo Diaria" onQuickEdit={() => setQuickEditTarget({ type: 'table' })} isCollapsed={collapsedBlocks.has(blockId)} onToggleCollapse={() => toggleCollapse(blockId)}>
                                         <Card className="bg-zinc-900 border-zinc-800 overflow-hidden shadow-2xl">
                                             <CardHeader className="border-b border-zinc-800 bg-zinc-950/30">
                                                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -1338,6 +1403,22 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                         setShowModal(false)
                     }}
                     tabId={activeTabId}
+                />
+            )}
+            {quickEditTarget && (
+                <QuickEditModal
+                    target={quickEditTarget}
+                    layout={{ ...activeLayout, blocks_order: orderedBlocks }}
+                    clienteId={cliente.id}
+                    tabId={activeTabId}
+                    conversionesCatalogo={conversionesCatalogo}
+                    campaignGroups={data.campaignGroups || []}
+                    campaignNames={allCampaignNames}
+                    onClose={() => setQuickEditTarget(null)}
+                    onLayoutApplied={(newLayout) => {
+                        setTabLayoutOverrides(prev => ({ ...prev, [activeTabId]: newLayout }))
+                        setTimeout(() => setQuickEditTarget(null), 600)
+                    }}
                 />
             )}
         </div>

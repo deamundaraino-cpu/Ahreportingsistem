@@ -14,7 +14,7 @@ import type { ColDef, CardDef, ChartDef, ChartType, ReportLayout, CardColor, Cam
 
 // ─── Available Metrics for Dropdown ──────────────────────────────────────────
 
-const AVAILABLE_METRICS = [
+export const AVAILABLE_METRICS = [
     // ── Meta · Entrega ────────────────────────────────────────────────────────
     { id: 'meta_spend',       label: 'Meta: Gasto' },
     { id: 'meta_impressions', label: 'Meta: Impresiones' },
@@ -164,7 +164,7 @@ const AVAILABLE_METRICS = [
 ]
 
 /** Build dynamic metric list merging static + catalog custom conversions */
-function buildAvailableMetrics(conversionesCatalogo: { conversion_key: string; label: string; field_id: string }[]) {
+export function buildAvailableMetrics(conversionesCatalogo: { conversion_key: string; label: string; field_id: string }[]) {
     const dynamic = conversionesCatalogo.map(c => ({ id: c.field_id, label: `Meta: ${c.label}` }))
     // Merge, removing duplicates by id
     const existing = new Set(AVAILABLE_METRICS.map(m => m.id))
@@ -174,7 +174,7 @@ function buildAvailableMetrics(conversionesCatalogo: { conversion_key: string; l
 
 // ─── Formula Input component ──────────────────────────────────────────────────
 
-function FormulaInput({ value, onChange, disabled, availableMetrics }: {
+export function FormulaInput({ value, onChange, disabled, availableMetrics }: {
     value: string
     onChange: (val: string) => void
     disabled?: boolean
@@ -265,7 +265,7 @@ function FormulaInput({ value, onChange, disabled, availableMetrics }: {
 
 // ─── Metric Type Selector ─────────────────────────────────────────────────────
 
-type MetricType = 'number' | 'currency' | 'percent'
+export type MetricType = 'number' | 'currency' | 'percent'
 
 function getMetricType(prefix?: string, suffix?: string): MetricType {
     if (suffix === '%') return 'percent'
@@ -279,7 +279,7 @@ function applyMetricType(type: MetricType): { prefix: string; suffix: string; de
     return { prefix: '', suffix: '', decimals: 0 }
 }
 
-function MetricTypeSelector({ prefix, suffix, onChange }: {
+export function MetricTypeSelector({ prefix, suffix, onChange }: {
     prefix?: string
     suffix?: string
     onChange: (vals: { prefix: string; suffix: string; decimals: number }) => void
@@ -412,7 +412,7 @@ function DraggableColumnRow({
 
 // ─── DnD Card Row ─────────────────────────────────────────────────────────────
 
-const COLOR_OPTIONS: { val: CardColor; bg: string }[] = [
+export const COLOR_OPTIONS: { val: CardColor; bg: string }[] = [
     { val: 'default', bg: 'bg-zinc-400' },
     { val: 'emerald', bg: 'bg-emerald-400' },
     { val: 'blue', bg: 'bg-blue-400' },
@@ -421,7 +421,7 @@ const COLOR_OPTIONS: { val: CardColor; bg: string }[] = [
 ]
 
 function DraggableCardRow({
-    card, index, onDragStart, onDragOver, onDrop, onUpdate, onRemove, availableMetrics, campaignGroups = [], campaignNames = []
+    card, index, onDragStart, onDragOver, onDrop, onUpdate, onRemove, onDuplicate, availableMetrics, campaignGroups = [], campaignNames = []
 }: {
     card: CardDef
     index: number
@@ -430,6 +430,7 @@ function DraggableCardRow({
     onDrop: (i: number) => void
     onUpdate: (card: CardDef) => void
     onRemove: () => void
+    onDuplicate?: () => void
     availableMetrics?: { id: string; label: string }[]
     campaignGroups?: { id: string; nombre: string }[]
     campaignNames?: string[]
@@ -489,16 +490,23 @@ function DraggableCardRow({
                 </div>
             </div>
 
-            <button onClick={onRemove} className="flex-shrink-0 text-zinc-700 hover:text-red-400 transition mt-1.5">
-                <X className="w-3.5 h-3.5" />
-            </button>
+            <div className="flex flex-col gap-1 flex-shrink-0 mt-1.5">
+                {onDuplicate && (
+                    <button onClick={onDuplicate} title="Duplicar tarjeta" className="text-zinc-700 hover:text-emerald-400 transition">
+                        <Copy className="w-3.5 h-3.5" />
+                    </button>
+                )}
+                <button onClick={onRemove} className="text-zinc-700 hover:text-red-400 transition">
+                    <X className="w-3.5 h-3.5" />
+                </button>
+            </div>
         </div>
     )
 }
 
 // ─── DnD Chart Row ────────────────────────────────────────────────────────────
 
-const CHART_TYPES: { val: ChartType; label: string; icon: string }[] = [
+export const CHART_TYPES: { val: ChartType; label: string; icon: string }[] = [
     { val: 'area',        label: 'Área',            icon: '📉' },
     { val: 'stacked_area',label: 'Área Apilada',    icon: '📈' },
     { val: 'bar',         label: 'Barras',          icon: '📊' },
@@ -512,7 +520,7 @@ const CHART_TYPES: { val: ChartType; label: string; icon: string }[] = [
     { val: 'funnel',      label: 'Embudo',          icon: '🔻' },
 ]
 
-const CHART_COLOR_OPTIONS = [
+export const CHART_COLOR_OPTIONS = [
     { val: 'amber',   hex: '#f59e0b' }, { val: 'cyan',    hex: '#22d3ee' },
     { val: 'blue',    hex: '#60a5fa' }, { val: 'violet',  hex: '#a78bfa' },
     { val: 'emerald', hex: '#34d399' }, { val: 'rose',    hex: '#fb7185' },
@@ -522,7 +530,7 @@ const CHART_COLOR_OPTIONS = [
 ]
 
 function DraggableChartRow({
-    chart, index, onDragStart, onDragOver, onDrop, onUpdate, onRemove, availableMetrics, campaignGroups = [], campaignNames = []
+    chart, index, onDragStart, onDragOver, onDrop, onUpdate, onRemove, onDuplicate, availableMetrics, campaignGroups = [], campaignNames = []
 }: {
     chart: ChartDef
     index: number
@@ -531,6 +539,7 @@ function DraggableChartRow({
     onDrop: (i: number) => void
     onUpdate: (chart: ChartDef) => void
     onRemove: () => void
+    onDuplicate?: () => void
     availableMetrics?: { id: string; label: string }[]
     campaignGroups?: { id: string; nombre: string }[]
     campaignNames?: string[]
@@ -603,9 +612,16 @@ function DraggableChartRow({
                     placeholder="Título"
                 />
 
-                <button onClick={onRemove} className="flex-shrink-0 text-zinc-700 hover:text-red-400 transition">
-                    <X className="w-3.5 h-3.5" />
-                </button>
+                <div className="flex items-center gap-1 flex-shrink-0">
+                    {onDuplicate && (
+                        <button onClick={onDuplicate} title="Duplicar gráfico" className="text-zinc-700 hover:text-emerald-400 transition">
+                            <Copy className="w-3.5 h-3.5" />
+                        </button>
+                    )}
+                    <button onClick={onRemove} className="text-zinc-700 hover:text-red-400 transition">
+                        <X className="w-3.5 h-3.5" />
+                    </button>
+                </div>
             </div>
 
             {/* Row 2: metrics list */}
@@ -846,7 +862,7 @@ const FILTER_OPERATORS: { value: CampaignFilterOperator; label: string; multi: b
     { value: 'none_of',     label: 'Fuera de estas',  multi: true  },
 ]
 
-function CampaignFilterPicker({
+export function CampaignFilterPicker({
     value,
     onChange,
     campaignGroups,
@@ -1288,6 +1304,48 @@ export function LayoutConfigModal({
         setWorkingLayout({ ...workingLayout, text_blocks: newBlocks })
     }
 
+    function duplicateCard(index: number) {
+        if (!workingLayout) return
+        const source = workingLayout.tarjetas[index]
+        if (!source) return
+        const copy = { ...source, id: crypto.randomUUID(), label: `${source.label} (copia)` }
+        const cards = [...workingLayout.tarjetas]
+        cards.splice(index + 1, 0, copy)
+        const newOrder = [...(workingLayout.blocks_order || [])]
+        const pos = newOrder.indexOf(`card:${source.id}`)
+        if (pos >= 0) newOrder.splice(pos + 1, 0, `card:${copy.id}`)
+        else newOrder.push(`card:${copy.id}`)
+        setWorkingLayout({ ...workingLayout, tarjetas: cards, blocks_order: newOrder })
+    }
+
+    function duplicateChart(index: number) {
+        if (!workingLayout) return
+        const source = (workingLayout.graficos || [])[index]
+        if (!source) return
+        const copy = { ...source, id: crypto.randomUUID(), title: `${source.title} (copia)`, colors: [...(source.colors || [])], valueFormulas: [...source.valueFormulas] }
+        const charts = [...(workingLayout.graficos || [])]
+        charts.splice(index + 1, 0, copy)
+        const newOrder = [...(workingLayout.blocks_order || [])]
+        const pos = newOrder.indexOf(`chart:${source.id}`)
+        if (pos >= 0) newOrder.splice(pos + 1, 0, `chart:${copy.id}`)
+        else newOrder.push(`chart:${copy.id}`)
+        setWorkingLayout({ ...workingLayout, graficos: charts, blocks_order: newOrder })
+    }
+
+    function duplicateRankingTable(index: number) {
+        if (!workingLayout) return
+        const source = (workingLayout.ranking_tables || [])[index]
+        if (!source) return
+        const copy = { ...source, id: crypto.randomUUID(), title: `${source.title} (copia)`, columns: source.columns.map((c: any) => ({ ...c })) }
+        const tables = [...(workingLayout.ranking_tables || [])]
+        tables.splice(index + 1, 0, copy)
+        const newOrder = [...(workingLayout.blocks_order || [])]
+        const pos = newOrder.indexOf(`ranking:${source.id}`)
+        if (pos >= 0) newOrder.splice(pos + 1, 0, `ranking:${copy.id}`)
+        else newOrder.push(`ranking:${copy.id}`)
+        setWorkingLayout({ ...workingLayout, ranking_tables: tables, blocks_order: newOrder })
+    }
+
     function duplicateTextBlock(index: number) {
         if (!workingLayout) return
         const source = (workingLayout.text_blocks || [])[index]
@@ -1546,6 +1604,7 @@ export function LayoutConfigModal({
                                                 onDrop={() => handleDrop(i, 'card')}
                                                 onUpdate={v => updateCard(i, v)}
                                                 onRemove={() => removeCard(i)}
+                                                onDuplicate={() => duplicateCard(i)}
                                                 availableMetrics={availableMetrics}
                                                 campaignGroups={campaignGroups}
                                                 campaignNames={campaignNames}
@@ -1596,6 +1655,7 @@ export function LayoutConfigModal({
                                         onDrop={() => handleDrop(i, 'chart' as any)}
                                         onUpdate={v => updateChart(i, v)}
                                         onRemove={() => removeChart(i)}
+                                        onDuplicate={() => duplicateChart(i)}
                                         availableMetrics={availableMetrics}
                                         campaignGroups={campaignGroups}
                                         campaignNames={campaignNames}
@@ -1765,6 +1825,9 @@ export function LayoutConfigModal({
                                                 className="h-7 text-xs bg-zinc-950 border-zinc-700 text-white flex-1"
                                                 placeholder="Título de la tabla"
                                             />
+                                            <button onClick={() => duplicateRankingTable(ti)} title="Duplicar tabla" className="flex-shrink-0 text-zinc-700 hover:text-emerald-400 transition">
+                                                <Copy className="w-3.5 h-3.5" />
+                                            </button>
                                             <button onClick={() => removeRankingTable(ti)} className="flex-shrink-0 text-zinc-700 hover:text-red-400 transition">
                                                 <X className="w-3.5 h-3.5" />
                                             </button>
