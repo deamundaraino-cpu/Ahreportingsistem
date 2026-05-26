@@ -1044,6 +1044,45 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                 </div>
                 {!isPublic && (
                     <div className="flex items-center gap-2">
+                        {isTeam && (
+                            <Popover open={addMenuOpen} onOpenChange={setAddMenuOpen}>
+                                <PopoverTrigger asChild>
+                                    <Button
+                                        size="sm"
+                                        variant="outline"
+                                        className="gap-1.5 text-xs border-zinc-700 text-zinc-400 hover:text-emerald-300 hover:border-emerald-500/40 hover:bg-emerald-500/5 transition"
+                                    >
+                                        <Plus className="w-3.5 h-3.5" />
+                                        Agregar
+                                    </Button>
+                                </PopoverTrigger>
+                                <PopoverContent
+                                    className="p-1 bg-zinc-900 border-zinc-800 w-48"
+                                    style={{ zIndex: 9999 }}
+                                    align="start"
+                                    side="bottom"
+                                    collisionBoundary={[]}
+                                    collisionPadding={8}
+                                    onOpenAutoFocus={e => e.preventDefault()}
+                                >
+                                    {([
+                                        { type: 'card',    icon: <CreditCard className="w-3.5 h-3.5" />, label: 'Tarjeta' },
+                                        { type: 'chart',   icon: <BarChart3  className="w-3.5 h-3.5" />, label: 'Gráfico' },
+                                        { type: 'ranking', icon: <Table2     className="w-3.5 h-3.5" />, label: 'Tabla ranking' },
+                                        { type: 'text',    icon: <Type       className="w-3.5 h-3.5" />, label: 'Texto / Sección' },
+                                    ] as const).map(({ type, icon, label }) => (
+                                        <button
+                                            key={type}
+                                            onClick={() => handleAddNewBlock(type)}
+                                            className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-white rounded transition"
+                                        >
+                                            <span className="text-zinc-500">{icon}</span>
+                                            {label}
+                                        </button>
+                                    ))}
+                                </PopoverContent>
+                            </Popover>
+                        )}
                         <Button
                             size="sm"
                             variant="outline"
