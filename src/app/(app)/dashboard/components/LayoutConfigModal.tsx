@@ -9,7 +9,7 @@ import {
     RotateCcw, Save, Loader2, Check,
     ChevronLeft, Eye, EyeOff, LayoutPanelTop, Plus, Database, BarChart3, Copy
 } from 'lucide-react'
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { Popover, PopoverContent, PopoverTrigger, PopoverAnchor } from '@/components/ui/popover'
 import type { ColDef, CardDef, ChartDef, ChartType, ReportLayout, CardColor, CampaignFilterSpec, CampaignFilterOperator, RankingTableDef, RankingColumnDef } from '@/lib/layout-types'
 
 // ─── Available Metrics for Dropdown ──────────────────────────────────────────
@@ -882,24 +882,10 @@ export function CampaignFilterPicker({
     const [showSuggestions, setShowSuggestions] = useState(false)
     const [showMultiPanel, setShowMultiPanel] = useState(false)
     const [multiSearch, setMultiSearch] = useState('')
-    const multiRef = useRef<HTMLDivElement>(null)
 
     useEffect(() => {
         if (value?.type !== 'keyword' || isMulti) setKwSearch('')
     }, [value, isMulti])
-
-    // close multi panel on outside click
-    useEffect(() => {
-        if (!showMultiPanel) return
-        const handler = (e: MouseEvent) => {
-            if (multiRef.current && !multiRef.current.contains(e.target as Node)) {
-                setShowMultiPanel(false)
-                setMultiSearch('')
-            }
-        }
-        document.addEventListener('mousedown', handler)
-        return () => document.removeEventListener('mousedown', handler)
-    }, [showMultiPanel])
 
     const selectedMulti: string[] = (value?.type === 'keyword' && Array.isArray(value.value)) ? value.value : []
 
@@ -965,102 +951,118 @@ export function CampaignFilterPicker({
 
             {/* Text input for single-value operators */}
             {!isMulti && (
-                <div className="relative">
-                    <Input
-                        value={kwSearch}
-                        onChange={e => {
-                            setKwSearch(e.target.value)
-                            if (e.target.value) onChange({ type: 'keyword', operator: currentOp, value: e.target.value })
-                            else if (value?.type === 'keyword') onChange(undefined)
-                            setShowSuggestions(true)
-                        }}
-                        onFocus={() => setShowSuggestions(true)}
-                        onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
-                        placeholder="Buscar campaña..."
-                        className="h-6 text-xs bg-zinc-950 border-zinc-700 text-zinc-300 w-40"
-                    />
-                    {showSuggestions && suggestions.length > 0 && (
-                        <div className="absolute top-7 left-0 z-[120] bg-zinc-900 border border-zinc-800 rounded shadow-lg max-h-48 overflow-y-auto w-56 custom-scrollbar">
-                            {suggestions.map(name => (
-                                <button
-                                    key={name}
-                                    onMouseDown={e => e.preventDefault()}
-                                    onClick={() => {
-                                        setKwSearch(name)
-                                        onChange({ type: 'keyword', operator: currentOp, value: name })
-                                        setShowSuggestions(false)
-                                    }}
-                                    className="w-full text-left px-2 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 transition truncate block"
-                                >
-                                    {name}
-                                </button>
-                            ))}
-                        </div>
-                    )}
-                </div>
+                <Popover open={showSuggestions && suggestions.length > 0} onOpenChange={open => { if (!open) setShowSuggestions(false) }}>
+                    <PopoverAnchor asChild>
+                        <Input
+                            value={kwSearch}
+                            onChange={e => {
+                                setKwSearch(e.target.value)
+                                if (e.target.value) onChange({ type: 'keyword', operator: currentOp, value: e.target.value })
+                                else if (value?.type === 'keyword') onChange(undefined)
+                                setShowSuggestions(true)
+                            }}
+                            onFocus={() => setShowSuggestions(true)}
+                            onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
+                            placeholder="Buscar campaña..."
+                            className="h-6 text-xs bg-zinc-950 border-zinc-700 text-zinc-300 w-40"
+                        />
+                    </PopoverAnchor>
+                    <PopoverContent
+                        className="p-0 bg-zinc-900 border-zinc-800 w-56 max-h-48 overflow-y-auto custom-scrollbar"
+                        style={{ zIndex: 9999 }}
+                        align="start"
+                        side="bottom"
+                        avoidCollisions={true}
+                        collisionBoundary={[]}
+                        collisionPadding={8}
+                        onOpenAutoFocus={e => e.preventDefault()}
+                    >
+                        {suggestions.map(name => (
+                            <button
+                                key={name}
+                                onMouseDown={e => e.preventDefault()}
+                                onClick={() => {
+                                    setKwSearch(name)
+                                    onChange({ type: 'keyword', operator: currentOp, value: name })
+                                    setShowSuggestions(false)
+                                }}
+                                className="w-full text-left px-2 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 transition truncate block"
+                            >
+                                {name}
+                            </button>
+                        ))}
+                    </PopoverContent>
+                </Popover>
             )}
 
             {/* Multi-select panel for any_of / none_of */}
             {isMulti && (
-                <div className="relative" ref={multiRef}>
-                    <button
-                        onClick={() => { setShowMultiPanel(p => !p); setMultiSearch('') }}
-                        className={`h-6 px-2 text-xs rounded border transition flex items-center gap-1 ${
-                            selectedMulti.length > 0
-                                ? 'bg-indigo-500/20 border-indigo-500/40 text-indigo-300'
-                                : 'bg-zinc-950 border-zinc-700 text-zinc-400 hover:border-zinc-500'
-                        }`}
+                <Popover open={showMultiPanel} onOpenChange={open => { setShowMultiPanel(open); if (!open) setMultiSearch('') }}>
+                    <PopoverTrigger asChild>
+                        <button
+                            className={`h-6 px-2 text-xs rounded border transition flex items-center gap-1 ${
+                                selectedMulti.length > 0
+                                    ? 'bg-indigo-500/20 border-indigo-500/40 text-indigo-300'
+                                    : 'bg-zinc-950 border-zinc-700 text-zinc-400 hover:border-zinc-500'
+                            }`}
+                        >
+                            {selectedMulti.length > 0 ? `${selectedMulti.length} campaña${selectedMulti.length > 1 ? 's' : ''}` : 'Seleccionar...'}
+                            <ChevronRight className={`w-3 h-3 transition-transform ${showMultiPanel ? 'rotate-90' : ''}`} />
+                        </button>
+                    </PopoverTrigger>
+                    <PopoverContent
+                        className="p-0 bg-zinc-900 border-zinc-700 w-64"
+                        style={{ zIndex: 9999 }}
+                        align="start"
+                        side="bottom"
+                        avoidCollisions={true}
+                        collisionBoundary={[]}
+                        collisionPadding={8}
+                        onOpenAutoFocus={e => e.preventDefault()}
                     >
-                        {selectedMulti.length > 0 ? `${selectedMulti.length} campaña${selectedMulti.length > 1 ? 's' : ''}` : 'Seleccionar...'}
-                        <ChevronRight className={`w-3 h-3 transition-transform ${showMultiPanel ? 'rotate-90' : ''}`} />
-                    </button>
-
-                    {showMultiPanel && (
-                        <div className="absolute top-8 left-0 z-[120] bg-zinc-900 border border-zinc-700 rounded-lg shadow-xl w-64">
-                            <div className="p-2 border-b border-zinc-800">
-                                <Input
-                                    value={multiSearch}
-                                    onChange={e => setMultiSearch(e.target.value)}
-                                    placeholder="Buscar campaña..."
-                                    className="h-6 text-xs bg-zinc-950 border-zinc-700 text-zinc-300 w-full"
-                                    autoFocus
-                                />
-                            </div>
-                            <div className="max-h-52 overflow-y-auto custom-scrollbar py-1">
-                                {filteredMultiNames.length === 0 ? (
-                                    <p className="px-3 py-2 text-xs text-zinc-600">Sin resultados</p>
-                                ) : filteredMultiNames.map(name => {
-                                    const checked = selectedMulti.includes(name)
-                                    return (
-                                        <button
-                                            key={name}
-                                            onClick={() => toggleMultiItem(name)}
-                                            className="w-full text-left px-3 py-1.5 text-xs flex items-center gap-2 hover:bg-zinc-800 transition"
-                                        >
-                                            <span className={`w-3.5 h-3.5 rounded border flex-shrink-0 flex items-center justify-center transition ${
-                                                checked ? 'bg-indigo-500 border-indigo-500' : 'border-zinc-600'
-                                            }`}>
-                                                {checked && <Check className="w-2.5 h-2.5 text-white" />}
-                                            </span>
-                                            <span className={`truncate ${checked ? 'text-indigo-300' : 'text-zinc-300'}`}>{name}</span>
-                                        </button>
-                                    )
-                                })}
-                            </div>
-                            {selectedMulti.length > 0 && (
-                                <div className="p-2 border-t border-zinc-800 flex justify-between items-center">
-                                    <span className="text-[10px] text-zinc-500">{selectedMulti.length} seleccionada{selectedMulti.length > 1 ? 's' : ''}</span>
-                                    <button
-                                        onClick={() => onChange(undefined)}
-                                        className="text-[10px] text-red-400 hover:text-red-300 transition"
-                                    >
-                                        Limpiar
-                                    </button>
-                                </div>
-                            )}
+                        <div className="p-2 border-b border-zinc-800">
+                            <Input
+                                value={multiSearch}
+                                onChange={e => setMultiSearch(e.target.value)}
+                                placeholder="Buscar campaña..."
+                                className="h-6 text-xs bg-zinc-950 border-zinc-700 text-zinc-300 w-full"
+                                autoFocus
+                            />
                         </div>
-                    )}
-                </div>
+                        <div className="max-h-52 overflow-y-auto custom-scrollbar py-1">
+                            {filteredMultiNames.length === 0 ? (
+                                <p className="px-3 py-2 text-xs text-zinc-600">Sin resultados</p>
+                            ) : filteredMultiNames.map(name => {
+                                const checked = selectedMulti.includes(name)
+                                return (
+                                    <button
+                                        key={name}
+                                        onClick={() => toggleMultiItem(name)}
+                                        className="w-full text-left px-3 py-1.5 text-xs flex items-center gap-2 hover:bg-zinc-800 transition"
+                                    >
+                                        <span className={`w-3.5 h-3.5 rounded border flex-shrink-0 flex items-center justify-center transition ${
+                                            checked ? 'bg-indigo-500 border-indigo-500' : 'border-zinc-600'
+                                        }`}>
+                                            {checked && <Check className="w-2.5 h-2.5 text-white" />}
+                                        </span>
+                                        <span className={`truncate ${checked ? 'text-indigo-300' : 'text-zinc-300'}`}>{name}</span>
+                                    </button>
+                                )
+                            })}
+                        </div>
+                        {selectedMulti.length > 0 && (
+                            <div className="p-2 border-t border-zinc-800 flex justify-between items-center">
+                                <span className="text-[10px] text-zinc-500">{selectedMulti.length} seleccionada{selectedMulti.length > 1 ? 's' : ''}</span>
+                                <button
+                                    onClick={() => onChange(undefined)}
+                                    className="text-[10px] text-red-400 hover:text-red-300 transition"
+                                >
+                                    Limpiar
+                                </button>
+                            </div>
+                        )}
+                    </PopoverContent>
+                </Popover>
             )}
 
             {/* Clear button */}
