@@ -1073,6 +1073,7 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                                     ] as const).map(({ type, icon, label }) => (
                                         <button
                                             key={type}
+                                            type="button"
                                             onClick={() => handleAddNewBlock(type)}
                                             className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-white rounded transition"
                                         >
