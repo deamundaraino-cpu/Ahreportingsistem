@@ -580,7 +580,7 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
 
         if (type === 'card') {
             const newCard: CardDef = { id: newId, label: 'Nueva tarjeta', formula: 'meta_spend', prefix: '$', suffix: '', decimals: 2, color: 'default' }
-            updated = { ...base, tarjetas: [...base.tarjetas, newCard], blocks_order: [...orderedBlocks, `card:${newId}`] }
+            updated = { ...base, tarjetas: [...(base.tarjetas || []), newCard], blocks_order: [...orderedBlocks, `card:${newId}`] }
             target = { type: 'card', id: newId }
         } else if (type === 'chart') {
             const newChart: ChartDef = { id: newId, title: 'Nuevo gráfico', type: 'line', categoryColumns: ['fecha'], valueFormulas: ['meta_spend'], colors: ['blue'], height: 240 }
