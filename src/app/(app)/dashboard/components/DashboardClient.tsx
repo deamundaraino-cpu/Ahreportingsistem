@@ -7,14 +7,15 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { evaluateFormula, aggregateFormula, formatValue } from '@/lib/formula-engine'
 import { LayoutConfigModal } from './LayoutConfigModal'
 import { QuickEditModal } from './QuickEditModal'
 import type { QuickEditTarget } from './QuickEditModal'
 import { TabConfigModal } from './TabConfigModal'
 import { MetricCharts } from './MetricCharts'
-import { LayoutDashboard, Settings2, Plus, Edit2, CalendarDays, Timer, BadgeDollarSign, Wallet, GripVertical, Search, X, Puzzle, Type, AlignLeft, AlignCenter, AlignRight, Trash2, Save, Loader2, Minus, Archive, Copy } from 'lucide-react'
-import type { ColDef, CardDef, ReportLayout, ChartDef, MetricDef, TextBlockDef } from '@/lib/layout-types'
+import { LayoutDashboard, Settings2, Plus, Edit2, CalendarDays, Timer, BadgeDollarSign, Wallet, GripVertical, Search, X, Puzzle, Type, AlignLeft, AlignCenter, AlignRight, Trash2, Save, Loader2, Minus, Archive, Copy, BarChart3, Table2, CreditCard } from 'lucide-react'
+import type { ColDef, CardDef, ReportLayout, ChartDef, MetricDef, TextBlockDef, RankingTableDef } from '@/lib/layout-types'
 import { updateManualMetric, getTabTotalSpend, saveClienteLayout, saveTabOverrides, updateLayoutPuzzleState, toggleTabArchived } from '../_actions'
 import { SortableCard, SortableChart, SortableTable, SortableText } from './PuzzleComponents'
 import { CountryBreakdown } from './CountryBreakdown'
@@ -332,6 +333,7 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
     const [keywordFilter, setKeywordFilter] = useState(initialKeyword)
     const [showModal, setShowModal] = useState(false)
     const [quickEditTarget, setQuickEditTarget] = useState<QuickEditTarget | null>(null)
+    const [addMenuOpen, setAddMenuOpen] = useState(false)
     const [showArchive, setShowArchive] = useState(false)
     const isTeam = ['superadmin', 'admin', 'trafficker'].includes(userRole ?? '')
 
@@ -567,6 +569,36 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
         } else {
             await saveClienteLayout(cliente.id, payload)
         }
+    }
+
+    function handleAddNewBlock(type: 'card' | 'chart' | 'ranking' | 'text') {
+        const newId = crypto.randomUUID()
+        const base = { ...(tabLayoutOverrides[activeTabId] || activeLayout), blocks_order: orderedBlocks }
+
+        let updated: typeof base
+        let target: QuickEditTarget
+
+        if (type === 'card') {
+            const newCard: CardDef = { id: newId, label: 'Nueva tarjeta', formula: 'meta_spend', prefix: '$', suffix: '', decimals: 2, color: 'default' }
+            updated = { ...base, tarjetas: [...base.tarjetas, newCard], blocks_order: [...orderedBlocks, `card:${newId}`] }
+            target = { type: 'card', id: newId }
+        } else if (type === 'chart') {
+            const newChart: ChartDef = { id: newId, title: 'Nuevo gráfico', type: 'line', categoryColumns: ['fecha'], valueFormulas: ['meta_spend'], colors: ['blue'], height: 240 }
+            updated = { ...base, graficos: [...(base.graficos || []), newChart], blocks_order: [...orderedBlocks, `chart:${newId}`] }
+            target = { type: 'chart', id: newId }
+        } else if (type === 'ranking') {
+            const newRanking: RankingTableDef = { id: newId, title: 'Nueva tabla', dimension: 'campaigns', topN: 10, sortOrder: 'desc', sortColumnIndex: 0, showRank: true, columns: [{ formula: 'meta_spend', label: 'Gasto', prefix: '$', suffix: '', decimals: 2 }] }
+            updated = { ...base, ranking_tables: [...(base.ranking_tables || []), newRanking], blocks_order: [...orderedBlocks, `ranking:${newId}`] }
+            target = { type: 'ranking', id: newId }
+        } else {
+            const newText: TextBlockDef = { id: newId, blockType: 'text', content: 'Nueva sección', style: 'h2', align: 'left', color: 'white', colSpan: 4 }
+            updated = { ...base, text_blocks: [...(base.text_blocks || []), newText], blocks_order: [...orderedBlocks, `text:${newId}`] }
+            target = { type: 'text', id: newId }
+        }
+
+        setTabLayoutOverrides(prev => ({ ...prev, [activeTabId]: updated }))
+        setAddMenuOpen(false)
+        setQuickEditTarget(target)
     }
 
     const handleUpdateChart = useCallback((chartId: string, updatedChart: ChartDef) => {
