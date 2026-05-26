@@ -220,7 +220,7 @@ export function FormulaInput({ value, onChange, disabled, availableMetrics }: {
                             <Database className="w-3.5 h-3.5" />
                         </button>
                     </PopoverTrigger>
-                    <PopoverContent className="w-64 p-0 bg-zinc-900 border-zinc-800 z-[110]" align="end" side="bottom">
+                    <PopoverContent className="w-64 p-0 bg-zinc-900 border-zinc-800 z-[500]" align="end" side="bottom">
                         <div className="p-2 border-b border-zinc-800 bg-zinc-950 rounded-t-lg">
                             <Input
                                 placeholder="Buscar métrica..."
