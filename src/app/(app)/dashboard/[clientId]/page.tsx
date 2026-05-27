@@ -72,7 +72,11 @@ export default async function DashboardPage(props: {
             </div>
 
             <div className="pt-4">
-                <DashboardClient data={dashboardData || { cliente: null, metrics: [], weeks: [] }} userRole={userRole} />
+                <DashboardClient
+                    data={dashboardData || { cliente: null, metrics: [], weeks: [] }}
+                    userRole={userRole}
+                    initialTabId={typeof searchParams.tab === 'string' ? searchParams.tab : 'general'}
+                />
             </div>
 
             {/* Google Sheets Leads Section — only show if enabled */}

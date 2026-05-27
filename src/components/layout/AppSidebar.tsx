@@ -25,7 +25,6 @@ export function AppSidebar({ initialRole = 'viewer', userId = '' }: { initialRol
     const [isOpen, setIsOpen] = useState(false)
     const [role, setRole] = useState<string | null>(initialRole)
     const [loading, setLoading] = useState(false)
-
     const supabase = createClient()
 
     useEffect(() => {
@@ -251,6 +250,22 @@ export function AppSidebar({ initialRole = 'viewer', userId = '' }: { initialRol
                         </div>
                     </div>
                 </nav>
+
+                {/* Soporte Ads House — fixed button */}
+                <div className="px-3 pb-2">
+                    <Link
+                        href="/soporte"
+                        onClick={() => setIsOpen(false)}
+                        className={`flex items-center gap-3 rounded-xl border px-3 py-2.5 text-sm font-semibold transition-all duration-200
+                            ${isActive('/soporte')
+                                ? 'border-blue-500/50 bg-blue-600 text-white shadow-lg shadow-blue-500/20'
+                                : 'border-blue-500/30 bg-gradient-to-r from-blue-900/40 to-blue-800/20 text-blue-300 hover:from-blue-800/50 hover:border-blue-400/50'
+                            }`}
+                    >
+                        <span className="text-base">🎧</span>
+                        <span className="flex-1 leading-tight">Soporte Ads House</span>
+                    </Link>
+                </div>
 
                 {/* Role badge + Logout */}
                 <div className="p-3 border-t border-zinc-200 dark:border-white/[0.06] space-y-2">

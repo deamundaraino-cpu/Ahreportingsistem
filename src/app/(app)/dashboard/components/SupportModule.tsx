@@ -19,6 +19,23 @@ function safeFormatDate(value: string | null | undefined, fmt: string): string {
     return isValid(d) ? format(d, fmt, { locale: es }) : 'Sin fecha'
 }
 
+function formatElapsed(fechaSolicitud: string): string {
+    const opened = new Date(fechaSolicitud)
+    const now = new Date()
+    const diffMs = now.getTime() - opened.getTime()
+    const days = Math.floor(diffMs / (1000 * 60 * 60 * 24))
+    const hours = Math.floor((diffMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60))
+    if (days > 0) return `${days}d ${hours}h`
+    return `${hours}h`
+}
+
+function daysUntilDeadline(fechaEntrega: string | null): number | null {
+    if (!fechaEntrega) return null
+    const deadline = new Date(fechaEntrega)
+    const now = new Date()
+    return Math.ceil((deadline.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
+}
+
 interface Ticket {
     id: string
     id_ticket_display: string
@@ -27,12 +44,16 @@ interface Ticket {
     requerimiento: string
     observaciones: string
     responsable: string
-    fecha_entrega: string
+    fecha_entrega: string | null
     prioridad: number
     estado: string
 }
 
-export function SupportModule({ clientId, userRole = 'viewer' }: { clientId: string; userRole?: string }) {
+export function SupportModule({ clientId, userRole = 'viewer', clienteNombre = '' }: {
+    clientId: string
+    userRole?: string
+    clienteNombre?: string
+}) {
     const [tickets, setTickets] = useState<Ticket[]>([])
     const [loading, setLoading] = useState(true)
     const [error, setError] = useState<string | null>(null)
@@ -40,15 +61,14 @@ export function SupportModule({ clientId, userRole = 'viewer' }: { clientId: str
     const [submitting, setSubmitting] = useState(false)
     const [search, setSearch] = useState('')
 
-    // Form state
     const [formData, setFormData] = useState({
         nombre_solicitante: '',
         requerimiento: '',
         observaciones: '',
-        prioridad: 2
+        prioridad: 2,
+        fecha_entrega: '',
     })
 
-    // Edit modal state
     const [editingTicket, setEditingTicket] = useState<Ticket | null>(null)
     const [editForm, setEditForm] = useState({
         nombre_solicitante: '',
@@ -87,11 +107,15 @@ export function SupportModule({ clientId, userRole = 'viewer' }: { clientId: str
         setSubmitting(true)
         const res = await createSoporteTicket({
             cliente_id: clientId,
-            ...formData
+            nombre_solicitante: formData.nombre_solicitante,
+            requerimiento: formData.requerimiento,
+            observaciones: formData.observaciones,
+            prioridad: formData.prioridad,
+            fecha_entrega: formData.fecha_entrega || undefined,
         })
         if (res.success) {
             setShowForm(false)
-            setFormData({ nombre_solicitante: '', requerimiento: '', observaciones: '', prioridad: 2 })
+            setFormData({ nombre_solicitante: '', requerimiento: '', observaciones: '', prioridad: 2, fecha_entrega: '' })
             fetchTickets()
         } else {
             alert("Error al crear el ticket: " + res.error)
@@ -180,6 +204,15 @@ export function SupportModule({ clientId, userRole = 'viewer' }: { clientId: str
                     <CardContent>
                         <form onSubmit={handleSubmit} className="grid grid-cols-1 md:grid-cols-2 gap-6">
                             <div className="space-y-4">
+                                {/* Cliente (auto) */}
+                                <div className="space-y-2">
+                                    <label className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">
+                                        Cliente <span className="text-blue-400 normal-case font-normal">(automático)</span>
+                                    </label>
+                                    <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-zinc-950 border border-blue-500/20 text-blue-400 text-sm">
+                                        🏢 {clienteNombre || 'Sin cliente'}
+                                    </div>
+                                </div>
                                 <div className="space-y-2">
                                     <label className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">Nombre del Solicitante</label>
                                     <Input
@@ -188,6 +221,15 @@ export function SupportModule({ clientId, userRole = 'viewer' }: { clientId: str
                                         onChange={e => setFormData({...formData, nombre_solicitante: e.target.value})}
                                         className="bg-zinc-950 border-zinc-800 text-white focus:border-indigo-500"
                                         placeholder="Ej. Juan Pérez"
+                                    />
+                                </div>
+                                <div className="space-y-2">
+                                    <label className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">Fecha de Entrega (Deadline)</label>
+                                    <input
+                                        type="date"
+                                        value={formData.fecha_entrega}
+                                        onChange={e => setFormData({...formData, fecha_entrega: e.target.value})}
+                                        className="w-full px-3 py-2 rounded-lg bg-zinc-950 border border-zinc-800 text-zinc-100 text-sm focus:outline-none focus:border-indigo-500 transition"
                                     />
                                 </div>
                                 <div className="space-y-2">
@@ -214,7 +256,7 @@ export function SupportModule({ clientId, userRole = 'viewer' }: { clientId: str
                                         rows={2}
                                         value={formData.requerimiento}
                                         onChange={e => setFormData({...formData, requerimiento: e.target.value})}
-                                        className="w-full bg-zinc-950 border-zinc-800 rounded-md p-3 text-sm text-white focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none transition"
+                                        className="w-full bg-zinc-950 border border-zinc-800 rounded-md p-3 text-sm text-white focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none transition"
                                         placeholder="Describe brevemente lo que necesitas..."
                                     />
                                 </div>
@@ -224,7 +266,7 @@ export function SupportModule({ clientId, userRole = 'viewer' }: { clientId: str
                                         rows={2}
                                         value={formData.observaciones}
                                         onChange={e => setFormData({...formData, observaciones: e.target.value})}
-                                        className="w-full bg-zinc-950 border-zinc-800 rounded-md p-3 text-sm text-white focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none transition"
+                                        className="w-full bg-zinc-950 border border-zinc-800 rounded-md p-3 text-sm text-white focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none transition"
                                         placeholder="Cualquier detalle extra que debamos saber..."
                                     />
                                 </div>
@@ -280,10 +322,10 @@ export function SupportModule({ clientId, userRole = 'viewer' }: { clientId: str
                             <TableHeader className="bg-zinc-950/50">
                                 <TableRow className="border-zinc-800">
                                     <TableHead className="text-zinc-400 font-bold w-[100px]">ID Ticket</TableHead>
-                                    <TableHead className="text-zinc-400 font-bold">Solicitante / Fecha</TableHead>
+                                    <TableHead className="text-zinc-400 font-bold">Cliente / Solicitante</TableHead>
                                     <TableHead className="text-zinc-400 font-bold">Requerimiento</TableHead>
                                     <TableHead className="text-zinc-400 font-bold">Prioridad</TableHead>
-                                    <TableHead className="text-zinc-400 font-bold">Responsable / Entrega</TableHead>
+                                    <TableHead className="text-zinc-400 font-bold">Responsable / Tiempo</TableHead>
                                     <TableHead className="text-zinc-400 font-bold text-center">Estado</TableHead>
                                     {isTeam && <TableHead className="text-zinc-400 font-bold w-[60px]"></TableHead>}
                                 </TableRow>
@@ -300,11 +342,18 @@ export function SupportModule({ clientId, userRole = 'viewer' }: { clientId: str
                                 ) : (
                                     filteredTickets.map(t => {
                                         const StatusIcon = statusMap[t.estado]?.icon || AlertCircle
+                                        const isActive = t.estado === 'abierto' || t.estado === 'en_progreso'
+                                        const daysLeft = daysUntilDeadline(t.fecha_entrega)
                                         return (
                                             <TableRow key={t.id} className="border-zinc-800 hover:bg-zinc-800/30 transition-colors group">
                                                 <TableCell className="font-mono font-bold text-indigo-400">{t.id_ticket_display}</TableCell>
                                                 <TableCell>
-                                                    <div className="flex flex-col">
+                                                    <div className="flex flex-col gap-0.5">
+                                                        {clienteNombre && (
+                                                            <span className="text-blue-400 text-xs font-semibold flex items-center gap-1">
+                                                                🏢 {clienteNombre}
+                                                            </span>
+                                                        )}
                                                         <span className="text-zinc-200 font-medium">{t.nombre_solicitante}</span>
                                                         <span className="text-zinc-500 text-[10px] flex items-center gap-1">
                                                             <Calendar className="w-3 h-3" />
@@ -329,15 +378,25 @@ export function SupportModule({ clientId, userRole = 'viewer' }: { clientId: str
                                                     </Badge>
                                                 </TableCell>
                                                 <TableCell>
-                                                    <div className="flex flex-col">
+                                                    <div className="flex flex-col gap-1">
                                                         <span className="text-zinc-300 text-sm flex items-center gap-1.5">
                                                             <User className="w-3.5 h-3.5 text-zinc-600" />
                                                             {t.responsable || <span className="text-zinc-600 italic">Por asignar</span>}
                                                         </span>
                                                         {t.fecha_entrega && (
-                                                            <span className="text-emerald-500/80 text-[10px] mt-1 font-semibold flex items-center gap-1">
+                                                            <span className="text-emerald-500/80 text-[10px] font-semibold flex items-center gap-1">
                                                                 <Clock className="w-3 h-3" />
                                                                 Est: {safeFormatDate(t.fecha_entrega, 'dd MMM yyyy')}
+                                                            </span>
+                                                        )}
+                                                        {isActive && (
+                                                            <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded bg-amber-500/10 border border-amber-500/20 text-amber-400 w-fit">
+                                                                ⏱ {formatElapsed(t.fecha_solicitud)} abierto
+                                                            </span>
+                                                        )}
+                                                        {isActive && daysLeft !== null && daysLeft <= 2 && (
+                                                            <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded bg-red-500/10 border border-red-500/20 text-red-400 w-fit">
+                                                                ⚠️ Vence en {daysLeft <= 0 ? 'hoy' : `${daysLeft}d`}
                                                             </span>
                                                         )}
                                                     </div>

@@ -394,6 +394,9 @@ export async function updateLayoutPuzzleState(
     payload: {
         blocks_order: string[]
         text_blocks: any[]
+        tarjetas?: any[]
+        graficos?: any[]
+        ranking_tables?: any[]
         full_layout?: {
             nombre: string
             columnas: any[]
@@ -407,12 +410,15 @@ export async function updateLayoutPuzzleState(
     const supabase = await createAdminClient()
 
     if (tabId && tabId !== 'general') {
-        // Tab específico: solo actualizar puzzle state — no tocar columnas/tarjetas/graficos
+        // Tab específico: actualizar puzzle state y arrays de bloques
         const { error } = await supabase
             .from('cliente_tabs')
             .update({
                 blocks_order: payload.blocks_order,
                 text_blocks: payload.text_blocks,
+                ...(payload.tarjetas !== undefined && { tarjetas: payload.tarjetas }),
+                ...(payload.graficos !== undefined && { graficos: payload.graficos }),
+                ...(payload.ranking_tables !== undefined && { ranking_tables: payload.ranking_tables }),
                 updated_at: new Date().toISOString(),
             })
             .eq('id', tabId)
@@ -429,12 +435,15 @@ export async function updateLayoutPuzzleState(
             .maybeSingle()
 
         if (existing) {
-            // Fila existe: solo actualizar puzzle state
+            // Fila existe: actualizar puzzle state y arrays de bloques
             const { error } = await supabase
                 .from('clientes_layouts')
                 .update({
                     blocks_order: payload.blocks_order,
                     text_blocks: payload.text_blocks,
+                    ...(payload.tarjetas !== undefined && { tarjetas: payload.tarjetas }),
+                    ...(payload.graficos !== undefined && { graficos: payload.graficos }),
+                    ...(payload.ranking_tables !== undefined && { ranking_tables: payload.ranking_tables }),
                     updated_at: new Date().toISOString(),
                 })
                 .eq('cliente_id', clienteId)
@@ -534,6 +543,18 @@ export async function getTabTotalSpend(clienteId: string, keywordFilter: string,
  * Support Tickets Actions
  */
 
+export async function getAllSoporteTickets() {
+    const supabase = await createAdminClient()
+    const { data, error } = await supabase
+        .from('soporte_tickets')
+        .select('*, cliente:clientes(nombre)')
+        .order('fecha_solicitud', { ascending: false })
+        .limit(100)
+
+    if (error) return { data: null, error: error.message }
+    return { data, error: null }
+}
+
 export async function getSoporteTickets(clienteId: string) {
     const supabase = await createAdminClient()
     const { data, error } = await supabase
@@ -552,6 +573,7 @@ export async function createSoporteTicket(payload: {
     requerimiento: string
     observaciones?: string
     prioridad: number
+    fecha_entrega?: string
 }) {
     const supabase = await createAdminClient()
     const { data, error } = await supabase
@@ -565,6 +587,7 @@ export async function createSoporteTicket(payload: {
 
     if (error) return { error: error.message }
     revalidatePath(`/dashboard/${payload.cliente_id}`)
+    revalidatePath('/soporte')
     return { success: true, data }
 }
 
@@ -589,6 +612,7 @@ export async function updateSoporteTicket(ticketId: string, clienteId: string, p
 
     if (error) return { error: error.message }
     revalidatePath(`/dashboard/${clienteId}`)
+    revalidatePath('/soporte')
     return { success: true }
 }
 

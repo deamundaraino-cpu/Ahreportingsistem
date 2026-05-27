@@ -1,4 +1,5 @@
 import { getClientes, getActiveAlerts, type ActiveAlert } from "../admin/settings/_actions"
+import { getAllSoporteTickets } from "./_actions"
 import {
   BarChart3,
   ArrowRight,
@@ -17,7 +18,7 @@ import {
 } from "lucide-react"
 
 export default async function DashboardHomePage() {
-  const [clientes, activeAlerts] = await Promise.all([getClientes(), getActiveAlerts()])
+  const [clientes, activeAlerts, soporteResult] = await Promise.all([getClientes(), getActiveAlerts(), getAllSoporteTickets()])
 
   const totalClientes = clientes?.length ?? 0
   const totalIntegrations = (clientes ?? []).reduce((acc: number, c: any) => {
@@ -167,6 +168,9 @@ export default async function DashboardHomePage() {
           />
         </div>
       </section>
+
+      {/* ── Soporte Ads House ── */}
+      <SoportePanel tickets={soporteResult.data ?? []} />
     </div>
   )
 }
@@ -493,5 +497,84 @@ function QuickLink({
         <ChevronRight className="h-4 w-4 shrink-0 text-zinc-600 transition-transform duration-200 group-hover:translate-x-0.5 group-hover:text-zinc-400" />
       </div>
     </a>
+  )
+}
+
+/* ─── Soporte Panel ──────────────────────────────────────────────────────────── */
+
+function SoportePanel({ tickets }: { tickets: any[] }) {
+  const total = tickets.length
+  const abiertos = tickets.filter(t => t.estado === "abierto").length
+  const enProgreso = tickets.filter(t => t.estado === "en_progreso").length
+  const completados = tickets.filter(t => t.estado === "completado").length
+  const urgentes = tickets.filter(t => {
+    if (t.estado !== "abierto" && t.estado !== "en_progreso") return false
+    if (!t.fecha_entrega) return false
+    const dl = Math.ceil((new Date(t.fecha_entrega).getTime() - Date.now()) / 86400000)
+    return dl <= 2
+  }).length
+
+  return (
+    <section className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-500/15">
+            <span className="text-base">🎧</span>
+          </div>
+          <div>
+            <h2 className="text-lg font-semibold text-zinc-100">Soporte Ads House</h2>
+            <p className="text-sm text-zinc-500">Requerimientos de todos los clientes</p>
+          </div>
+        </div>
+        <a
+          href="/soporte"
+          className="flex items-center gap-1.5 rounded-lg border border-blue-500/20 bg-blue-500/10 px-3 py-1.5 text-xs font-medium text-blue-400 hover:bg-blue-500/15 transition-colors"
+        >
+          Ver todos <ChevronRight className="h-3.5 w-3.5" />
+        </a>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-5">
+        <SoporteStat label="Total" value={total} color="zinc" />
+        <SoporteStat label="Abiertos" value={abiertos} color="blue" />
+        <SoporteStat label="En Progreso" value={enProgreso} color="amber" />
+        <SoporteStat label="Completados" value={completados} color="emerald" />
+        {urgentes > 0 && (
+          <SoporteStat label="Vencen Pronto" value={urgentes} color="red" pulse />
+        )}
+      </div>
+    </section>
+  )
+}
+
+function SoporteStat({
+  label,
+  value,
+  color,
+  pulse,
+}: {
+  label: string
+  value: number
+  color: "zinc" | "blue" | "amber" | "emerald" | "red"
+  pulse?: boolean
+}) {
+  const colorMap = {
+    zinc:    { bg: "bg-zinc-800",        text: "text-zinc-100", sub: "text-zinc-500",  border: "border-white/[0.06]" },
+    blue:    { bg: "bg-blue-500/10",     text: "text-blue-300", sub: "text-blue-500",  border: "border-blue-500/20" },
+    amber:   { bg: "bg-amber-500/10",    text: "text-amber-300",sub: "text-amber-500", border: "border-amber-500/20" },
+    emerald: { bg: "bg-emerald-500/10",  text: "text-emerald-300", sub: "text-emerald-500", border: "border-emerald-500/20" },
+    red:     { bg: "bg-red-500/10",      text: "text-red-300",  sub: "text-red-500",   border: "border-red-500/20" },
+  }
+  const c = colorMap[color]
+  return (
+    <div className={`relative flex flex-col gap-1 rounded-xl border p-4 ${c.bg} ${c.border}`}>
+      {pulse && (
+        <span className="absolute right-3 top-3 h-2 w-2 rounded-full bg-red-500">
+          <span className="absolute inset-0 animate-ping rounded-full bg-red-400 opacity-75" />
+        </span>
+      )}
+      <span className={`text-2xl font-bold tabular-nums ${c.text}`}>{value}</span>
+      <span className={`text-xs font-medium ${c.sub}`}>{label}</span>
+    </div>
   )
 }

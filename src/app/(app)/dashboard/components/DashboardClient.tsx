@@ -1,6 +1,7 @@
 'use client'
 
-import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
+import React, { useState, useEffect, useMemo, useCallback, useRef, Suspense } from 'react'
+import { useSearchParams } from 'next/navigation'
 import { format, parseISO, addDays, getDay, differenceInDays, isValid } from 'date-fns'
 import { es } from 'date-fns/locale'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
@@ -223,7 +224,13 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
 }) {
     const { cliente, metrics, weeks, allLayouts, tabs: initialTabs = [], conversionesCatalogo = [], availablePlatforms: availablePlatformsArr = ['meta'] } = data
     const platformSet = useMemo(() => new Set<string>(availablePlatformsArr), [availablePlatformsArr])
-    const [activeTabId, setActiveTabId] = useState<string>(initialTabId)
+    const searchParams = useSearchParams()
+    const tabFromUrl = searchParams.get('tab')
+    const [activeTabId, setActiveTabId] = useState<string>(tabFromUrl || initialTabId)
+
+    useEffect(() => {
+        if (tabFromUrl) setActiveTabId(tabFromUrl)
+    }, [tabFromUrl])
 
     const [isPuzzleMode, setIsPuzzleMode] = useState(false)
     const [isSavingLayout, setIsSavingLayout] = useState(false)
@@ -483,6 +490,9 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
             await updateLayoutPuzzleState(cliente.id, activeTabId, {
                 blocks_order: orderedBlocks,
                 text_blocks: activeLayout.text_blocks || [],
+                tarjetas: activeLayout.tarjetas,
+                graficos: activeLayout.graficos || [],
+                ranking_tables: activeLayout.ranking_tables || [],
                 // Necesario para crear fila en clientes_layouts si no existe aún
                 full_layout: activeTabId === 'general' ? {
                     nombre: activeLayout.nombre,
@@ -502,14 +512,24 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
         const newOrder = orderedBlocks.filter(id => id !== blockId)
         setOrderedBlocks(newOrder)
 
+        const base = tabLayoutOverrides[activeTabId] || activeLayout
         const updates: Partial<ReportLayout> = { blocks_order: newOrder }
         if (blockId.startsWith('text:')) {
             const textId = blockId.replace('text:', '')
-            updates.text_blocks = (activeLayout.text_blocks || []).filter((b: TextBlockDef) => b.id !== textId)
+            updates.text_blocks = (base.text_blocks || []).filter((b: TextBlockDef) => b.id !== textId)
+        } else if (blockId.startsWith('card:')) {
+            const cardId = blockId.replace('card:', '')
+            updates.tarjetas = (base.tarjetas || []).filter((b: any) => b.id !== cardId)
+        } else if (blockId.startsWith('chart:')) {
+            const chartId = blockId.replace('chart:', '')
+            updates.graficos = (base.graficos || []).filter((b: any) => b.id !== chartId)
+        } else if (blockId.startsWith('ranking:')) {
+            const rankingId = blockId.replace('ranking:', '')
+            updates.ranking_tables = (base.ranking_tables || []).filter((b: any) => b.id !== rankingId)
         }
         setTabLayoutOverrides(prev => ({
             ...prev,
-            [activeTabId]: { ...(prev[activeTabId] || activeLayout), ...updates }
+            [activeTabId]: { ...(base), ...updates }
         }))
     }
 
@@ -1012,7 +1032,7 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
 
             {/* Soporte Tab Content */}
             {activeTabId === 'soporte' && (
-                <SupportModule clientId={cliente.id} userRole={userRole} />
+                <SupportModule clientId={cliente.id} userRole={userRole} clienteNombre={cliente.nombre ?? ''} />
             )}
 
             {/* Toolbar + Dashboard Content */}
@@ -1163,7 +1183,7 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                                 const rankingDef = activeLayout.ranking_tables?.find(r => r.id === rankingId)
                                 if (!rankingDef) return null
                                 return (
-                                    <SortableTable key={blockId} id={blockId} isPuzzleMode={isPuzzleMode} title={rankingDef.title} onQuickEdit={() => setQuickEditTarget({ type: 'ranking', id: rankingId })} onDuplicate={() => handleDuplicateBlock(blockId)} isCollapsed={collapsedBlocks.has(blockId)} onToggleCollapse={() => toggleCollapse(blockId)}>
+                                    <SortableTable key={blockId} id={blockId} isPuzzleMode={isPuzzleMode} title={rankingDef.title} onQuickEdit={() => setQuickEditTarget({ type: 'ranking', id: rankingId })} onDuplicate={() => handleDuplicateBlock(blockId)} onRemove={() => handleRemoveBlock(blockId)} isCollapsed={collapsedBlocks.has(blockId)} onToggleCollapse={() => toggleCollapse(blockId)}>
                                         <RankingTableBlock
                                             def={rankingDef}
                                             metrics={filteredMetrics}
@@ -1664,15 +1684,17 @@ export function DashboardClient({
     // Always use DynamicDashboard for MIRROR effect (identical view)
     // DynamicDashboard handles isPublic to hide/show buttons
     return (
-        <DynamicDashboard
-            data={data}
-            initialLayout={layout || DEFAULT_MEGALAYOUT}
-            isCustomized={!!clienteLayoutId}
-            isPublic={isPublic}
-            initialTabId={initialTabId}
-            initialKeyword={initialKeyword}
-            userRole={userRole}
-        />
+        <Suspense fallback={null}>
+            <DynamicDashboard
+                data={data}
+                initialLayout={layout || DEFAULT_MEGALAYOUT}
+                isCustomized={!!clienteLayoutId}
+                isPublic={isPublic}
+                initialTabId={initialTabId}
+                initialKeyword={initialKeyword}
+                userRole={userRole}
+            />
+        </Suspense>
     )
 }
 
