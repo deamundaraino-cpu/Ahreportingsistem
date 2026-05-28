@@ -433,6 +433,27 @@ export function aggregateFormula(
 
 
 /**
+ * Returns a copy of a metrics row with tiktok_spend/impressions/clicks/conversions
+ * derived by summing only campaigns belonging to the given advertiser_id.
+ * When accountId is undefined the original row is returned unchanged.
+ */
+export function filterRowByTikTokAccount(
+    row: Record<string, any>,
+    accountId: string | undefined
+): Record<string, any> {
+    if (!accountId) return row
+    const campaigns: any[] = Array.isArray(row.tiktok_campaigns) ? row.tiktok_campaigns : []
+    const filtered = campaigns.filter(c => c.account_id === accountId)
+    return {
+        ...row,
+        tiktok_spend:       filtered.reduce((s, c) => s + (parseFloat(c.spend ?? 0) || 0), 0),
+        tiktok_impressions: filtered.reduce((s, c) => s + (parseInt(c.impressions ?? 0) || 0), 0),
+        tiktok_clicks:      filtered.reduce((s, c) => s + (parseInt(c.clicks ?? 0) || 0), 0),
+        tiktok_conversions: filtered.reduce((s, c) => s + (parseInt(c.conversions ?? 0) || 0), 0),
+    }
+}
+
+/**
  * Formats a numeric result based on column definition.
  */
 export function formatValue(
