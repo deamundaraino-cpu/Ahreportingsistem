@@ -9,7 +9,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { evaluateFormula, aggregateFormula, formatValue } from '@/lib/formula-engine'
+import { evaluateFormula, aggregateFormula, formatValue, filterRowByTikTokAccount } from '@/lib/formula-engine'
 import { LayoutConfigModal } from './LayoutConfigModal'
 import { QuickEditModal } from './QuickEditModal'
 import type { QuickEditTarget } from './QuickEditModal'
@@ -382,6 +382,9 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
     const metaKeywords: string[] = cliente.config_api?.meta_keywords
         ? cliente.config_api.meta_keywords.split(',').map((k: string) => k.trim()).filter(Boolean)
         : []
+
+    const tiktokAccounts: { id: string; label: string; advertiser_id: string }[] =
+        (cliente.config_api?.tiktok_accounts ?? []).filter((a: any) => a.advertiser_id)
 
     // 1. Determine active tab object
     const activeTabObj = useMemo(() => tabs.find((t: any) => t.id === activeTabId), [tabs, activeTabId])
@@ -776,6 +779,9 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
             let rows = filter === effectiveKeyword
                 ? filteredMetrics
                 : baseRows.map((m: any) => enrichMetaRow(m, filter, data.campaignGroups))
+            if (t.account_id) {
+                rows = rows.map((r: any) => filterRowByTikTokAccount(r, t.account_id))
+            }
             return {
                 ...t,
                 value: aggregateFormula(t.formula, rows, varContext, sourceMapping, platformSet, layoutCustomMetrics),
@@ -1191,6 +1197,7 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                                             sourceMapping={sourceMapping}
                                             customMetrics={layoutCustomMetrics}
                                             clienteId={cliente.id}
+                                            accountId={rankingDef.account_id}
                                         />
                                     </SortableTable>
                                 )
@@ -1203,12 +1210,15 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                             if (blockId.startsWith('chart:')) {
                                 const chart = activeLayout.graficos?.find((g: any) => `chart:${g.id}` === blockId)
                                 if (!chart) return null
+                                const chartMetrics = chart.account_id
+                                    ? filteredMetrics.map((r: any) => filterRowByTikTokAccount(r, chart.account_id))
+                                    : filteredMetrics
                                 return <SortableChart
                                     key={blockId}
                                     id={blockId}
                                     chart={chart}
                                     isPuzzleMode={isPuzzleMode}
-                                    metrics={filteredMetrics}
+                                    metrics={chartMetrics}
                                     weeks={weeks}
                                     varContext={varContext}
                                     sourceMapping={sourceMapping}
@@ -1495,6 +1505,7 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                         setShowModal(false)
                     }}
                     tabId={activeTabId}
+                    tiktokAccounts={tiktokAccounts}
                 />
             )}
             {quickEditTarget && (
