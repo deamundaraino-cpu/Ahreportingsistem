@@ -760,26 +760,19 @@ export async function GET(request: Request) {
             return record
         }
 
-        // ─── Helper: Fetch TikTok Ads for a single date ──────────────────────
-        async function fetchTikTok(targetDate: string) {
-            // apiSuccess distinguishes "API worked but no data" from "API failed" —
-            // used to avoid overwriting valid DB data with zeros on transient failures.
+        // ─── Helper: Fetch TikTok Ads for a single advertiser account + date ───
+        async function fetchTikTokSingleAccount(targetDate: string, advertiserId: string, token: string) {
             const record = { spend: 0, impressions: 0, clicks: 0, conversions: 0, campaigns: [] as any[], tiktok_ads: [] as any[], tiktok_adgroups: [] as any[], apiSuccess: false }
-            if (!config.tiktok_access_token || !config.tiktok_advertiser_id) {
-                platformLogs.tiktok = 'Sin configurar'
-                log(`[TikTok] ${targetDate} Sin configurar — token: ${config.tiktok_access_token ? 'presente' : 'FALTA'}, advertiser_id: ${config.tiktok_advertiser_id ? config.tiktok_advertiser_id : 'FALTA'}`)
-                return record
-            }
-            log(`[TikTok] ${targetDate} Consultando advertiser_id: ${config.tiktok_advertiser_id}`)
+            log(`[TikTok] ${targetDate} Consultando advertiser_id: ${advertiserId}`)
 
             try {
                 // First, fetch campaigns to map campaign_id to campaign_name
                 const campaignMap = new Map<string, string>()
                 try {
                     const campUrl = new URL('https://business-api.tiktok.com/open_api/v1.3/campaign/get/')
-                    campUrl.searchParams.append('advertiser_id', config.tiktok_advertiser_id)
+                    campUrl.searchParams.append('advertiser_id', advertiserId)
                     const campRes = await fetch(campUrl.toString(), {
-                        headers: { 'Access-Token': config.tiktok_access_token }
+                        headers: { 'Access-Token': token }
                     })
                     const campData = await campRes.json()
                     if (campData.code === 0 && campData.data && campData.data.list) {
@@ -808,9 +801,9 @@ export async function GET(request: Request) {
                                 ? 'https://business-api.tiktok.com/open_api/v1.3/ad/get/'
                                 : 'https://business-api.tiktok.com/open_api/v1.3/adgroup/get/'
                             const listUrl = new URL(listPath)
-                            listUrl.searchParams.append('advertiser_id', config.tiktok_advertiser_id)
+                            listUrl.searchParams.append('advertiser_id', advertiserId)
                             const listRes = await fetch(listUrl.toString(), {
-                                headers: { 'Access-Token': config.tiktok_access_token }
+                                headers: { 'Access-Token': token }
                             })
                             const listData = await listRes.json()
                             if (listData.code === 0 && listData.data?.list) {
@@ -827,7 +820,7 @@ export async function GET(request: Request) {
                         const dims = level === 'ad' ? ['ad_id'] : ['adgroup_id']
 
                         const rptUrl = new URL('https://business-api.tiktok.com/open_api/v1.3/report/integrated/get/')
-                        rptUrl.searchParams.append('advertiser_id', config.tiktok_advertiser_id)
+                        rptUrl.searchParams.append('advertiser_id', advertiserId)
                         rptUrl.searchParams.append('report_type', 'BASIC')
                         rptUrl.searchParams.append('data_level', dataLevel)
                         rptUrl.searchParams.append('dimensions', JSON.stringify(dims))
@@ -836,7 +829,7 @@ export async function GET(request: Request) {
                         rptUrl.searchParams.append('end_date', targetDate)
                         rptUrl.searchParams.append('page_size', '100')
 
-                        const rptRes  = await fetch(rptUrl.toString(), { headers: { 'Access-Token': config.tiktok_access_token } })
+                        const rptRes  = await fetch(rptUrl.toString(), { headers: { 'Access-Token': token } })
                         const rptData = await rptRes.json()
 
                         if (rptData.code !== 0 || !rptData.data?.list) {
@@ -850,12 +843,13 @@ export async function GET(request: Request) {
                             const m  = item.metrics    || {}
                             const id = String(d[idDim] || '')
                             const out: any = {
-                                [idKey]:   id || null,
-                                [nameKey]: nameMap.get(id) || id || 'Desconocido',
-                                spend:         parseFloat(m.spend       || '0'),
-                                impressions:   parseInt(m.impressions   || '0'),
-                                clicks:        parseInt(m.clicks        || '0'),
-                                conversions:   parseInt(m.conversion    || '0'),
+                                [idKey]:     id || null,
+                                [nameKey]:   nameMap.get(id) || id || 'Desconocido',
+                                spend:       parseFloat(m.spend       || '0'),
+                                impressions: parseInt(m.impressions   || '0'),
+                                clicks:      parseInt(m.clicks        || '0'),
+                                conversions: parseInt(m.conversion    || '0'),
+                                account_id:  advertiserId,
                             }
                             items.push(out)
                         })
@@ -872,7 +866,7 @@ export async function GET(request: Request) {
 
                 // Fetch reports from TikTok Business API
                 const url = new URL('https://business-api.tiktok.com/open_api/v1.3/report/integrated/get/')
-                url.searchParams.append('advertiser_id', config.tiktok_advertiser_id)
+                url.searchParams.append('advertiser_id', advertiserId)
                 url.searchParams.append('report_type', 'BASIC')
                 url.searchParams.append('data_level', 'AUCTION_CAMPAIGN')
                 url.searchParams.append('dimensions', JSON.stringify(['campaign_id']))
@@ -882,7 +876,7 @@ export async function GET(request: Request) {
                 url.searchParams.append('page_size', '100')
 
                 const res = await fetch(url.toString(), {
-                    headers: { 'Access-Token': config.tiktok_access_token }
+                    headers: { 'Access-Token': token }
                 })
                 const data = await res.json()
 
@@ -913,7 +907,8 @@ export async function GET(request: Request) {
                             spend: cSpend,
                             impressions: cImpr,
                             clicks: cClicks,
-                            conversions: cConv
+                            conversions: cConv,
+                            account_id: advertiserId,
                         })
                     })
 
@@ -923,8 +918,7 @@ export async function GET(request: Request) {
                     record.conversions = totalConv
                     record.campaigns = campaignsArr
                     record.apiSuccess = true
-                    platformLogs.tiktok = campaignsArr.length > 0 || totalSpend > 0 ? 'Conectado OK' : 'Sin Datos'
-                    log(`[TikTok] ${targetDate} Spend: ${totalSpend}, Campañas: ${campaignsArr.length}`)
+                    log(`[TikTok] ${targetDate} [${advertiserId}] Spend: ${totalSpend}, Campañas: ${campaignsArr.length}`)
 
                     // Fetch ad-level and adgroup-level breakdowns in parallel
                     const [tiktokAdsResult, tiktokAdgroupsResult] = await Promise.all([
@@ -935,13 +929,62 @@ export async function GET(request: Request) {
                     record.tiktok_adgroups = tiktokAdgroupsResult
                 } else {
                     const msg = data.message || 'Error API'
-                    log(`[TikTok] ${targetDate} Error de API: ${JSON.stringify(data)}`)
-                    platformLogs.tiktok = msg
+                    log(`[TikTok] ${targetDate} [${advertiserId}] Error de API: ${JSON.stringify(data)}`)
                 }
             } catch (e: any) {
-                log(`[TikTok] Catch Error: ${e.message}`)
-                platformLogs.tiktok = 'Error'
+                log(`[TikTok] [${advertiserId}] Catch Error: ${e.message}`)
             }
+            return record
+        }
+
+        // ─── Multi-account wrapper: iterates tiktok_accounts, consolidates ───
+        async function fetchTikTok(targetDate: string) {
+            const record = {
+                spend: 0, impressions: 0, clicks: 0, conversions: 0,
+                campaigns: [] as any[], tiktok_ads: [] as any[], tiktok_adgroups: [] as any[],
+                apiSuccess: false,
+            }
+
+            // Build list of accounts to sync (multi-account or legacy single-account)
+            let accountsToFetch: { advertiser_id: string; token: string }[] = []
+            if (config.tiktok_accounts && Array.isArray(config.tiktok_accounts) && config.tiktok_accounts.length > 0) {
+                accountsToFetch = config.tiktok_accounts
+                    .filter((a: any) => a.advertiser_id)
+                    .map((a: any) => ({
+                        advertiser_id: a.advertiser_id,
+                        token: a.access_token || config.tiktok_access_token || '',
+                    }))
+            } else if (config.tiktok_access_token && config.tiktok_advertiser_id) {
+                accountsToFetch = [{ advertiser_id: config.tiktok_advertiser_id, token: config.tiktok_access_token }]
+            }
+
+            if (accountsToFetch.length === 0) {
+                platformLogs.tiktok = 'Sin configurar'
+                log(`[TikTok] ${targetDate} Sin cuentas configuradas`)
+                return record
+            }
+
+            const results = await Promise.all(
+                accountsToFetch.map(({ advertiser_id, token }) =>
+                    fetchTikTokSingleAccount(targetDate, advertiser_id, token)
+                )
+            )
+
+            for (const r of results) {
+                record.spend       += r.spend
+                record.impressions += r.impressions
+                record.clicks      += r.clicks
+                record.conversions += r.conversions
+                record.campaigns.push(...r.campaigns)
+                record.tiktok_ads.push(...r.tiktok_ads)
+                record.tiktok_adgroups.push(...r.tiktok_adgroups)
+                if (r.apiSuccess) record.apiSuccess = true
+            }
+
+            if (record.apiSuccess) {
+                platformLogs.tiktok = record.campaigns.length > 0 || record.spend > 0 ? 'Conectado OK' : 'Sin Datos'
+            }
+            log(`[TikTok] ${targetDate} Total — Spend: ${record.spend.toFixed(2)}, Campañas: ${record.campaigns.length}, Cuentas: ${accountsToFetch.length}`)
             return record
         }
 
@@ -1338,7 +1381,8 @@ export async function GET(request: Request) {
 
                 // Per-platform guard: if TikTok API failed (not just zero spend, but actual API error),
                 // skip TikTok fields in the upsert to preserve previously-synced data in the DB.
-                const tiktokFailed = config.tiktok_access_token && !tiktokRecord.apiSuccess
+                const hasAnyTikTokConfig = (Array.isArray(config.tiktok_accounts) && config.tiktok_accounts.length > 0) || !!config.tiktok_access_token
+                const tiktokFailed = hasAnyTikTokConfig && !tiktokRecord.apiSuccess
 
                 // ─── Merge funnel breakdown: Hotmart sales + GA4 page views per tab ───
                 // Total pagos_iniciados (suma de payment_page_views de todos los funnels)
