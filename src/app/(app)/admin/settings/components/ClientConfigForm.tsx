@@ -96,6 +96,91 @@ function MetaAccountRow({ account, sharedToken, testStatus, onChange, onRemove, 
     )
 }
 
+// ─── TikTok Account Row ───────────────────────────────────────────────────────
+
+interface TikTokAccount {
+    id: string
+    label: string
+    advertiser_id: string
+    access_token: string
+}
+
+function TikTokAccountRow({ account, sharedToken, testStatus, onChange, onRemove, onTest }: {
+    account: TikTokAccount
+    sharedToken: string
+    testStatus?: { loading: boolean; success?: boolean; error?: string }
+    onChange: (updated: TikTokAccount) => void
+    onRemove: () => void
+    onTest: () => void
+}) {
+    return (
+        <div className="bg-zinc-950/60 border border-zinc-800 rounded-lg p-4 space-y-3">
+            <div className="flex items-center gap-2">
+                <Input
+                    placeholder="Nombre de la cuenta (ej: Cuenta Principal)"
+                    value={account.label}
+                    onChange={(e) => onChange({ ...account, label: e.target.value })}
+                    className="bg-zinc-900 border-zinc-700 h-8 text-sm"
+                />
+                <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={onRemove}
+                    className="text-zinc-500 hover:text-red-400 shrink-0 h-8 w-8 p-0"
+                >
+                    <Trash2 className="w-4 h-4" />
+                </Button>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                    <Label className="text-zinc-400 text-xs">Advertiser ID</Label>
+                    <Input
+                        placeholder="1234567890123456789"
+                        value={account.advertiser_id}
+                        onChange={(e) => onChange({ ...account, advertiser_id: e.target.value })}
+                        className="bg-zinc-900 border-zinc-700 h-8 text-sm"
+                    />
+                </div>
+                <div className="space-y-1.5">
+                    <Label className="text-zinc-400 text-xs">Token propio (opcional)</Label>
+                    <Input
+                        type="password"
+                        placeholder={sharedToken ? 'Usa token compartido' : 'Token...'}
+                        value={account.access_token}
+                        onChange={(e) => onChange({ ...account, access_token: e.target.value })}
+                        className="bg-zinc-900 border-zinc-700 h-8 text-sm"
+                    />
+                </div>
+            </div>
+            <div className="flex items-center gap-3">
+                <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={onTest}
+                    disabled={testStatus?.loading || !account.advertiser_id}
+                    className="h-7 text-xs"
+                >
+                    {testStatus?.loading
+                        ? <RefreshCw className="w-3 h-3 animate-spin mr-1" />
+                        : <RefreshCw className="w-3 h-3 mr-1" />
+                    }
+                    Probar conexión
+                </Button>
+                {testStatus?.success && (
+                    <span className="text-green-500 text-xs flex items-center gap-1">
+                        <CheckCircle2 className="w-3 h-3" /> Conexión exitosa
+                    </span>
+                )}
+                {testStatus?.error && (
+                    <span className="text-red-500 text-xs flex items-center gap-1">
+                        <AlertCircle className="w-3 h-3" /> {testStatus.error}
+                    </span>
+                )}
+            </div>
+        </div>
+    )
+}
+
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export function ClientConfigForm({ cliente, layouts = [], isAdmin = false }: { cliente: any; layouts?: any[]; isAdmin?: boolean }) {
@@ -145,6 +230,29 @@ const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean
         setMetaAccounts(prev => prev.map((a, i) => i === idx ? updated : a))
     }
 
+    // ── tiktokAccounts state (with backward compat migration) ────────────────
+    const initTikTokAccounts = (): TikTokAccount[] => {
+        const cfg = cliente.config_api || {}
+        if (cfg.tiktok_accounts && Array.isArray(cfg.tiktok_accounts) && cfg.tiktok_accounts.length > 0) {
+            return cfg.tiktok_accounts
+        }
+        if (cfg.tiktok_access_token || cfg.tiktok_advertiser_id) {
+            return [{ id: crypto.randomUUID(), label: 'Cuenta Principal', advertiser_id: cfg.tiktok_advertiser_id || '', access_token: '' }]
+        }
+        return []
+    }
+    const [tiktokAccounts, setTiktokAccounts] = useState<TikTokAccount[]>(initTikTokAccounts)
+
+    function addTikTokAccount() {
+        setTiktokAccounts(prev => [...prev, { id: crypto.randomUUID(), label: `Cuenta ${prev.length + 1}`, advertiser_id: '', access_token: '' }])
+    }
+    function removeTikTokAccount(idx: number) {
+        setTiktokAccounts(prev => prev.filter((_, i) => i !== idx))
+    }
+    function updateTikTokAccount(idx: number, updated: TikTokAccount) {
+        setTiktokAccounts(prev => prev.map((a, i) => i === idx ? updated : a))
+    }
+
     async function runTest(key: string, fn: () => Promise<any>) {
         setTestStatus(prev => ({ ...prev, [key]: { loading: true } }))
         try {
@@ -177,6 +285,7 @@ const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean
             ...config,
             meta_accounts: metaAccounts,
             meta_account_id: metaAccounts[0]?.account_id || config.meta_account_id || '',
+            tiktok_accounts: tiktokAccounts,
             hotmart_basic: computedBasic || config.hotmart_basic || '',
         }
         const { success, error: updateError } = await updateClienteConfig(cliente.id, finalConfig)
@@ -575,60 +684,64 @@ const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean
             {/* ─── TikTok ───────────────────────────────────────────────────── */}
             <Card className="bg-zinc-900 border-zinc-800">
                 <CardHeader>
-                    <div className="flex justify-between items-center">
-                        <CardTitle>TikTok Ads</CardTitle>
-                        <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => runTest('tiktok', () => testTikTokConnection(config.tiktok_access_token, config.tiktok_advertiser_id))}
-                            disabled={testStatus.tiktok?.loading || !config.tiktok_access_token}
-                        >
-                            {testStatus.tiktok?.loading ? <RefreshCw className="w-3 h-3 animate-spin mr-2" /> : <RefreshCw className="w-3 h-3 mr-2" />}
-                            Probar Conexión
-                        </Button>
-                    </div>
-                    <CardDescription>Conecta tu cuenta de TikTok Ads usando OAuth o ingresando el token manualmente.</CardDescription>
-                    {tiktokOAuthStatus?.success && <p className="text-green-500 text-xs flex items-center mt-2"><CheckCircle2 className="w-3 h-3 mr-1" /> Cuenta TikTok conectada exitosamente</p>}
-                    {tiktokOAuthStatus?.error && <p className="text-red-500 text-xs flex items-center mt-2"><AlertCircle className="w-3 h-3 mr-1" /> {tiktokOAuthStatus.error}</p>}
-                    {testStatus.tiktok?.success && <p className="text-green-500 text-xs flex items-center mt-2"><CheckCircle2 className="w-3 h-3 mr-1" /> Conexión Exitosa</p>}
-                    {testStatus.tiktok?.error && <p className="text-red-500 text-xs flex items-center mt-2"><AlertCircle className="w-3 h-3 mr-1" /> {testStatus.tiktok.error}</p>}
+                    <CardTitle>TikTok Ads</CardTitle>
+                    <CardDescription>Conecta una o más cuentas publicitarias de TikTok Ads. Los datos de todas las cuentas se consolidan en el reporte y pueden filtrarse por cuenta en el layout.</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                    {/* OAuth Button */}
+                    {/* Shared token */}
+                    <div className="space-y-2">
+                        <Label className="text-zinc-300">Access Token Compartido</Label>
+                        <Input
+                            type="password"
+                            placeholder="Tu TikTok Marketing API Access Token"
+                            value={config.tiktok_access_token || ''}
+                            onChange={(e) => setConfig({ ...config, tiktok_access_token: e.target.value })}
+                            className="bg-zinc-950 border-zinc-700"
+                        />
+                        <p className="text-xs text-zinc-500">Token OAuth o token manual. Las cuentas sin token propio usarán este.</p>
+                    </div>
+
+                    {/* OAuth button */}
                     <div className="flex flex-col gap-2">
                         <a href={`/api/auth/tiktok?client_id=${cliente.id}`}>
                             <Button variant="default" size="sm" className="w-full bg-[#ff2d55] hover:bg-[#e0003a] text-white">
                                 {config.tiktok_access_token ? '🔄 Reconectar con TikTok Ads' : '🔗 Conectar con TikTok Ads'}
                             </Button>
                         </a>
-                        {config.tiktok_access_token && (
-                            <p className="text-green-500 text-xs flex items-center gap-1"><CheckCircle2 className="w-3 h-3" /> Token guardado — cuenta conectada</p>
-                        )}
+                        {tiktokOAuthStatus?.success && <p className="text-green-500 text-xs flex items-center gap-1"><CheckCircle2 className="w-3 h-3" /> Cuenta TikTok conectada exitosamente</p>}
+                        {tiktokOAuthStatus?.error && <p className="text-red-500 text-xs flex items-center gap-1"><AlertCircle className="w-3 h-3" /> {tiktokOAuthStatus.error}</p>}
+                        {testStatus.tiktok?.success && <p className="text-green-500 text-xs flex items-center gap-1"><CheckCircle2 className="w-3 h-3" /> Conexión Exitosa</p>}
+                        {testStatus.tiktok?.error && <p className="text-red-500 text-xs flex items-center gap-1"><AlertCircle className="w-3 h-3" /> {testStatus.tiktok.error}</p>}
                     </div>
 
-                    <div className="border-t border-zinc-800 pt-4 space-y-4">
-                        <p className="text-zinc-500 text-xs">O ingresa el token manualmente:</p>
-                        <div className="space-y-2">
-                            <Label htmlFor="tiktok_access_token" className="text-zinc-300">Access Token</Label>
-                            <Input
-                                id="tiktok_access_token"
-                                type="password"
-                                placeholder="Tu TikTok Marketing API Access Token"
-                                value={config.tiktok_access_token || ''}
-                                onChange={(e) => setConfig({ ...config, tiktok_access_token: e.target.value })}
-                                className="bg-zinc-950 border-zinc-700"
-                            />
+                    {/* Multi-account list */}
+                    <div className="space-y-3 pt-2 border-t border-zinc-800">
+                        <div className="flex items-center justify-between">
+                            <Label className="text-zinc-300">Cuentas Publicitarias TikTok</Label>
+                            <Button size="sm" variant="outline" onClick={addTikTokAccount} className="h-7 text-xs">
+                                <Plus className="w-3 h-3 mr-1" /> Agregar Cuenta
+                            </Button>
                         </div>
-                        <div className="space-y-2">
-                            <Label htmlFor="tiktok_advertiser_id" className="text-zinc-300">Advertiser ID</Label>
-                            <Input
-                                id="tiktok_advertiser_id"
-                                placeholder="1234567890123456789"
-                                value={config.tiktok_advertiser_id || ''}
-                                onChange={(e) => setConfig({ ...config, tiktok_advertiser_id: e.target.value })}
-                                className="bg-zinc-950 border-zinc-700"
+
+                        {tiktokAccounts.length === 0 && (
+                            <p className="text-xs text-zinc-500 py-3 text-center border border-dashed border-zinc-800 rounded-lg">
+                                Sin cuentas configuradas. Conéctate via OAuth o agrega manualmente.
+                            </p>
+                        )}
+
+                        {tiktokAccounts.map((acct, idx) => (
+                            <TikTokAccountRow
+                                key={acct.id}
+                                account={acct}
+                                sharedToken={config.tiktok_access_token || ''}
+                                testStatus={testStatus[`tiktok_${acct.id}`]}
+                                onChange={(updated) => updateTikTokAccount(idx, updated)}
+                                onRemove={() => removeTikTokAccount(idx)}
+                                onTest={() => runTest(`tiktok_${acct.id}`, () =>
+                                    testTikTokConnection(acct.access_token || config.tiktok_access_token, acct.advertiser_id)
+                                )}
                             />
-                        </div>
+                        ))}
                     </div>
                 </CardContent>
             </Card>
