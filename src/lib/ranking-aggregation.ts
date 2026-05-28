@@ -72,11 +72,12 @@ export function aggregateRankingRows(
     metrics: any[],
     dimension: RankingDimension,
     campaignFilter?: CampaignFilterSpec,
+    accountId?: string,
 ): any[] {
     const isTiktok = dimension.startsWith('tiktok_')
 
     if (isTiktok) {
-        return aggregateTiktokRows(metrics, dimension as 'tiktok_campaigns' | 'tiktok_ads' | 'tiktok_adgroups', campaignFilter)
+        return aggregateTiktokRows(metrics, dimension as 'tiktok_campaigns' | 'tiktok_ads' | 'tiktok_adgroups', campaignFilter, accountId)
     }
 
     // ── Meta aggregation (original logic) ────────────────────────────────────
@@ -141,6 +142,7 @@ function aggregateTiktokRows(
     metrics: any[],
     dimension: 'tiktok_campaigns' | 'tiktok_ads' | 'tiktok_adgroups',
     campaignFilter?: CampaignFilterSpec,
+    accountId?: string,
 ): any[] {
     const groupMap = new Map<string, any>()
 
@@ -160,6 +162,8 @@ function aggregateTiktokRows(
         const entries: any[] = Array.isArray(row[arrayKey]) ? row[arrayKey] : []
 
         for (const entry of entries) {
+            if (accountId && entry.account_id !== accountId) continue
+
             if (campaignFilter && campaignFilter.type === 'keyword') {
                 const nameToFilter = String(entry.campaign_name || entry.name || '')
                 if (!matchesFilter(nameToFilter, campaignFilter)) continue
