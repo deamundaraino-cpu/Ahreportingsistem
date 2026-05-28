@@ -62,6 +62,7 @@ export interface CardDef {
     color?: CardColor
     campaignFilter?: CampaignFilterSpec
     formFilter?: FormFilterSpec
+    account_id?: string
 }
 
 export type ChartType =
@@ -87,6 +88,7 @@ export interface ChartDef {
     height?: number
     campaignFilter?: CampaignFilterSpec
     formFilter?: FormFilterSpec
+    account_id?: string
     yAxes?: ('left' | 'right')[]
     types?: ('line' | 'bar' | 'area' | '')[]
     strokeWidths?: number[]
@@ -132,6 +134,7 @@ export interface RankingTableDef {
     showRank?: boolean
     campaignFilter?: CampaignFilterSpec
     formFilter?: FormFilterSpec
+    account_id?: string
 }
 
 export interface MetricDef {
