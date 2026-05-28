@@ -410,6 +410,39 @@ function DraggableColumnRow({
     )
 }
 
+// ─── TikTok Account Picker ────────────────────────────────────────────────────
+
+const hasTikTokFormula = (formula: string) => formula.includes('tiktok_')
+
+function TikTokAccountPicker({
+    value,
+    accounts,
+    onChange,
+}: {
+    value?: string
+    accounts: { id: string; label: string; advertiser_id: string }[]
+    onChange: (v: string) => void
+}) {
+    if (accounts.length === 0) return null
+    return (
+        <div className="flex items-center gap-1.5">
+            <span className="text-[10px] text-zinc-500 shrink-0">Cuenta TikTok:</span>
+            <select
+                value={value || ''}
+                onChange={e => onChange(e.target.value)}
+                className="h-6 bg-zinc-950 border border-zinc-700 text-zinc-300 rounded px-1.5 text-xs"
+            >
+                <option value="">Todas las cuentas</option>
+                {accounts.map(a => (
+                    <option key={a.id} value={a.advertiser_id}>
+                        {a.label} ({a.advertiser_id})
+                    </option>
+                ))}
+            </select>
+        </div>
+    )
+}
+
 // ─── DnD Card Row ─────────────────────────────────────────────────────────────
 
 export const COLOR_OPTIONS: { val: CardColor; bg: string }[] = [
@@ -421,7 +454,7 @@ export const COLOR_OPTIONS: { val: CardColor; bg: string }[] = [
 ]
 
 function DraggableCardRow({
-    card, index, onDragStart, onDragOver, onDrop, onUpdate, onRemove, onDuplicate, availableMetrics, campaignGroups = [], campaignNames = []
+    card, index, onDragStart, onDragOver, onDrop, onUpdate, onRemove, onDuplicate, availableMetrics, campaignGroups = [], campaignNames = [], tiktokAccounts = []
 }: {
     card: CardDef
     index: number
@@ -434,6 +467,7 @@ function DraggableCardRow({
     availableMetrics?: { id: string; label: string }[]
     campaignGroups?: { id: string; nombre: string }[]
     campaignNames?: string[]
+    tiktokAccounts?: { id: string; label: string; advertiser_id: string }[]
 }) {
     return (
         <div
@@ -472,7 +506,7 @@ function DraggableCardRow({
                     />
                 </div>
 
-                {/* Row 2: type selector + campaign filter */}
+                {/* Row 2: type selector + campaign filter + TikTok account */}
                 <div className="flex flex-col gap-1">
                     <div className="flex items-center gap-2">
                         <MetricTypeSelector
@@ -487,6 +521,13 @@ function DraggableCardRow({
                             campaignNames={campaignNames}
                         />
                     </div>
+                    {hasTikTokFormula(card.formula) && (
+                        <TikTokAccountPicker
+                            value={card.account_id}
+                            accounts={tiktokAccounts}
+                            onChange={v => onUpdate({ ...card, account_id: v || undefined })}
+                        />
+                    )}
                 </div>
             </div>
 
@@ -530,7 +571,7 @@ export const CHART_COLOR_OPTIONS = [
 ]
 
 function DraggableChartRow({
-    chart, index, onDragStart, onDragOver, onDrop, onUpdate, onRemove, onDuplicate, availableMetrics, campaignGroups = [], campaignNames = []
+    chart, index, onDragStart, onDragOver, onDrop, onUpdate, onRemove, onDuplicate, availableMetrics, campaignGroups = [], campaignNames = [], tiktokAccounts = []
 }: {
     chart: ChartDef
     index: number
@@ -543,6 +584,7 @@ function DraggableChartRow({
     availableMetrics?: { id: string; label: string }[]
     campaignGroups?: { id: string; nombre: string }[]
     campaignNames?: string[]
+    tiktokAccounts?: { id: string; label: string; advertiser_id: string }[]
 }) {
     const isCircular = chart.type === 'donut' || chart.type === 'pie' || chart.type === 'radial' || chart.type === 'funnel'
     const maxMetrics = chart.type === 'scatter' ? 2 : isCircular ? 6 : 5
@@ -807,6 +849,13 @@ function DraggableChartRow({
 
                 {/* Campaign filter & Height */}
                 <div className="flex flex-col gap-1 mt-1">
+                    {chart.valueFormulas.some(hasTikTokFormula) && (
+                        <TikTokAccountPicker
+                            value={chart.account_id}
+                            accounts={tiktokAccounts}
+                            onChange={v => onUpdate({ ...chart, account_id: v || undefined })}
+                        />
+                    )}
                     <div className="flex items-center justify-between gap-2">
                         <CampaignFilterPicker
                             value={chart.campaignFilter}
@@ -1092,6 +1141,7 @@ export function LayoutConfigModal({
     conversionesCatalogo = [],
     campaignGroups = [],
     campaignNames = [],
+    tiktokAccounts = [],
 }: {
     clienteId: string
     currentLayout: ReportLayout | null
@@ -1103,6 +1153,7 @@ export function LayoutConfigModal({
     conversionesCatalogo?: { conversion_key: string; label: string; field_id: string }[]
     campaignGroups?: { id: string; nombre: string }[]
     campaignNames?: string[]
+    tiktokAccounts?: { id: string; label: string; advertiser_id: string }[]
 }) {
     const availableMetrics = buildAvailableMetrics(conversionesCatalogo)
     const [step, setStep] = useState<'select' | 'edit'>(currentLayout ? 'edit' : 'select')
@@ -1610,6 +1661,7 @@ export function LayoutConfigModal({
                                                 availableMetrics={availableMetrics}
                                                 campaignGroups={campaignGroups}
                                                 campaignNames={campaignNames}
+                                                tiktokAccounts={tiktokAccounts}
                                             />
                                         </div>
                                     ))}
@@ -1661,6 +1713,7 @@ export function LayoutConfigModal({
                                         availableMetrics={availableMetrics}
                                         campaignGroups={campaignGroups}
                                         campaignNames={campaignNames}
+                                        tiktokAccounts={tiktokAccounts}
                                     />
                                 ))}
                                 {(!workingLayout.graficos || workingLayout.graficos.length === 0) && (
@@ -1912,7 +1965,16 @@ export function LayoutConfigModal({
                                             </div>
                                         )}
 
-
+                                        {/* TikTok account picker — visible for TikTok dimensions */}
+                                        {table.dimension.startsWith('tiktok_') && (
+                                            <div className="pl-1">
+                                                <TikTokAccountPicker
+                                                    value={table.account_id}
+                                                    accounts={tiktokAccounts}
+                                                    onChange={v => updateRankingTable(ti, { ...table, account_id: v || undefined })}
+                                                />
+                                            </div>
+                                        )}
 
                                         {/* Columns list */}
                                         <div className="space-y-2 pt-1 border-t border-zinc-800">
