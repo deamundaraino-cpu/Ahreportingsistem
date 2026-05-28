@@ -13,6 +13,7 @@ interface Props {
     sourceMapping: Record<string, string>
     customMetrics: Record<string, string>
     clienteId: string
+    accountId?: string
 }
 
 interface ConsolidateModal {
@@ -21,7 +22,7 @@ interface ConsolidateModal {
     colValues: (number | null)[]
 }
 
-export function RankingTableBlock({ def, metrics, campaignGroups, sourceMapping, customMetrics, clienteId }: Props) {
+export function RankingTableBlock({ def, metrics, campaignGroups, sourceMapping, customMetrics, clienteId, accountId }: Props) {
     const [adInfoMap, setAdInfoMap] = useState<Record<string, { thumbnail: string | null, previewUrl: string | null }>>({})
     const [sortColIdx, setSortColIdx] = useState(def.sortColumnIndex)
     const [sortDir, setSortDir] = useState<'asc' | 'desc'>(def.sortOrder)
@@ -67,8 +68,8 @@ export function RankingTableBlock({ def, metrics, campaignGroups, sourceMapping,
 
     // All aggregated rows (no topN limit) — needed for consolidation by name
     const allAggregated = useMemo(() => {
-        return aggregateRankingRows(metrics, def.dimension, def.campaignFilter)
-    }, [metrics, def.dimension, def.campaignFilter])
+        return aggregateRankingRows(metrics, def.dimension, def.campaignFilter, accountId)
+    }, [metrics, def.dimension, def.campaignFilter, accountId])
 
     // Count how many distinct entries share each name
     const nameCount = useMemo(() => {
