@@ -43,7 +43,7 @@ export async function GET(request: Request) {
     const { data: clientes, error } = await query
     if (error || !clientes) return NextResponse.json({ error: 'Failed to fetch clients' }, { status: 500 })
 
-    const results = []
+    const results: any[] = []
 
     const debugLogs: string[] = []
     const log = (msg: string) => {
@@ -66,9 +66,10 @@ export async function GET(request: Request) {
         return NextResponse.json({ error: 'Fechas inválidas.' }, { status: 400 })
     }
 
-    for (const cliente of clientes) {
+    // Procesar todos los clientes en paralelo — reduce tiempo total de N×T a T (el cliente más lento)
+    await Promise.all(clientes.map(async (cliente: any) => {
         const config = cliente.config_api as any
-        if (!config) continue
+        if (!config) return
 
         const platformLogs = { meta: 'Saltado', tiktok: 'Saltado', hotmart: 'Saltado', ga4: 'Saltado' }
 
@@ -1480,7 +1481,7 @@ export async function GET(request: Request) {
                 results.forEach((r: any) => { if (r.cliente_id === cliente.id) r.status = 'ok' });
             }
         }
-    }
+    }))
 
     return NextResponse.json({ message: 'Sync complete', results, debugLogs })
 }
