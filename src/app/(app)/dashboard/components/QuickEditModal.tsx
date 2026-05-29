@@ -8,6 +8,7 @@ import { saveClienteLayout, saveTabOverrides } from '../_actions'
 import {
     FormulaInput, MetricTypeSelector, CampaignFilterPicker,
     CHART_TYPES, CHART_COLOR_OPTIONS, COLOR_OPTIONS, buildAvailableMetrics,
+    TikTokAccountPicker, hasTikTokFormula,
 } from './LayoutConfigModal'
 import type {
     ReportLayout, CardDef, ChartDef, TextBlockDef, RankingTableDef, ColDef,
@@ -24,12 +25,13 @@ export type QuickEditTarget =
 
 // ─── Card Editor ───────────────────────────────────────────────────────────────
 
-function CardEditor({ card, onChange, availableMetrics, campaignGroups, campaignNames }: {
+function CardEditor({ card, onChange, availableMetrics, campaignGroups, campaignNames, tiktokAccounts = [] }: {
     card: CardDef
     onChange: (card: CardDef) => void
     availableMetrics: { id: string; label: string }[]
     campaignGroups: { id: string; nombre: string }[]
     campaignNames: string[]
+    tiktokAccounts?: { id: string; label: string; advertiser_id: string }[]
 }) {
     return (
         <div className="space-y-3">
@@ -55,18 +57,27 @@ function CardEditor({ card, onChange, availableMetrics, campaignGroups, campaign
                     availableMetrics={availableMetrics}
                 />
             </div>
-            <div className="flex items-center gap-2">
-                <MetricTypeSelector
-                    prefix={card.prefix}
-                    suffix={card.suffix}
-                    onChange={vals => onChange({ ...card, ...vals })}
-                />
-                <CampaignFilterPicker
-                    value={card.campaignFilter}
-                    onChange={v => onChange({ ...card, campaignFilter: v })}
-                    campaignGroups={campaignGroups}
-                    campaignNames={campaignNames}
-                />
+            <div className="flex flex-col gap-1.5">
+                <div className="flex items-center gap-2">
+                    <MetricTypeSelector
+                        prefix={card.prefix}
+                        suffix={card.suffix}
+                        onChange={vals => onChange({ ...card, ...vals })}
+                    />
+                    <CampaignFilterPicker
+                        value={card.campaignFilter}
+                        onChange={v => onChange({ ...card, campaignFilter: v })}
+                        campaignGroups={campaignGroups}
+                        campaignNames={campaignNames}
+                    />
+                </div>
+                {hasTikTokFormula(card.formula) && (
+                    <TikTokAccountPicker
+                        value={card.account_id}
+                        accounts={tiktokAccounts}
+                        onChange={v => onChange({ ...card, account_id: v || undefined })}
+                    />
+                )}
             </div>
         </div>
     )
@@ -74,12 +85,13 @@ function CardEditor({ card, onChange, availableMetrics, campaignGroups, campaign
 
 // ─── Chart Editor ──────────────────────────────────────────────────────────────
 
-function ChartEditor({ chart, onChange, availableMetrics, campaignGroups, campaignNames }: {
+function ChartEditor({ chart, onChange, availableMetrics, campaignGroups, campaignNames, tiktokAccounts = [] }: {
     chart: ChartDef
     onChange: (chart: ChartDef) => void
     availableMetrics: { id: string; label: string }[]
     campaignGroups: { id: string; nombre: string }[]
     campaignNames: string[]
+    tiktokAccounts?: { id: string; label: string; advertiser_id: string }[]
 }) {
     function addMetric() {
         onChange({
@@ -160,7 +172,15 @@ function ChartEditor({ chart, onChange, availableMetrics, campaignGroups, campai
                 )}
             </div>
 
-            <div className="flex items-center gap-3 pt-1 border-t border-zinc-800/60">
+            <div className="flex flex-col gap-1.5 pt-1 border-t border-zinc-800/60">
+                {chart.valueFormulas.some(hasTikTokFormula) && (
+                    <TikTokAccountPicker
+                        value={chart.account_id}
+                        accounts={tiktokAccounts}
+                        onChange={v => onChange({ ...chart, account_id: v || undefined })}
+                    />
+                )}
+                <div className="flex items-center gap-3">
                 <CampaignFilterPicker
                     value={chart.campaignFilter}
                     onChange={v => onChange({ ...chart, campaignFilter: v })}
@@ -178,6 +198,7 @@ function ChartEditor({ chart, onChange, availableMetrics, campaignGroups, campai
                         max={600}
                     />
                     <span className="text-[9px] text-zinc-700">px</span>
+                </div>
                 </div>
             </div>
         </div>
@@ -289,12 +310,13 @@ function TextEditor({ block, onChange }: {
 
 // ─── Ranking Table Editor ──────────────────────────────────────────────────────
 
-function RankingEditor({ ranking, onChange, availableMetrics, campaignGroups, campaignNames }: {
+function RankingEditor({ ranking, onChange, availableMetrics, campaignGroups, campaignNames, tiktokAccounts = [] }: {
     ranking: RankingTableDef
     onChange: (r: RankingTableDef) => void
     availableMetrics: { id: string; label: string }[]
     campaignGroups: { id: string; nombre: string }[]
     campaignNames: string[]
+    tiktokAccounts?: { id: string; label: string; advertiser_id: string }[]
 }) {
     return (
         <div className="space-y-4">
@@ -375,6 +397,13 @@ function RankingEditor({ ranking, onChange, availableMetrics, campaignGroups, ca
                     onChange={v => onChange({ ...ranking, campaignFilter: v })}
                     campaignGroups={campaignGroups}
                     campaignNames={campaignNames}
+                />
+            )}
+            {ranking.dimension.startsWith('tiktok_') && (
+                <TikTokAccountPicker
+                    value={ranking.account_id}
+                    accounts={tiktokAccounts}
+                    onChange={v => onChange({ ...ranking, account_id: v || undefined })}
                 />
             )}
 
@@ -539,6 +568,7 @@ export function QuickEditModal({
     campaignGroups = [],
     campaignNames = [],
     conversionesCatalogo = [],
+    tiktokAccounts = [],
     onClose,
     onLayoutApplied,
 }: {
@@ -549,6 +579,7 @@ export function QuickEditModal({
     campaignGroups?: { id: string; nombre: string }[]
     campaignNames?: string[]
     conversionesCatalogo?: { conversion_key: string; label: string; field_id: string }[]
+    tiktokAccounts?: { id: string; label: string; advertiser_id: string }[]
     onClose: () => void
     onLayoutApplied: (layout: ReportLayout) => void
 }) {
@@ -679,6 +710,7 @@ export function QuickEditModal({
                             availableMetrics={availableMetrics}
                             campaignGroups={campaignGroups}
                             campaignNames={campaignNames}
+                            tiktokAccounts={tiktokAccounts}
                         />
                     )}
                     {target.type === 'chart' && chart && (
@@ -688,6 +720,7 @@ export function QuickEditModal({
                             availableMetrics={availableMetrics}
                             campaignGroups={campaignGroups}
                             campaignNames={campaignNames}
+                            tiktokAccounts={tiktokAccounts}
                         />
                     )}
                     {target.type === 'text' && textBlock && (
@@ -700,6 +733,7 @@ export function QuickEditModal({
                             availableMetrics={availableMetrics}
                             campaignGroups={campaignGroups}
                             campaignNames={campaignNames}
+                            tiktokAccounts={tiktokAccounts}
                         />
                     )}
                     {target.type === 'table' && (

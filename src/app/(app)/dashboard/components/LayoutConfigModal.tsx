@@ -412,9 +412,9 @@ function DraggableColumnRow({
 
 // ─── TikTok Account Picker ────────────────────────────────────────────────────
 
-const hasTikTokFormula = (formula: string) => formula.includes('tiktok_')
+export const hasTikTokFormula = (formula: string) => formula.includes('tiktok_')
 
-function TikTokAccountPicker({
+export function TikTokAccountPicker({
     value,
     accounts,
     onChange,

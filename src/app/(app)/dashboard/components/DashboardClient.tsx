@@ -1517,6 +1517,7 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                     conversionesCatalogo={conversionesCatalogo}
                     campaignGroups={data.campaignGroups || []}
                     campaignNames={allCampaignNames}
+                    tiktokAccounts={tiktokAccounts}
                     onClose={() => setQuickEditTarget(null)}
                     onLayoutApplied={(newLayout) => {
                         setTabLayoutOverrides(prev => ({ ...prev, [activeTabId]: newLayout }))
