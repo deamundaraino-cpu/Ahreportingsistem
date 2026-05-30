@@ -93,7 +93,9 @@ function buildGroupedData(
     varContext: Record<string, number> = {},
     sourceMapping: Record<string, string> = {},
     availablePlatforms?: Set<string>,
-    customMetrics: Record<string, string> = {}
+    customMetrics: Record<string, string> = {},
+    campaignFilter?: import('@/lib/layout-types').CampaignFilterSpec,
+    campaignGroups: any[] = []
 ): Array<Record<string, any>> {
     const validRows = metrics.filter((r: any) => {
         if (!r.fecha) return false
@@ -101,14 +103,21 @@ function buildGroupedData(
         return isValid(d)
     })
 
+    // Aplica filtro de campaña a cada fila individualmente si está configurado
+    const hasFilter = campaignFilter && (
+        Array.isArray(campaignFilter.value) ? campaignFilter.value.length > 0 : campaignFilter.value !== ''
+    )
+    const prepareRow = (row: any) => hasFilter ? enrichMetaRow(row, campaignFilter!, campaignGroups) : row
+
     if (periodicity === 'day') {
         return validRows.map((row: any) => {
+            const filteredRow = prepareRow(row)
             const pt: Record<string, any> = {
                 date: format(parseISO(row.fecha), 'dd MMM', { locale: es }),
                 rawDate: row.fecha,
             }
             formulas.forEach(f => {
-                const v = evaluateFormula(f, row, varContext, sourceMapping, availablePlatforms, customMetrics)
+                const v = evaluateFormula(f, filteredRow, varContext, sourceMapping, availablePlatforms, customMetrics)
                 pt[getLabel(f)] = v === null || isNaN(v as number) ? 0 : (v as number)
             })
             return pt
@@ -119,6 +128,7 @@ function buildGroupedData(
     const groups: Record<string, { label: string; dateObj: Date; rows: any[] }> = {}
 
     validRows.forEach(row => {
+        const filteredRow = prepareRow(row)
         const d = parseISO(row.fecha)
         let key = ''
         let label = ''
@@ -144,7 +154,7 @@ function buildGroupedData(
         if (!groups[key]) {
             groups[key] = { label, dateObj, rows: [] }
         }
-        groups[key].rows.push(row)
+        groups[key].rows.push(filteredRow)
     })
 
     // Sort group keys to ensure chronological order
@@ -289,24 +299,33 @@ function SingleMetricChart({
         setLocalUnits(chart.units || [])
     }, [chart.units])
 
-    // metrics ya llega pre-filtrado desde DashboardClient (keyword + campaignFilter por gráfica compuesto)
-    const chartMetrics = metrics
+    // Si la gráfica tiene campaignFilter propio, usamos rawMetrics (datos sin keyword) como base
+    // y el filtro se aplica dentro de buildGroupedData por cada fila/métrica individualmente.
+    // Si no tiene filtro, usamos metrics (ya filtrado por keyword global).
+    const hasOwnFilter = chart.campaignFilter && (
+        Array.isArray(chart.campaignFilter.value)
+            ? chart.campaignFilter.value.length > 0
+            : chart.campaignFilter.value !== ''
+    )
+    const sourceMetrics = (hasOwnFilter && rawMetrics) ? rawMetrics : metrics
 
     // Formulas
     const formulas = useMemo(() => chart.valueFormulas.filter(Boolean), [chart.valueFormulas])
 
-    // Build grouped data
+    // Build grouped data — el campaignFilter se aplica por fila dentro de buildGroupedData
     const data = useMemo(() => {
         return buildGroupedData(
-            chartMetrics,
+            sourceMetrics,
             formulas,
             periodicity,
             varContext,
             sourceMapping,
             platformSet,
-            layoutCustomMetrics
+            layoutCustomMetrics,
+            hasOwnFilter ? chart.campaignFilter : undefined,
+            campaignGroups
         )
-    }, [chartMetrics, formulas, periodicity, varContext, sourceMapping, platformSet, layoutCustomMetrics])
+    }, [sourceMetrics, formulas, periodicity, varContext, sourceMapping, platformSet, layoutCustomMetrics, chart.campaignFilter, campaignGroups, hasOwnFilter])
 
     if (!formulas.length) return null
 

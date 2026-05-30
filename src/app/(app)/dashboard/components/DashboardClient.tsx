@@ -1234,21 +1234,9 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                             if (blockId.startsWith('chart:')) {
                                 const chart = activeLayout.graficos?.find((g: any) => `chart:${g.id}` === blockId)
                                 if (!chart) return null
-                                // Aplicar filtro compuesto (keyword global + filtro por gráfica) aquí,
-                                // igual que hacemos con tarjetas, para evitar problemas de referencia en useMemo
-                                let chartMetrics = filteredMetrics
-                                if (chart.campaignFilter) {
-                                    const cf = chart.campaignFilter as import('@/lib/layout-types').CampaignFilterSpec
-                                    const cfHasValue = Array.isArray(cf.value) ? cf.value.length > 0 : cf.value !== ''
-                                    if (cfHasValue) {
-                                        chartMetrics = filteredMetrics.map((m: any) =>
-                                            applyCompoundFilter(m, effectiveKeyword, cf, data.campaignGroups)
-                                        )
-                                    }
-                                }
-                                if (chart.account_id) {
-                                    chartMetrics = chartMetrics.map((r: any) => filterRowByTikTokAccount(r, chart.account_id))
-                                }
+                                const chartMetrics = chart.account_id
+                                    ? filteredMetrics.map((r: any) => filterRowByTikTokAccount(r, chart.account_id))
+                                    : filteredMetrics
                                 return <SortableChart
                                     key={blockId}
                                     id={blockId}
