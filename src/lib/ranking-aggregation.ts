@@ -73,11 +73,13 @@ export function aggregateRankingRows(
     dimension: RankingDimension,
     campaignFilter?: CampaignFilterSpec,
     accountId?: string,
+    effectiveKeyword?: string,
+    campaignGroups?: any[],
 ): any[] {
     const isTiktok = dimension.startsWith('tiktok_')
 
     if (isTiktok) {
-        return aggregateTiktokRows(metrics, dimension as 'tiktok_campaigns' | 'tiktok_ads' | 'tiktok_adgroups', campaignFilter, accountId)
+        return aggregateTiktokRows(metrics, dimension as 'tiktok_campaigns' | 'tiktok_ads' | 'tiktok_adgroups', campaignFilter, accountId, effectiveKeyword, campaignGroups)
     }
 
     // ── Meta aggregation (original logic) ────────────────────────────────────
@@ -101,6 +103,31 @@ export function aggregateRankingRows(
         const entries: any[] = Array.isArray(row[arrayKey]) ? row[arrayKey] : []
 
         for (const entry of entries) {
+            // Keyword global primero (nomenclatura de campañas)
+            if (effectiveKeyword) {
+                const nameToCheck = String(entry[filterKey] || entry.name || '')
+                const kw = effectiveKeyword.toLowerCase()
+                // Soportar grupos de campañas
+                if (campaignGroups && campaignGroups.length > 0) {
+                    const selectedGroup = campaignGroups.find((g: any) => g.id === effectiveKeyword)
+                    if (selectedGroup?.campaign_group_mappings) {
+                        const matches = selectedGroup.campaign_group_mappings.some((m: any) => {
+                            if (m.campaign_id && entry.campaign_id === m.campaign_id) return true
+                            if (m.campaign_name_pattern) {
+                                const pat = m.campaign_name_pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/%/g, '.*').replace(/_/g, '.')
+                                return new RegExp(`^${pat}$`, 'i').test(nameToCheck)
+                            }
+                            return false
+                        })
+                        if (!matches) continue
+                    } else if (!nameToCheck.toLowerCase().includes(kw)) {
+                        continue
+                    }
+                } else if (!nameToCheck.toLowerCase().includes(kw)) {
+                    continue
+                }
+            }
+            // Filtro específico del ranking encadenado sobre el subset del keyword
             if (campaignFilter && campaignFilter.type === 'keyword') {
                 const nameToFilter = String(entry[filterKey] || entry.name || '')
                 if (!matchesFilter(nameToFilter, campaignFilter)) continue
@@ -143,6 +170,8 @@ function aggregateTiktokRows(
     dimension: 'tiktok_campaigns' | 'tiktok_ads' | 'tiktok_adgroups',
     campaignFilter?: CampaignFilterSpec,
     accountId?: string,
+    effectiveKeyword?: string,
+    campaignGroups?: any[],
 ): any[] {
     const groupMap = new Map<string, any>()
 
@@ -164,6 +193,12 @@ function aggregateTiktokRows(
         for (const entry of entries) {
             if (accountId && entry.account_id !== accountId) continue
 
+            // Keyword global primero
+            if (effectiveKeyword) {
+                const nameToCheck = String(entry.campaign_name || entry.name || '')
+                if (!nameToCheck.toLowerCase().includes(effectiveKeyword.toLowerCase())) continue
+            }
+            // Filtro específico encadenado
             if (campaignFilter && campaignFilter.type === 'keyword') {
                 const nameToFilter = String(entry.campaign_name || entry.name || '')
                 if (!matchesFilter(nameToFilter, campaignFilter)) continue

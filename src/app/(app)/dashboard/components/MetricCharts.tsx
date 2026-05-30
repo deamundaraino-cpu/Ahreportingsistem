@@ -18,7 +18,7 @@ import { evaluateFormula, aggregateFormula } from '@/lib/formula-engine'
 import { format, parseISO, isValid, startOfWeek, startOfMonth, startOfYear } from 'date-fns'
 import { es } from 'date-fns/locale'
 import type { ChartDef } from '@/lib/layout-types'
-import { enrichMetaRow } from '@/lib/campaign-filter'
+import { enrichMetaRow, filterCampaignList } from '@/lib/campaign-filter'
 
 // ─── Palette ──────────────────────────────────────────────────────────────────
 const PALETTE: Record<string, string> = {
@@ -256,7 +256,7 @@ export function MetricCharts({
 
 // ─── Single Metric Chart Component ───────────────────────────────────────────
 function SingleMetricChart({
-    chart, metrics, varContext, rawMetrics, campaignGroups,
+    chart, metrics, varContext, rawMetrics, campaignGroups, effectiveKeyword,
     sourceMapping, platformSet, layoutCustomMetrics, onUpdateChart
 }: {
     chart: ChartDef
@@ -289,14 +289,8 @@ function SingleMetricChart({
         setLocalUnits(chart.units || [])
     }, [chart.units])
 
-    // Filter rawMetrics / metrics based on campaign filter
-    const chartMetrics = useMemo(() => {
-        const filter = chart.campaignFilter
-        const hasFilter = filter && (Array.isArray(filter.value) ? filter.value.length > 0 : filter.value !== '')
-        return (hasFilter && rawMetrics)
-            ? rawMetrics.map((r: any) => enrichMetaRow(r, filter, campaignGroups))
-            : metrics
-    }, [chart.campaignFilter, rawMetrics, metrics, campaignGroups])
+    // metrics ya llega pre-filtrado desde DashboardClient (keyword + campaignFilter por gráfica compuesto)
+    const chartMetrics = metrics
 
     // Formulas
     const formulas = useMemo(() => chart.valueFormulas.filter(Boolean), [chart.valueFormulas])

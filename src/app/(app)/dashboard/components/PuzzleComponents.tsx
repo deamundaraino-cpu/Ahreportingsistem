@@ -81,7 +81,7 @@ export function SortableCard({ id, card, isPuzzleMode, onRemove, onQuickEdit, on
     )
 }
 
-export function SortableChart({ id, chart, isPuzzleMode, metrics, weeks, varContext, sourceMapping, platformSet, layoutCustomMetrics, onRemove, onUpdateChart, onQuickEdit, onDuplicate, isCollapsed, onToggleCollapse }: any) {
+export function SortableChart({ id, chart, isPuzzleMode, metrics, weeks, varContext, sourceMapping, platformSet, layoutCustomMetrics, rawMetrics, campaignGroups, effectiveKeyword, onRemove, onUpdateChart, onQuickEdit, onDuplicate, isCollapsed, onToggleCollapse }: any) {
     const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id })
     const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.5 : 1, zIndex: isDragging ? 50 : 'auto' as any }
 
@@ -134,6 +134,9 @@ export function SortableChart({ id, chart, isPuzzleMode, metrics, weeks, varCont
                 sourceMapping={sourceMapping}
                 platformSet={platformSet}
                 layoutCustomMetrics={layoutCustomMetrics}
+                rawMetrics={rawMetrics}
+                campaignGroups={campaignGroups}
+                effectiveKeyword={effectiveKeyword}
                 onUpdateChart={onUpdateChart}
             />
         </div>
@@ -411,7 +414,7 @@ export function SortableText({ id, block, isPuzzleMode, onRemove, onUpdate, onQu
     )
 }
 
-export function SortableTable({ id, isPuzzleMode, children, title, onQuickEdit, onDuplicate, isCollapsed, onToggleCollapse }: any) {
+export function SortableTable({ id, isPuzzleMode, children, title, onQuickEdit, onDuplicate, onRemove, isCollapsed, onToggleCollapse }: any) {
     const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id })
     const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.5 : 1, zIndex: isDragging ? 50 : 'auto' as any }
 
@@ -428,6 +431,11 @@ export function SortableTable({ id, isPuzzleMode, children, title, onQuickEdit, 
         <div ref={setNodeRef} style={style} className={`col-span-1 md:col-span-4 relative group ${isPuzzleMode ? 'ring-1 ring-zinc-700/50 p-1 rounded-xl hover:shadow-lg hover:border-zinc-500' : ''}`}>
             {isPuzzleMode ? (
                 <div className="absolute top-4 right-4 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-20">
+                    {onRemove && (
+                        <button type="button" onClick={e => { e.stopPropagation(); onRemove() }} className="p-1.5 text-zinc-400 hover:text-red-400 bg-zinc-900 border border-zinc-700 hover:border-red-500/40 rounded shadow transition" title="Eliminar">
+                            <Trash2 className="w-4 h-4" />
+                        </button>
+                    )}
                     <button {...attributes} {...listeners} className="p-1.5 text-zinc-400 hover:text-white cursor-grab active:cursor-grabbing bg-zinc-900 border border-zinc-700 rounded shadow">
                         <GripVertical className="w-4 h-4" />
                     </button>

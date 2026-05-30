@@ -64,6 +64,47 @@ function campaignMatchesOperator(
     }
 }
 
+/**
+ * Filters a list of campaigns by a keyword/group/spec filter.
+ * Returns the subset of campaigns that match. Exported for compound filtering.
+ */
+export function filterCampaignList(
+    campaigns: any[],
+    filter: string | CampaignFilterSpec | undefined,
+    campaignGroups?: any[]
+): any[] {
+    if (!filter || (typeof filter === 'string' && filter === '') ||
+        (typeof filter !== 'string' && (Array.isArray(filter.value) ? filter.value.length === 0 : filter.value === ''))) {
+        return campaigns
+    }
+    if (typeof filter === 'string') {
+        if (campaignGroups && campaignGroups.length > 0) {
+            const selectedGroup = campaignGroups.find(g => g.id === filter)
+            if (selectedGroup && selectedGroup.campaign_group_mappings) {
+                return campaigns.filter((c: any) =>
+                    campaignMatchesGroup(c, selectedGroup.campaign_group_mappings)
+                )
+            }
+        }
+        const kw = filter.toLowerCase()
+        return campaigns.filter((c: any) => c.name?.toLowerCase().includes(kw))
+    }
+    // CampaignFilterSpec
+    if (filter.type === 'group' && typeof filter.value === 'string' && campaignGroups) {
+        const selectedGroup = campaignGroups.find(g => g.id === filter.value)
+        if (selectedGroup && selectedGroup.campaign_group_mappings) {
+            return campaigns.filter((c: any) =>
+                campaignMatchesGroup(c, selectedGroup.campaign_group_mappings)
+            )
+        }
+        return campaigns
+    }
+    const op: CampaignFilterOperator = filter.operator ?? 'includes'
+    return campaigns.filter((c: any) =>
+        campaignMatchesOperator(c.name || '', op, filter.value)
+    )
+}
+
 export function enrichMetaRow(
     row: any,
     filter: string | CampaignFilterSpec | undefined,
@@ -71,47 +112,7 @@ export function enrichMetaRow(
 ): any {
     if (!row.meta_campaigns || !Array.isArray(row.meta_campaigns)) return row
 
-    let matching = row.meta_campaigns
-
-    if (!filter || (typeof filter === 'string' && filter === '') ||
-        (typeof filter !== 'string' && (Array.isArray(filter.value) ? filter.value.length === 0 : filter.value === ''))) {
-        // Sin filtro activo
-    } else if (typeof filter === 'string') {
-        // Legado: string plano — intentar grupo, luego keyword includes
-        if (campaignGroups && campaignGroups.length > 0) {
-            const selectedGroup = campaignGroups.find(g => g.id === filter)
-            if (selectedGroup && selectedGroup.campaign_group_mappings) {
-                matching = row.meta_campaigns.filter((c: any) =>
-                    campaignMatchesGroup(c, selectedGroup.campaign_group_mappings)
-                )
-            } else {
-                const kw = filter.toLowerCase()
-                matching = row.meta_campaigns.filter((c: any) =>
-                    c.name?.toLowerCase().includes(kw)
-                )
-            }
-        } else {
-            const kw = filter.toLowerCase()
-            matching = row.meta_campaigns.filter((c: any) =>
-                c.name?.toLowerCase().includes(kw)
-            )
-        }
-    } else {
-        // Spec completo con tipo y operador
-        if (filter.type === 'group' && typeof filter.value === 'string' && campaignGroups) {
-            const selectedGroup = campaignGroups.find(g => g.id === filter.value)
-            if (selectedGroup && selectedGroup.campaign_group_mappings) {
-                matching = row.meta_campaigns.filter((c: any) =>
-                    campaignMatchesGroup(c, selectedGroup.campaign_group_mappings)
-                )
-            }
-        } else {
-            const op: CampaignFilterOperator = filter.operator ?? 'includes'
-            matching = row.meta_campaigns.filter((c: any) =>
-                campaignMatchesOperator(c.name || '', op, filter.value)
-            )
-        }
-    }
+    const matching = filterCampaignList(row.meta_campaigns, filter, campaignGroups)
 
     // Reduce helper (inline to avoid breaking patterns)
     const ri = (field: string) => matching.reduce((s: number, c: any) => s + (parseInt(c[field] || '0') || 0), 0)

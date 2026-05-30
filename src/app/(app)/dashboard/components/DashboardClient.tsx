@@ -28,7 +28,7 @@ import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, us
 import { SortableContext, horizontalListSortingStrategy, verticalListSortingStrategy, useSortable, arrayMove } from '@dnd-kit/sortable'
 
 import { CSS } from '@dnd-kit/utilities'
-import { enrichMetaRow } from '@/lib/campaign-filter'
+import { enrichMetaRow, filterCampaignList } from '@/lib/campaign-filter'
 import type { CampaignFilterSpec } from '@/lib/layout-types'
 
 // ─── Helper Functions ────────────────────────────────────────────────────────
@@ -48,6 +48,28 @@ function resolveFilter(
 ): CampaignFilterSpec | string {
     if (campaignFilter) return campaignFilter
     return fallback
+}
+
+/**
+ * Applies keyword global + campaignFilter específico en cadena sobre una fila de filteredMetrics.
+ * filteredMetrics preserva meta_campaigns original (enrichMetaRow hace ...row),
+ * así que podemos re-filtrar la lista de campañas: keyword primero, luego campaignFilter.
+ * Los campos de funnel/hotmart/ga se conservan porque vienen del propio filteredRow.
+ */
+function applyCompoundFilter(
+    filteredRow: any,
+    keyword: string,
+    campaignFilter: CampaignFilterSpec | undefined,
+    campaignGroups: any[]
+): any {
+    if (!campaignFilter) return filteredRow
+    if (!filteredRow.meta_campaigns || !Array.isArray(filteredRow.meta_campaigns)) {
+        return enrichMetaRow(filteredRow, campaignFilter, campaignGroups)
+    }
+    const kwCampaigns = keyword
+        ? filterCampaignList(filteredRow.meta_campaigns, keyword, campaignGroups)
+        : filteredRow.meta_campaigns
+    return enrichMetaRow({ ...filteredRow, meta_campaigns: kwCampaigns }, campaignFilter, campaignGroups)
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -772,13 +794,14 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
     // Extract source mapping for semantic alias resolution
     const sourceMapping = useMemo(() => activeLayout.source_mapping || {}, [activeLayout.source_mapping])
 
-    // Summary cards — aggregate formula over all filtered rows (per-card filter aware)
+    // Summary cards — keyword global primero, luego filtro por tarjeta encadenado
     const tarjetaValues = useMemo(() => {
         return activeLayout.tarjetas.map((t: CardDef) => {
-            const filter = resolveFilter(t.campaignFilter, effectiveKeyword)
-            let rows = filter === effectiveKeyword
+            let rows = !t.campaignFilter
                 ? filteredMetrics
-                : baseRows.map((m: any) => enrichMetaRow(m, filter, data.campaignGroups))
+                : filteredMetrics.map((m: any) =>
+                    applyCompoundFilter(m, effectiveKeyword, t.campaignFilter, data.campaignGroups)
+                )
             if (t.account_id) {
                 rows = rows.map((r: any) => filterRowByTikTokAccount(r, t.account_id))
             }
@@ -1198,6 +1221,7 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                                             customMetrics={layoutCustomMetrics}
                                             clienteId={cliente.id}
                                             accountId={rankingDef.account_id}
+                                            effectiveKeyword={effectiveKeyword}
                                         />
                                     </SortableTable>
                                 )
@@ -1210,9 +1234,21 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                             if (blockId.startsWith('chart:')) {
                                 const chart = activeLayout.graficos?.find((g: any) => `chart:${g.id}` === blockId)
                                 if (!chart) return null
-                                const chartMetrics = chart.account_id
-                                    ? filteredMetrics.map((r: any) => filterRowByTikTokAccount(r, chart.account_id))
-                                    : filteredMetrics
+                                // Aplicar filtro compuesto (keyword global + filtro por gráfica) aquí,
+                                // igual que hacemos con tarjetas, para evitar problemas de referencia en useMemo
+                                let chartMetrics = filteredMetrics
+                                if (chart.campaignFilter) {
+                                    const cf = chart.campaignFilter as import('@/lib/layout-types').CampaignFilterSpec
+                                    const cfHasValue = Array.isArray(cf.value) ? cf.value.length > 0 : cf.value !== ''
+                                    if (cfHasValue) {
+                                        chartMetrics = filteredMetrics.map((m: any) =>
+                                            applyCompoundFilter(m, effectiveKeyword, cf, data.campaignGroups)
+                                        )
+                                    }
+                                }
+                                if (chart.account_id) {
+                                    chartMetrics = chartMetrics.map((r: any) => filterRowByTikTokAccount(r, chart.account_id))
+                                }
                                 return <SortableChart
                                     key={blockId}
                                     id={blockId}
@@ -1224,6 +1260,9 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                                     sourceMapping={sourceMapping}
                                     platformSet={platformSet}
                                     layoutCustomMetrics={layoutCustomMetrics}
+                                    rawMetrics={baseRows}
+                                    campaignGroups={data.campaignGroups}
+                                    effectiveKeyword={effectiveKeyword}
                                     onRemove={() => handleRemoveBlock(blockId)}
                                     onUpdateChart={handleUpdateChart}
                                     onQuickEdit={() => setQuickEditTarget({ type: 'chart', id: chart.id })}
@@ -1354,13 +1393,7 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                                                                                     </TableCell>
                                                                                 )
                                                                             }
-                                                                            const filter = resolveFilter(col.campaignFilter, effectiveKeyword)
-                                                                            let rowForCol = filter === effectiveKeyword
-                                                                                ? raw
-                                                                                : (() => {
-                                                                                    const base = baseRows.find((m: any) => m.fecha === dayStr)
-                                                                                    return base ? enrichMetaRow(base, filter, data.campaignGroups) : raw
-                                                                                })()
+                                                                            const rowForCol = applyCompoundFilter(raw, effectiveKeyword, col.campaignFilter, data.campaignGroups)
                                                                             const val = evaluateFormula(col.formula, rowForCol, varContext, sourceMapping, platformSet, layoutCustomMetrics)
                                                                             const hl = highlightClass(val, col)
                                                                             if (col.isManual) {
@@ -1403,7 +1436,10 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                                                                             if (col.formula === 'fecha') {
                                                                                 return <TableCell key={col.id} className="text-blue-300">Total Sem {week.weekNumber}</TableCell>
                                                                             }
-                                                                            const val = aggregateFormula(col.formula, weekRows, varContext, sourceMapping, platformSet, layoutCustomMetrics)
+                                                                            const colWeekRows = col.campaignFilter
+                                                                                ? weekRows.map((r: any) => applyCompoundFilter(r, effectiveKeyword, col.campaignFilter, data.campaignGroups))
+                                                                                : weekRows
+                                                                            const val = aggregateFormula(col.formula, colWeekRows, varContext, sourceMapping, platformSet, layoutCustomMetrics)
                                                                             const hl = col.highlight ? highlightClass(val, col) : ''
                                                                             return (
                                                                                 <TableCell key={col.id} className={`${col.align === 'right' ? 'text-right' : ''} ${hl}`}>
