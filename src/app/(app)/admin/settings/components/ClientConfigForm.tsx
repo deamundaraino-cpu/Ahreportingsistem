@@ -6,7 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter }
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Button } from '@/components/ui/button'
-import { updateClienteConfig, deleteCliente, assignLayoutToCliente, testMetaConnection, testHotmartConnection, refreshMetaCustomConversions, testTikTokConnection, syncClienteMetrics, testGA4Connection, syncGoogleSheets } from '../_actions'
+import { updateClienteConfig, deleteCliente, assignLayoutToCliente, testMetaConnection, testHotmartConnection, refreshMetaCustomConversions, testTikTokConnection, syncClienteMetrics, testGA4Connection, syncGoogleSheets, fetchMetaAdAccounts } from '../_actions'
 import { Loader2, ArrowLeft, Save, Trash2, CheckCircle2, AlertCircle, RefreshCw, LayoutDashboard, DownloadCloud, DatabaseZap, Plus } from 'lucide-react'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -190,6 +190,7 @@ export function ClientConfigForm({ cliente, layouts = [], isAdmin = false }: { c
     const [error, setError] = useState<string | null>(null)
     const [config, setConfig] = useState(cliente.config_api || {})
     const [tiktokOAuthStatus, setTiktokOAuthStatus] = useState<{ success?: boolean; error?: string } | null>(null)
+    const [metaOAuthStatus, setMetaOAuthStatus] = useState<{ success?: boolean; error?: string } | null>(null)
 
     useEffect(() => {
         if (searchParams.get('tiktok_connected')) {
@@ -197,6 +198,12 @@ export function ClientConfigForm({ cliente, layouts = [], isAdmin = false }: { c
             setConfig((prev: any) => ({ ...prev }))
         } else if (searchParams.get('tiktok_error')) {
             setTiktokOAuthStatus({ error: decodeURIComponent(searchParams.get('tiktok_error')!) })
+        }
+        if (searchParams.get('meta_connected')) {
+            setMetaOAuthStatus({ success: true })
+            setConfig((prev: any) => ({ ...prev }))
+        } else if (searchParams.get('meta_error')) {
+            setMetaOAuthStatus({ error: decodeURIComponent(searchParams.get('meta_error')!) })
         }
     }, [searchParams])
 const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean, success?: boolean, error?: string, message?: string } }>({})
@@ -228,6 +235,32 @@ const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean
     }
     function updateAccount(idx: number, updated: MetaAccount) {
         setMetaAccounts(prev => prev.map((a, i) => i === idx ? updated : a))
+    }
+
+    const [importingMeta, setImportingMeta] = useState(false)
+    async function importMetaAccounts() {
+        const token = config.meta_token
+        if (!token) {
+            alert('Primero conecta por OAuth o pega un Access Token compartido.')
+            return
+        }
+        setImportingMeta(true)
+        try {
+            const res = await fetchMetaAdAccounts(token)
+            if (res.error) {
+                alert(`Error importando cuentas: ${res.error}`)
+                return
+            }
+            setMetaAccounts(prev => {
+                const existingIds = new Set(prev.map(a => a.account_id))
+                const newOnes = (res.accounts || [])
+                    .filter((a: any) => !existingIds.has(a.account_id))
+                    .map((a: any) => ({ id: crypto.randomUUID(), label: a.name, account_id: a.account_id, token: '' }))
+                return [...prev, ...newOnes]
+            })
+        } finally {
+            setImportingMeta(false)
+        }
     }
 
     // ── tiktokAccounts state (with backward compat migration) ────────────────
@@ -395,6 +428,32 @@ const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean
                     )}
                 </CardHeader>
                 <CardContent className="space-y-5">
+                    {/* OAuth connect + estado de conexión */}
+                    <div className="flex flex-col gap-2 pb-4 border-b border-zinc-800">
+                        <a href={`/api/auth/meta?client_id=${cliente.id}`}>
+                            <Button variant="default" size="sm" className="w-full bg-[#1877f2] hover:bg-[#0f5ed8] text-white">
+                                {config.meta_token ? '🔄 Reconectar con Facebook Ads' : '🔗 Conectar con Facebook Ads'}
+                            </Button>
+                        </a>
+                        {(() => {
+                            const expiresAt = config.meta_token_expires_at
+                            if (config.meta_connection_status === 'expired') {
+                                return <p className="text-red-500 text-xs flex items-center gap-1"><AlertCircle className="w-3 h-3" /> Token vencido, reconecta con Facebook</p>
+                            }
+                            if (config.meta_token && expiresAt) {
+                                const days = Math.ceil((new Date(expiresAt).getTime() - Date.now()) / (24 * 60 * 60 * 1000))
+                                if (days <= 0) {
+                                    return <p className="text-red-500 text-xs flex items-center gap-1"><AlertCircle className="w-3 h-3" /> Token vencido, reconecta con Facebook</p>
+                                }
+                                const cls = days <= 10 ? 'text-amber-500' : 'text-green-500'
+                                return <p className={`${cls} text-xs flex items-center gap-1`}><CheckCircle2 className="w-3 h-3" /> Conectado · el token se renueva automáticamente (vence en {days} días)</p>
+                            }
+                            return null
+                        })()}
+                        {metaOAuthStatus?.success && <p className="text-green-500 text-xs flex items-center gap-1"><CheckCircle2 className="w-3 h-3" /> Cuenta de Facebook conectada exitosamente</p>}
+                        {metaOAuthStatus?.error && <p className="text-red-500 text-xs flex items-center gap-1"><AlertCircle className="w-3 h-3" /> {metaOAuthStatus.error}</p>}
+                    </div>
+
                     {/* Shared token */}
                     <div className="space-y-2">
                         <Label htmlFor="meta_token" className="text-zinc-300">
@@ -409,7 +468,8 @@ const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean
                             className="bg-zinc-950 border-zinc-700"
                         />
                         <p className="text-xs text-zinc-500">
-                            Token de System User o User Token. Si una cuenta no tiene token propio, se usará este.
+                            Se completa automáticamente al conectar por OAuth. Si una cuenta no tiene token propio, se usará este.
+                            Para una conexión que <strong>no caduca</strong>, pega aquí un <strong>System User token</strong> del Business Manager.
                         </p>
                     </div>
 
@@ -417,9 +477,14 @@ const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean
                     <div className="space-y-3">
                         <div className="flex items-center justify-between">
                             <Label className="text-zinc-300">Cuentas Publicitarias</Label>
-                            <Button size="sm" variant="outline" onClick={addAccount} className="h-7 text-xs">
-                                <Plus className="w-3 h-3 mr-1" /> Agregar Cuenta
-                            </Button>
+                            <div className="flex items-center gap-2">
+                                <Button size="sm" variant="outline" onClick={importMetaAccounts} disabled={importingMeta || !config.meta_token} className="h-7 text-xs">
+                                    {importingMeta ? <RefreshCw className="w-3 h-3 mr-1 animate-spin" /> : <DownloadCloud className="w-3 h-3 mr-1" />} Importar del token
+                                </Button>
+                                <Button size="sm" variant="outline" onClick={addAccount} className="h-7 text-xs">
+                                    <Plus className="w-3 h-3 mr-1" /> Agregar Cuenta
+                                </Button>
+                            </div>
                         </div>
 
                         {metaAccounts.length === 0 && (

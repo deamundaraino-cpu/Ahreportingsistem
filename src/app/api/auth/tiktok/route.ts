@@ -15,7 +15,12 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'TIKTOK_APP_ID no configurado' }, { status: 500 })
   }
 
-  const redirectUri = `${process.env.NEXT_PUBLIC_APP_URL}/api/auth/tiktok/callback`
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL
+  if (!appUrl) {
+    return NextResponse.json({ error: 'NEXT_PUBLIC_APP_URL no configurado' }, { status: 500 })
+  }
+
+  const redirectUri = `${appUrl}/api/auth/tiktok/callback`
   const state = clientId
 
   const authUrl = new URL('https://ads.tiktok.com/marketing_api/auth')

@@ -52,9 +52,11 @@ export async function updateSession(request: NextRequest) {
   // report-utm: tracking links públicos + pixel JS estático
   const isTrackingLink = pathname.startsWith('/t/')
   const isPixelScript = pathname === '/report-utm-pixel.js'
+  // Páginas legales públicas (requeridas por revisión de apps de Meta/TikTok)
+  const isLegalPage = pathname === '/privacy' || pathname === '/terms'
 
   // 1. Redirect unauthenticated users to login
-  if (!user && !isLoginPage && !isApiPage && !isReportPage && !isMirrorPage && !isTrackingLink && !isPixelScript) {
+  if (!user && !isLoginPage && !isApiPage && !isReportPage && !isMirrorPage && !isTrackingLink && !isPixelScript && !isLegalPage) {
     const url = request.nextUrl.clone()
     url.pathname = '/login'
     return NextResponse.redirect(url)
@@ -70,8 +72,11 @@ export async function updateSession(request: NextRequest) {
   // 3. Role-based route protection for authenticated users
   if (user && pathname.startsWith('/admin')) {
     const isAdminOnlyRoute = ADMIN_ONLY_ROUTES.some(r => pathname.startsWith(r))
+    const isAuthenticatedAdminRoute = AUTHENTICATED_ADMIN_ROUTES.some(r => pathname.startsWith(r))
 
-    if (isAdminOnlyRoute) {
+    // Any /admin route requires at least a privileged role. Stricter routes
+    // (ADMIN_ONLY_ROUTES) require superadmin/admin; the rest also allow trafficker.
+    if (isAdminOnlyRoute || isAuthenticatedAdminRoute) {
       const { data: profile } = await supabase
         .from('user_profiles')
         .select('role')
@@ -79,7 +84,11 @@ export async function updateSession(request: NextRequest) {
         .single()
 
       const role = profile?.role ?? 'viewer'
-      if (!['superadmin', 'admin'].includes(role)) {
+      const allowedRoles = isAdminOnlyRoute
+        ? ['superadmin', 'admin']
+        : ['superadmin', 'admin', 'trafficker']
+
+      if (!allowedRoles.includes(role)) {
         const url = request.nextUrl.clone()
         url.pathname = '/dashboard'
         return NextResponse.redirect(url)

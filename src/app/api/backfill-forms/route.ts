@@ -1,5 +1,7 @@
 import { createClient } from '@supabase/supabase-js'
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
+import { authenticateCron } from '@/lib/cron-auth'
+import { ApiError } from '@/lib/error-handler'
 
 export const maxDuration = 300
 
@@ -9,8 +11,21 @@ export const maxDuration = 300
  *
  * Populates meta_forms for existing metricas_diarias rows that have empty arrays.
  * Fetches form names from /leadgen_forms and metrics from insights breakdown.
+ *
+ * Protected: requires Authorization: Bearer {CRON_SECRET}. This endpoint runs
+ * privileged writes with the service-role key and calls the Meta Graph API,
+ * so it must never be reachable unauthenticated.
  */
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
+    try {
+        authenticateCron(request)
+    } catch (err) {
+        if (err instanceof ApiError) {
+            return NextResponse.json({ error: err.message }, { status: err.statusCode })
+        }
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
     const adminSupabase = createClient(
         process.env.NEXT_PUBLIC_SUPABASE_URL!,
         process.env.SUPABASE_SERVICE_ROLE_KEY!

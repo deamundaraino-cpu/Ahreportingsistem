@@ -19,7 +19,21 @@ export async function GET(request: NextRequest) {
   const appId = process.env.TIKTOK_APP_ID!
   const appSecret = process.env.TIKTOK_APP_SECRET!
 
-  // Intercambiar auth_code por access_token
+  // Validar que el state corresponde a un cliente existente antes de intercambiar el code.
+  const supabase = await createAdminClient()
+  const { data: cliente, error: fetchError } = await supabase
+    .from('clientes')
+    .select('config_api')
+    .eq('id', clientId)
+    .single()
+
+  if (fetchError || !cliente) {
+    return NextResponse.redirect(`${appUrl}/admin/settings?tiktok_error=Cliente+no+encontrado`)
+  }
+
+  // Intercambiar auth_code por access_token.
+  // Nota: los access tokens de TikTok Business API no caducan, por lo que no se requiere
+  // un cron de refresh (a diferencia de Meta, cuyos tokens long-lived duran ~60 días).
   let tokenData: any
   try {
     const res = await fetch('https://business-api.tiktok.com/open_api/v1.3/oauth2/access_token/', {
@@ -40,18 +54,7 @@ export async function GET(request: NextRequest) {
   const accessToken: string = tokenData.data.access_token
   const advertiserIds: string[] = tokenData.data.advertiser_ids ?? []
 
-  // Guardar token en config_api del cliente
-  const supabase = await createAdminClient()
-  const { data: cliente, error: fetchError } = await supabase
-    .from('clientes')
-    .select('config_api')
-    .eq('id', clientId)
-    .single()
-
-  if (fetchError || !cliente) {
-    return NextResponse.redirect(`${appUrl}/admin/settings?tiktok_error=Cliente+no+encontrado`)
-  }
-
+  // Guardar token en config_api del cliente (ya validado arriba)
   const existingAccounts: any[] = Array.isArray(cliente.config_api?.tiktok_accounts) ? cliente.config_api.tiktok_accounts : []
   const newEntries = advertiserIds
     .filter((aid: string) => aid && !existingAccounts.some((a: any) => a.advertiser_id === aid))

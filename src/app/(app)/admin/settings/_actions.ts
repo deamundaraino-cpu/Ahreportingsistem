@@ -255,6 +255,30 @@ export async function testMetaConnection(token: string, accountId: string) {
     }
 }
 
+// Lista las ad accounts disponibles con el token guardado (sin re-hacer OAuth).
+// Devuelve [{ account_id: 'act_XXX', name }] para que la UI las agregue a meta_accounts[].
+export async function fetchMetaAdAccounts(token: string) {
+    if (!token) return { error: 'Falta el token de Meta' }
+
+    try {
+        const url = `https://graph.facebook.com/v19.0/me/adaccounts?fields=account_id,name&limit=200&access_token=${token}`
+        const res = await fetch(url)
+        const data = await res.json()
+
+        if (data.error) {
+            return { error: data.error.message }
+        }
+
+        const accounts = (data.data ?? []).map((a: any) => {
+            const actId = String(a.account_id || '').startsWith('act_') ? String(a.account_id) : `act_${a.account_id}`
+            return { account_id: actId, name: a.name || actId }
+        })
+        return { success: true, accounts }
+    } catch (err: any) {
+        return { error: err.message }
+    }
+}
+
 export async function testHotmartConnection(config: any) {
     let accessToken = config.hotmart_token
 
