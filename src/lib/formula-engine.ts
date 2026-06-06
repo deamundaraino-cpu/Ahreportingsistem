@@ -323,6 +323,64 @@ function expandFormulaRecursive(
 }
 
 /**
+ * Safely evaluates a pure arithmetic expression (digits, spaces, + - * / . ( )).
+ * Replaces `new Function`/`eval`, which are blocked by the production CSP
+ * (script-src has no 'unsafe-eval'). The caller MUST sanitize the input to the
+ * allowed character set before calling this. Recursive-descent parser with
+ * standard precedence and unary +/-. Returns NaN on malformed input.
+ */
+function safeEvalArithmetic(input: string): number {
+    const s = input
+    let i = 0
+    const skipWs = () => { while (i < s.length && s[i] === ' ') i++ }
+
+    const parseExpression = (): number => {
+        let left = parseTerm()
+        skipWs()
+        while (i < s.length && (s[i] === '+' || s[i] === '-')) {
+            const op = s[i++]
+            const right = parseTerm()
+            left = op === '+' ? left + right : left - right
+            skipWs()
+        }
+        return left
+    }
+    const parseTerm = (): number => {
+        let left = parseFactor()
+        skipWs()
+        while (i < s.length && (s[i] === '*' || s[i] === '/')) {
+            const op = s[i++]
+            const right = parseFactor()
+            left = op === '*' ? left * right : left / right
+            skipWs()
+        }
+        return left
+    }
+    const parseFactor = (): number => {
+        skipWs()
+        if (s[i] === '+') { i++; return parseFactor() }
+        if (s[i] === '-') { i++; return -parseFactor() }
+        if (s[i] === '(') {
+            i++
+            const val = parseExpression()
+            skipWs()
+            if (s[i] === ')') i++
+            return val
+        }
+        const start = i
+        while (i < s.length && ((s[i] >= '0' && s[i] <= '9') || s[i] === '.')) i++
+        if (i === start) return NaN
+        return parseFloat(s.slice(start, i))
+    }
+
+    const result = parseExpression()
+    skipWs()
+    // Trailing unparsed characters → malformed
+    if (i !== s.length) return NaN
+    return result
+}
+
+/**
  * Evaluates a formula string against a metric row object.
  * Returns the numeric result or null if calculation isn't possible.
  */
@@ -381,8 +439,10 @@ export function evaluateFormula(
         // Only allow safe characters: digits, operators, spaces, parentheses, dots
         if (!/^[\d\s\+\-\*\/\.\(\)]+$/.test(expr)) return null
 
-        // eslint-disable-next-line no-new-func
-        const result = new Function(`"use strict"; return (${expr})`)()
+        // Evaluate WITHOUT eval/new Function — the production CSP (script-src sin
+        // 'unsafe-eval') bloquea new Function y haría que toda métrica calculada
+        // devolviera null ("–"). safeEvalArithmetic parsea la expresión saneada.
+        const result = safeEvalArithmetic(expr)
         if (!isFinite(result) || isNaN(result)) return null
         return result as number
     } catch {
