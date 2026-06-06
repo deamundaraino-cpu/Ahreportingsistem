@@ -237,30 +237,55 @@ const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean
         setMetaAccounts(prev => prev.map((a, i) => i === idx ? updated : a))
     }
 
-    const [importingMeta, setImportingMeta] = useState(false)
-    async function importMetaAccounts() {
+    // ── Selector de cuentas Meta (elegir cuáles agregar) ─────────────────────
+    const [loadingMetaAccounts, setLoadingMetaAccounts] = useState(false)
+    const [availableMetaAccounts, setAvailableMetaAccounts] = useState<{ account_id: string; name: string }[] | null>(null)
+    const [selectedMetaIds, setSelectedMetaIds] = useState<Set<string>>(new Set())
+    const [metaPickerError, setMetaPickerError] = useState<string | null>(null)
+
+    async function openMetaAccountPicker() {
         const token = config.meta_token
         if (!token) {
             alert('Primero conecta por OAuth o pega un Access Token compartido.')
             return
         }
-        setImportingMeta(true)
+        setLoadingMetaAccounts(true)
+        setMetaPickerError(null)
         try {
             const res = await fetchMetaAdAccounts(token)
             if (res.error) {
-                alert(`Error importando cuentas: ${res.error}`)
+                setMetaPickerError(res.error)
+                setAvailableMetaAccounts([])
                 return
             }
-            setMetaAccounts(prev => {
-                const existingIds = new Set(prev.map(a => a.account_id))
-                const newOnes = (res.accounts || [])
-                    .filter((a: any) => !existingIds.has(a.account_id))
-                    .map((a: any) => ({ id: crypto.randomUUID(), label: a.name, account_id: a.account_id, token: '' }))
-                return [...prev, ...newOnes]
-            })
+            setAvailableMetaAccounts(res.accounts || [])
+            setSelectedMetaIds(new Set())
         } finally {
-            setImportingMeta(false)
+            setLoadingMetaAccounts(false)
         }
+    }
+
+    function toggleMetaSelection(accountId: string) {
+        setSelectedMetaIds(prev => {
+            const next = new Set(prev)
+            if (next.has(accountId)) next.delete(accountId)
+            else next.add(accountId)
+            return next
+        })
+    }
+
+    function addSelectedMetaAccounts() {
+        if (!availableMetaAccounts) return
+        const chosen = availableMetaAccounts.filter(a => selectedMetaIds.has(a.account_id))
+        setMetaAccounts(prev => {
+            const existingIds = new Set(prev.map(a => a.account_id))
+            const newOnes = chosen
+                .filter(a => !existingIds.has(a.account_id))
+                .map(a => ({ id: crypto.randomUUID(), label: a.name, account_id: a.account_id, token: '' }))
+            return [...prev, ...newOnes]
+        })
+        setAvailableMetaAccounts(null)
+        setSelectedMetaIds(new Set())
     }
 
     // ── tiktokAccounts state (with backward compat migration) ────────────────
@@ -478,14 +503,56 @@ const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean
                         <div className="flex items-center justify-between">
                             <Label className="text-zinc-300">Cuentas Publicitarias</Label>
                             <div className="flex items-center gap-2">
-                                <Button size="sm" variant="outline" onClick={importMetaAccounts} disabled={importingMeta || !config.meta_token} className="h-7 text-xs">
-                                    {importingMeta ? <RefreshCw className="w-3 h-3 mr-1 animate-spin" /> : <DownloadCloud className="w-3 h-3 mr-1" />} Importar del token
+                                <Button size="sm" variant="outline" onClick={openMetaAccountPicker} disabled={loadingMetaAccounts || !config.meta_token} className="h-7 text-xs">
+                                    {loadingMetaAccounts ? <RefreshCw className="w-3 h-3 mr-1 animate-spin" /> : <DownloadCloud className="w-3 h-3 mr-1" />} Elegir cuentas
                                 </Button>
                                 <Button size="sm" variant="outline" onClick={addAccount} className="h-7 text-xs">
                                     <Plus className="w-3 h-3 mr-1" /> Agregar Cuenta
                                 </Button>
                             </div>
                         </div>
+
+                        {/* Selector de cuentas disponibles desde el token */}
+                        {availableMetaAccounts && (
+                            <div className="bg-zinc-950/80 border border-indigo-500/30 rounded-lg p-4 space-y-3">
+                                <div className="flex items-center justify-between">
+                                    <p className="text-sm text-zinc-200 font-medium">Cuentas disponibles en tu Facebook</p>
+                                    <Button variant="ghost" size="sm" onClick={() => setAvailableMetaAccounts(null)} className="h-6 text-xs text-zinc-500 hover:text-zinc-300">Cancelar</Button>
+                                </div>
+                                {metaPickerError && (
+                                    <p className="text-red-500 text-xs flex items-center gap-1"><AlertCircle className="w-3 h-3" /> {metaPickerError}</p>
+                                )}
+                                {availableMetaAccounts.length === 0 && !metaPickerError && (
+                                    <p className="text-xs text-zinc-500">No se encontraron cuentas publicitarias para este token.</p>
+                                )}
+                                <div className="space-y-1 max-h-64 overflow-y-auto">
+                                    {availableMetaAccounts.map(a => {
+                                        const alreadyAdded = metaAccounts.some(m => m.account_id === a.account_id)
+                                        return (
+                                            <label key={a.account_id} className={`flex items-center gap-3 p-2 rounded-md ${alreadyAdded ? 'opacity-50' : 'hover:bg-zinc-900 cursor-pointer'}`}>
+                                                <input
+                                                    type="checkbox"
+                                                    disabled={alreadyAdded}
+                                                    checked={alreadyAdded || selectedMetaIds.has(a.account_id)}
+                                                    onChange={() => toggleMetaSelection(a.account_id)}
+                                                    className="rounded border-zinc-600 bg-zinc-950 text-indigo-500 focus:ring-indigo-500"
+                                                />
+                                                <span className="text-sm text-zinc-200 flex-1">{a.name}</span>
+                                                <span className="text-xs text-zinc-500 font-mono">{a.account_id}</span>
+                                                {alreadyAdded && <span className="text-xs text-green-500">ya agregada</span>}
+                                            </label>
+                                        )
+                                    })}
+                                </div>
+                                {availableMetaAccounts.length > 0 && (
+                                    <div className="flex justify-end">
+                                        <Button size="sm" onClick={addSelectedMetaAccounts} disabled={selectedMetaIds.size === 0} className="h-8 text-xs bg-indigo-600 hover:bg-indigo-700">
+                                            <Plus className="w-3 h-3 mr-1" /> Agregar {selectedMetaIds.size > 0 ? `(${selectedMetaIds.size})` : ''}
+                                        </Button>
+                                    </div>
+                                )}
+                            </div>
+                        )}
 
                         {metaAccounts.length === 0 && (
                             <p className="text-xs text-zinc-500 py-3 text-center border border-dashed border-zinc-800 rounded-lg">

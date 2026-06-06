@@ -52,19 +52,10 @@ export async function GET(request: NextRequest) {
     const expiresIn: number = longData.expires_in ?? 60 * 24 * 60 * 60 // fallback 60 días
     const expiresAt = new Date(Date.now() + expiresIn * 1000).toISOString()
 
-    // 3. Listar ad accounts del usuario
-    const accountsUrl = new URL(`${GRAPH}/me/adaccounts`)
-    accountsUrl.searchParams.set('fields', 'account_id,name')
-    accountsUrl.searchParams.set('limit', '200')
-    accountsUrl.searchParams.set('access_token', longToken)
-    const accountsRes = await fetch(accountsUrl.toString())
-    const accountsData = await accountsRes.json()
-    if (accountsData.error) {
-      return NextResponse.redirect(`${settingsUrl}?meta_error=${encodeURIComponent(accountsData.error.message)}`)
-    }
-    const fetchedAccounts: { account_id: string; name?: string }[] = accountsData.data ?? []
-
-    // 4. Guardar token + cuentas en config_api del cliente
+    // 3. Guardar SOLO el token en config_api del cliente.
+    // Las cuentas publicitarias NO se auto-importan: el admin elige cuáles sincronizar
+    // desde la UI (botón "Elegir cuentas"), porque el token concede acceso a todas
+    // las cuentas del usuario de Facebook.
     const supabase = await createAdminClient()
     const { data: cliente, error: fetchError } = await supabase
       .from('clientes')
@@ -77,25 +68,13 @@ export async function GET(request: NextRequest) {
     }
 
     const existingAccounts: any[] = Array.isArray(cliente.config_api?.meta_accounts) ? cliente.config_api.meta_accounts : []
-    const newEntries = fetchedAccounts
-      .map((a) => {
-        const actId = String(a.account_id || '').startsWith('act_') ? String(a.account_id) : `act_${a.account_id}`
-        return { actId, name: a.name }
-      })
-      .filter(({ actId }) => actId && actId !== 'act_' && !existingAccounts.some((e: any) => e.account_id === actId))
-      .map(({ actId, name }) => ({
-        id: crypto.randomUUID(),
-        label: name || `Cuenta ${actId}`,
-        account_id: actId,
-        token: '',
-      }))
 
     const newConfig = {
       ...cliente.config_api,
       meta_token: longToken,
       meta_token_expires_at: expiresAt,
       meta_connection_status: 'connected',
-      meta_accounts: [...existingAccounts, ...newEntries],
+      meta_accounts: existingAccounts,
     }
 
     const { error: updateError } = await supabase
