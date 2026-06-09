@@ -1,6 +1,6 @@
 'use server'
 
-import { createAdminClient } from '@/utils/supabase/server'
+import { createAdminClient, createClient } from '@/utils/supabase/server'
 import { getWeeksInRange } from '@/lib/date-utils'
 import { revalidatePath } from 'next/cache'
 import { format, addDays } from 'date-fns'
@@ -543,6 +543,18 @@ export async function getTabTotalSpend(clienteId: string, keywordFilter: string,
  * Support Tickets Actions
  */
 
+async function getCurrentRole(): Promise<string> {
+    const supabase = await createClient()
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return 'viewer'
+    const { data } = await supabase.from('user_profiles').select('role').eq('id', user.id).single()
+    return data?.role ?? 'viewer'
+}
+
+async function isTeamMember(): Promise<boolean> {
+    return ['superadmin', 'admin', 'trafficker'].includes(await getCurrentRole())
+}
+
 export async function getAllSoporteTickets() {
     const supabase = await createAdminClient()
     const { data, error } = await supabase
@@ -568,30 +580,34 @@ export async function getSoporteTickets(clienteId: string) {
 }
 
 export async function createSoporteTicket(payload: {
-    cliente_id: string
+    cliente_id?: string | null
+    tipo: 'bug' | 'feature' | 'mejora' | 'tarea'
     nombre_solicitante: string
     requerimiento: string
     observaciones?: string
     prioridad: number
     fecha_entrega?: string
 }) {
+    if (!(await isTeamMember())) return { error: 'No autorizado' }
+
     const supabase = await createAdminClient()
     const { data, error } = await supabase
         .from('soporte_tickets')
         .insert({
             ...payload,
+            cliente_id: payload.cliente_id || null,
             estado: 'abierto'
         })
         .select()
         .single()
 
     if (error) return { error: error.message }
-    revalidatePath(`/dashboard/${payload.cliente_id}`)
+    if (payload.cliente_id) revalidatePath(`/dashboard/${payload.cliente_id}`)
     revalidatePath('/soporte')
     return { success: true, data }
 }
 
-export async function updateSoporteTicket(ticketId: string, clienteId: string, payload: {
+export async function updateSoporteTicket(ticketId: string, clienteId: string | null, payload: {
     responsable?: string
     fecha_entrega?: string
     prioridad?: number
@@ -599,7 +615,11 @@ export async function updateSoporteTicket(ticketId: string, clienteId: string, p
     observaciones?: string
     nombre_solicitante?: string
     requerimiento?: string
+    tipo?: 'bug' | 'feature' | 'mejora' | 'tarea'
+    cliente_id?: string | null
 }) {
+    if (!(await isTeamMember())) return { error: 'No autorizado' }
+
     const supabase = await createAdminClient()
     const { error } = await supabase
         .from('soporte_tickets')
@@ -608,10 +628,9 @@ export async function updateSoporteTicket(ticketId: string, clienteId: string, p
             updated_at: new Date().toISOString()
         })
         .eq('id', ticketId)
-        .eq('cliente_id', clienteId)
 
     if (error) return { error: error.message }
-    revalidatePath(`/dashboard/${clienteId}`)
+    if (clienteId) revalidatePath(`/dashboard/${clienteId}`)
     revalidatePath('/soporte')
     return { success: true }
 }

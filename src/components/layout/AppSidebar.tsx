@@ -251,7 +251,7 @@ export function AppSidebar({ initialRole = 'viewer', userId = '' }: { initialRol
                     </div>
                 </nav>
 
-                {/* Soporte Ads House — fixed button */}
+                {/* Roadmap — fixed button */}
                 <div className="px-3 pb-2">
                     <Link
                         href="/soporte"
@@ -262,8 +262,8 @@ export function AppSidebar({ initialRole = 'viewer', userId = '' }: { initialRol
                                 : 'border-blue-500/30 bg-gradient-to-r from-blue-900/40 to-blue-800/20 text-blue-300 hover:from-blue-800/50 hover:border-blue-400/50'
                             }`}
                     >
-                        <span className="text-base">🎧</span>
-                        <span className="flex-1 leading-tight">Soporte Ads House</span>
+                        <span className="text-base">🗺️</span>
+                        <span className="flex-1 leading-tight">Roadmap</span>
                     </Link>
                 </div>
 

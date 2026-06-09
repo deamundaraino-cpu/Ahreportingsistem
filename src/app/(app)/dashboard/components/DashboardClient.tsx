@@ -1042,12 +1042,12 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                     >
                         📊 Reporte Mensual
                     </button>
-                    {/* Pestaña fija de Soporte */}
+                    {/* Pestaña fija de Roadmap */}
                     <button
                         onClick={() => setActiveTabId('soporte')}
                         className={`px-4 py-2 text-sm font-medium rounded-t-lg transition whitespace-nowrap border-b-2 flex items-center gap-1.5 ${activeTabId === 'soporte' ? 'border-indigo-500 text-indigo-400 bg-indigo-500/10' : 'border-transparent text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800'}`}
                     >
-                        🎧 Soporte Ads
+                        🗺️ Roadmap
                     </button>
                 </div>
             )}
