@@ -186,3 +186,35 @@ export function enrichMetaRow(
 
     return base
 }
+
+/**
+ * Recalcula las métricas de TikTok (tiktok_spend/impressions/clicks/conversions)
+ * sumando solo las campañas de `tiktok_campaigns` que coinciden con el filtro
+ * keyword/grupo/spec. Es el análogo de enrichMetaRow para TikTok.
+ *
+ * Conserva `tiktok_campaigns` intacto (...row), igual que enrichMetaRow con
+ * meta_campaigns, para que el filtro por cuenta (filterRowByTikTokAccount) pueda
+ * re-derivar combinando keyword + account_id sobre la misma lista.
+ *
+ * Si la fila no trae arreglo `tiktok_campaigns` se devuelve sin cambios, así no
+ * se sobreescribe el tiktok_spend almacenado en filas antiguas sin desglose.
+ */
+export function enrichTikTokRow(
+    row: any,
+    filter: string | CampaignFilterSpec | undefined,
+    campaignGroups?: any[]
+): any {
+    if (!row.tiktok_campaigns || !Array.isArray(row.tiktok_campaigns)) return row
+
+    const matching = filterCampaignList(row.tiktok_campaigns, filter, campaignGroups)
+    const ri = (field: string) => matching.reduce((s: number, c: any) => s + (parseInt(c[field] ?? '0') || 0), 0)
+    const rf = (field: string) => matching.reduce((s: number, c: any) => s + (parseFloat(c[field] ?? '0') || 0), 0)
+
+    return {
+        ...row,
+        tiktok_spend:       rf('spend'),
+        tiktok_impressions: ri('impressions'),
+        tiktok_clicks:      ri('clicks'),
+        tiktok_conversions: ri('conversions'),
+    }
+}

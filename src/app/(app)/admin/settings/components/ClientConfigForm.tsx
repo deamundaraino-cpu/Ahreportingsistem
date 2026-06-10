@@ -191,6 +191,8 @@ export function ClientConfigForm({ cliente, layouts = [], isAdmin = false }: { c
     const [config, setConfig] = useState(cliente.config_api || {})
     const [tiktokOAuthStatus, setTiktokOAuthStatus] = useState<{ success?: boolean; error?: string } | null>(null)
     const [metaOAuthStatus, setMetaOAuthStatus] = useState<{ success?: boolean; error?: string } | null>(null)
+    const [hotmartOAuthStatus, setHotmartOAuthStatus] = useState<{ success?: boolean; error?: string } | null>(null)
+    const [showHotmartAdvanced, setShowHotmartAdvanced] = useState(false)
 
     useEffect(() => {
         if (searchParams.get('tiktok_connected')) {
@@ -204,6 +206,12 @@ export function ClientConfigForm({ cliente, layouts = [], isAdmin = false }: { c
             setConfig((prev: any) => ({ ...prev }))
         } else if (searchParams.get('meta_error')) {
             setMetaOAuthStatus({ error: decodeURIComponent(searchParams.get('meta_error')!) })
+        }
+        if (searchParams.get('hotmart_connected')) {
+            setHotmartOAuthStatus({ success: true })
+            setConfig((prev: any) => ({ ...prev, hotmart_auth_mode: 'hotconnect', hotmart_connection_status: 'connected' }))
+        } else if (searchParams.get('hotmart_error')) {
+            setHotmartOAuthStatus({ error: decodeURIComponent(searchParams.get('hotmart_error')!) })
         }
     }, [searchParams])
 const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean, success?: boolean, error?: string, message?: string } }>({})
@@ -330,6 +338,23 @@ const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean
             }
         } catch (err: any) {
             setTestStatus(prev => ({ ...prev, [key]: { loading: false, error: err.message } }))
+        }
+    }
+
+    async function testHotmart() {
+        setTestStatus(prev => ({ ...prev, hotmart: { loading: true } }))
+        try {
+            const res = await testHotmartConnection(config, cliente.id)
+            const now = new Date().toISOString()
+            if (res.error) {
+                setConfig((p: any) => ({ ...p, hotmart_connection_status: 'error', hotmart_last_checked_at: now }))
+                setTestStatus(prev => ({ ...prev, hotmart: { loading: false, error: res.error } }))
+            } else {
+                setConfig((p: any) => ({ ...p, hotmart_connection_status: 'connected', hotmart_last_checked_at: now }))
+                setTestStatus(prev => ({ ...prev, hotmart: { loading: false, success: true } }))
+            }
+        } catch (err: any) {
+            setTestStatus(prev => ({ ...prev, hotmart: { loading: false, error: err.message } }))
         }
     }
 
@@ -659,42 +684,55 @@ const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean
             <Card className="bg-zinc-900 border-zinc-800">
                 <CardHeader>
                     <div className="flex justify-between items-center">
-                        <CardTitle>Hotmart API Settings</CardTitle>
+                        <CardTitle>Hotmart</CardTitle>
                         <Button
                             variant="outline"
                             size="sm"
-                            onClick={() => runTest('hotmart', () => testHotmartConnection(config))}
+                            onClick={testHotmart}
                             disabled={testStatus.hotmart?.loading}
                         >
                             {testStatus.hotmart?.loading ? <RefreshCw className="w-3 h-3 animate-spin mr-2" /> : <RefreshCw className="w-3 h-3 mr-2" />}
                             Probar Conexión
                         </Button>
                     </div>
-                    <CardDescription>Proporciona tus credenciales de Hotmart Developers.</CardDescription>
+                    <CardDescription>Conecta la cuenta de Hotmart del cliente para sincronizar ventas, comisiones y afiliados.</CardDescription>
                     {testStatus.hotmart?.success && <p className="text-green-500 text-xs flex items-center mt-2"><CheckCircle2 className="w-3 h-3 mr-1" /> Conexión Exitosa</p>}
                     {testStatus.hotmart?.error && <p className="text-red-500 text-xs flex items-center mt-2"><AlertCircle className="w-3 h-3 mr-1" /> {testStatus.hotmart.error}</p>}
                 </CardHeader>
-                <CardContent className="space-y-4">
-                    <div className="space-y-2">
-                        <Label htmlFor="hotmart_token" className="text-zinc-300">Access Token Temporal (Opcional si usas Basic Auth)</Label>
-                        <Input
-                            id="hotmart_token"
-                            type="password"
-                            value={config.hotmart_token || ''}
-                            onChange={(e) => setConfig({ ...config, hotmart_token: e.target.value })}
-                            className="bg-zinc-950 border-zinc-700"
-                        />
+                <CardContent className="space-y-5">
+                    {/* OAuth (HotConnect) connect + estado de conexión */}
+                    <div className="flex flex-col gap-2 pb-4 border-b border-zinc-800">
+                        <a href={`/api/auth/hotmart?client_id=${cliente.id}`}>
+                            <Button variant="default" size="sm" className="w-full bg-[#ef4a23] hover:bg-[#d63d18] text-white">
+                                {config.hotmart_auth_mode === 'hotconnect' ? '🔄 Reconectar con Hotmart' : '🔗 Conectar con Hotmart'}
+                            </Button>
+                        </a>
+                        {(() => {
+                            if (config.hotmart_connection_status === 'expired') {
+                                return <p className="text-red-500 text-xs flex items-center gap-1"><AlertCircle className="w-3 h-3" /> Token vencido, reconecta con Hotmart</p>
+                            }
+                            if (config.hotmart_auth_mode === 'hotconnect' && config.hotmart_connection_status === 'connected') {
+                                return <p className="text-green-500 text-xs flex items-center gap-1"><CheckCircle2 className="w-3 h-3" /> Conectado por HotConnect · el token se renueva automáticamente</p>
+                            }
+                            if (config.hotmart_connection_status === 'connected') {
+                                return <p className="text-green-500 text-xs flex items-center gap-1"><CheckCircle2 className="w-3 h-3" /> Conectado con credenciales</p>
+                            }
+                            return null
+                        })()}
+                        {hotmartOAuthStatus?.success && <p className="text-green-500 text-xs flex items-center gap-1"><CheckCircle2 className="w-3 h-3" /> Cuenta de Hotmart conectada exitosamente</p>}
+                        {hotmartOAuthStatus?.error && <p className="text-red-500 text-xs flex items-center gap-1"><AlertCircle className="w-3 h-3" /> {hotmartOAuthStatus.error}</p>}
                     </div>
-                    <div className="space-y-2">
-                        <Label htmlFor="hotmart_basic" className="text-zinc-300">Basic Auth (Base64 Client ID:Secret)</Label>
-                        <Input
-                            id="hotmart_basic"
-                            type="password"
-                            value={config.hotmart_basic || ''}
-                            onChange={(e) => setConfig({ ...config, hotmart_basic: e.target.value })}
-                            className="bg-zinc-950 border-zinc-700"
-                        />
+
+                    {/* Guía paso a paso para pegar credenciales */}
+                    <div className="bg-orange-500/5 border border-orange-500/20 rounded-lg p-3">
+                        <p className="text-xs text-orange-300/90 leading-relaxed">
+                            <strong className="text-orange-400">¿Prefieres pegar credenciales?</strong> En la cuenta de Hotmart del cliente:
+                            <br />1. Entra a <strong>Herramientas → Credenciales de Desarrollador</strong>.
+                            <br />2. Crea una credencial (entorno <strong>Producción</strong>).
+                            <br />3. Copia el <strong>Client ID</strong> y <strong>Client Secret</strong> y pégalos abajo.
+                        </p>
                     </div>
+
                     <div className="space-y-2">
                         <Label htmlFor="hotmart_client_id" className="text-zinc-300">Client ID</Label>
                         <Input
@@ -715,10 +753,46 @@ const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean
                         />
                     </div>
 
+                    {/* Avanzado: campos manuales raramente necesarios */}
+                    <div className="pt-1">
+                        <button
+                            type="button"
+                            onClick={() => setShowHotmartAdvanced(v => !v)}
+                            className="text-xs text-zinc-500 hover:text-zinc-300"
+                        >
+                            {showHotmartAdvanced ? '▾ Ocultar avanzado' : '▸ Opciones avanzadas'}
+                        </button>
+                        {showHotmartAdvanced && (
+                            <div className="space-y-4 mt-3">
+                                <div className="space-y-2">
+                                    <Label htmlFor="hotmart_token" className="text-zinc-300">Access Token Temporal (opcional)</Label>
+                                    <Input
+                                        id="hotmart_token"
+                                        type="password"
+                                        value={config.hotmart_token || ''}
+                                        onChange={(e) => setConfig({ ...config, hotmart_token: e.target.value })}
+                                        className="bg-zinc-950 border-zinc-700"
+                                    />
+                                </div>
+                                <div className="space-y-2">
+                                    <Label htmlFor="hotmart_basic" className="text-zinc-300">Basic Auth (Base64 Client ID:Secret)</Label>
+                                    <Input
+                                        id="hotmart_basic"
+                                        type="password"
+                                        value={config.hotmart_basic || ''}
+                                        onChange={(e) => setConfig({ ...config, hotmart_basic: e.target.value })}
+                                        className="bg-zinc-950 border-zinc-700"
+                                    />
+                                    <p className="text-xs text-zinc-500">Se calcula automáticamente desde Client ID + Secret al guardar. Solo edítalo si tienes el token Basic directamente.</p>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+
                     <div className="pt-4 border-t border-zinc-800">
-                        <div className="bg-orange-500/5 border border-orange-500/20 rounded-lg p-3">
-                            <p className="text-xs text-orange-300/90 leading-relaxed">
-                                <strong className="text-orange-400">Filtros de productos por funnel</strong> — La configuración de productos (Principal / Order Bump / Upsell) y URLs de página ahora se hace <strong>por pestaña</strong> desde el dashboard del cliente. Cada pestaña representa un funnel independiente con sus propias métricas, lo que permite medir varios productos del mismo cliente por separado.
+                        <div className="bg-zinc-800/40 border border-zinc-700/50 rounded-lg p-3">
+                            <p className="text-xs text-zinc-400 leading-relaxed">
+                                <strong className="text-zinc-300">Filtros de productos por funnel</strong> — La configuración de productos (Principal / Order Bump / Upsell) y URLs de página se hace <strong>por pestaña</strong> desde el dashboard del cliente. Cada pestaña representa un funnel independiente con sus propias métricas.
                             </p>
                         </div>
                     </div>

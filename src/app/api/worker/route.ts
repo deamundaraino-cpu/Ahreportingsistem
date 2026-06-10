@@ -74,34 +74,85 @@ export async function GET(request: Request) {
         const platformLogs = { meta: 'Saltado', tiktok: 'Saltado', hotmart: 'Saltado', ga4: 'Saltado' }
 
         let hotmartAccessToken: string | null = null
-        const hotmartBasic = config.hotmart_basic ||
-            (config.hotmart_client_id && config.hotmart_client_secret
-                ? Buffer.from(`${config.hotmart_client_id}:${config.hotmart_client_secret}`).toString('base64')
-                : null)
-        if (hotmartBasic) {
-            try {
-                const tokenRes = await fetch('https://api-sec-vlc.hotmart.com/security/oauth/token?grant_type=client_credentials', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/x-www-form-urlencoded',
-                        'Authorization': `Basic ${hotmartBasic}`
+        if (config.hotmart_auth_mode === 'hotconnect') {
+            // ─── Modo HotConnect (OAuth authorization_code) ──────────────────────
+            // Usa el access_token guardado; si venció (o falta), lo refresca con el refresh_token.
+            const expiresMs = config.hotmart_token_expires_at ? new Date(config.hotmart_token_expires_at).getTime() : 0
+            const isExpired = !config.hotmart_access_token || !expiresMs || Number.isNaN(expiresMs) || expiresMs - Date.now() < 60_000
+            if (!isExpired) {
+                hotmartAccessToken = config.hotmart_access_token
+                platformLogs.hotmart = 'Preparado'
+            } else if (config.hotmart_refresh_token && process.env.HOTMART_APP_CLIENT_ID && process.env.HOTMART_APP_CLIENT_SECRET) {
+                try {
+                    const params = new URLSearchParams()
+                    params.set('grant_type', 'refresh_token')
+                    params.set('client_id', process.env.HOTMART_APP_CLIENT_ID)
+                    params.set('client_secret', process.env.HOTMART_APP_CLIENT_SECRET)
+                    params.set('refresh_token', config.hotmart_refresh_token)
+                    const tokenRes = await fetch('https://api-sec-vlc.hotmart.com/security/oauth/token', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                        body: params.toString(),
+                    })
+                    const tokenData = await tokenRes.json()
+                    if (tokenData.access_token) {
+                        hotmartAccessToken = tokenData.access_token
+                        const expiresIn = tokenData.expires_in ?? 6 * 60 * 60
+                        // Persistir el token refrescado para que el cron/UI lo reflejen.
+                        await adminSupabase.from('clientes').update({
+                            config_api: {
+                                ...config,
+                                hotmart_access_token: tokenData.access_token,
+                                hotmart_refresh_token: tokenData.refresh_token ?? config.hotmart_refresh_token,
+                                hotmart_token_expires_at: new Date(Date.now() + expiresIn * 1000).toISOString(),
+                                hotmart_connection_status: 'connected',
+                            },
+                        }).eq('id', cliente.id)
+                        log(`[Cliente ${cliente.nombre}] Token de Hotmart (HotConnect) refrescado.`)
+                        platformLogs.hotmart = 'Preparado'
+                    } else {
+                        log(`[Cliente ${cliente.nombre}] Error refrescando token HotConnect: ${JSON.stringify(tokenData)}`)
+                        platformLogs.hotmart = 'Error Auth'
                     }
-                })
-                const tokenData = await tokenRes.json()
-                if (tokenData.access_token) {
-                    hotmartAccessToken = tokenData.access_token
-                    log(`[Cliente ${cliente.nombre}] Token de Hotmart obtenido.`)
-                    platformLogs.hotmart = 'Preparado'
-                } else {
-                    log(`[Cliente ${cliente.nombre}] Error obteniendo token de Hotmart: ${JSON.stringify(tokenData)}`)
-                    platformLogs.hotmart = 'Error Auth'
+                } catch (err: any) {
+                    log(`[Cliente ${cliente.nombre}] Catch Refresh HotConnect: ${err.message}`)
+                    platformLogs.hotmart = 'Fallo Critico'
                 }
-            } catch (err: any) {
-                log(`[Cliente ${cliente.nombre}] Catch Token Hotmart: ${err.message}`)
-                platformLogs.hotmart = 'Fallo Critico'
+            } else {
+                log(`[Cliente ${cliente.nombre}] HotConnect sin refresh_token o app no configurada.`)
+                platformLogs.hotmart = 'Error Auth'
             }
         } else {
-            log(`[Cliente ${cliente.nombre}] No tiene hotmart_basic ni hotmart_client_id/secret definidos.`)
+            // ─── Modo "pegar credenciales" (Basic / client_credentials) ──────────
+            const hotmartBasic = config.hotmart_basic ||
+                (config.hotmart_client_id && config.hotmart_client_secret
+                    ? Buffer.from(`${config.hotmart_client_id}:${config.hotmart_client_secret}`).toString('base64')
+                    : null)
+            if (hotmartBasic) {
+                try {
+                    const tokenRes = await fetch('https://api-sec-vlc.hotmart.com/security/oauth/token?grant_type=client_credentials', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/x-www-form-urlencoded',
+                            'Authorization': `Basic ${hotmartBasic}`
+                        }
+                    })
+                    const tokenData = await tokenRes.json()
+                    if (tokenData.access_token) {
+                        hotmartAccessToken = tokenData.access_token
+                        log(`[Cliente ${cliente.nombre}] Token de Hotmart obtenido.`)
+                        platformLogs.hotmart = 'Preparado'
+                    } else {
+                        log(`[Cliente ${cliente.nombre}] Error obteniendo token de Hotmart: ${JSON.stringify(tokenData)}`)
+                        platformLogs.hotmart = 'Error Auth'
+                    }
+                } catch (err: any) {
+                    log(`[Cliente ${cliente.nombre}] Catch Token Hotmart: ${err.message}`)
+                    platformLogs.hotmart = 'Fallo Critico'
+                }
+            } else {
+                log(`[Cliente ${cliente.nombre}] No tiene hotmart_basic ni hotmart_client_id/secret definidos.`)
+            }
         }
 
         // ─── Cargar funnels Hotmart configurados por pestaña ────────────────────
@@ -141,6 +192,92 @@ export async function GET(request: Request) {
             }
             if (hotmartFunnels.length > 0) {
                 log(`[Cliente ${cliente.nombre}] ${hotmartFunnels.length} funnel(s) Hotmart configurados`)
+            }
+        }
+
+        // ─── Snapshot de suscripciones Hotmart (estado actual, 1 vez por cliente) ──
+        // Las suscripciones son un estado actual (no por día) → tabla aparte.
+        // Captura un snapshot para la fecha de hoy: conteos por estado + valor
+        // recurrente de las ACTIVE. Idempotente vía upsert (cliente_id, captured_date).
+        if (hotmartAccessToken) {
+            try {
+                const STATUS_GROUP: Record<string, 'active' | 'delayed' | 'inactive' | 'canceled'> = {
+                    ACTIVE: 'active',
+                    DELAYED: 'delayed', OVERDUE: 'delayed',
+                    INACTIVE: 'inactive', STARTED: 'inactive',
+                    CANCELLED_BY_CUSTOMER: 'canceled', CANCELLED_BY_SELLER: 'canceled', CANCELLED_BY_ADMIN: 'canceled',
+                }
+                const byStatus: Record<string, number> = {}
+                const byProduct: Record<string, { active: number; recurring_value: number }> = {}
+                let active = 0, delayed = 0, inactive = 0, canceled = 0, total = 0
+                let activeRecurringValue = 0
+                let currency = ''
+
+                let pageToken = ''
+                let hasNext = true
+                let pages = 0
+                const MAX_PAGES = 100 // tope de seguridad: 100 × 100 = 10k suscripciones
+                while (hasNext && pages < MAX_PAGES) {
+                    pages++
+                    const url = new URL('https://developers.hotmart.com/payments/api/v1/subscriptions')
+                    url.searchParams.append('max_results', '100')
+                    if (pageToken) url.searchParams.append('page_token', pageToken)
+
+                    const res = await fetch(url.toString(), {
+                        headers: { 'Authorization': `Bearer ${hotmartAccessToken}` }
+                    })
+                    const data = await res.json()
+                    if (data.error || data.message) {
+                        log(`[Hotmart Subs] API Error: ${JSON.stringify(data)}`)
+                        break
+                    }
+                    const items: any[] = Array.isArray(data.items) ? data.items : []
+                    for (const it of items) {
+                        total++
+                        const status = String(it.status || '').toUpperCase()
+                        byStatus[status] = (byStatus[status] || 0) + 1
+                        const group = STATUS_GROUP[status]
+                        if (group === 'active') active++
+                        else if (group === 'delayed') delayed++
+                        else if (group === 'inactive') inactive++
+                        else if (group === 'canceled') canceled++
+
+                        const prodName = String(it.product?.name || it.plan?.name || '(Sin nombre)').trim()
+                        if (!byProduct[prodName]) byProduct[prodName] = { active: 0, recurring_value: 0 }
+                        if (group === 'active') {
+                            const val = Number(it.price?.value ?? it.plan?.recurrency_value ?? 0) || 0
+                            const cur = String(it.price?.currency_code ?? '')
+                            if (cur && !currency) currency = cur
+                            activeRecurringValue += val
+                            byProduct[prodName].active++
+                            byProduct[prodName].recurring_value += val
+                        }
+                    }
+                    pageToken = data.page_info?.next_page_token
+                    hasNext = !!pageToken
+                }
+                if (pages >= MAX_PAGES && hasNext) {
+                    log(`[Hotmart Subs] ${cliente.nombre}: alcanzado el tope de ${MAX_PAGES} páginas — snapshot puede estar incompleto.`)
+                }
+
+                const capturedDate = format(new Date(), 'yyyy-MM-dd')
+                await adminSupabase.from('hotmart_subscriptions_snapshot').upsert({
+                    cliente_id: cliente.id,
+                    captured_date: capturedDate,
+                    captured_at: new Date().toISOString(),
+                    active_count: active,
+                    delayed_count: delayed,
+                    inactive_count: inactive,
+                    canceled_count: canceled,
+                    total_count: total,
+                    active_recurring_value: activeRecurringValue,
+                    currency: currency || null,
+                    by_status: byStatus,
+                    by_product: byProduct,
+                }, { onConflict: 'cliente_id, captured_date' })
+                log(`[Hotmart Subs] ${cliente.nombre}: ${active} activas, ${delayed} atrasadas, ${canceled} canceladas (total ${total}).`)
+            } catch (e: any) {
+                log(`[Hotmart Subs] Catch: ${e.message}`)
             }
         }
 
@@ -767,21 +904,49 @@ export async function GET(request: Request) {
             log(`[TikTok] ${targetDate} Consultando advertiser_id: ${advertiserId}`)
 
             try {
+                // ─── Helper: paginated fetch over TikTok endpoints that return
+                // { data: { list: [...], page_info: { page, total_page } } }.
+                // Iterates every page so totales no se truncan a 100 filas.
+                async function fetchTikTokPaged(
+                    baseUrl: URL,
+                    pageSize = 1000
+                ): Promise<{ ok: boolean; list: any[]; message?: string }> {
+                    const all: any[] = []
+                    let page = 1
+                    let totalPage = 1
+                    const MAX_PAGES = 200 // safety backstop
+                    do {
+                        const u = new URL(baseUrl.toString())
+                        u.searchParams.set('page', String(page))
+                        u.searchParams.set('page_size', String(pageSize))
+                        const res = await fetch(u.toString(), { headers: { 'Access-Token': token } })
+                        const json = await res.json()
+                        if (json.code !== 0 || !json.data) {
+                            return { ok: false, list: all, message: json.message || JSON.stringify(json) }
+                        }
+                        const list = Array.isArray(json.data.list) ? json.data.list : []
+                        all.push(...list)
+                        const pi = json.data.page_info || {}
+                        totalPage = pi.total_page || 1
+                        page++
+                    } while (page <= totalPage && page <= MAX_PAGES)
+                    return { ok: true, list: all }
+                }
+
                 // First, fetch campaigns to map campaign_id to campaign_name
                 const campaignMap = new Map<string, string>()
                 try {
                     const campUrl = new URL('https://business-api.tiktok.com/open_api/v1.3/campaign/get/')
                     campUrl.searchParams.append('advertiser_id', advertiserId)
-                    const campRes = await fetch(campUrl.toString(), {
-                        headers: { 'Access-Token': token }
-                    })
-                    const campData = await campRes.json()
-                    if (campData.code === 0 && campData.data && campData.data.list) {
-                        campData.data.list.forEach((c: any) => {
+                    const campPaged = await fetchTikTokPaged(campUrl)
+                    if (campPaged.ok) {
+                        campPaged.list.forEach((c: any) => {
                             if (c.campaign_id && c.campaign_name) {
                                 campaignMap.set(c.campaign_id.toString(), c.campaign_name)
                             }
                         })
+                    } else {
+                        log(`[TikTok] Warning: Error al obtener nombres de campañas: ${campPaged.message}`)
                     }
                 } catch (campErr: any) {
                     log(`[TikTok] Warning: Error al obtener nombres de campañas: ${campErr.message}`)
@@ -803,16 +968,15 @@ export async function GET(request: Request) {
                                 : 'https://business-api.tiktok.com/open_api/v1.3/adgroup/get/'
                             const listUrl = new URL(listPath)
                             listUrl.searchParams.append('advertiser_id', advertiserId)
-                            const listRes = await fetch(listUrl.toString(), {
-                                headers: { 'Access-Token': token }
-                            })
-                            const listData = await listRes.json()
-                            if (listData.code === 0 && listData.data?.list) {
-                                listData.data.list.forEach((item: any) => {
+                            const listPaged = await fetchTikTokPaged(listUrl)
+                            if (listPaged.ok) {
+                                listPaged.list.forEach((item: any) => {
                                     const id   = String(item[idKey]   || '').toString()
                                     const name = item[nameKey]
                                     if (id && name) nameMap.set(id, name)
                                 })
+                            } else {
+                                log(`[TikTok] Warning: No se pudieron obtener nombres de ${level}: ${listPaged.message}`)
                             }
                         } catch (e: any) {
                             log(`[TikTok] Warning: No se pudieron obtener nombres de ${level}: ${e.message}`)
@@ -828,18 +992,15 @@ export async function GET(request: Request) {
                         rptUrl.searchParams.append('metrics', JSON.stringify(['spend', 'impressions', 'clicks', 'conversion']))
                         rptUrl.searchParams.append('start_date', targetDate)
                         rptUrl.searchParams.append('end_date', targetDate)
-                        rptUrl.searchParams.append('page_size', '100')
 
-                        const rptRes  = await fetch(rptUrl.toString(), { headers: { 'Access-Token': token } })
-                        const rptData = await rptRes.json()
-
-                        if (rptData.code !== 0 || !rptData.data?.list) {
-                            log(`[TikTok] fetchTikTokAtLevel(${level}) error: ${JSON.stringify(rptData)}`)
+                        const rptPaged = await fetchTikTokPaged(rptUrl)
+                        if (!rptPaged.ok) {
+                            log(`[TikTok] fetchTikTokAtLevel(${level}) error: ${rptPaged.message}`)
                             return []
                         }
 
                         const items: any[] = []
-                        rptData.data.list.forEach((item: any) => {
+                        rptPaged.list.forEach((item: any) => {
                             const d  = item.dimensions || {}
                             const m  = item.metrics    || {}
                             const id = String(d[idDim] || '')
@@ -874,21 +1035,17 @@ export async function GET(request: Request) {
                 url.searchParams.append('metrics', JSON.stringify(['spend', 'impressions', 'clicks', 'conversion']))
                 url.searchParams.append('start_date', targetDate)
                 url.searchParams.append('end_date', targetDate)
-                url.searchParams.append('page_size', '100')
 
-                const res = await fetch(url.toString(), {
-                    headers: { 'Access-Token': token }
-                })
-                const data = await res.json()
+                const campReport = await fetchTikTokPaged(url)
 
-                if (data.code === 0 && data.data && data.data.list) {
-                    if (data.data.list.length > 0) {
-                        log(`[TikTok] ${targetDate} RAW primer resultado: ${JSON.stringify(data.data.list[0])}`)
+                if (campReport.ok) {
+                    if (campReport.list.length > 0) {
+                        log(`[TikTok] ${targetDate} RAW primer resultado: ${JSON.stringify(campReport.list[0])}`)
                     }
                     let totalSpend = 0, totalImpr = 0, totalClicks = 0, totalConv = 0
                     const campaignsArr: any[] = []
 
-                    data.data.list.forEach((camp: any) => {
+                    campReport.list.forEach((camp: any) => {
                         const dims = camp.dimensions || {}
                         const mets = camp.metrics || {}
                         const cSpend = parseFloat(mets.spend || '0')
@@ -929,8 +1086,7 @@ export async function GET(request: Request) {
                     record.tiktok_ads      = tiktokAdsResult
                     record.tiktok_adgroups = tiktokAdgroupsResult
                 } else {
-                    const msg = data.message || 'Error API'
-                    log(`[TikTok] ${targetDate} [${advertiserId}] Error de API: ${JSON.stringify(data)}`)
+                    log(`[TikTok] ${targetDate} [${advertiserId}] Error de API: ${campReport.message}`)
                 }
             } catch (e: any) {
                 log(`[TikTok] [${advertiserId}] Catch Error: ${e.message}`)
@@ -1011,6 +1167,9 @@ export async function GET(request: Request) {
             bump_bruto: number         // bruto order bump
             upsell_bruto: number       // bruto upsell
             ventas_count: number       // total transacciones procesadas
+            affiliate_net: number      // comisión de afiliado (USD) — fuente AFFILIATE
+            affiliate_count: number    // # de transacciones con comisión de afiliado
+            coproducer_net: number     // comisión de co-producción (USD) — fuente COPRODUCER
             // Desglose JSON
             by_tab: Record<string, FunnelBreakdown>
             extras: Array<{ product_name: string; count: number; gross: number; net: number }>
@@ -1030,6 +1189,7 @@ export async function GET(request: Request) {
                 principal: 0, bump: 0, upsell: 0,
                 principal_count: 0, bump_count: 0, upsell_count: 0,
                 principal_bruto: 0, bump_bruto: 0, upsell_bruto: 0, ventas_count: 0,
+                affiliate_net: 0, affiliate_count: 0, coproducer_net: 0,
                 by_tab: {},
                 extras: [],
             }
@@ -1115,13 +1275,22 @@ export async function GET(request: Request) {
                             record.ventas_count++
 
                             let netUSD = 0
+                            let hadAffiliate = false
                             if (item.commissions && Array.isArray(item.commissions)) {
                                 item.commissions.forEach((c: any) => {
-                                    if (c.source === 'PRODUCER' && c.commission?.currency_code === 'USD') {
-                                        netUSD += c.commission.value
+                                    if (c.commission?.currency_code !== 'USD') return
+                                    const val = Number(c.commission.value) || 0
+                                    if (c.source === 'PRODUCER') {
+                                        netUSD += val
+                                    } else if (c.source === 'AFFILIATE') {
+                                        record.affiliate_net += val
+                                        hadAffiliate = true
+                                    } else if (c.source === 'COPRODUCER') {
+                                        record.coproducer_net += val
                                     }
                                 })
                             }
+                            if (hadAffiliate) record.affiliate_count++
 
                             const prodName = String(item.product?.name || '').trim()
                             const txMeta = txInfo.get(tx)!
@@ -1401,6 +1570,11 @@ export async function GET(request: Request) {
                 const funnelDataPayload = {
                     by_tab: byTabFinal,
                     extras: hotmartRecord.extras,
+                    affiliates: {
+                        affiliate_net: hotmartRecord.affiliate_net,
+                        affiliate_count: hotmartRecord.affiliate_count,
+                        coproducer_net: hotmartRecord.coproducer_net,
+                    },
                 }
 
                 // Compute payload hash for idempotency

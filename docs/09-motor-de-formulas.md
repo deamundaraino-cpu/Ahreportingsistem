@@ -76,7 +76,8 @@ Nombres de alto nivel (empiezan con `$`) que el usuario elige en el Layout Build
 | `resolveAliasesWithFallback(…)` | Igual, con fallback de plataforma. |
 | `expandFormulaRecursive(formula, macroMap, path?)` | Expande macros y métricas custom con detección de ciclos. |
 | `safeEvalArithmetic(input)` | Parser de descenso recursivo (sin `eval`). |
-| `filterRowByTikTokAccount(row, accountId)` | Filtra métricas TikTok por `advertiser_id`. |
+| `filterRowByTikTokAccount(row, accountId, filter?, campaignGroups?)` | Recalcula métricas TikTok sumando solo las campañas que coinciden con el `advertiser_id` **y** (opcional) un filtro de nombre keyword/grupo/spec. Ambos predicados se aplican sobre la misma lista `tiktok_campaigns`. |
+| `enrichTikTokRow(row, filter, campaignGroups?)` (en `campaign-filter.ts`) | Análogo de `enrichMetaRow` para TikTok: recalcula `tiktok_spend/impressions/clicks/conversions` desde las campañas de `tiktok_campaigns` que coinciden con el filtro. Conserva `tiktok_campaigns` intacto. |
 | `formatValue(value, { prefix, suffix, decimals })` | Formatea para mostrar (moneda, %, decimales). |
 
 ### Pipeline de `evaluateFormula`

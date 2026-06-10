@@ -15,6 +15,10 @@
     {
       "path": "/api/cron/refresh-meta-tokens",
       "schedule": "0 4 * * *"
+    },
+    {
+      "path": "/api/cron/refresh-hotmart-tokens",
+      "schedule": "0 4 * * *"
     }
   ]
 }

@@ -3,6 +3,8 @@
  * Supports: +, -, *, / and references to raw DB columns.
  * Returns null when division by zero or any referenced value is missing (0).
  */
+import { filterCampaignList } from './campaign-filter'
+import type { CampaignFilterSpec } from './layout-types'
 
 // All available fields from metricas_diarias that formulas can reference.
 const FIELD_MAP: Record<string, string> = {
@@ -494,16 +496,24 @@ export function aggregateFormula(
 
 /**
  * Returns a copy of a metrics row with tiktok_spend/impressions/clicks/conversions
- * derived by summing only campaigns belonging to the given advertiser_id.
- * When accountId is undefined the original row is returned unchanged.
+ * derived by summing only the campaigns that match BOTH the given advertiser_id
+ * (account scope) AND an optional keyword/group/spec filter (campaign-name scope).
+ *
+ * Ambos predicados se aplican sobre la misma lista `tiktok_campaigns` antes de
+ * sumar, evitando recalcular dos veces. Cuando no hay accountId ni filtro la fila
+ * se devuelve sin cambios.
  */
 export function filterRowByTikTokAccount(
     row: Record<string, any>,
-    accountId: string | undefined
+    accountId: string | undefined,
+    filter?: string | CampaignFilterSpec,
+    campaignGroups?: any[]
 ): Record<string, any> {
-    if (!accountId) return row
+    const hasFilter = filter !== undefined && filter !== ''
+    if (!accountId && !hasFilter) return row
     const campaigns: any[] = Array.isArray(row.tiktok_campaigns) ? row.tiktok_campaigns : []
-    const filtered = campaigns.filter(c => c.account_id === accountId)
+    let filtered = accountId ? campaigns.filter(c => c.account_id === accountId) : campaigns
+    if (hasFilter) filtered = filterCampaignList(filtered, filter, campaignGroups)
     return {
         ...row,
         tiktok_spend:       filtered.reduce((s, c) => s + (parseFloat(c.spend ?? 0) || 0), 0),

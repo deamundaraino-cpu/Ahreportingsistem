@@ -279,14 +279,34 @@ export async function fetchMetaAdAccounts(token: string) {
     }
 }
 
-export async function testHotmartConnection(config: any) {
+export async function testHotmartConnection(config: any, clienteId?: string) {
+    // Persiste hotmart_connection_status/last_checked_at en config_api del cliente
+    // (read-modify-write para no clobberear otras claves). Best-effort: no rompe el test.
+    const persistStatus = async (status: 'connected' | 'error') => {
+        if (!clienteId) return
+        try {
+            const admin = await createAdminClient()
+            const { data: row } = await admin.from('clientes').select('config_api').eq('id', clienteId).single()
+            if (!row) return
+            await admin.from('clientes').update({
+                config_api: { ...row.config_api, hotmart_connection_status: status, hotmart_last_checked_at: new Date().toISOString() },
+            }).eq('id', clienteId)
+        } catch { /* best-effort */ }
+    }
+
     let accessToken = config.hotmart_token
 
-    // Auto-compute Basic Auth from client_id + client_secret if not explicitly set
-    const hotmartBasic = config.hotmart_basic ||
+    // Auto-compute Basic Auth from client_id + client_secret if not explicitly set.
+    // En modo HotConnect, se usa el access_token guardado directamente.
+    const hotmartBasic = config.hotmart_auth_mode === 'hotconnect'
+        ? null
+        : config.hotmart_basic ||
         (config.hotmart_client_id && config.hotmart_client_secret
             ? Buffer.from(`${config.hotmart_client_id}:${config.hotmart_client_secret}`).toString('base64')
             : null)
+    if (config.hotmart_auth_mode === 'hotconnect') {
+        accessToken = config.hotmart_access_token || accessToken
+    }
 
     try {
         if (hotmartBasic) {
@@ -302,11 +322,11 @@ export async function testHotmartConnection(config: any) {
                 body: params.toString()
             })
             const data = await res.json()
-            if (data.error) return { error: data.error_description || data.error }
+            if (data.error) { await persistStatus('error'); return { error: data.error_description || data.error } }
             accessToken = data.access_token
         }
 
-        if (!accessToken) return { error: 'No hay token disponible. Configura Client ID y Client Secret.' }
+        if (!accessToken) { await persistStatus('error'); return { error: 'No hay token disponible. Configura Client ID y Client Secret.' } }
 
         // Hotmart requires start_date and end_date; use last 7 days as a probe
         const now = Date.now()
@@ -320,10 +340,12 @@ export async function testHotmartConnection(config: any) {
             headers: { 'Authorization': `Bearer ${accessToken}` }
         })
         const data = await res.json()
-        if (res.status !== 200) return { error: data.message || data.error_description || 'Error de conexión' }
+        if (res.status !== 200) { await persistStatus('error'); return { error: data.message || data.error_description || 'Error de conexión' } }
 
+        await persistStatus('connected')
         return { success: true }
     } catch (err: any) {
+        await persistStatus('error')
         return { error: err.message }
     }
 }

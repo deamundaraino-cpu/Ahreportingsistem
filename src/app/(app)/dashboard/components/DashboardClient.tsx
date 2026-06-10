@@ -28,7 +28,7 @@ import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, us
 import { SortableContext, horizontalListSortingStrategy, verticalListSortingStrategy, useSortable, arrayMove } from '@dnd-kit/sortable'
 
 import { CSS } from '@dnd-kit/utilities'
-import { enrichMetaRow, filterCampaignList } from '@/lib/campaign-filter'
+import { enrichMetaRow, enrichTikTokRow, filterCampaignList } from '@/lib/campaign-filter'
 import type { CampaignFilterSpec } from '@/lib/layout-types'
 
 // ─── Helper Functions ────────────────────────────────────────────────────────
@@ -716,7 +716,9 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
 
     // Step 2: campaign-enrich with global tab filter + funnel injection (existing behavior)
     const filteredMetrics = useMemo(() => {
-        const enriched = baseRows.map((m: any) => enrichMetaRow(m, effectiveKeyword, data.campaignGroups))
+        const enriched = baseRows.map((m: any) =>
+            enrichTikTokRow(enrichMetaRow(m, effectiveKeyword, data.campaignGroups), effectiveKeyword, data.campaignGroups)
+        )
 
         // Inyectar campos del funnel actual desde hotmart_funnel_data.by_tab[activeTabId]
         // Esto permite que las fórmulas usen $funnel.* / funnel_principal_count / funnel_bump_neto, etc.
@@ -803,7 +805,7 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                     applyCompoundFilter(m, effectiveKeyword, t.campaignFilter, data.campaignGroups)
                 )
             if (t.account_id) {
-                rows = rows.map((r: any) => filterRowByTikTokAccount(r, t.account_id))
+                rows = rows.map((r: any) => filterRowByTikTokAccount(r, t.account_id, effectiveKeyword, data.campaignGroups))
             }
             return {
                 ...t,
@@ -1235,7 +1237,7 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                                 const chart = activeLayout.graficos?.find((g: any) => `chart:${g.id}` === blockId)
                                 if (!chart) return null
                                 const chartMetrics = chart.account_id
-                                    ? filteredMetrics.map((r: any) => filterRowByTikTokAccount(r, chart.account_id))
+                                    ? filteredMetrics.map((r: any) => filterRowByTikTokAccount(r, chart.account_id, effectiveKeyword, data.campaignGroups))
                                     : filteredMetrics
                                 return <SortableChart
                                     key={blockId}
@@ -1606,7 +1608,7 @@ function ExecutiveDashboard({ data, layout }: { data: any, layout: { tarjetas: C
     const [campaignFilter, setCampaignFilter] = useState('')
 
     const filteredMetrics = useMemo(() => {
-        return metrics.map((m: any) => enrichMetaRow(m, campaignFilter))
+        return metrics.map((m: any) => enrichTikTokRow(enrichMetaRow(m, campaignFilter), campaignFilter))
     }, [metrics, campaignFilter])
 
     const varContext = useMemo(() => ({}), [])
