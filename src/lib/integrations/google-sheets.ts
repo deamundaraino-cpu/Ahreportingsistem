@@ -1,5 +1,6 @@
 import { GoogleSpreadsheet } from 'google-spreadsheet'
-import { JWT } from 'google-auth-library'
+import { JWT, OAuth2Client } from 'google-auth-library'
+import { hasAgencyGoogleConnection, getAgencyAccessToken } from './google-auth'
 
 interface GoogleSheetsConfig {
   sheet_url: string
@@ -56,10 +57,17 @@ function extractSheetId(url: string): string | null {
 }
 
 /**
- * Create an authenticated JWT client for Google Sheets API
- * Uses client-specific credentials if provided, falls back to env vars
+ * Create an authenticated client for the Google Sheets API.
+ * Prefers the agency-wide OAuth connection if available; otherwise falls back to a
+ * service account JWT (client-specific credentials, then env var fallback).
  */
-function createAuthClient(clientEmail?: string, clientKey?: string): JWT {
+async function createAuthClient(clientEmail?: string, clientKey?: string): Promise<JWT | OAuth2Client> {
+  // 1) OAuth de agencia (preferido): una sola conexión para todos los clientes.
+  if (await hasAgencyGoogleConnection()) {
+    return await getAgencyAccessToken()
+  }
+
+  // 2) Service account legacy (por cliente o env vars globales).
   const email = clientEmail || process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL
   const key = (clientKey || process.env.GOOGLE_SERVICE_ACCOUNT_KEY)?.replace(/\\n/g, '\n')
 
@@ -88,7 +96,7 @@ export async function fetchLeadsFromSheet(
   const sheetId = extractSheetId(sheetUrl)
   if (!sheetId) throw new Error(`Invalid Google Sheets URL: ${sheetUrl}`)
 
-  const auth = createAuthClient(clientEmail, clientKey)
+  const auth = await createAuthClient(clientEmail, clientKey)
   const doc = new GoogleSpreadsheet(sheetId, auth)
   await doc.loadInfo()
 

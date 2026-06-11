@@ -639,3 +639,27 @@ export async function syncGoogleSheets(clienteId: string) {
         return { error: e.message || 'Error al sincronizar Google Sheets' }
     }
 }
+
+// ─── Google OAuth (conexión a nivel agencia) ─────────────────────────────────
+
+// Estado de la conexión OAuth global de Google (Analytics + Sheets).
+export async function getGoogleConnectionStatus() {
+    const { getGoogleIntegration } = await import('@/lib/integrations/google-auth')
+    const row = await getGoogleIntegration()
+    return {
+        connected: !!row?.refresh_token && row.connection_status === 'connected',
+        email: row?.connected_email ?? null,
+    }
+}
+
+// Desconecta la cuenta de Google de la agencia (borra los tokens).
+export async function disconnectGoogle(): Promise<{ success: boolean; error?: string }> {
+    try {
+        const { disconnectGoogleIntegration } = await import('@/lib/integrations/google-auth')
+        await disconnectGoogleIntegration()
+        revalidatePath('/admin/settings')
+        return { success: true }
+    } catch (e: any) {
+        return { success: false, error: e.message || 'Error al desconectar' }
+    }
+}

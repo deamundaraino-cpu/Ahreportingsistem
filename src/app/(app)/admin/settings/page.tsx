@@ -1,11 +1,15 @@
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/components/ui/card"
-import { getClientes } from "./_actions"
+import { getClientes, getGoogleConnectionStatus } from "./_actions"
 import { NewClientDialog } from "./components/NewClientDialog"
+import { GoogleConnectionCard } from "./components/GoogleConnectionCard"
 import { AtSign, Settings, Layers } from "lucide-react"
 import Link from "next/link"
 
 export default async function AdminClientesPage() {
-    const clientes = await getClientes()
+    const [clientes, googleStatus] = await Promise.all([
+        getClientes(),
+        getGoogleConnectionStatus(),
+    ])
 
     return (
         <div className="space-y-6">
@@ -16,6 +20,8 @@ export default async function AdminClientesPage() {
                 </div>
                 <NewClientDialog />
             </div>
+
+            <GoogleConnectionCard connected={googleStatus.connected} email={googleStatus.email} />
 
             {!clientes || clientes.length === 0 ? (
                 <Card className="bg-zinc-900 border-zinc-800 flex flex-col items-center justify-center p-12 text-center">

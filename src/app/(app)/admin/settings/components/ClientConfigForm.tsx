@@ -835,6 +835,11 @@ const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean
                         />
                     </div>
 
+                    <p className="text-xs text-emerald-400/80 bg-emerald-500/5 border border-emerald-500/20 rounded p-2">
+                        Si conectaste la cuenta de Google de la agencia (en Ajustes → Conexión Google), solo necesitas el
+                        Property ID. Las credenciales de Service Account de abajo son opcionales (modo legacy).
+                    </p>
+
                     <div className="bg-zinc-950/60 border border-zinc-800 p-4 rounded-lg space-y-4 relative overflow-hidden">
                         <div className="absolute top-0 left-0 w-1 h-full bg-indigo-500/50"></div>
                         
@@ -977,6 +982,10 @@ const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean
 
                     {config.google_sheets?.enabled && (
                         <>
+                            <p className="text-xs text-emerald-400/80 bg-emerald-500/5 border border-emerald-500/20 rounded p-2">
+                                Si conectaste la cuenta de Google de la agencia (en Ajustes → Conexión Google), solo necesitas
+                                la URL del Sheet. Las credenciales de Service Account de abajo son opcionales (modo legacy).
+                            </p>
                             {/* ── Credenciales de Autenticación (JSON upload) ── */}
                             <div className="bg-zinc-950/60 border border-zinc-800 p-4 rounded-lg space-y-4 relative overflow-hidden">
                                 <div className="absolute top-0 left-0 w-1 h-full bg-green-500/50"></div>

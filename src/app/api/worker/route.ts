@@ -2,6 +2,7 @@ import { createClient } from '@supabase/supabase-js'
 import { NextResponse } from 'next/server'
 import { format, subDays, parseISO, isBefore, addDays, differenceInDays } from 'date-fns'
 import { createClient as createSSRClient } from '@/utils/supabase/server'
+import { getAgencyAccessToken, hasAgencyGoogleConnection } from '@/lib/integrations/google-auth'
 
 export const maxDuration = 300 // 5 minutos — necesario para sincronizar rangos amplios
 
@@ -1373,19 +1374,26 @@ export async function GET(request: Request) {
         }
         async function fetchGA4(targetDate: string): Promise<GARecord> {
             const record: GARecord = { sessions: 0, bounceRate: 0, avgSessionDuration: 0, funnel_pages: {} }
-            if (!config.ga_property_id || !config.ga_client_email || !config.ga_private_key) {
+            // Necesita una propiedad. La autenticación puede venir de:
+            //  1) OAuth de agencia (preferido) — solo hace falta ga_property_id
+            //  2) Service account legacy por cliente (ga_client_email + ga_private_key)
+            const useAgencyOAuth = await hasAgencyGoogleConnection()
+            const hasServiceAccount = !!(config.ga_client_email && config.ga_private_key)
+            if (!config.ga_property_id || (!useAgencyOAuth && !hasServiceAccount)) {
                 platformLogs.ga4 = 'Sin configurar'
                 return record
             }
 
             try {
                 const { BetaAnalyticsDataClient } = await import('@google-analytics/data')
-                const client = new BetaAnalyticsDataClient({
-                    credentials: {
-                        client_email: config.ga_client_email,
-                        private_key: config.ga_private_key.replace(/\\n/g, '\n'),
-                    }
-                })
+                const client = useAgencyOAuth
+                    ? new BetaAnalyticsDataClient({ authClient: await getAgencyAccessToken() as any })
+                    : new BetaAnalyticsDataClient({
+                        credentials: {
+                            client_email: config.ga_client_email,
+                            private_key: config.ga_private_key.replace(/\\n/g, '\n'),
+                        }
+                    })
 
                 const propertyName = config.ga_property_id.startsWith('properties/')
                     ? config.ga_property_id
