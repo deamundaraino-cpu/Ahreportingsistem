@@ -6,6 +6,7 @@ const ADMIN_ONLY_ROUTES = [
   '/admin/users',
   '/admin/api-tokens',
   '/admin/reports',
+  '/admin/whatsapp',
 ]
 
 // Routes accessible by superadmin, admin, and trafficker

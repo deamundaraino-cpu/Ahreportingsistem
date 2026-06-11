@@ -12,6 +12,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Microservicio independiente con su propio tsconfig/deps.
+    "whatsapp-gateway/**",
   ]),
 ]);
 

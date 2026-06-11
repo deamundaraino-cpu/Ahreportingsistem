@@ -112,6 +112,47 @@ En el dashboard, los leads se muestran en `GoogleSheetsLeadsCard`.
 
 ---
 
+## WhatsApp (notificaciones a grupos · Baileys)
+
+Notificaciones a **grupos de WhatsApp**, ruteables **por cliente** o **por tipo de notificación**.
+
+### Arquitectura
+
+Baileys necesita un proceso Node persistente (WebSocket vivo + sesión en disco), incompatible
+con Vercel serverless. Por eso vive en un **microservicio aparte** (`whatsapp-gateway/`, desplegado
+en Railway/Render/Fly/VPS) que mantiene la conexión y expone una API REST. La app (Vercel) nunca
+importa Baileys; solo llama al gateway por HTTP con un Bearer compartido.
+
+```
+[Next.js/Vercel] --HTTP--> [whatsapp-gateway (Baileys)] --WS--> WhatsApp
+       |                            |
+       +------- Supabase -----------+   (sesión, ruteo, logs)
+```
+
+### Componentes
+
+- **Gateway** (`whatsapp-gateway/`): endpoints `GET /status`, `GET /qr`, `GET /groups`,
+  `POST /send`. Persiste su sesión en `public.whatsapp_session` (adaptador de auth state Supabase).
+- **Cliente HTTP**: `src/lib/whatsapp/gateway.ts`.
+- **Lógica de envío**: `src/lib/whatsapp/notify.ts` → `sendWhatsAppNotification({ clienteId, notificationType, message })`.
+  Resuelve grupos por `whatsapp_routes` (ruta del cliente → fallback global por tipo) y loguea en `whatsapp_messages`.
+- **UI admin**: `/admin/whatsapp` (QR/estado, sincronizar grupos, editor de rutas, envío manual, log).
+
+### Disparadores
+- **Manual**: acción `sendManualWhatsApp` desde `/admin/whatsapp`.
+- **Cron**: `GET /api/cron/whatsapp-digest` (diario) → resumen de métricas, tipo `metrics_summary`.
+- **Ventas**: el webhook de Hotmart de Report-UTM dispara `sale.approved` / `sale.refunded`
+  tras emitir los webhooks salientes.
+
+### Tipos de notificación
+`metrics_summary`, `alert_threshold`, `report_ready`, `sale.approved`, `sale.refunded`, `manual`
+(ver `src/lib/whatsapp/types.ts`).
+
+> Config: `WHATSAPP_GATEWAY_URL` + `WHATSAPP_GATEWAY_API_KEY` en Vercel. Ver el README de
+> `whatsapp-gateway/` para desplegar y emparejar el número de la agencia.
+
+---
+
 ## Resumen
 
 | Integración | Auth | Configuración | Tablas/columnas destino |
@@ -122,3 +163,4 @@ En el dashboard, los leads se muestran en `GoogleSheetsLeadsCard`.
 | Hotmart (reporting) | Basic/API key por cliente | `config_api.hotmart_*` + funnel por tab | `ventas_*`, `hotmart_funnel_data` |
 | Google Sheets | Cuenta de servicio (global o por cliente) | `config_api.google_sheets` | `leads`, `leads_diarios` |
 | Hotmart (Report-UTM) | Webhook HMAC | `report_utm.integrations` | `report_utm.sales_events` |
+| WhatsApp | Gateway Baileys (Bearer) | `/admin/whatsapp` + env gateway | `whatsapp_groups/routes/messages/session` |
