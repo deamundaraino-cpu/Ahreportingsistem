@@ -1,4 +1,5 @@
 import type { Metadata } from 'next'
+import { ThemeToggle } from '@/components/theme/ThemeToggle'
 
 export const metadata: Metadata = {
     title: 'Reporte Mensual | AdsHouse',
@@ -7,7 +8,8 @@ export const metadata: Metadata = {
 
 export default function MonthlyReportLayout({ children }: { children: React.ReactNode }) {
     return (
-        <div className="min-h-screen bg-zinc-950 text-white">
+        <div className="min-h-screen bg-background text-foreground">
+            <ThemeToggle className="fixed top-4 right-4 z-50" />
             {children}
         </div>
     )

@@ -3,6 +3,7 @@ import { DashboardClient } from "@/app/(app)/dashboard/components/DashboardClien
 import { DateRangeSelector } from "@/app/(app)/dashboard/components/DateRangeSelector"
 import { notFound } from "next/navigation"
 import { Search, X } from "lucide-react"
+import { ThemeToggle } from "@/components/theme/ThemeToggle"
 
 export const dynamic = 'force-dynamic'
 
@@ -19,21 +20,22 @@ export default async function PublicMirrorPage({ params, searchParams }: any) {
     const keyword = typeof search === 'string' ? search : ''
 
     return (
-        <div className="min-h-screen bg-[#0E0E0E] text-zinc-50 font-sans">
+        <div className="min-h-screen bg-background text-foreground font-sans">
              {/* Public Mirror View - No sidebar, just the dashboard */}
-            <header className="border-b border-zinc-800 bg-zinc-950/50 backdrop-blur-md sticky top-0 z-50">
+            <header className="border-b border-border bg-background/50 backdrop-blur-md sticky top-0 z-50">
                 <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
                     <div className="flex items-center gap-6">
                         <div>
-                            <h1 className="text-xl font-bold text-white flex items-center gap-2">
-                                AdsHouse <span className="text-zinc-500 font-normal">|</span> <span className="text-blue-400">Mirror</span>
+                            <h1 className="text-xl font-bold text-foreground flex items-center gap-2">
+                                AdsHouse <span className="text-muted-foreground/70 font-normal">|</span> <span className="text-blue-600 dark:text-blue-400">Mirror</span>
                             </h1>
-                            <p className="text-xs text-zinc-400 mt-0.5">Reporte de: {data.cliente.nombre}</p>
+                            <p className="text-xs text-muted-foreground mt-0.5">Reporte de: {data.cliente.nombre}</p>
                         </div>
                     </div>
-                    
+
                     <div className="flex flex-1 items-center justify-end gap-4">
                         <DateRangeSelector basePath="/p" isPublic={true} />
+                        <ThemeToggle />
                     </div>
                 </div>
             </header>

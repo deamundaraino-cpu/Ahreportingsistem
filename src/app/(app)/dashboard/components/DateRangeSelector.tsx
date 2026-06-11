@@ -128,21 +128,21 @@ export function DateRangeSelector({ basePath = '/dashboard', isPublic = false }:
     const isCustomSelected = activePresetId === 'personalizado' || showCustom
 
     return (
-        <div className="flex flex-col sm:flex-row items-center gap-3 bg-zinc-900 border border-zinc-800 p-2 rounded-lg mt-4 sm:mt-0">
+        <div className="flex flex-col sm:flex-row items-center gap-3 bg-card border border-border p-2 rounded-lg mt-4 sm:mt-0">
             <Popover open={open} onOpenChange={handleOpenChange}>
                 <PopoverTrigger asChild>
                     <Button
                         variant="outline"
                         size="sm"
-                        className="h-8 gap-2 border-zinc-700 bg-zinc-800 text-zinc-100 hover:bg-zinc-700 hover:text-zinc-100"
+                        className="h-8 gap-2 border-border bg-muted text-foreground hover:bg-accent hover:text-foreground"
                     >
-                        <CalendarDays className="h-4 w-4 text-zinc-400" />
+                        <CalendarDays className="h-4 w-4 text-muted-foreground" />
                         {buttonLabel}
-                        <ChevronDown className="h-4 w-4 text-zinc-400" />
+                        <ChevronDown className="h-4 w-4 text-muted-foreground" />
                     </Button>
                 </PopoverTrigger>
                 <PopoverContent
-                    className="w-52 p-2 bg-zinc-900 border-zinc-700 shadow-xl"
+                    className="w-52 p-2 bg-card border-border shadow-xl"
                     align="start"
                     sideOffset={6}
                 >
@@ -154,10 +154,10 @@ export function DateRangeSelector({ basePath = '/dashboard', isPublic = false }:
                                     key={preset.id}
                                     onClick={() => handlePresetSelect(preset.id)}
                                     className={`w-full flex items-center gap-2.5 px-3 py-1.5 text-sm rounded-md text-left transition-colors
-                                        ${isActive ? 'bg-zinc-700 text-zinc-100' : 'text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100'}`}
+                                        ${isActive ? 'bg-secondary text-secondary-foreground' : 'text-foreground/90 hover:bg-accent hover:text-foreground'}`}
                                 >
                                     <span className={`h-3.5 w-3.5 rounded-full border-2 flex-shrink-0 flex items-center justify-center
-                                        ${isActive ? 'border-blue-500' : 'border-zinc-600'}`}>
+                                        ${isActive ? 'border-blue-500' : 'border-muted-foreground/40'}`}>
                                         {isActive && <span className="h-1.5 w-1.5 rounded-full bg-blue-500" />}
                                     </span>
                                     {preset.label}
@@ -167,10 +167,10 @@ export function DateRangeSelector({ basePath = '/dashboard', isPublic = false }:
                         <button
                             onClick={() => handlePresetSelect('personalizado')}
                             className={`w-full flex items-center gap-2.5 px-3 py-1.5 text-sm rounded-md text-left transition-colors
-                                ${isCustomSelected ? 'bg-zinc-700 text-zinc-100' : 'text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100'}`}
+                                ${isCustomSelected ? 'bg-secondary text-secondary-foreground' : 'text-foreground/90 hover:bg-accent hover:text-foreground'}`}
                         >
                             <span className={`h-3.5 w-3.5 rounded-full border-2 flex-shrink-0 flex items-center justify-center
-                                ${isCustomSelected ? 'border-blue-500' : 'border-zinc-600'}`}>
+                                ${isCustomSelected ? 'border-blue-500' : 'border-muted-foreground/40'}`}>
                                 {isCustomSelected && <span className="h-1.5 w-1.5 rounded-full bg-blue-500" />}
                             </span>
                             Personalizado
@@ -178,29 +178,29 @@ export function DateRangeSelector({ basePath = '/dashboard', isPublic = false }:
                     </div>
 
                     {isCustomSelected && (
-                        <div className="mt-2 pt-2 border-t border-zinc-700 space-y-2">
+                        <div className="mt-2 pt-2 border-t border-border space-y-2">
                             <div className="flex flex-col gap-1">
-                                <span className="text-xs text-zinc-500 ml-1">Desde</span>
+                                <span className="text-xs text-muted-foreground/70 ml-1">Desde</span>
                                 <input
                                     type="date"
                                     value={customFrom === 'all' ? '' : customFrom}
                                     onChange={e => setCustomFrom(e.target.value)}
-                                    className="bg-zinc-800 text-zinc-100 border-none rounded p-1.5 text-sm focus:ring-1 focus:ring-zinc-500 cursor-pointer w-full"
+                                    className="bg-muted text-foreground border-none rounded p-1.5 text-sm focus:ring-1 focus:ring-ring cursor-pointer w-full"
                                 />
                             </div>
                             <div className="flex flex-col gap-1">
-                                <span className="text-xs text-zinc-500 ml-1">Hasta</span>
+                                <span className="text-xs text-muted-foreground/70 ml-1">Hasta</span>
                                 <input
                                     type="date"
                                     value={customTo}
                                     onChange={e => setCustomTo(e.target.value)}
-                                    className="bg-zinc-800 text-zinc-100 border-none rounded p-1.5 text-sm focus:ring-1 focus:ring-zinc-500 cursor-pointer w-full"
+                                    className="bg-muted text-foreground border-none rounded p-1.5 text-sm focus:ring-1 focus:ring-ring cursor-pointer w-full"
                                 />
                             </div>
                             <Button
                                 onClick={handleCustomApply}
                                 size="sm"
-                                className="w-full h-8 bg-zinc-700 hover:bg-zinc-600 text-zinc-100"
+                                className="w-full h-8 bg-muted-foreground/30 hover:bg-accent text-foreground"
                             >
                                 Aplicar
                             </Button>
@@ -209,7 +209,7 @@ export function DateRangeSelector({ basePath = '/dashboard', isPublic = false }:
                 </PopoverContent>
             </Popover>
 
-            <div className="h-8 w-px bg-zinc-700 hidden sm:block mx-1" />
+            <div className="h-8 w-px bg-muted-foreground/30 hidden sm:block mx-1" />
 
             <div className={`flex flex-col items-end ${isPublic ? 'hidden' : ''}`}>
                 <Button
@@ -217,15 +217,15 @@ export function DateRangeSelector({ basePath = '/dashboard', isPublic = false }:
                     variant="outline"
                     size="sm"
                     disabled={syncStatus === 'syncing' || !clientId}
-                    className={`mt-4 sm:mt-0 h-8 gap-2 border-zinc-700 bg-zinc-950 text-zinc-300 transition-colors
+                    className={`mt-4 sm:mt-0 h-8 gap-2 border-border bg-background text-foreground/90 transition-colors
                         ${syncStatus === 'success' ? 'text-green-400 border-green-500/50 hover:bg-green-500/10 hover:text-green-300' : ''}
-                        ${syncStatus === 'error' ? 'text-red-400 border-red-500/50 hover:bg-red-500/10 hover:text-red-300' : 'hover:bg-zinc-800'}
+                        ${syncStatus === 'error' ? 'text-red-600 dark:text-red-400 border-red-500/50 hover:bg-red-500/10 hover:text-red-300' : 'hover:bg-accent'}
                     `}
                 >
-                    {syncStatus === 'syncing' && <Loader2 className="h-4 w-4 animate-spin text-blue-400" />}
+                    {syncStatus === 'syncing' && <Loader2 className="h-4 w-4 animate-spin text-blue-600 dark:text-blue-400" />}
                     {syncStatus === 'success' && <CheckCircle2 className="h-4 w-4" />}
                     {syncStatus === 'error' && <AlertCircle className="h-4 w-4" />}
-                    {syncStatus === 'idle' && <RefreshCcw className="h-4 w-4 text-blue-400" />}
+                    {syncStatus === 'idle' && <RefreshCcw className="h-4 w-4 text-blue-600 dark:text-blue-400" />}
                     {syncStatus === 'syncing' ? 'Sincronizando...' :
                         syncStatus === 'success' ? '¡Actualizado!' :
                             syncStatus === 'error' ? 'Error. Reintentar' : 'Sincronizar Datos'}
@@ -233,9 +233,9 @@ export function DateRangeSelector({ basePath = '/dashboard', isPublic = false }:
 
                 {syncStatus === 'success' && syncLogs && (
                     <div className="flex gap-2 mt-1 text-[10px] font-mono justify-end w-full">
-                        {syncLogs.meta && <span className={syncLogs.meta.includes('Saltado') ? 'text-zinc-500' : 'text-green-500/80'}>M:{syncLogs.meta.includes('Saltado') ? 'Skip' : 'OK'}</span>}
-                        {syncLogs.hotmart && <span className={syncLogs.hotmart.includes('Saltado') ? 'text-zinc-500' : 'text-green-500/80'}>H:{syncLogs.hotmart.includes('Saltado') ? 'Skip' : 'OK'}</span>}
-                        {syncLogs.ga4 && <span className={syncLogs.ga4.includes('Saltado') ? 'text-zinc-500' : 'text-green-500/80'}>G:{syncLogs.ga4.includes('Saltado') ? 'Skip' : 'OK'}</span>}
+                        {syncLogs.meta && <span className={syncLogs.meta.includes('Saltado') ? 'text-muted-foreground/70' : 'text-green-500/80'}>M:{syncLogs.meta.includes('Saltado') ? 'Skip' : 'OK'}</span>}
+                        {syncLogs.hotmart && <span className={syncLogs.hotmart.includes('Saltado') ? 'text-muted-foreground/70' : 'text-green-500/80'}>H:{syncLogs.hotmart.includes('Saltado') ? 'Skip' : 'OK'}</span>}
+                        {syncLogs.ga4 && <span className={syncLogs.ga4.includes('Saltado') ? 'text-muted-foreground/70' : 'text-green-500/80'}>G:{syncLogs.ga4.includes('Saltado') ? 'Skip' : 'OK'}</span>}
                     </div>
                 )}
             </div>

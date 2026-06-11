@@ -31,8 +31,8 @@ export default async function AdminUsersPage() {
                     <UsersIcon className="h-6 w-6 text-purple-400" />
                 </div>
                 <div>
-                    <h2 className="text-2xl font-bold text-white">Gestión de Usuarios</h2>
-                    <p className="text-zinc-400 text-sm">Administra los roles y accesos de tu equipo.</p>
+                    <h2 className="text-2xl font-bold text-foreground">Gestión de Usuarios</h2>
+                    <p className="text-muted-foreground text-sm">Administra los roles y accesos de tu equipo.</p>
                 </div>
             </div>
 

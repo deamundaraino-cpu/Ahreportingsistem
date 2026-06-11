@@ -17,7 +17,7 @@ export function PixelSnippet({ origin, clienteSlug }: { origin: string; clienteS
     }
 
     return (
-        <div className="rounded-lg border border-zinc-200 dark:border-white/[0.06] bg-zinc-950 overflow-hidden">
+        <div className="rounded-lg border border-border bg-zinc-950 overflow-hidden">
             <div className="flex items-center justify-between px-4 py-2 border-b border-white/[0.06]">
                 <span className="text-[10px] font-mono uppercase tracking-wider text-zinc-500">
                     HTML · pegar antes de &lt;/head&gt;

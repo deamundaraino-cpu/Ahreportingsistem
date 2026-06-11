@@ -26,8 +26,8 @@ export default async function AdminWhatsAppPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-2xl font-bold text-white">Notificaciones de WhatsApp</h2>
-        <p className="text-zinc-400">
+        <h2 className="text-2xl font-bold text-foreground">Notificaciones de WhatsApp</h2>
+        <p className="text-muted-foreground">
           Conecta el número de la agencia y rutea grupos por cliente o por tipo de notificación.
         </p>
       </div>

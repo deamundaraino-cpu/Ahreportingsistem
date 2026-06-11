@@ -9,6 +9,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { BarChart3 } from 'lucide-react'
+import { ThemeToggle } from '@/components/theme/ThemeToggle'
 
 export default function LoginPage() {
     const [email, setEmail] = useState('')
@@ -37,39 +38,41 @@ export default function LoginPage() {
     }
 
     return (
-        <div className="min-h-screen flex flex-col items-center justify-center bg-zinc-50 dark:bg-[#0E0E0E] p-4 relative overflow-hidden">
+        <div className="min-h-screen flex flex-col items-center justify-center bg-background p-4 relative overflow-hidden">
             {/* Brand ambient glows */}
-            <div className="absolute top-[-15%] left-[-10%] w-[45%] h-[45%] rounded-full opacity-[0.08] blur-[130px] pointer-events-none"
-                 style={{ background: '#E53529' }} />
-            <div className="absolute bottom-[-15%] right-[-10%] w-[45%] h-[45%] rounded-full opacity-[0.08] blur-[130px] pointer-events-none"
-                 style={{ background: '#1E6AB5' }} />
+            <div className="absolute top-[-15%] left-[-10%] w-[45%] h-[45%] ambient-glow-red" />
+            <div className="absolute bottom-[-15%] right-[-10%] w-[45%] h-[45%] ambient-glow-blue" />
+
+            {/* Theme switcher */}
+            <div className="absolute top-4 right-4">
+                <ThemeToggle />
+            </div>
 
             {/* Logo mark */}
             <div className="flex items-center gap-3 mb-8 relative">
-                <div className="flex h-12 w-12 items-center justify-center rounded-xl shadow-lg"
-                     style={{ background: 'linear-gradient(135deg, #E53529 0%, #1E6AB5 100%)' }}>
+                <div className="flex h-12 w-12 items-center justify-center rounded-xl shadow-lg brand-gradient-reporting">
                     <BarChart3 className="h-6 w-6 text-white" />
                 </div>
                 <div className="flex flex-col leading-tight">
-                    <span className="text-2xl font-bold tracking-tight text-zinc-900 dark:text-zinc-50">
+                    <span className="text-2xl font-bold tracking-tight text-foreground">
                         AdsHouse
                     </span>
-                    <span className="text-xs font-medium text-zinc-400 dark:text-zinc-500 tracking-widest uppercase">
+                    <span className="text-xs font-medium text-muted-foreground tracking-widest uppercase">
                         Reporting
                     </span>
                 </div>
             </div>
 
             <Card className="w-full max-w-md relative
-                             bg-white dark:bg-zinc-900/80
-                             border border-zinc-200 dark:border-zinc-800
+                             bg-card/80
+                             border border-border
                              shadow-xl dark:shadow-none
                              backdrop-blur-xl">
                 <CardHeader className="space-y-1 pb-4">
-                    <CardTitle className="text-2xl font-bold text-zinc-900 dark:text-zinc-50 text-center">
+                    <CardTitle className="text-2xl font-bold text-foreground text-center">
                         Bienvenido
                     </CardTitle>
-                    <CardDescription className="text-zinc-500 dark:text-zinc-400 text-center">
+                    <CardDescription className="text-muted-foreground text-center">
                         Ingresa a tu cuenta para ver tus métricas.
                     </CardDescription>
                 </CardHeader>
@@ -77,7 +80,7 @@ export default function LoginPage() {
                 <form onSubmit={handleLogin}>
                     <CardContent className="space-y-4">
                         <div className="space-y-2">
-                            <Label htmlFor="email" className="text-zinc-700 dark:text-zinc-300 font-medium">
+                            <Label htmlFor="email" className="text-foreground/90 font-medium">
                                 Email
                             </Label>
                             <Input
@@ -86,12 +89,12 @@ export default function LoginPage() {
                                 placeholder="tu@email.com"
                                 value={email}
                                 onChange={(e) => setEmail(e.target.value)}
-                                className="bg-zinc-50 dark:bg-zinc-950 border-zinc-300 dark:border-zinc-800 text-zinc-900 dark:text-white placeholder:text-zinc-400 dark:placeholder:text-zinc-600"
+                                className="bg-background border-input text-foreground placeholder:text-muted-foreground/70"
                                 required
                             />
                         </div>
                         <div className="space-y-2">
-                            <Label htmlFor="password" className="text-zinc-700 dark:text-zinc-300 font-medium">
+                            <Label htmlFor="password" className="text-foreground/90 font-medium">
                                 Contraseña
                             </Label>
                             <Input
@@ -99,7 +102,7 @@ export default function LoginPage() {
                                 type="password"
                                 value={password}
                                 onChange={(e) => setPassword(e.target.value)}
-                                className="bg-zinc-50 dark:bg-zinc-950 border-zinc-300 dark:border-zinc-800 text-zinc-900 dark:text-white"
+                                className="bg-background border-input text-foreground"
                                 required
                             />
                         </div>
@@ -113,15 +116,14 @@ export default function LoginPage() {
                     <CardFooter className="flex flex-col gap-4 pt-2">
                         <Button
                             type="submit"
-                            className="w-full text-white font-semibold py-6 transition-all duration-200 shadow-md hover:shadow-lg hover:opacity-90 active:scale-[0.98]"
-                            style={{ background: 'linear-gradient(135deg, #1E6AB5 0%, #155a9a 100%)' }}
+                            className="w-full text-white font-semibold py-6 transition-all duration-200 shadow-md hover:shadow-lg hover:opacity-90 active:scale-[0.98] nav-active-blue"
                             disabled={loading}
                         >
                             {loading ? 'Ingresando...' : 'Iniciar Sesión'}
                         </Button>
-                        <p className="text-sm text-zinc-500 dark:text-zinc-500 text-center">
+                        <p className="text-sm text-muted-foreground text-center">
                             ¿No tienes cuenta?{' '}
-                            <Link href="/signup" className="text-[#1E6AB5] dark:text-[#5a9fd4] hover:underline underline-offset-4 font-medium transition-colors">
+                            <Link href="/signup" className="text-brand-blue dark:text-brand-blue-light hover:underline underline-offset-4 font-medium transition-colors">
                                 Regístrate gratis
                             </Link>
                         </p>

@@ -30,16 +30,16 @@ export function MonthSelector() {
     } catch (err) { }
 
     return (
-        <div className="flex items-center gap-4 bg-zinc-900 border border-zinc-800 p-2 rounded-lg mt-4 sm:mt-0 max-w-sm">
+        <div className="flex items-center gap-4 bg-card border border-border p-2 rounded-lg mt-4 sm:mt-0 max-w-sm">
             <div className="flex flex-col flex-1 pl-2">
-                <span className="text-xs text-zinc-400 font-medium">Periodo Seleccionado</span>
-                <span className="text-sm font-semibold text-zinc-100">{formattedText}</span>
+                <span className="text-xs text-muted-foreground font-medium">Periodo Seleccionado</span>
+                <span className="text-sm font-semibold text-foreground">{formattedText}</span>
             </div>
             <input
                 type="month"
                 value={currentVal}
                 onChange={handleMonthChange}
-                className="bg-zinc-800 text-zinc-100 border-none rounded p-2 text-sm focus:ring-1 focus:ring-zinc-500 max-w-[150px] cursor-pointer"
+                className="bg-muted text-foreground border-none rounded p-2 text-sm focus:ring-1 focus:ring-ring max-w-[150px] cursor-pointer"
             />
         </div>
     )

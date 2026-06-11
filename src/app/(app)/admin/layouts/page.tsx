@@ -22,8 +22,8 @@ export default async function LayoutsPage() {
     return (
         <div className="space-y-6">
             <div>
-                <h2 className="text-2xl font-bold tracking-tight text-white">Constructor de Layouts</h2>
-                <p className="text-zinc-400">Crea y edita plantillas de métricas para asignarlas a tus clientes.</p>
+                <h2 className="text-2xl font-bold tracking-tight text-foreground">Constructor de Layouts</h2>
+                <p className="text-muted-foreground">Crea y edita plantillas de métricas para asignarlas a tus clientes.</p>
             </div>
             <LayoutBuilderClient layouts={layouts} isAdmin={isAdmin} />
         </div>

@@ -19,7 +19,7 @@ export function CopyLinkButton({ clientId }: { clientId: string }) {
             variant="outline"
             size="sm"
             onClick={handleCopy}
-            className={`gap-2 ${copied ? 'text-emerald-400 border-emerald-500/50 bg-emerald-500/10' : 'text-zinc-400 border-zinc-700 bg-zinc-950 hover:bg-zinc-800 hover:text-zinc-200'}`}
+            className={`gap-2 ${copied ? 'text-emerald-600 dark:text-emerald-400 border-emerald-500/50 bg-emerald-500/10' : 'text-muted-foreground border-border bg-background hover:bg-accent hover:text-foreground'}`}
         >
             {copied ? <Check className="w-4 h-4" /> : <Link className="w-4 h-4" />}
             {copied ? 'Copiado' : 'Link Público'}

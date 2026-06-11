@@ -30,9 +30,9 @@ export function RunAggregateButton({ clienteId, hours = 24 }: { clienteId?: stri
                 onClick={onClick}
                 disabled={pending}
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium
-                           text-zinc-700 dark:text-zinc-300
-                           border border-zinc-200 dark:border-white/[0.08]
-                           hover:bg-zinc-50 dark:hover:bg-white/[0.04]
+                           text-foreground/90
+                           border border-border
+                           hover:bg-accent
                            disabled:opacity-50 transition-colors"
             >
                 <Sparkles className="h-3.5 w-3.5" />

@@ -209,33 +209,33 @@ export function FormulaInput({ value, onChange, disabled, availableMetrics }: {
                 ref={inputRef}
                 value={value}
                 onChange={e => onChange(e.target.value)}
-                className={`h-7 text-xs bg-zinc-950 border-zinc-700 text-zinc-200 w-full font-mono ${!disabled ? 'pr-8' : ''}`}
+                className={`h-7 text-xs bg-background border-border text-foreground w-full font-mono ${!disabled ? 'pr-8' : ''}`}
                 placeholder="Fórmula"
                 disabled={disabled}
             />
             {!disabled && (
                 <Popover>
                     <PopoverTrigger asChild>
-                        <button className="absolute right-1 text-zinc-500 hover:text-indigo-400 p-1 transition bg-zinc-950 rounded" title="Insertar métrica">
+                        <button className="absolute right-1 text-muted-foreground/70 hover:text-indigo-400 p-1 transition bg-background rounded" title="Insertar métrica">
                             <Database className="w-3.5 h-3.5" />
                         </button>
                     </PopoverTrigger>
-                    <PopoverContent className="w-64 p-0 bg-zinc-900 border-zinc-800" style={{ zIndex: 9999 }} align="end" side="bottom" avoidCollisions={true} collisionBoundary={[]} collisionPadding={8}>
-                        <div className="p-2 border-b border-zinc-800 bg-zinc-950 rounded-t-lg">
+                    <PopoverContent className="w-64 p-0 bg-card border-border" style={{ zIndex: 9999 }} align="end" side="bottom" avoidCollisions={true} collisionBoundary={[]} collisionPadding={8}>
+                        <div className="p-2 border-b border-border bg-background rounded-t-lg">
                             <Input
                                 placeholder="Buscar métrica..."
                                 value={search}
                                 onChange={e => setSearch(e.target.value)}
-                                className="h-8 text-xs bg-zinc-900 border-zinc-800 focus-visible:ring-indigo-500/50"
+                                className="h-8 text-xs bg-card border-border focus-visible:ring-indigo-500/50"
                             />
                         </div>
-                        <div className="flex gap-1 p-1 bg-zinc-950 border-b border-zinc-800 text-[9px] overflow-x-auto custom-scrollbar">
+                        <div className="flex gap-1 p-1 bg-background border-b border-border text-[9px] overflow-x-auto custom-scrollbar">
                             {(['all', 'meta', 'tiktok', 'ventas', 'ga4'] as const).map(tab => (
                                 <button
                                     key={tab}
                                     type="button"
                                     onClick={() => setActiveTab(tab)}
-                                    className={`px-1.5 py-0.5 rounded transition whitespace-nowrap flex-shrink-0 ${activeTab === tab ? 'bg-indigo-600 text-white font-semibold' : 'text-zinc-400 hover:text-zinc-200'}`}
+                                    className={`px-1.5 py-0.5 rounded transition whitespace-nowrap flex-shrink-0 ${activeTab === tab ? 'bg-indigo-600 text-white font-semibold' : 'text-muted-foreground hover:text-foreground'}`}
                                 >
                                     {tab === 'all' ? 'Todos' : tab === 'ventas' ? 'Ventas' : tab === 'ga4' ? 'GA4' : tab === 'tiktok' ? 'TikTok' : 'Meta'}
                                 </button>
@@ -246,14 +246,14 @@ export function FormulaInput({ value, onChange, disabled, availableMetrics }: {
                                 <button
                                     key={m.id}
                                     onClick={() => insertMetric(m.id)}
-                                    className="w-full text-left px-2 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 rounded transition flex flex-col gap-0.5"
+                                    className="w-full text-left px-2 py-1.5 text-xs text-foreground/90 hover:bg-accent rounded transition flex flex-col gap-0.5"
                                 >
-                                    <span className="font-semibold text-zinc-200">{m.label}</span>
-                                    <span className="text-[10px] text-zinc-500 font-mono">{m.id}</span>
+                                    <span className="font-semibold text-foreground">{m.label}</span>
+                                    <span className="text-[10px] text-muted-foreground/70 font-mono">{m.id}</span>
                                 </button>
                             ))}
                             {filteredMetrics.length === 0 && (
-                                <p className="text-center text-xs text-zinc-600 py-4">No se encontraron métricas</p>
+                                <p className="text-center text-xs text-muted-foreground/70 py-4">No se encontraron métricas</p>
                             )}
                         </div>
                     </PopoverContent>
@@ -286,9 +286,9 @@ export function MetricTypeSelector({ prefix, suffix, onChange }: {
 }) {
     const current = getMetricType(prefix, suffix)
     const types: { type: MetricType; icon: string; label: string; active: string; inactive: string }[] = [
-        { type: 'number', icon: '#', label: 'Número', active: 'bg-zinc-600 text-white border-zinc-500', inactive: 'bg-zinc-900 text-zinc-500 border-zinc-700 hover:border-zinc-500 hover:text-zinc-300' },
-        { type: 'currency', icon: '$', label: 'Moneda', active: 'bg-emerald-600/30 text-emerald-300 border-emerald-500/60', inactive: 'bg-zinc-900 text-zinc-500 border-zinc-700 hover:border-emerald-500/40 hover:text-emerald-400' },
-        { type: 'percent', icon: '%', label: 'Porcentaje', active: 'bg-blue-600/30 text-blue-300 border-blue-500/60', inactive: 'bg-zinc-900 text-zinc-500 border-zinc-700 hover:border-blue-500/40 hover:text-blue-400' },
+        { type: 'number', icon: '#', label: 'Número', active: 'bg-secondary text-secondary-foreground border-ring', inactive: 'bg-card text-muted-foreground/70 border-border hover:border-muted-foreground/50 hover:text-foreground/90' },
+        { type: 'currency', icon: '$', label: 'Moneda', active: 'bg-emerald-600/30 text-emerald-600 dark:text-emerald-300 border-emerald-500/60', inactive: 'bg-card text-muted-foreground/70 border-border hover:border-emerald-500/40 hover:text-emerald-400' },
+        { type: 'percent', icon: '%', label: 'Porcentaje', active: 'bg-blue-600/30 text-blue-600 dark:text-blue-300 border-blue-500/60', inactive: 'bg-card text-muted-foreground/70 border-border hover:border-blue-500/40 hover:text-blue-400' },
     ]
     return (
         <div className="flex gap-1 flex-shrink-0" title="Tipo de métrica">
@@ -331,15 +331,15 @@ function DraggableColumnRow({
             onDrop={(e) => { e.preventDefault(); e.stopPropagation(); onDrop(index) }}
         >
             <div
-                className={`flex flex-col gap-1.5 bg-zinc-900 border rounded-l-lg px-3 py-2.5 transition cursor-grab active:cursor-grabbing select-none flex-1 min-w-0 ${col.hidden ? 'border-zinc-800 border-r-0 opacity-50' : 'border-zinc-700 border-r-0 hover:border-zinc-600'}`}
+                className={`flex flex-col gap-1.5 bg-card border rounded-l-lg px-3 py-2.5 transition cursor-grab active:cursor-grabbing select-none flex-1 min-w-0 ${col.hidden ? 'border-border border-r-0 opacity-50' : 'border-border border-r-0 hover:border-muted-foreground/40'}`}
             >
                 {/* Row 1: grip + eye + label + formula */}
                 <div className="flex items-center gap-2">
-                    <GripVertical className="w-4 h-4 text-zinc-600 flex-shrink-0 group-hover/row:text-zinc-400 transition" />
+                    <GripVertical className="w-4 h-4 text-muted-foreground/70 flex-shrink-0 group-hover/row:text-muted-foreground transition" />
 
                     <button
                         onClick={() => onUpdate({ ...col, hidden: !col.hidden })}
-                        className="flex-shrink-0 text-zinc-500 hover:text-zinc-200 transition"
+                        className="flex-shrink-0 text-muted-foreground/70 hover:text-foreground transition"
                         title={col.hidden ? 'Mostrar columna' : 'Ocultar columna'}
                     >
                         {col.hidden ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
@@ -348,7 +348,7 @@ function DraggableColumnRow({
                     <Input
                         value={col.label}
                         onChange={e => onUpdate({ ...col, label: e.target.value })}
-                        className="h-7 text-xs bg-zinc-950 border-zinc-700 text-zinc-200 w-28 flex-shrink-0"
+                        className="h-7 text-xs bg-background border-border text-foreground w-28 flex-shrink-0"
                         placeholder="Etiqueta"
                     />
 
@@ -373,7 +373,7 @@ function DraggableColumnRow({
                             <button
                                 onClick={() => onUpdate({ ...col, highlight: !col.highlight })}
                                 title="Colorear según impacto"
-                                className={`flex-shrink-0 w-6 h-7 rounded border text-xs transition ${col.highlight ? 'bg-indigo-500/20 border-indigo-500/40 text-indigo-400' : 'bg-zinc-900 border-zinc-700 text-zinc-600 hover:text-zinc-400'}`}
+                                className={`flex-shrink-0 w-6 h-7 rounded border text-xs transition ${col.highlight ? 'bg-indigo-500/20 border-indigo-500/40 text-indigo-600 dark:text-indigo-400' : 'bg-card border-border text-muted-foreground/70 hover:text-muted-foreground'}`}
                             >
                                 ✦
                             </button>
@@ -386,7 +386,7 @@ function DraggableColumnRow({
                             />
 
                             {col.isManual && (
-                                <span className="flex-shrink-0 text-[9px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 px-1.5 py-0.5 rounded font-bold uppercase tracking-wide">
+                                <span className="flex-shrink-0 text-[9px] bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 px-1.5 py-0.5 rounded font-bold uppercase tracking-wide">
                                     Manual
                                 </span>
                             )}
@@ -401,7 +401,7 @@ function DraggableColumnRow({
                 <button
                     onClick={onRemove}
                     title="Eliminar columna"
-                    className={`flex-shrink-0 flex items-center justify-center w-8 bg-zinc-900 border border-l-0 rounded-r-lg transition text-zinc-600 hover:text-red-400 hover:bg-red-400/5 hover:border-red-400/30 ${col.hidden ? 'border-zinc-800 opacity-50' : 'border-zinc-700'}`}
+                    className={`flex-shrink-0 flex items-center justify-center w-8 bg-card border border-l-0 rounded-r-lg transition text-muted-foreground/70 hover:text-red-400 hover:bg-red-400/5 hover:border-red-400/30 ${col.hidden ? 'border-border opacity-50' : 'border-border'}`}
                 >
                     <X className="w-3.5 h-3.5" />
                 </button>
@@ -426,11 +426,11 @@ export function TikTokAccountPicker({
     if (accounts.length === 0) return null
     return (
         <div className="flex items-center gap-1.5">
-            <span className="text-[10px] text-zinc-500 shrink-0">Cuenta TikTok:</span>
+            <span className="text-[10px] text-muted-foreground/70 shrink-0">Cuenta TikTok:</span>
             <select
                 value={value || ''}
                 onChange={e => onChange(e.target.value)}
-                className="h-6 bg-zinc-950 border border-zinc-700 text-zinc-300 rounded px-1.5 text-xs"
+                className="h-6 bg-background border border-border text-foreground/90 rounded px-1.5 text-xs"
             >
                 <option value="">Todas las cuentas</option>
                 {accounts.map(a => (
@@ -446,7 +446,7 @@ export function TikTokAccountPicker({
 // ─── DnD Card Row ─────────────────────────────────────────────────────────────
 
 export const COLOR_OPTIONS: { val: CardColor; bg: string }[] = [
-    { val: 'default', bg: 'bg-zinc-400' },
+    { val: 'default', bg: 'bg-muted-foreground/70' },
     { val: 'emerald', bg: 'bg-emerald-400' },
     { val: 'blue', bg: 'bg-blue-400' },
     { val: 'amber', bg: 'bg-amber-400' },
@@ -475,9 +475,9 @@ function DraggableCardRow({
             onDragStart={() => onDragStart(index)}
             onDragOver={(e) => { e.preventDefault(); onDragOver(e, index) }}
             onDrop={() => onDrop(index)}
-            className="flex items-start gap-2 bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2.5 group transition cursor-grab active:cursor-grabbing select-none hover:border-zinc-600"
+            className="flex items-start gap-2 bg-card border border-border rounded-lg px-3 py-2.5 group transition cursor-grab active:cursor-grabbing select-none hover:border-muted-foreground/40"
         >
-            <GripVertical className="w-4 h-4 text-zinc-600 flex-shrink-0 group-hover:text-zinc-400 transition mt-1.5" />
+            <GripVertical className="w-4 h-4 text-muted-foreground/70 flex-shrink-0 group-hover:text-muted-foreground transition mt-1.5" />
 
             <div className="flex flex-col gap-1.5 flex-1 min-w-0">
                 {/* Row 1: label + formula */}
@@ -487,7 +487,7 @@ function DraggableCardRow({
                             <button
                                 key={opt.val}
                                 onClick={() => onUpdate({ ...card, color: opt.val })}
-                                className={`w-3 h-3 rounded-full ${opt.bg} transition ${card.color === opt.val ? 'ring-2 ring-white ring-offset-2 ring-offset-zinc-900 scale-110' : 'opacity-40 hover:opacity-100'}`}
+                                className={`w-3 h-3 rounded-full ${opt.bg} transition ${card.color === opt.val ? 'ring-2 ring-ring ring-offset-2 ring-offset-background scale-110' : 'opacity-40 hover:opacity-100'}`}
                             />
                         ))}
                     </div>
@@ -495,7 +495,7 @@ function DraggableCardRow({
                     <Input
                         value={card.label}
                         onChange={e => onUpdate({ ...card, label: e.target.value })}
-                        className="h-7 text-xs bg-zinc-950 border-zinc-700 text-zinc-200 w-28 flex-shrink-0"
+                        className="h-7 text-xs bg-background border-border text-foreground w-28 flex-shrink-0"
                         placeholder="Etiqueta"
                     />
 
@@ -533,11 +533,11 @@ function DraggableCardRow({
 
             <div className="flex flex-col gap-1 flex-shrink-0 mt-1.5">
                 {onDuplicate && (
-                    <button onClick={onDuplicate} title="Duplicar tarjeta" className="text-zinc-700 hover:text-emerald-400 transition">
+                    <button onClick={onDuplicate} title="Duplicar tarjeta" className="text-muted-foreground/50 hover:text-emerald-400 transition">
                         <Copy className="w-3.5 h-3.5" />
                     </button>
                 )}
-                <button onClick={onRemove} className="text-zinc-700 hover:text-red-400 transition">
+                <button onClick={onRemove} className="text-muted-foreground/50 hover:text-red-400 transition">
                     <X className="w-3.5 h-3.5" />
                 </button>
             </div>
@@ -631,16 +631,16 @@ function DraggableChartRow({
             onDragStart={(e) => { e.stopPropagation(); onDragStart(index) }}
             onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); onDragOver(e, index) }}
             onDrop={(e) => { e.preventDefault(); e.stopPropagation(); onDrop(index) }}
-            className="flex flex-col gap-2.5 bg-zinc-900 border border-zinc-700 rounded-xl p-3 group transition cursor-grab active:cursor-grabbing select-none hover:border-zinc-600"
+            className="flex flex-col gap-2.5 bg-card border border-border rounded-xl p-3 group transition cursor-grab active:cursor-grabbing select-none hover:border-muted-foreground/40"
         >
             {/* Row 1: drag handle + type select + title + remove */}
             <div className="flex items-center gap-2">
-                <GripVertical className="w-4 h-4 text-zinc-600 flex-shrink-0 group-hover:text-zinc-400 transition" />
+                <GripVertical className="w-4 h-4 text-muted-foreground/70 flex-shrink-0 group-hover:text-muted-foreground transition" />
 
                 <select
                     value={chart.type}
                     onChange={(e) => onUpdate({ ...chart, type: e.target.value as ChartType })}
-                    className="h-7 text-xs bg-zinc-950 border border-zinc-700 text-zinc-200 rounded px-1.5 max-w-[130px]"
+                    className="h-7 text-xs bg-background border border-border text-foreground rounded px-1.5 max-w-[130px]"
                 >
                     {CHART_TYPES.map(t => (
                         <option key={t.val} value={t.val}>{t.icon} {t.label}</option>
@@ -650,17 +650,17 @@ function DraggableChartRow({
                 <Input
                     value={chart.title}
                     onChange={e => onUpdate({ ...chart, title: e.target.value })}
-                    className="h-7 text-xs bg-zinc-950 border-zinc-700 text-zinc-200 flex-1 min-w-[80px]"
+                    className="h-7 text-xs bg-background border-border text-foreground flex-1 min-w-[80px]"
                     placeholder="Título"
                 />
 
                 <div className="flex items-center gap-1 flex-shrink-0">
                     {onDuplicate && (
-                        <button onClick={onDuplicate} title="Duplicar gráfico" className="text-zinc-700 hover:text-emerald-400 transition">
+                        <button onClick={onDuplicate} title="Duplicar gráfico" className="text-muted-foreground/50 hover:text-emerald-400 transition">
                             <Copy className="w-3.5 h-3.5" />
                         </button>
                     )}
-                    <button onClick={onRemove} className="text-zinc-700 hover:text-red-400 transition">
+                    <button onClick={onRemove} className="text-muted-foreground/50 hover:text-red-400 transition">
                         <X className="w-3.5 h-3.5" />
                     </button>
                 </div>
@@ -669,7 +669,7 @@ function DraggableChartRow({
             {/* Row 2: metrics list */}
             <div className="pl-6 space-y-2">
                 {chart.valueFormulas.map((formula, i) => (
-                    <div key={i} className="space-y-1.5 p-2 bg-zinc-950/40 rounded-lg border border-zinc-800/60">
+                    <div key={i} className="space-y-1.5 p-2 bg-background/40 rounded-lg border border-border">
                         <div className="flex items-center gap-1.5">
                             {/* Color dot picker */}
                             <select
@@ -693,7 +693,7 @@ function DraggableChartRow({
                             </div>
 
                             {chart.valueFormulas.length > 1 && (
-                                <button onClick={() => removeMetric(i)} className="text-zinc-700 hover:text-red-400 transition flex-shrink-0">
+                                <button onClick={() => removeMetric(i)} className="text-muted-foreground/50 hover:text-red-400 transition flex-shrink-0">
                                     <X className="w-3 h-3" />
                                 </button>
                             )}
@@ -701,14 +701,14 @@ function DraggableChartRow({
 
                         {/* Series overrides */}
                         <div className="pl-7 mt-1.5 w-full">
-                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-zinc-950/45 p-2 rounded-lg border border-zinc-800/30 text-[9px] text-zinc-400 w-full min-w-0">
+                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-background/45 p-2 rounded-lg border border-border text-[9px] text-muted-foreground w-full min-w-0">
                                 <div className="flex flex-col gap-1">
-                                    <span className="text-zinc-600 font-medium">Unidad</span>
+                                    <span className="text-muted-foreground/70 font-medium">Unidad</span>
                                     <div className="flex gap-1 flex-shrink-0">
                                         {[
-                                            { type: 'number' as const, icon: '#', label: 'Número', active: 'bg-zinc-600 text-white border-zinc-500', inactive: 'bg-zinc-900 text-zinc-500 border-zinc-700 hover:border-zinc-500 hover:text-zinc-300' },
-                                            { type: 'currency' as const, icon: '$', label: 'Moneda', active: 'bg-emerald-600/30 text-emerald-300 border-emerald-500/60', inactive: 'bg-zinc-900 text-zinc-500 border-zinc-700 hover:border-emerald-500/40 hover:text-emerald-400' },
-                                            { type: 'percent' as const, icon: '%', label: 'Porcentaje', active: 'bg-blue-600/30 text-blue-300 border-blue-500/60', inactive: 'bg-zinc-900 text-zinc-500 border-zinc-700 hover:border-blue-500/40 hover:text-blue-400' },
+                                            { type: 'number' as const, icon: '#', label: 'Número', active: 'bg-secondary text-secondary-foreground border-ring', inactive: 'bg-card text-muted-foreground/70 border-border hover:border-muted-foreground/50 hover:text-foreground/90' },
+                                            { type: 'currency' as const, icon: '$', label: 'Moneda', active: 'bg-emerald-600/30 text-emerald-600 dark:text-emerald-300 border-emerald-500/60', inactive: 'bg-card text-muted-foreground/70 border-border hover:border-emerald-500/40 hover:text-emerald-400' },
+                                            { type: 'percent' as const, icon: '%', label: 'Porcentaje', active: 'bg-blue-600/30 text-blue-600 dark:text-blue-300 border-blue-500/60', inactive: 'bg-card text-muted-foreground/70 border-border hover:border-blue-500/40 hover:text-blue-400' },
                                         ].map(t => {
                                             const currentUnit = chart.units?.[i] || 'number'
                                             const isActive = currentUnit === t.type
@@ -735,7 +735,7 @@ function DraggableChartRow({
                                 {isCartesian ? (
                                     <>
                                         <div className="flex flex-col gap-1 min-w-0">
-                                            <span className="text-zinc-600 font-medium">Tipo</span>
+                                            <span className="text-muted-foreground/70 font-medium">Tipo</span>
                                             <select
                                                 value={chart.types?.[i] || ''}
                                                 onChange={(e) => {
@@ -744,7 +744,7 @@ function DraggableChartRow({
                                                     newTypes[i] = e.target.value as 'line' | 'bar' | 'area' | ''
                                                     onUpdate({ ...chart, types: newTypes })
                                                 }}
-                                                className="bg-zinc-900 border border-zinc-800 text-zinc-300 rounded px-1 py-0.5 outline-none cursor-pointer h-6 text-[10px] w-full min-w-0"
+                                                className="bg-card border border-border text-foreground/90 rounded px-1 py-0.5 outline-none cursor-pointer h-6 text-[10px] w-full min-w-0"
                                             >
                                                 <option value="">Por defecto</option>
                                                 <option value="line">Línea</option>
@@ -754,7 +754,7 @@ function DraggableChartRow({
                                         </div>
 
                                         <div className="flex flex-col gap-1 min-w-0">
-                                            <span className="text-zinc-600 font-medium">Eje Y</span>
+                                            <span className="text-muted-foreground/70 font-medium">Eje Y</span>
                                             <select
                                                 value={chart.yAxes?.[i] || 'left'}
                                                 onChange={(e) => {
@@ -763,7 +763,7 @@ function DraggableChartRow({
                                                     newAxes[i] = e.target.value as 'left' | 'right'
                                                     onUpdate({ ...chart, yAxes: newAxes })
                                                 }}
-                                                className="bg-zinc-900 border border-zinc-800 text-zinc-300 rounded px-1 py-0.5 outline-none cursor-pointer h-6 text-[10px] w-full min-w-0"
+                                                className="bg-card border border-border text-foreground/90 rounded px-1 py-0.5 outline-none cursor-pointer h-6 text-[10px] w-full min-w-0"
                                             >
                                                 <option value="left">Izq (Pral)</option>
                                                 <option value="right">Der (Sec)</option>
@@ -771,7 +771,7 @@ function DraggableChartRow({
                                         </div>
 
                                         <div className="flex flex-col gap-1 min-w-0">
-                                            <span className="text-zinc-600 font-medium">Grosor</span>
+                                            <span className="text-muted-foreground/70 font-medium">Grosor</span>
                                             <select
                                                 value={chart.strokeWidths?.[i] ?? 2}
                                                 onChange={(e) => {
@@ -780,7 +780,7 @@ function DraggableChartRow({
                                                     newWidths[i] = Number(e.target.value)
                                                     onUpdate({ ...chart, strokeWidths: newWidths })
                                                 }}
-                                                className="bg-zinc-900 border border-zinc-800 text-zinc-300 rounded px-1 py-0.5 outline-none cursor-pointer h-6 text-[10px] w-full min-w-0"
+                                                className="bg-card border border-border text-foreground/90 rounded px-1 py-0.5 outline-none cursor-pointer h-6 text-[10px] w-full min-w-0"
                                             >
                                                 <option value={1}>1px</option>
                                                 <option value={2}>2px</option>
@@ -802,28 +802,28 @@ function DraggableChartRow({
                 {chart.valueFormulas.length < maxMetrics && (
                     <button
                         onClick={addMetric}
-                        className="flex items-center gap-1 text-[10px] text-zinc-500 hover:text-amber-400 transition mt-1 pl-1"
+                        className="flex items-center gap-1 text-[10px] text-muted-foreground/70 hover:text-amber-400 transition mt-1 pl-1"
                     >
                         <Plus className="w-3 h-3" /> Añadir métrica
                     </button>
                 )}
 
                 {chart.type === 'scatter' && chart.valueFormulas.length < 2 && (
-                    <p className="text-[9px] text-zinc-600 mt-0.5 pl-1">El gráfico de dispersión necesita exactamente 2 métricas (eje X e Y).</p>
+                    <p className="text-[9px] text-muted-foreground/70 mt-0.5 pl-1">El gráfico de dispersión necesita exactamente 2 métricas (eje X e Y).</p>
                 )}
             </div>
 
             {/* Row 3: Global Chart Settings */}
-            <div className="pl-6 pt-2 border-t border-zinc-800/40 space-y-2 text-[10px]">
+            <div className="pl-6 pt-2 border-t border-border space-y-2 text-[10px]">
                 {/* Periodicity & Show Data Labels */}
                 <div className="flex flex-wrap items-center gap-4">
                     {isCartesian && (
                         <div className="flex flex-col gap-0.5">
-                            <span className="text-zinc-600 font-medium">Temporalidad por defecto:</span>
+                            <span className="text-muted-foreground/70 font-medium">Temporalidad por defecto:</span>
                             <select
                                 value={chart.periodicity || 'day'}
                                 onChange={(e) => onUpdate({ ...chart, periodicity: e.target.value as any })}
-                                className="bg-zinc-950 border border-zinc-800 text-zinc-300 rounded px-1.5 py-0.5 outline-none hover:border-zinc-700 cursor-pointer text-[9px]"
+                                className="bg-background border border-border text-foreground/90 rounded px-1.5 py-0.5 outline-none hover:border-muted-foreground/30 cursor-pointer text-[9px]"
                             >
                                 <option value="day">Día</option>
                                 <option value="week">Semana</option>
@@ -839,9 +839,9 @@ function DraggableChartRow({
                             id={`labels-${chart.id}`}
                             checked={chart.showDataLabels || false}
                             onChange={(e) => onUpdate({ ...chart, showDataLabels: e.target.checked })}
-                            className="rounded border-zinc-700 bg-zinc-950 text-amber-500 focus:ring-amber-500 w-3 h-3 cursor-pointer"
+                            className="rounded border-border bg-background text-amber-500 focus:ring-amber-500 w-3 h-3 cursor-pointer"
                         />
-                        <label htmlFor={`labels-${chart.id}`} className="text-zinc-400 cursor-pointer">
+                        <label htmlFor={`labels-${chart.id}`} className="text-muted-foreground cursor-pointer">
                             Etiquetas de datos
                         </label>
                     </div>
@@ -864,16 +864,16 @@ function DraggableChartRow({
                             campaignNames={campaignNames}
                         />
                         <div className="flex items-center gap-1 flex-shrink-0">
-                            <span className="text-zinc-600">Alto:</span>
+                            <span className="text-muted-foreground/70">Alto:</span>
                             <input
                                 type="number"
                                 value={chart.height || 240}
                                 onChange={(e) => onUpdate({ ...chart, height: Math.max(100, Number(e.target.value)) })}
-                                className="w-12 h-6 text-xs text-center bg-zinc-950 border border-zinc-700 text-zinc-300 rounded outline-none"
+                                className="w-12 h-6 text-xs text-center bg-background border border-border text-foreground/90 rounded outline-none"
                                 min={100}
                                 max={600}
                             />
-                            <span className="text-zinc-700 text-[9px]">px</span>
+                            <span className="text-muted-foreground/50 text-[9px]">px</span>
                         </div>
                     </div>
                 </div>
@@ -968,7 +968,7 @@ export function CampaignFilterPicker({
 
     return (
         <div className="flex items-center gap-1.5 flex-shrink-0" title="Filtro de campaña (opcional)">
-            <span className="text-[10px] text-zinc-600 flex-shrink-0">Campaña:</span>
+            <span className="text-[10px] text-muted-foreground/70 flex-shrink-0">Campaña:</span>
 
             {/* Group selector */}
             {campaignGroups.length > 0 && (
@@ -978,7 +978,7 @@ export function CampaignFilterPicker({
                         if (e.target.value) onChange({ type: 'group', operator: undefined, value: e.target.value })
                         else if (value?.type === 'group') onChange(undefined)
                     }}
-                    className="h-6 text-xs bg-zinc-950 border border-zinc-700 text-zinc-300 rounded px-1.5 max-w-[100px]"
+                    className="h-6 text-xs bg-background border border-border text-foreground/90 rounded px-1.5 max-w-[100px]"
                 >
                     <option value="">Grupo...</option>
                     {campaignGroups.map(g => (
@@ -991,7 +991,7 @@ export function CampaignFilterPicker({
             <select
                 value={currentOp}
                 onChange={e => handleOperatorChange(e.target.value as CampaignFilterOperator)}
-                className="h-6 text-xs bg-zinc-950 border border-zinc-700 text-zinc-300 rounded px-1.5 max-w-[120px]"
+                className="h-6 text-xs bg-background border border-border text-foreground/90 rounded px-1.5 max-w-[120px]"
             >
                 {FILTER_OPERATORS.map(op => (
                     <option key={op.value} value={op.value}>{op.label}</option>
@@ -1013,11 +1013,11 @@ export function CampaignFilterPicker({
                             onFocus={() => setShowSuggestions(true)}
                             onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
                             placeholder="Buscar campaña..."
-                            className="h-6 text-xs bg-zinc-950 border-zinc-700 text-zinc-300 w-40"
+                            className="h-6 text-xs bg-background border-border text-foreground/90 w-40"
                         />
                     </PopoverAnchor>
                     <PopoverContent
-                        className="p-0 bg-zinc-900 border-zinc-800 w-56 max-h-48 overflow-y-auto custom-scrollbar"
+                        className="p-0 bg-card border-border w-56 max-h-48 overflow-y-auto custom-scrollbar"
                         style={{ zIndex: 9999 }}
                         align="start"
                         side="bottom"
@@ -1035,7 +1035,7 @@ export function CampaignFilterPicker({
                                     onChange({ type: 'keyword', operator: currentOp, value: name })
                                     setShowSuggestions(false)
                                 }}
-                                className="w-full text-left px-2 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 transition truncate block"
+                                className="w-full text-left px-2 py-1.5 text-xs text-foreground/90 hover:bg-accent transition truncate block"
                             >
                                 {name}
                             </button>
@@ -1051,8 +1051,8 @@ export function CampaignFilterPicker({
                         <button
                             className={`h-6 px-2 text-xs rounded border transition flex items-center gap-1 ${
                                 selectedMulti.length > 0
-                                    ? 'bg-indigo-500/20 border-indigo-500/40 text-indigo-300'
-                                    : 'bg-zinc-950 border-zinc-700 text-zinc-400 hover:border-zinc-500'
+                                    ? 'bg-indigo-500/20 border-indigo-500/40 text-indigo-600 dark:text-indigo-300'
+                                    : 'bg-background border-border text-muted-foreground hover:border-muted-foreground/50'
                             }`}
                         >
                             {selectedMulti.length > 0 ? `${selectedMulti.length} campaña${selectedMulti.length > 1 ? 's' : ''}` : 'Seleccionar...'}
@@ -1060,7 +1060,7 @@ export function CampaignFilterPicker({
                         </button>
                     </PopoverTrigger>
                     <PopoverContent
-                        className="p-0 bg-zinc-900 border-zinc-700 w-64"
+                        className="p-0 bg-card border-border w-64"
                         style={{ zIndex: 9999 }}
                         align="start"
                         side="bottom"
@@ -1069,42 +1069,42 @@ export function CampaignFilterPicker({
                         collisionPadding={8}
                         onOpenAutoFocus={e => e.preventDefault()}
                     >
-                        <div className="p-2 border-b border-zinc-800">
+                        <div className="p-2 border-b border-border">
                             <Input
                                 value={multiSearch}
                                 onChange={e => setMultiSearch(e.target.value)}
                                 placeholder="Buscar campaña..."
-                                className="h-6 text-xs bg-zinc-950 border-zinc-700 text-zinc-300 w-full"
+                                className="h-6 text-xs bg-background border-border text-foreground/90 w-full"
                                 autoFocus
                             />
                         </div>
                         <div className="max-h-52 overflow-y-auto custom-scrollbar py-1">
                             {filteredMultiNames.length === 0 ? (
-                                <p className="px-3 py-2 text-xs text-zinc-600">Sin resultados</p>
+                                <p className="px-3 py-2 text-xs text-muted-foreground/70">Sin resultados</p>
                             ) : filteredMultiNames.map(name => {
                                 const checked = selectedMulti.includes(name)
                                 return (
                                     <button
                                         key={name}
                                         onClick={() => toggleMultiItem(name)}
-                                        className="w-full text-left px-3 py-1.5 text-xs flex items-center gap-2 hover:bg-zinc-800 transition"
+                                        className="w-full text-left px-3 py-1.5 text-xs flex items-center gap-2 hover:bg-accent transition"
                                     >
                                         <span className={`w-3.5 h-3.5 rounded border flex-shrink-0 flex items-center justify-center transition ${
-                                            checked ? 'bg-indigo-500 border-indigo-500' : 'border-zinc-600'
+                                            checked ? 'bg-indigo-500 border-indigo-500' : 'border-muted-foreground/40'
                                         }`}>
                                             {checked && <Check className="w-2.5 h-2.5 text-white" />}
                                         </span>
-                                        <span className={`truncate ${checked ? 'text-indigo-300' : 'text-zinc-300'}`}>{name}</span>
+                                        <span className={`truncate ${checked ? 'text-indigo-600 dark:text-indigo-300' : 'text-foreground/90'}`}>{name}</span>
                                     </button>
                                 )
                             })}
                         </div>
                         {selectedMulti.length > 0 && (
-                            <div className="p-2 border-t border-zinc-800 flex justify-between items-center">
-                                <span className="text-[10px] text-zinc-500">{selectedMulti.length} seleccionada{selectedMulti.length > 1 ? 's' : ''}</span>
+                            <div className="p-2 border-t border-border flex justify-between items-center">
+                                <span className="text-[10px] text-muted-foreground/70">{selectedMulti.length} seleccionada{selectedMulti.length > 1 ? 's' : ''}</span>
                                 <button
                                     onClick={() => onChange(undefined)}
-                                    className="text-[10px] text-red-400 hover:text-red-300 transition"
+                                    className="text-[10px] text-red-600 dark:text-red-400 hover:text-red-300 transition"
                                 >
                                     Limpiar
                                 </button>
@@ -1119,7 +1119,7 @@ export function CampaignFilterPicker({
                 <button
                     onClick={() => { onChange(undefined); setKwSearch('') }}
                     title="Limpiar filtro de campaña"
-                    className="text-zinc-600 hover:text-red-400 transition flex-shrink-0"
+                    className="text-muted-foreground/70 hover:text-red-400 transition flex-shrink-0"
                 >
                     <X className="w-3 h-3" />
                 </button>
@@ -1521,25 +1521,25 @@ export function LayoutConfigModal({
     return (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 sm:p-8 bg-black/80 backdrop-blur-md" onClick={onClose}>
             <div
-                className="relative bg-[#0a0a0c] border border-zinc-800 rounded-2xl shadow-2xl w-full max-w-6xl max-h-[95vh] flex flex-col overflow-hidden"
+                className="relative bg-[#0a0a0c] border border-border rounded-2xl shadow-2xl w-full max-w-6xl max-h-[95vh] flex flex-col overflow-hidden"
                 onClick={e => e.stopPropagation()}
             >
                 {/* Header */}
-                <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-800 bg-zinc-950/60 flex-shrink-0">
+                <div className="flex items-center justify-between px-6 py-4 border-b border-border bg-background/60 flex-shrink-0">
                     <div className="flex items-center gap-3">
                         <div className="p-2 bg-indigo-500/10 rounded-lg">
-                            <LayoutDashboard className="w-5 h-5 text-indigo-400" />
+                            <LayoutDashboard className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
                         </div>
                         <div className="flex flex-col">
-                            <h2 className="text-base font-bold text-white tracking-tight flex items-center gap-2">
+                            <h2 className="text-base font-bold text-foreground tracking-tight flex items-center gap-2">
                                 {tabId && tabId !== 'general' ? 'Personalizar Vista de Pestaña' : 'Personalización de Layout'}
                                 {isCustomized && (!tabId || tabId === 'general') && (
-                                    <span className="text-[10px] bg-indigo-500/20 text-indigo-300 font-bold px-2 py-0.5 rounded uppercase tracking-wide border border-indigo-500/30">
+                                    <span className="text-[10px] bg-indigo-500/20 text-indigo-600 dark:text-indigo-300 font-bold px-2 py-0.5 rounded uppercase tracking-wide border border-indigo-500/30">
                                         Personalizado
                                     </span>
                                 )}
                             </h2>
-                            <p className="text-xs text-zinc-500">
+                            <p className="text-xs text-muted-foreground/70">
                                 {tabId && tabId !== 'general'
                                     ? 'Los cambios se aplicarán UNICAMENTE a esta pestaña.'
                                     : 'Ajusta métricas, orden y visibilidad exclusivos para este cliente.'}
@@ -1548,11 +1548,11 @@ export function LayoutConfigModal({
                     </div>
                     <div className="flex items-center gap-3">
                         {step === 'edit' && isCustomized && (
-                            <Button size="sm" variant="ghost" onClick={handleReset} disabled={loading} className="text-zinc-500 hover:text-red-400 gap-1.5 text-xs">
+                            <Button size="sm" variant="ghost" onClick={handleReset} disabled={loading} className="text-muted-foreground/70 hover:text-red-400 gap-1.5 text-xs">
                                 <RotateCcw className="w-3.5 h-3.5" /> Restablecer
                             </Button>
                         )}
-                        <button onClick={onClose} className="text-zinc-500 hover:text-white transition p-1.5 hover:bg-zinc-800 rounded-lg">
+                        <button onClick={onClose} className="text-muted-foreground/70 hover:text-foreground transition p-1.5 hover:bg-accent rounded-lg">
                             <X className="w-5 h-5" />
                         </button>
                     </div>
@@ -1563,20 +1563,20 @@ export function LayoutConfigModal({
                     {step === 'select' ? (
                         <div className="max-w-2xl mx-auto space-y-4 py-8">
                             <div className="text-center mb-8">
-                                <h3 className="text-xl font-semibold text-white">Elige una plantilla de inicio</h3>
-                                <p className="text-sm text-zinc-400 mt-2">Se creará una copia privada para que puedas editarla libremente.</p>
+                                <h3 className="text-xl font-semibold text-foreground">Elige una plantilla de inicio</h3>
+                                <p className="text-sm text-muted-foreground mt-2">Se creará una copia privada para que puedas editarla libremente.</p>
                             </div>
                             {allLayouts.map(l => (
                                 <button
                                     key={l.id}
                                     onClick={() => handleSelectTemplate(l.id)}
-                                    className="w-full text-left bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 hover:border-indigo-500/50 rounded-xl p-5 group transition"
+                                    className="w-full text-left bg-card hover:bg-accent border border-border hover:border-indigo-500/50 rounded-xl p-5 group transition"
                                 >
                                     <div className="flex justify-between items-center">
-                                        <span className="text-base font-semibold text-white group-hover:text-indigo-400 transition">{l.nombre}</span>
-                                        <ChevronRight className="w-5 h-5 text-zinc-600 transition group-hover:translate-x-1 group-hover:text-indigo-400" />
+                                        <span className="text-base font-semibold text-foreground group-hover:text-indigo-400 transition">{l.nombre}</span>
+                                        <ChevronRight className="w-5 h-5 text-muted-foreground/70 transition group-hover:translate-x-1 group-hover:text-indigo-400" />
                                     </div>
-                                    <p className="text-xs text-zinc-500 mt-1">{l.descripcion}</p>
+                                    <p className="text-xs text-muted-foreground/70 mt-1">{l.descripcion}</p>
                                 </button>
                             ))}
                         </div>
@@ -1588,13 +1588,13 @@ export function LayoutConfigModal({
                                 <div className="flex items-center justify-between">
                                     <div className="flex items-center gap-2">
                                         <div className="w-1 h-4 bg-indigo-500 rounded-full" />
-                                        <h3 className="text-sm font-bold text-white uppercase tracking-wider">Columnas de Tabla</h3>
+                                        <h3 className="text-sm font-bold text-foreground uppercase tracking-wider">Columnas de Tabla</h3>
                                     </div>
                                     <div className="flex items-center gap-2">
-                                        <button onClick={addManualMetric} className="text-[10px] text-emerald-400 hover:text-emerald-300 flex items-center gap-1 bg-emerald-500/10 px-2 py-1 rounded transition">
+                                        <button onClick={addManualMetric} className="text-[10px] text-emerald-600 dark:text-emerald-400 hover:text-emerald-300 flex items-center gap-1 bg-emerald-500/10 px-2 py-1 rounded transition">
                                             <Plus className="w-3 h-3" /> Input Manual
                                         </button>
-                                        <button onClick={() => addPreset(PRESETS[0], 'col')} className="text-[10px] text-indigo-400 hover:text-indigo-300 flex items-center gap-1 bg-indigo-500/10 px-2 py-1 rounded transition">
+                                        <button onClick={() => addPreset(PRESETS[0], 'col')} className="text-[10px] text-indigo-600 dark:text-indigo-400 hover:text-indigo-300 flex items-center gap-1 bg-indigo-500/10 px-2 py-1 rounded transition">
                                             <Plus className="w-3 h-3" /> Nueva Columna
                                         </button>
                                     </div>
@@ -1623,10 +1623,10 @@ export function LayoutConfigModal({
                                 </div>
 
                                 <div className="pt-2">
-                                    <p className="text-[10px] text-zinc-600 font-bold uppercase mb-2">Añadir métrica rápida:</p>
+                                    <p className="text-[10px] text-muted-foreground/70 font-bold uppercase mb-2">Añadir métrica rápida:</p>
                                     <div className="flex flex-wrap gap-1.5">
                                         {PRESETS.map(p => (
-                                            <button key={p.formula} onClick={() => addPreset(p, 'col')} className="text-[10px] bg-zinc-900 border border-zinc-800 hover:border-indigo-500/40 text-zinc-400 hover:text-indigo-300 px-2 py-1 rounded transition">
+                                            <button key={p.formula} onClick={() => addPreset(p, 'col')} className="text-[10px] bg-card border border-border hover:border-indigo-500/40 text-muted-foreground hover:text-indigo-300 px-2 py-1 rounded transition">
                                                 {p.label}
                                             </button>
                                         ))}
@@ -1639,9 +1639,9 @@ export function LayoutConfigModal({
                                 <div className="flex items-center justify-between">
                                     <div className="flex items-center gap-2">
                                         <div className="w-1 h-4 bg-emerald-500 rounded-full" />
-                                        <h3 className="text-sm font-bold text-white uppercase tracking-wider">Tarjetas Superiores</h3>
+                                        <h3 className="text-sm font-bold text-foreground uppercase tracking-wider">Tarjetas Superiores</h3>
                                     </div>
-                                    <button onClick={() => addPreset(PRESETS[0], 'card')} className="text-[10px] text-emerald-400 hover:text-emerald-300 flex items-center gap-1">
+                                    <button onClick={() => addPreset(PRESETS[0], 'card')} className="text-[10px] text-emerald-600 dark:text-emerald-400 hover:text-emerald-300 flex items-center gap-1">
                                         <Plus className="w-3 h-3" /> Nueva Tarjeta
                                     </button>
                                 </div>
@@ -1666,18 +1666,18 @@ export function LayoutConfigModal({
                                         </div>
                                     ))}
                                     {workingLayout.tarjetas.length === 0 && (
-                                        <div className="border border-zinc-800 border-dashed rounded-xl p-8 text-center bg-zinc-950/20">
-                                            <LayoutPanelTop className="w-6 h-6 text-zinc-700 mx-auto mb-2 opacity-50" />
-                                            <p className="text-xs text-zinc-600">No hay tarjetas configuradas.</p>
+                                        <div className="border border-border border-dashed rounded-xl p-8 text-center bg-background/20">
+                                            <LayoutPanelTop className="w-6 h-6 text-muted-foreground/50 mx-auto mb-2 opacity-50" />
+                                            <p className="text-xs text-muted-foreground/70">No hay tarjetas configuradas.</p>
                                         </div>
                                     )}
                                 </div>
 
                                 <div className="pt-2">
-                                    <p className="text-[10px] text-zinc-600 font-bold uppercase mb-2">Añadir tarjeta rápida:</p>
+                                    <p className="text-[10px] text-muted-foreground/70 font-bold uppercase mb-2">Añadir tarjeta rápida:</p>
                                     <div className="flex flex-wrap gap-1.5">
                                         {PRESETS.map(p => (
-                                            <button key={p.formula} onClick={() => addPreset(p, 'card')} className="text-[10px] bg-zinc-900 border border-zinc-800 hover:border-emerald-500/40 text-zinc-400 hover:text-emerald-300 px-2 py-1 rounded transition">
+                                            <button key={p.formula} onClick={() => addPreset(p, 'card')} className="text-[10px] bg-card border border-border hover:border-emerald-500/40 text-muted-foreground hover:text-emerald-300 px-2 py-1 rounded transition">
                                                 {p.label}
                                             </button>
                                         ))}
@@ -1687,13 +1687,13 @@ export function LayoutConfigModal({
                         </div>
 
                         {/* Charts Section */}
-                        <div className="pt-8 border-t border-zinc-800 space-y-4">
+                        <div className="pt-8 border-t border-border space-y-4">
                              <div className="flex items-center justify-between">
                                  <div className="flex items-center gap-2">
                                      <div className="w-1 h-4 bg-amber-500 rounded-full" />
-                                     <h3 className="text-sm font-bold text-white uppercase tracking-wider">Gráficos de Rendimiento</h3>
+                                     <h3 className="text-sm font-bold text-foreground uppercase tracking-wider">Gráficos de Rendimiento</h3>
                                  </div>
-                                 <button onClick={addChart} className="text-[10px] text-amber-400 hover:text-amber-300 flex items-center gap-1 bg-amber-500/10 px-2 py-1 rounded transition">
+                                 <button onClick={addChart} className="text-[10px] text-amber-600 dark:text-amber-400 hover:text-amber-300 flex items-center gap-1 bg-amber-500/10 px-2 py-1 rounded transition">
                                      <Plus className="w-3 h-3" /> Añadir Gráfico
                                  </button>
                              </div>
@@ -1717,42 +1717,42 @@ export function LayoutConfigModal({
                                     />
                                 ))}
                                 {(!workingLayout.graficos || workingLayout.graficos.length === 0) && (
-                                     <div className="col-span-full border border-zinc-800 border-dashed rounded-xl p-8 text-center bg-zinc-950/20">
-                                         <BarChart3 className="w-6 h-6 text-zinc-700 mx-auto mb-2 opacity-50" />
-                                         <p className="text-xs text-zinc-600">No hay gráficos configurados. Haz clic en "Añadir Gráfico" para crear uno.</p>
+                                     <div className="col-span-full border border-border border-dashed rounded-xl p-8 text-center bg-background/20">
+                                         <BarChart3 className="w-6 h-6 text-muted-foreground/50 mx-auto mb-2 opacity-50" />
+                                         <p className="text-xs text-muted-foreground/70">No hay gráficos configurados. Haz clic en "Añadir Gráfico" para crear uno.</p>
                                      </div>
                                 )}
                              </div>
                         </div>
                         
                         {/* Text Blocks / Titles Section */}
-                        <div className="pt-8 border-t border-zinc-800 space-y-4">
+                        <div className="pt-8 border-t border-border space-y-4">
                              <div className="flex items-center justify-between">
                                  <div className="flex items-center gap-2">
                                      <div className="w-1 h-4 bg-purple-500 rounded-full" />
-                                     <h3 className="text-sm font-bold text-white uppercase tracking-wider">Títulos y Separadores</h3>
+                                     <h3 className="text-sm font-bold text-foreground uppercase tracking-wider">Títulos y Separadores</h3>
                                  </div>
-                                 <button onClick={addTextBlock} className="text-[10px] text-purple-400 hover:text-purple-300 flex items-center gap-1 bg-purple-500/10 px-2 py-1 rounded transition">
+                                 <button onClick={addTextBlock} className="text-[10px] text-purple-600 dark:text-purple-400 hover:text-purple-300 flex items-center gap-1 bg-purple-500/10 px-2 py-1 rounded transition">
                                      <Plus className="w-3 h-3" /> Añadir Título
                                  </button>
                              </div>
 
                              <div className="space-y-3">
                                 {(workingLayout.text_blocks || []).map((block: any, i: number) => (
-                                    <div key={block.id} className="flex flex-col gap-3 bg-zinc-900 border border-zinc-800 rounded-xl p-4">
+                                    <div key={block.id} className="flex flex-col gap-3 bg-card border border-border rounded-xl p-4">
                                         <div className="flex items-start justify-between gap-4">
                                             <div className="flex-1 space-y-3">
                                                 <Input
                                                     value={block.content}
                                                     onChange={e => updateTextBlock(i, { content: e.target.value })}
-                                                    className="h-9 text-sm font-bold bg-zinc-950 border-zinc-700 text-white placeholder:text-zinc-600"
+                                                    className="h-9 text-sm font-bold bg-background border-border text-foreground placeholder:text-muted-foreground/70"
                                                     placeholder="Escribe el título aquí..."
                                                 />
                                                 <div className="flex flex-wrap items-center gap-2">
                                                     <select 
                                                         value={block.style} 
                                                         onChange={e => updateTextBlock(i, { style: e.target.value as any })}
-                                                        className="bg-zinc-950 border border-zinc-800 rounded px-2 py-1.5 text-xs text-zinc-300 outline-none hover:border-zinc-700 cursor-pointer"
+                                                        className="bg-background border border-border rounded px-2 py-1.5 text-xs text-foreground/90 outline-none hover:border-muted-foreground/30 cursor-pointer"
                                                         title="Grosor (Jerarquía)"
                                                     >
                                                         <option value="h1">Grosor H1 (Bold)</option>
@@ -1763,7 +1763,7 @@ export function LayoutConfigModal({
                                                     <select 
                                                         value={block.fontSize || ''} 
                                                         onChange={e => updateTextBlock(i, { fontSize: e.target.value as any })}
-                                                        className="bg-zinc-950 border border-zinc-800 rounded px-2 py-1.5 text-xs text-zinc-300 outline-none hover:border-zinc-700 cursor-pointer"
+                                                        className="bg-background border border-border rounded px-2 py-1.5 text-xs text-foreground/90 outline-none hover:border-muted-foreground/30 cursor-pointer"
                                                         title="Tamaño Personalizado"
                                                     >
                                                         <option value="">Tamaño Default</option>
@@ -1778,7 +1778,7 @@ export function LayoutConfigModal({
                                                     <select 
                                                         value={block.fontFamily || ''} 
                                                         onChange={e => updateTextBlock(i, { fontFamily: e.target.value as any })}
-                                                        className="bg-zinc-950 border border-zinc-800 rounded px-2 py-1.5 text-xs text-zinc-300 outline-none hover:border-zinc-700 cursor-pointer"
+                                                        className="bg-background border border-border rounded px-2 py-1.5 text-xs text-foreground/90 outline-none hover:border-muted-foreground/30 cursor-pointer"
                                                         title="Tipografía"
                                                     >
                                                         <option value="">Fuente (Sans)</option>
@@ -1788,7 +1788,7 @@ export function LayoutConfigModal({
                                                     <select 
                                                         value={block.color || 'white'} 
                                                         onChange={e => updateTextBlock(i, { color: e.target.value as any })}
-                                                        className="bg-zinc-950 border border-zinc-800 rounded px-2 py-1.5 text-xs text-zinc-300 outline-none hover:border-zinc-700 cursor-pointer"
+                                                        className="bg-background border border-border rounded px-2 py-1.5 text-xs text-foreground/90 outline-none hover:border-muted-foreground/30 cursor-pointer"
                                                         title="Color del texto"
                                                     >
                                                         <option value="white">Blanco</option>
@@ -1803,7 +1803,7 @@ export function LayoutConfigModal({
                                                     <select 
                                                         value={block.align || 'left'} 
                                                         onChange={e => updateTextBlock(i, { align: e.target.value as 'left' | 'center' | 'right' })}
-                                                        className="bg-zinc-950 border border-zinc-800 rounded px-2 py-1.5 text-xs text-zinc-300 outline-none hover:border-zinc-700 cursor-pointer"
+                                                        className="bg-background border border-border rounded px-2 py-1.5 text-xs text-foreground/90 outline-none hover:border-muted-foreground/30 cursor-pointer"
                                                         title="Alineación"
                                                     >
                                                         <option value="left">Izquierda</option>
@@ -1813,12 +1813,12 @@ export function LayoutConfigModal({
                                                     <select 
                                                         value={block.backgroundColor || ''} 
                                                         onChange={e => updateTextBlock(i, { backgroundColor: e.target.value })}
-                                                        className="bg-zinc-950 border border-zinc-800 rounded px-2 py-1.5 text-xs text-zinc-300 outline-none hover:border-zinc-700 cursor-pointer"
+                                                        className="bg-background border border-border rounded px-2 py-1.5 text-xs text-foreground/90 outline-none hover:border-muted-foreground/30 cursor-pointer"
                                                         title="Fondo de Tarjeta"
                                                     >
                                                         <option value="">Sin Fondo (Transparente)</option>
-                                                        <option value="bg-zinc-900/60 border-zinc-800">Gris Suave</option>
-                                                        <option value="bg-zinc-900 border-zinc-700">Gris Sólido (Tarjeta)</option>
+                                                        <option value="bg-card/60 border-border">Gris Suave</option>
+                                                        <option value="bg-card border-border">Gris Sólido (Tarjeta)</option>
                                                         <option value="bg-indigo-500/10 border-indigo-500/20">Índigo Sutil</option>
                                                         <option value="bg-emerald-500/10 border-emerald-500/20">Verde Sutil</option>
                                                         <option value="bg-amber-500/10 border-amber-500/20">Ámbar Sutil</option>
@@ -1828,7 +1828,7 @@ export function LayoutConfigModal({
                                                     <select 
                                                         value={block.borderRadius || 'xl'} 
                                                         onChange={e => updateTextBlock(i, { borderRadius: e.target.value as any })}
-                                                        className="bg-zinc-950 border border-zinc-800 rounded px-2 py-1.5 text-xs text-zinc-300 outline-none hover:border-zinc-700 cursor-pointer"
+                                                        className="bg-background border border-border rounded px-2 py-1.5 text-xs text-foreground/90 outline-none hover:border-muted-foreground/30 cursor-pointer"
                                                         title="Redondeado"
                                                     >
                                                         <option value="none">Esquinas Rectas</option>
@@ -1841,49 +1841,49 @@ export function LayoutConfigModal({
                                                     </select>
                                                 </div>
                                             </div>
-                                            <button onClick={() => duplicateTextBlock(i)} title="Duplicar título" className="text-zinc-600 hover:text-purple-400 p-1.5 rounded bg-zinc-950 border border-zinc-800 transition flex-shrink-0">
+                                            <button onClick={() => duplicateTextBlock(i)} title="Duplicar título" className="text-muted-foreground/70 hover:text-purple-400 p-1.5 rounded bg-background border border-border transition flex-shrink-0">
                                                 <Copy className="w-4 h-4" />
                                             </button>
-                                            <button onClick={() => removeTextBlock(i)} title="Eliminar título" className="text-zinc-600 hover:text-red-400 p-1.5 rounded bg-zinc-950 border border-zinc-800 transition flex-shrink-0">
+                                            <button onClick={() => removeTextBlock(i)} title="Eliminar título" className="text-muted-foreground/70 hover:text-red-400 p-1.5 rounded bg-background border border-border transition flex-shrink-0">
                                                 <X className="w-4 h-4" />
                                             </button>
                                         </div>
                                     </div>
                                 ))}
                                 {(!workingLayout.text_blocks || workingLayout.text_blocks.length === 0) && (
-                                     <div className="border border-zinc-800 border-dashed rounded-xl p-8 text-center bg-zinc-950/20">
-                                         <p className="text-xs text-zinc-600">No hay títulos configurados. Puedes usarlos para separar secciones en el Dashboard.</p>
+                                     <div className="border border-border border-dashed rounded-xl p-8 text-center bg-background/20">
+                                         <p className="text-xs text-muted-foreground/70">No hay títulos configurados. Puedes usarlos para separar secciones en el Dashboard.</p>
                                      </div>
                                 )}
                              </div>
                         </div>
                         {/* Rankings Section */}
-                        <div className="pt-8 border-t border-zinc-800 space-y-4">
+                        <div className="pt-8 border-t border-border space-y-4">
                             <div className="flex items-center justify-between">
                                 <div className="flex items-center gap-2">
                                     <div className="w-1 h-4 bg-cyan-500 rounded-full" />
-                                    <h3 className="text-sm font-bold text-white uppercase tracking-wider">Tablas de Ranking</h3>
+                                    <h3 className="text-sm font-bold text-foreground uppercase tracking-wider">Tablas de Ranking</h3>
                                 </div>
-                                <button onClick={addRankingTable} className="text-[10px] text-cyan-400 hover:text-cyan-300 flex items-center gap-1 bg-cyan-500/10 px-2 py-1 rounded transition">
+                                <button onClick={addRankingTable} className="text-[10px] text-cyan-600 dark:text-cyan-400 hover:text-cyan-300 flex items-center gap-1 bg-cyan-500/10 px-2 py-1 rounded transition">
                                     <Plus className="w-3 h-3" /> Agregar tabla
                                 </button>
                             </div>
 
                             <div className="space-y-4">
                                 {(workingLayout?.ranking_tables || []).map((table, ti) => (
-                                    <div key={table.id} className="bg-zinc-900 border border-zinc-700 rounded-xl p-4 space-y-3">
+                                    <div key={table.id} className="bg-card border border-border rounded-xl p-4 space-y-3">
                                         {/* Table header row */}
                                         <div className="flex items-center gap-2">
                                             <Input
                                                 value={table.title}
                                                 onChange={e => updateRankingTable(ti, { ...table, title: e.target.value })}
-                                                className="h-7 text-xs bg-zinc-950 border-zinc-700 text-white flex-1"
+                                                className="h-7 text-xs bg-background border-border text-foreground flex-1"
                                                 placeholder="Título de la tabla"
                                             />
-                                            <button onClick={() => duplicateRankingTable(ti)} title="Duplicar tabla" className="flex-shrink-0 text-zinc-700 hover:text-emerald-400 transition">
+                                            <button onClick={() => duplicateRankingTable(ti)} title="Duplicar tabla" className="flex-shrink-0 text-muted-foreground/50 hover:text-emerald-400 transition">
                                                 <Copy className="w-3.5 h-3.5" />
                                             </button>
-                                            <button onClick={() => removeRankingTable(ti)} className="flex-shrink-0 text-zinc-700 hover:text-red-400 transition">
+                                            <button onClick={() => removeRankingTable(ti)} className="flex-shrink-0 text-muted-foreground/50 hover:text-red-400 transition">
                                                 <X className="w-3.5 h-3.5" />
                                             </button>
                                         </div>
@@ -1891,11 +1891,11 @@ export function LayoutConfigModal({
                                         {/* Settings row */}
                                         <div className="flex flex-wrap items-center gap-2 text-[10px]">
                                             <div className="flex items-center gap-1">
-                                                <span className="text-zinc-500">Dimensión:</span>
+                                                <span className="text-muted-foreground/70">Dimensión:</span>
                                                 <select
                                                     value={table.dimension}
                                                     onChange={e => updateRankingTable(ti, { ...table, dimension: e.target.value as any })}
-                                                    className="h-6 bg-zinc-950 border border-zinc-700 text-zinc-300 rounded px-1.5"
+                                                    className="h-6 bg-background border border-border text-foreground/90 rounded px-1.5"
                                                 >
                                                     <optgroup label="Meta">
                                                         <option value="campaigns">Campañas</option>
@@ -1910,32 +1910,32 @@ export function LayoutConfigModal({
                                                 </select>
                                             </div>
                                             <div className="flex items-center gap-1">
-                                                <span className="text-zinc-500">Top:</span>
+                                                <span className="text-muted-foreground/70">Top:</span>
                                                 <select
                                                     value={table.topN}
                                                     onChange={e => updateRankingTable(ti, { ...table, topN: Number(e.target.value) })}
-                                                    className="h-6 bg-zinc-950 border border-zinc-700 text-zinc-300 rounded px-1.5"
+                                                    className="h-6 bg-background border border-border text-foreground/90 rounded px-1.5"
                                                 >
                                                     {[5, 10, 20, 50].map(n => <option key={n} value={n}>{n}</option>)}
                                                 </select>
                                             </div>
                                             <div className="flex items-center gap-1">
-                                                <span className="text-zinc-500">Orden:</span>
+                                                <span className="text-muted-foreground/70">Orden:</span>
                                                 <select
                                                     value={table.sortOrder}
                                                     onChange={e => updateRankingTable(ti, { ...table, sortOrder: e.target.value as 'desc' | 'asc' })}
-                                                    className="h-6 bg-zinc-950 border border-zinc-700 text-zinc-300 rounded px-1.5"
+                                                    className="h-6 bg-background border border-border text-foreground/90 rounded px-1.5"
                                                 >
                                                     <option value="desc">Mayor → Menor</option>
                                                     <option value="asc">Menor → Mayor</option>
                                                 </select>
                                             </div>
                                             <div className="flex items-center gap-1">
-                                                <span className="text-zinc-500">Columna de orden:</span>
+                                                <span className="text-muted-foreground/70">Columna de orden:</span>
                                                 <select
                                                     value={table.sortColumnIndex}
                                                     onChange={e => updateRankingTable(ti, { ...table, sortColumnIndex: Number(e.target.value) })}
-                                                    className="h-6 bg-zinc-950 border border-zinc-700 text-zinc-300 rounded px-1.5"
+                                                    className="h-6 bg-background border border-border text-foreground/90 rounded px-1.5"
                                                 >
                                                     {table.columns.map((col, ci) => (
                                                         <option key={ci} value={ci}>{col.label || `Col ${ci + 1}`}</option>
@@ -1949,7 +1949,7 @@ export function LayoutConfigModal({
                                                     onChange={e => updateRankingTable(ti, { ...table, showRank: e.target.checked })}
                                                     className="w-3 h-3 accent-cyan-500"
                                                 />
-                                                <span className="text-zinc-400">Mostrar #</span>
+                                                <span className="text-muted-foreground">Mostrar #</span>
                                             </label>
                                         </div>
 
@@ -1977,8 +1977,8 @@ export function LayoutConfigModal({
                                         )}
 
                                         {/* Columns list */}
-                                        <div className="space-y-2 pt-1 border-t border-zinc-800">
-                                            <p className="text-[10px] text-zinc-500 font-medium uppercase">Columnas de métricas</p>
+                                        <div className="space-y-2 pt-1 border-t border-border">
+                                            <p className="text-[10px] text-muted-foreground/70 font-medium uppercase">Columnas de métricas</p>
                                             {table.columns.map((col, ci) => (
                                                 <div key={ci} className="flex items-center gap-1.5">
                                                     <Input
@@ -1988,7 +1988,7 @@ export function LayoutConfigModal({
                                                             cols[ci] = { ...col, label: e.target.value }
                                                             updateRankingTable(ti, { ...table, columns: cols })
                                                         }}
-                                                        className="h-6 text-xs bg-zinc-950 border-zinc-700 text-zinc-200 w-24 flex-shrink-0"
+                                                        className="h-6 text-xs bg-background border-border text-foreground w-24 flex-shrink-0"
                                                         placeholder="Etiqueta"
                                                     />
                                                     <div className="flex-1">
@@ -2018,7 +2018,7 @@ export function LayoutConfigModal({
                                                             updateRankingTable(ti, { ...table, columns: cols })
                                                         }}
                                                         title="Heatmap"
-                                                        className={`flex-shrink-0 w-6 h-6 rounded border text-xs transition ${col.highlight ? 'bg-indigo-500/20 border-indigo-500/40 text-indigo-400' : 'bg-zinc-900 border-zinc-700 text-zinc-600 hover:text-zinc-400'}`}
+                                                        className={`flex-shrink-0 w-6 h-6 rounded border text-xs transition ${col.highlight ? 'bg-indigo-500/20 border-indigo-500/40 text-indigo-600 dark:text-indigo-400' : 'bg-card border-border text-muted-foreground/70 hover:text-muted-foreground'}`}
                                                     >
                                                         ✦
                                                     </button>
@@ -2031,7 +2031,7 @@ export function LayoutConfigModal({
                                                                     : table.sortColumnIndex
                                                                 updateRankingTable(ti, { ...table, columns: cols, sortColumnIndex: newSortIdx })
                                                             }}
-                                                            className="flex-shrink-0 text-zinc-700 hover:text-red-400 transition"
+                                                            className="flex-shrink-0 text-muted-foreground/50 hover:text-red-400 transition"
                                                         >
                                                             <X className="w-3 h-3" />
                                                         </button>
@@ -2051,8 +2051,8 @@ export function LayoutConfigModal({
                                     </div>
                                 ))}
                                 {(!workingLayout?.ranking_tables || workingLayout.ranking_tables.length === 0) && (
-                                    <div className="border border-zinc-800 border-dashed rounded-xl p-8 text-center bg-zinc-950/20">
-                                        <p className="text-xs text-zinc-600">No hay tablas de ranking. Haz clic en "Agregar tabla" para crear una.</p>
+                                    <div className="border border-border border-dashed rounded-xl p-8 text-center bg-background/20">
+                                        <p className="text-xs text-muted-foreground/70">No hay tablas de ranking. Haz clic en "Agregar tabla" para crear una.</p>
                                     </div>
                                 )}
                             </div>
@@ -2063,12 +2063,12 @@ export function LayoutConfigModal({
 
                 {/* Footer */}
                 {step === 'edit' && workingLayout && (
-                    <div className="flex items-center justify-between px-6 py-4 border-t border-zinc-800 bg-zinc-950/80 flex-shrink-0">
-                        <button onClick={() => setStep('select')} className="text-xs text-zinc-500 hover:text-zinc-300 flex items-center gap-1.5 transition">
+                    <div className="flex items-center justify-between px-6 py-4 border-t border-border bg-background/80 flex-shrink-0">
+                        <button onClick={() => setStep('select')} className="text-xs text-muted-foreground/70 hover:text-foreground/90 flex items-center gap-1.5 transition">
                             <ChevronLeft className="w-4 h-4" /> Cambiar Plantilla
                         </button>
                         <div className="flex gap-3">
-                            <Button variant="outline" onClick={onClose} className="border-zinc-700 text-zinc-400 hover:text-white text-xs px-6">
+                            <Button variant="outline" onClick={onClose} className="border-border text-muted-foreground hover:text-foreground text-xs px-6">
                                 Cancelar
                             </Button>
                             <Button

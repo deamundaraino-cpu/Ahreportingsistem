@@ -75,17 +75,17 @@ function applyCompoundFilter(
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 const COLOR_MAP: Record<string, string> = {
-    emerald: 'text-emerald-400',
-    red: 'text-red-400',
-    blue: 'text-blue-400',
-    amber: 'text-amber-400',
-    default: 'text-white',
+    emerald: 'text-emerald-600 dark:text-emerald-400',
+    red: 'text-red-600 dark:text-red-400',
+    blue: 'text-blue-600 dark:text-blue-400',
+    amber: 'text-amber-600 dark:text-amber-400',
+    default: 'text-foreground',
 }
 
 function highlightClass(value: number | null, col: ColDef): string {
     if (!col.highlight || value === null) return ''
-    if (col.suffix === 'x') return value >= 1 ? 'text-emerald-400' : 'text-red-400'
-    if (col.suffix === '%') return value >= 0 ? 'text-emerald-400' : 'text-red-400'
+    if (col.suffix === 'x') return value >= 1 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'
+    if (col.suffix === '%') return value >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'
     return ''
 }
 
@@ -97,7 +97,7 @@ function LayoutConfigButton({ onClick, isCustomized }: { onClick: () => void; is
             size="sm"
             variant="outline"
             onClick={onClick}
-            className="gap-1.5 border-zinc-700 text-zinc-400 hover:text-indigo-300 hover:border-indigo-500/40 hover:bg-indigo-500/5 text-xs transition"
+            className="gap-1.5 border-border text-muted-foreground hover:text-indigo-300 hover:border-indigo-500/40 hover:bg-indigo-500/5 text-xs transition"
         >
             <Settings2 className="w-3.5 h-3.5" />
             {isCustomized ? 'Layout personalizado ✦' : 'Configurar Layout'}
@@ -130,7 +130,7 @@ function SortableTab({ tab, isActive, onSelect, onEdit, isPublic, hasOverride }:
                 <button
                     {...attributes}
                     {...listeners}
-                    className="p-1 text-zinc-600 hover:text-zinc-400 cursor-grab active:cursor-grabbing"
+                    className="p-1 text-muted-foreground/70 hover:text-muted-foreground cursor-grab active:cursor-grabbing"
                     title="Arrastrar para reordenar"
                 >
                     <GripVertical className="w-3.5 h-3.5" />
@@ -138,18 +138,18 @@ function SortableTab({ tab, isActive, onSelect, onEdit, isPublic, hasOverride }:
             )}
             <button
                 onClick={onSelect}
-                className={`px-4 py-2 text-sm font-medium rounded-t-lg transition whitespace-nowrap border-b-2 flex items-center gap-1.5 ${isActive ? 'border-blue-500 text-blue-400 bg-blue-500/10' : 'border-transparent text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800'}`}
+                className={`px-4 py-2 text-sm font-medium rounded-t-lg transition whitespace-nowrap border-b-2 flex items-center gap-1.5 ${isActive ? 'border-blue-500 text-blue-600 dark:text-blue-400 bg-blue-500/10' : 'border-transparent text-muted-foreground hover:text-foreground hover:bg-accent'}`}
             >
                 {tab.nombre}
-                <span className="text-[10px] bg-zinc-800/80 px-1.5 py-0.5 rounded text-zinc-400 font-mono tracking-wider">{tab.keyword_meta}</span>
+                <span className="text-[10px] bg-muted/80 px-1.5 py-0.5 rounded text-muted-foreground font-mono tracking-wider">{tab.keyword_meta}</span>
                 {hasOverride && (
-                    <span className="text-[9px] text-indigo-400 font-bold" title="Vista personalizada">✦</span>
+                    <span className="text-[9px] text-indigo-600 dark:text-indigo-400 font-bold" title="Vista personalizada">✦</span>
                 )}
             </button>
             {!isPublic && (
                 <button
                     onClick={(e) => { e.stopPropagation(); onEdit(); }}
-                    className={`absolute right-1 p-1 text-zinc-500 hover:text-white rounded bg-zinc-900 shadow border border-zinc-700 opacity-0 group-hover:opacity-100 transition ${isActive ? 'opacity-100' : ''}`}
+                    className={`absolute right-1 p-1 text-muted-foreground/70 hover:text-foreground rounded bg-card shadow border border-border opacity-0 group-hover:opacity-100 transition ${isActive ? 'opacity-100' : ''}`}
                 >
                     <Edit2 className="w-3 h-3" />
                 </button>
@@ -188,23 +188,23 @@ function ExtrasPanel({ filteredMetrics }: { filteredMetrics: any[] }) {
     const totalGross = aggregated.reduce((s, r) => s + r.gross, 0)
 
     return (
-        <Card className="bg-zinc-900 border-zinc-800 overflow-hidden">
-            <CardHeader className="border-b border-zinc-800 bg-zinc-950/30 py-3">
+        <Card className="bg-card border-border overflow-hidden">
+            <CardHeader className="border-b border-border bg-background/30 py-3">
                 <div className="flex items-center justify-between">
-                    <CardTitle className="text-white text-base flex items-center gap-2">
-                        <span className="text-orange-400">⚡</span>
+                    <CardTitle className="text-foreground text-base flex items-center gap-2">
+                        <span className="text-orange-600 dark:text-orange-400">⚡</span>
                         Productos Extras
-                        <span className="text-xs font-normal text-zinc-500">(no asignados a ningún funnel)</span>
+                        <span className="text-xs font-normal text-muted-foreground/70">(no asignados a ningún funnel)</span>
                     </CardTitle>
-                    <div className="text-xs text-zinc-400">
-                        {aggregated.length} producto{aggregated.length !== 1 ? 's' : ''} · <span className="text-emerald-400 font-mono">${totalNet.toFixed(2)}</span> neto
+                    <div className="text-xs text-muted-foreground">
+                        {aggregated.length} producto{aggregated.length !== 1 ? 's' : ''} · <span className="text-emerald-600 dark:text-emerald-400 font-mono">${totalNet.toFixed(2)}</span> neto
                     </div>
                 </div>
             </CardHeader>
             <CardContent className="p-0 overflow-x-auto custom-scrollbar">
                 <Table className="whitespace-nowrap">
                     <TableHeader>
-                        <TableRow className="border-zinc-800 bg-zinc-950 *:text-zinc-300 *:font-semibold *:text-xs">
+                        <TableRow className="border-border bg-background *:text-foreground/90 *:font-semibold *:text-xs">
                             <TableHead className="pl-4">Producto</TableHead>
                             <TableHead className="text-right">Ventas</TableHead>
                             <TableHead className="text-right">Bruto (USD)</TableHead>
@@ -213,18 +213,18 @@ function ExtrasPanel({ filteredMetrics }: { filteredMetrics: any[] }) {
                     </TableHeader>
                     <TableBody>
                         {aggregated.map(r => (
-                            <TableRow key={r.name} className="border-zinc-800 hover:bg-zinc-950/50">
-                                <TableCell className="pl-4 text-zinc-200">{r.name}</TableCell>
-                                <TableCell className="text-right font-mono text-zinc-300">{r.count}</TableCell>
-                                <TableCell className="text-right font-mono text-zinc-400">${r.gross.toFixed(2)}</TableCell>
-                                <TableCell className="text-right pr-4 font-mono text-emerald-400">${r.net.toFixed(2)}</TableCell>
+                            <TableRow key={r.name} className="border-border hover:bg-background/50">
+                                <TableCell className="pl-4 text-foreground">{r.name}</TableCell>
+                                <TableCell className="text-right font-mono text-foreground/90">{r.count}</TableCell>
+                                <TableCell className="text-right font-mono text-muted-foreground">${r.gross.toFixed(2)}</TableCell>
+                                <TableCell className="text-right pr-4 font-mono text-emerald-600 dark:text-emerald-400">${r.net.toFixed(2)}</TableCell>
                             </TableRow>
                         ))}
-                        <TableRow className="border-zinc-700 bg-zinc-950/60 font-semibold">
-                            <TableCell className="pl-4 text-zinc-200">Total</TableCell>
-                            <TableCell className="text-right font-mono text-zinc-200">{totalCount}</TableCell>
-                            <TableCell className="text-right font-mono text-zinc-200">${totalGross.toFixed(2)}</TableCell>
-                            <TableCell className="text-right pr-4 font-mono text-emerald-400">${totalNet.toFixed(2)}</TableCell>
+                        <TableRow className="border-border bg-background/60 font-semibold">
+                            <TableCell className="pl-4 text-foreground">Total</TableCell>
+                            <TableCell className="text-right font-mono text-foreground">{totalCount}</TableCell>
+                            <TableCell className="text-right font-mono text-foreground">${totalGross.toFixed(2)}</TableCell>
+                            <TableCell className="text-right pr-4 font-mono text-emerald-600 dark:text-emerald-400">${totalNet.toFixed(2)}</TableCell>
                         </TableRow>
                     </TableBody>
                 </Table>
@@ -867,22 +867,22 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
 
         budgetCards = (
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 mt-2 mb-2">
-                <Card className="bg-zinc-900 border-zinc-800 border-l-4 border-l-blue-500 shadow-lg">
+                <Card className="bg-card border-border border-l-4 border-l-blue-500 shadow-lg">
                     <CardContent className="py-3 px-4 flex items-center justify-between">
                         <div>
-                            <p className="text-xs text-zinc-400 font-medium mb-1">Rango de Captación</p>
-                            <p className="text-sm text-zinc-200 font-semibold">{fechaInicioStr} - {fechaFinStr}</p>
+                            <p className="text-xs text-muted-foreground font-medium mb-1">Rango de Captación</p>
+                            <p className="text-sm text-foreground font-semibold">{fechaInicioStr} - {fechaFinStr}</p>
                         </div>
                         <CalendarDays className="w-7 h-7 text-blue-500/50" />
                     </CardContent>
                 </Card>
                 
                 {daysLeft !== null && (
-                    <Card className="bg-zinc-900 border-zinc-800 border-l-4 border-l-amber-500 shadow-lg">
+                    <Card className="bg-card border-border border-l-4 border-l-amber-500 shadow-lg">
                         <CardContent className="py-3 px-4 flex items-center justify-between">
                             <div>
-                                <p className="text-xs text-zinc-400 font-medium mb-1">Días Faltantes</p>
-                                <p className="text-lg md:text-xl font-bold text-amber-400 font-mono">{daysLeft} días</p>
+                                <p className="text-xs text-muted-foreground font-medium mb-1">Días Faltantes</p>
+                                <p className="text-lg md:text-xl font-bold text-amber-600 dark:text-amber-400 font-mono">{daysLeft} días</p>
                             </div>
                             <Timer className="w-7 h-7 text-amber-500/50" />
                         </CardContent>
@@ -890,14 +890,14 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                 )}
 
                 {pres > 0 && (
-                    <Card className="bg-zinc-900 border-zinc-800 border-l-4 border-l-emerald-500 shadow-lg">
+                    <Card className="bg-card border-border border-l-4 border-l-emerald-500 shadow-lg">
                         <CardContent className="py-3 px-4 flex items-center justify-between">
                             <div>
-                                <p className="text-xs text-zinc-400 font-medium mb-1">Presupuesto Restante</p>
+                                <p className="text-xs text-muted-foreground font-medium mb-1">Presupuesto Restante</p>
                                 {fetchingSpend ? (
-                                    <p className="text-sm text-zinc-500">Calculando...</p>
+                                    <p className="text-sm text-muted-foreground/70">Calculando...</p>
                                 ) : (
-                                    <p className="text-lg md:text-xl font-bold text-emerald-400 font-mono">
+                                    <p className="text-lg md:text-xl font-bold text-emerald-600 dark:text-emerald-400 font-mono">
                                         ${rem.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
                                     </p>
                                 )}
@@ -908,14 +908,14 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                 )}
 
                 {pres > 0 && daysLeft !== null && (
-                    <Card className="bg-zinc-900 border-zinc-800 border-l-4 border-l-indigo-500 shadow-lg">
+                    <Card className="bg-card border-border border-l-4 border-l-indigo-500 shadow-lg">
                         <CardContent className="py-3 px-4 flex items-center justify-between">
                             <div>
-                                <p className="text-xs text-zinc-400 font-medium mb-1">Prep. Diario Sugerido</p>
+                                <p className="text-xs text-muted-foreground font-medium mb-1">Prep. Diario Sugerido</p>
                                 {fetchingSpend ? (
-                                    <p className="text-sm text-zinc-500">Calculando...</p>
+                                    <p className="text-sm text-muted-foreground/70">Calculando...</p>
                                 ) : (
-                                    <p className="text-lg md:text-xl font-bold text-indigo-400 font-mono">
+                                    <p className="text-lg md:text-xl font-bold text-indigo-600 dark:text-indigo-400 font-mono">
                                         ${dailyBudget.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}/día
                                     </p>
                                 )}
@@ -948,16 +948,16 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
         <div className="space-y-6">
             {/* Public Tabs Bar — simplified, no drag, no edit */}
             {isPublic && visibleTabs.length > 0 && (
-                <div className="flex items-center gap-2 overflow-x-auto pb-2 custom-scrollbar border-b border-zinc-800">
+                <div className="flex items-center gap-2 overflow-x-auto pb-2 custom-scrollbar border-b border-border">
                     {visibleTabs.map((tab: any) => (
                         <button
                             key={tab.id}
                             onClick={() => setActiveTabId(tab.id)}
-                            className={`px-4 py-2 text-sm font-medium rounded-t-lg transition whitespace-nowrap border-b-2 flex items-center gap-1.5 ${activeTabId === tab.id ? 'border-blue-500 text-blue-400 bg-blue-500/10' : 'border-transparent text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800'}`}
+                            className={`px-4 py-2 text-sm font-medium rounded-t-lg transition whitespace-nowrap border-b-2 flex items-center gap-1.5 ${activeTabId === tab.id ? 'border-blue-500 text-blue-600 dark:text-blue-400 bg-blue-500/10' : 'border-transparent text-muted-foreground hover:text-foreground hover:bg-accent'}`}
                         >
                             {tab.nombre}
                             {tab.keyword_meta && (
-                                <span className="text-[10px] bg-zinc-800/80 px-1.5 py-0.5 rounded text-zinc-400 font-mono tracking-wider">{tab.keyword_meta}</span>
+                                <span className="text-[10px] bg-muted/80 px-1.5 py-0.5 rounded text-muted-foreground font-mono tracking-wider">{tab.keyword_meta}</span>
                             )}
                         </button>
                     ))}
@@ -966,11 +966,11 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
 
             {/* Tabs Bar with Drag & Drop */}
             {!isPublic && (
-                <div className="flex items-center gap-2 overflow-x-auto pb-2 custom-scrollbar border-b border-zinc-800">
+                <div className="flex items-center gap-2 overflow-x-auto pb-2 custom-scrollbar border-b border-border">
                     {/* Vista General - always first, not draggable */}
                     <button
                         onClick={() => setActiveTabId('general')}
-                        className={`px-4 py-2 text-sm font-medium rounded-t-lg transition whitespace-nowrap border-b-2 ${activeTabId === 'general' ? 'border-blue-500 text-blue-400 bg-blue-500/10' : 'border-transparent text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800'}`}
+                        className={`px-4 py-2 text-sm font-medium rounded-t-lg transition whitespace-nowrap border-b-2 ${activeTabId === 'general' ? 'border-blue-500 text-blue-600 dark:text-blue-400 bg-blue-500/10' : 'border-transparent text-muted-foreground hover:text-foreground hover:bg-accent'}`}
                     >
                         Vista General
                     </button>
@@ -980,7 +980,7 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                             <button
                                 key={tab.id}
                                 onClick={() => setActiveTabId(tab.id)}
-                                className={`px-4 py-2 text-sm font-medium rounded-t-lg transition whitespace-nowrap border-b-2 ${activeTabId === tab.id ? 'border-blue-500 text-blue-400 bg-blue-500/10' : 'border-transparent text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800'}`}
+                                className={`px-4 py-2 text-sm font-medium rounded-t-lg transition whitespace-nowrap border-b-2 ${activeTabId === tab.id ? 'border-blue-500 text-blue-600 dark:text-blue-400 bg-blue-500/10' : 'border-transparent text-muted-foreground hover:text-foreground hover:bg-accent'}`}
                             >
                                 {tab.nombre}
                             </button>
@@ -1007,7 +1007,7 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                             </SortableContext>
                             <DragOverlay>
                                 {dragActiveId ? (
-                                    <div className="px-4 py-2 text-sm font-medium rounded-t-lg border-b-2 border-blue-500 text-blue-400 bg-blue-500/10 shadow-lg">
+                                    <div className="px-4 py-2 text-sm font-medium rounded-t-lg border-b-2 border-blue-500 text-blue-600 dark:text-blue-400 bg-blue-500/10 shadow-lg">
                                         {tabs.find((t: any) => t.id === dragActiveId)?.nombre}
                                     </div>
                                 ) : null}
@@ -1017,7 +1017,7 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                     {!isPublic && (
                         <button
                             onClick={() => { setTabToEdit(null); setShowTabModal(true); }}
-                            className="ml-2 px-3 py-1.5 text-xs font-medium text-zinc-400 hover:text-zinc-200 bg-zinc-900 border border-zinc-700 hover:border-zinc-500 rounded flex items-center gap-1 transition"
+                            className="ml-2 px-3 py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground bg-card border border-border hover:border-muted-foreground/50 rounded flex items-center gap-1 transition"
                         >
                             <Plus className="w-3.5 h-3.5" />
                             Nueva Pestaña
@@ -1027,7 +1027,7 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                         <button
                             onClick={() => setShowArchive(true)}
                             title="Archivo de pestañas"
-                            className="ml-1 px-2.5 py-1.5 text-xs font-medium text-zinc-400 hover:text-zinc-200 bg-zinc-900 border border-zinc-700 hover:border-zinc-500 rounded flex items-center gap-1.5 transition relative"
+                            className="ml-1 px-2.5 py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground bg-card border border-border hover:border-muted-foreground/50 rounded flex items-center gap-1.5 transition relative"
                         >
                             <Archive className="w-3.5 h-3.5" />
                             {archivedCount > 0 && (
@@ -1040,14 +1040,14 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                     {/* Pestaña fija de Reporte Mensual */}
                     <button
                         onClick={() => setActiveTabId('monthly-report')}
-                        className={`px-4 py-2 text-sm font-medium rounded-t-lg transition whitespace-nowrap border-b-2 flex items-center gap-1.5 ${activeTabId === 'monthly-report' ? 'border-amber-500 text-amber-400 bg-amber-500/10' : 'border-transparent text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800'}`}
+                        className={`px-4 py-2 text-sm font-medium rounded-t-lg transition whitespace-nowrap border-b-2 flex items-center gap-1.5 ${activeTabId === 'monthly-report' ? 'border-amber-500 text-amber-600 dark:text-amber-400 bg-amber-500/10' : 'border-transparent text-muted-foreground hover:text-foreground hover:bg-accent'}`}
                     >
                         📊 Reporte Mensual
                     </button>
                     {/* Pestaña fija de Roadmap */}
                     <button
                         onClick={() => setActiveTabId('soporte')}
-                        className={`px-4 py-2 text-sm font-medium rounded-t-lg transition whitespace-nowrap border-b-2 flex items-center gap-1.5 ${activeTabId === 'soporte' ? 'border-indigo-500 text-indigo-400 bg-indigo-500/10' : 'border-transparent text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800'}`}
+                        className={`px-4 py-2 text-sm font-medium rounded-t-lg transition whitespace-nowrap border-b-2 flex items-center gap-1.5 ${activeTabId === 'soporte' ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400 bg-indigo-500/10' : 'border-transparent text-muted-foreground hover:text-foreground hover:bg-accent'}`}
                     >
                         🗺️ Roadmap
                     </button>
@@ -1070,23 +1070,23 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
             {activeTabId !== 'monthly-report' && activeTabId !== 'soporte' && (<>
             <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
-                    <div className="flex items-center gap-2 text-xs text-indigo-400 bg-indigo-500/5 border border-indigo-500/20 rounded-lg px-3 py-1.5">
+                    <div className="flex items-center gap-2 text-xs text-indigo-600 dark:text-indigo-400 bg-indigo-500/5 border border-indigo-500/20 rounded-lg px-3 py-1.5">
                         <LayoutDashboard className="w-3.5 h-3.5" />
                         <span><strong>{activeLayout.nombre}</strong>{layoutIsCustomized ? ' — Personalizada' : ' — Plantilla Base'}</span>
                     </div>
 
                     <div className="relative">
-                        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-zinc-500 pointer-events-none" />
+                        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground/70 pointer-events-none" />
                         <Input
                             placeholder="Buscar campaña..."
                             value={keywordFilter}
                             onChange={(e) => setKeywordFilter(e.target.value)}
-                            className="h-8 pl-8 text-xs w-44 md:w-64 bg-zinc-900 border-zinc-700 text-zinc-100 placeholder:text-zinc-500"
+                            className="h-8 pl-8 text-xs w-44 md:w-64 bg-card border-border text-foreground placeholder:text-muted-foreground/70"
                         />
                         {keywordFilter && (
                             <button 
                                 onClick={() => setKeywordFilter('')}
-                                className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300"
+                                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground/70 hover:text-foreground/90"
                             >
                                 <X className="h-3 w-3" />
                             </button>
@@ -1101,14 +1101,14 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                                     <Button
                                         size="sm"
                                         variant="outline"
-                                        className="gap-1.5 text-xs border-zinc-700 text-zinc-400 hover:text-emerald-300 hover:border-emerald-500/40 hover:bg-emerald-500/5 transition"
+                                        className="gap-1.5 text-xs border-border text-muted-foreground hover:text-emerald-300 hover:border-emerald-500/40 hover:bg-emerald-500/5 transition"
                                     >
                                         <Plus className="w-3.5 h-3.5" />
                                         Agregar
                                     </Button>
                                 </PopoverTrigger>
                                 <PopoverContent
-                                    className="p-1 bg-zinc-900 border-zinc-800 w-48"
+                                    className="p-1 bg-card border-border w-48"
                                     style={{ zIndex: 9999 }}
                                     align="start"
                                     side="bottom"
@@ -1126,9 +1126,9 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                                             key={type}
                                             type="button"
                                             onClick={() => handleAddNewBlock(type)}
-                                            className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-white rounded transition"
+                                            className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-foreground/90 hover:bg-accent hover:text-foreground rounded transition"
                                         >
-                                            <span className="text-zinc-500">{icon}</span>
+                                            <span className="text-muted-foreground/70">{icon}</span>
                                             {label}
                                         </button>
                                     ))}
@@ -1139,7 +1139,7 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                             size="sm"
                             variant="outline"
                             onClick={() => setIsPuzzleMode(!isPuzzleMode)}
-                            className={`gap-1.5 text-xs transition ${isPuzzleMode ? 'border-amber-500/50 bg-amber-500/10 text-amber-400 hover:bg-amber-500/20' : 'border-zinc-700 text-zinc-400 hover:text-indigo-300 hover:bg-indigo-500/5'}`}
+                            className={`gap-1.5 text-xs transition ${isPuzzleMode ? 'border-amber-500/50 bg-amber-500/10 text-amber-600 dark:text-amber-400 hover:bg-amber-500/20' : 'border-border text-muted-foreground hover:text-indigo-300 hover:bg-indigo-500/5'}`}
                         >
                             <Puzzle className="w-3.5 h-3.5" />
                             {isPuzzleMode ? 'Salir Modo Edición' : 'Modo Rompecabezas'}
@@ -1151,7 +1151,7 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                                     size="sm"
                                     variant="outline"
                                     onClick={() => handleAddBlock('text')}
-                                    className="gap-1.5 text-xs border-indigo-500/40 text-indigo-400 hover:bg-indigo-500/10 animate-in zoom-in-95 duration-200"
+                                    className="gap-1.5 text-xs border-indigo-500/40 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-500/10 animate-in zoom-in-95 duration-200"
                                 >
                                     <Type className="w-3.5 h-3.5" />
                                     + Sección
@@ -1160,7 +1160,7 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                                     size="sm"
                                     variant="outline"
                                     onClick={() => handleAddBlock('separator')}
-                                    className="gap-1.5 text-xs border-zinc-600 text-zinc-400 hover:bg-zinc-800 animate-in zoom-in-95 duration-200"
+                                    className="gap-1.5 text-xs border-muted-foreground/40 text-muted-foreground hover:bg-accent animate-in zoom-in-95 duration-200"
                                 >
                                     <Minus className="w-3.5 h-3.5" />
                                     + Separador
@@ -1187,7 +1187,7 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                                 size="sm"
                                 variant="outline"
                                 onClick={() => setShowModal(true)}
-                                className="gap-1.5 border-zinc-700 text-zinc-400 hover:text-indigo-300 hover:border-indigo-500/40 hover:bg-indigo-500/5 text-xs transition"
+                                className="gap-1.5 border-border text-muted-foreground hover:text-indigo-300 hover:border-indigo-500/40 hover:bg-indigo-500/5 text-xs transition"
                             >
                                 <Settings2 className="w-3.5 h-3.5" />
                                 Configurar layout
@@ -1280,10 +1280,10 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                             if (blockId === 'table') {
                                 return (
                                     <SortableTable key={blockId} id={blockId} isPuzzleMode={isPuzzleMode} title="Vista de Embudo Diaria" onQuickEdit={() => setQuickEditTarget({ type: 'table' })} isCollapsed={collapsedBlocks.has(blockId)} onToggleCollapse={() => toggleCollapse(blockId)}>
-                                        <Card className="bg-zinc-900 border-zinc-800 overflow-hidden shadow-2xl">
-                                            <CardHeader className="border-b border-zinc-800 bg-zinc-950/30">
+                                        <Card className="bg-card border-border overflow-hidden shadow-2xl">
+                                            <CardHeader className="border-b border-border bg-background/30">
                                                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                                                    <CardTitle className="text-white">Vista de Embudo Diaria — {cliente.nombre} {activeTabObj && <span className="text-blue-400 opacity-80 border-l border-zinc-700 pl-2 ml-2">{activeTabObj.nombre}</span>}</CardTitle>
+                                                    <CardTitle className="text-foreground">Vista de Embudo Diaria — {cliente.nombre} {activeTabObj && <span className="text-blue-600 dark:text-blue-400 opacity-80 border-l border-border pl-2 ml-2">{activeTabObj.nombre}</span>}</CardTitle>
                                                     <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2">
                                                         {activeTabId === 'general' ? (
                                                             <>
@@ -1292,32 +1292,32 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                                                                         size="sm"
                                                                         variant="outline"
                                                                         onClick={() => setKeywordFilter('')}
-                                                                        className={`h-7 text-xs ${keywordFilter === '' ? 'bg-blue-600 text-white border-transparent hover:bg-blue-700' : 'border-zinc-700 bg-zinc-950 text-zinc-400 hover:text-zinc-200'}`}
+                                                                        className={`h-7 text-xs ${keywordFilter === '' ? 'bg-blue-600 text-white border-transparent hover:bg-blue-700' : 'border-border bg-background text-muted-foreground hover:text-foreground'}`}
                                                                     >Ver Todo</Button>
                                                                     {data.campaignGroups && data.campaignGroups.length > 0 && (
                                                                         <>
-                                                                            <div className="h-6 w-px bg-zinc-700" />
+                                                                            <div className="h-6 w-px bg-muted-foreground/30" />
                                                                             {data.campaignGroups.map((group: any) => (
                                                                                 <Button
                                                                                     key={group.id}
                                                                                     size="sm"
                                                                                     variant="outline"
                                                                                     onClick={() => setKeywordFilter(group.id)}
-                                                                                    className={`h-7 text-xs ${keywordFilter === group.id ? 'bg-emerald-600 text-white border-transparent hover:bg-emerald-700' : 'border-zinc-700 bg-zinc-950 text-zinc-400 hover:text-zinc-200'}`}
+                                                                                    className={`h-7 text-xs ${keywordFilter === group.id ? 'bg-emerald-600 text-white border-transparent hover:bg-emerald-700' : 'border-border bg-background text-muted-foreground hover:text-foreground'}`}
                                                                                 >📊 {group.nombre}</Button>
                                                                             ))}
                                                                         </>
                                                                     )}
                                                                     {metaKeywords.length > 0 && (
                                                                         <>
-                                                                            {(data.campaignGroups && data.campaignGroups.length > 0) && <div className="h-6 w-px bg-zinc-700" />}
+                                                                            {(data.campaignGroups && data.campaignGroups.length > 0) && <div className="h-6 w-px bg-muted-foreground/30" />}
                                                                             {metaKeywords.map((kw: string) => (
                                                                                 <Button
                                                                                     key={kw}
                                                                                     size="sm"
                                                                                     variant="outline"
                                                                                     onClick={() => setKeywordFilter(kw)}
-                                                                                    className={`h-7 text-xs ${keywordFilter.toLowerCase() === kw.toLowerCase() ? 'bg-blue-600 text-white border-transparent hover:bg-blue-700' : 'border-zinc-700 bg-zinc-950 text-zinc-400 hover:text-zinc-200'}`}
+                                                                                    className={`h-7 text-xs ${keywordFilter.toLowerCase() === kw.toLowerCase() ? 'bg-blue-600 text-white border-transparent hover:bg-blue-700' : 'border-border bg-background text-muted-foreground hover:text-foreground'}`}
                                                                                 >{kw}</Button>
                                                                             ))}
                                                                         </>
@@ -1325,8 +1325,8 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                                                                 </div>
                                                             </>
                                                         ) : activeTabObj ? (
-                                                            <div className="text-xs text-zinc-500 bg-zinc-950 px-3 py-1.5 rounded-md border border-zinc-800">
-                                                                Filtro: <span className="font-mono text-zinc-300">"{activeTabObj.keyword_meta}"</span>
+                                                            <div className="text-xs text-muted-foreground/70 bg-background px-3 py-1.5 rounded-md border border-border">
+                                                                Filtro: <span className="font-mono text-foreground/90">"{activeTabObj.keyword_meta}"</span>
                                                             </div>
                                                         ) : null}
                                                     </div>
@@ -1335,7 +1335,7 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                                             <CardContent className="p-0 overflow-x-auto custom-scrollbar">
                                                 <Table className="whitespace-nowrap select-none">
                                                     <TableHeader>
-                                                        <TableRow className="border-zinc-800 bg-zinc-950 *:text-zinc-300 *:font-semibold">
+                                                        <TableRow className="border-border bg-background *:text-foreground/90 *:font-semibold">
                                                             {visibleCols.map((col: ColDef) => (
                                                                 <TableHead
                                                                     key={col.id}
@@ -1374,7 +1374,7 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
 
                                                                 const isWeekend = getDay(currentDate) === 0 || getDay(currentDate) === 6
                                                                 daysInWeek.push(
-                                                                    <TableRow key={dayStr} className={`border-zinc-800/60 ${isWeekend ? 'bg-zinc-950/60 text-zinc-600' : 'text-zinc-200'} hover:bg-zinc-800/70 transition-colors`}>
+                                                                    <TableRow key={dayStr} className={`border-border ${isWeekend ? 'bg-background/60 text-muted-foreground/70' : 'text-foreground'} hover:bg-accent transition-colors`}>
                                                                         {visibleCols.map((col: ColDef) => {
                                                                             if (col.formula === 'fecha') {
                                                                                 return (
@@ -1390,12 +1390,12 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                                                                                 return (
                                                                                     <TableCell key={col.id} className={`${col.align === 'right' ? 'text-right' : ''} p-1`}>
                                                                                         {isPublic ? (
-                                                                                            <span className="text-zinc-200 block mt-1">{val || '0'}</span>
+                                                                                            <span className="text-foreground block mt-1">{val || '0'}</span>
                                                                                         ) : (
                                                                                             <Input
                                                                                                 type="number"
                                                                                                 defaultValue={val || ''}
-                                                                                                className="h-7 w-20 text-xs text-right bg-zinc-950 border-zinc-700 mx-auto"
+                                                                                                className="h-7 w-20 text-xs text-right bg-background border-border mx-auto"
                                                                                                 onBlur={async (e) => {
                                                                                                     const newVal = parseFloat(e.target.value) || 0
                                                                                                     if (newVal !== val) {
@@ -1421,10 +1421,10 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                                                             return (
                                                                 <React.Fragment key={`week-${wIndex}`}>
                                                                     {daysInWeek}
-                                                                    <TableRow className="border-t-2 border-zinc-600 bg-zinc-900/80 font-semibold *:text-white">
+                                                                    <TableRow className="border-t-2 border-muted-foreground/40 bg-card/80 font-semibold *:text-foreground">
                                                                         {visibleCols.map((col: ColDef) => {
                                                                             if (col.formula === 'fecha') {
-                                                                                return <TableCell key={col.id} className="text-blue-300">Total Sem {week.weekNumber}</TableCell>
+                                                                                return <TableCell key={col.id} className="text-blue-600 dark:text-blue-300">Total Sem {week.weekNumber}</TableCell>
                                                                             }
                                                                             const colWeekRows = col.campaignFilter
                                                                                 ? weekRows.map((r: any) => applyCompoundFilter(r, effectiveKeyword, col.campaignFilter, data.campaignGroups))
@@ -1443,7 +1443,7 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                                                         })}
                                                         {weeks.length === 0 && (
                                                             <TableRow>
-                                                                <TableCell colSpan={visibleCols.length} className="text-center p-8 text-zinc-500">
+                                                                <TableCell colSpan={visibleCols.length} className="text-center p-8 text-muted-foreground/70">
                                                                     No hay datos reportados para este rango.
                                                                 </TableCell>
                                                             </TableRow>
@@ -1483,7 +1483,7 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
             <div>
                 <button
                     onClick={() => setShowCountries(v => !v)}
-                    className="flex items-center gap-2 text-xs text-zinc-400 hover:text-zinc-200 bg-zinc-900 border border-zinc-800 hover:border-zinc-600 rounded-lg px-3 py-2 transition"
+                    className="flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground bg-card border border-border hover:border-muted-foreground/40 rounded-lg px-3 py-2 transition"
                 >
                     <span>{showCountries ? '▲' : '▼'}</span>
                     {showCountries ? 'Ocultar desglose por país' : 'Ver desglose por país'}
@@ -1626,12 +1626,12 @@ function ExecutiveDashboard({ data, layout }: { data: any, layout: { tarjetas: C
             {/* Campaign Filter */}
             <div className="flex items-center gap-2">
                 <div className="relative flex-1 max-w-sm">
-                    <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-500 pointer-events-none" />
+                    <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground/70 pointer-events-none" />
                     <Input
                         placeholder="Filtrar por campaña..."
                         value={campaignFilter}
                         onChange={(e) => setCampaignFilter(e.target.value)}
-                        className="pl-8 bg-zinc-900 border-zinc-700 text-zinc-200 placeholder:text-zinc-500 h-9"
+                        className="pl-8 bg-card border-border text-foreground placeholder:text-muted-foreground/70 h-9"
                     />
                 </div>
                 {campaignFilter && (
@@ -1639,7 +1639,7 @@ function ExecutiveDashboard({ data, layout }: { data: any, layout: { tarjetas: C
                         variant="ghost"
                         size="sm"
                         onClick={() => setCampaignFilter('')}
-                        className="text-zinc-400 hover:text-white h-9"
+                        className="text-muted-foreground hover:text-foreground h-9"
                     >
                         <X className="h-4 w-4 mr-1" />
                         Limpiar
@@ -1651,15 +1651,15 @@ function ExecutiveDashboard({ data, layout }: { data: any, layout: { tarjetas: C
             {tarjetaValues.length > 0 && (
                 <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
                     {tarjetaValues.map((t: CardDef & { value: number | null }) => (
-                        <Card key={t.id} className="bg-zinc-900 border-zinc-800 hover:border-zinc-700 transition">
+                        <Card key={t.id} className="bg-card border-border hover:border-muted-foreground/30 transition">
                             <CardHeader className="pb-2">
-                                <CardDescription className="text-zinc-400 font-medium">
+                                <CardDescription className="text-muted-foreground font-medium">
                                     {t.label}
                                 </CardDescription>
                             </CardHeader>
                             <CardContent className="overflow-hidden">
                                 <p
-                                    className={`truncate text-2xl lg:text-3xl font-bold font-mono tracking-tight ${COLOR_MAP[t.color || 'default']}`}
+                                    className={`truncate text-2xl lg:text-3xl font-bold font-mono tabular-nums tracking-tight ${COLOR_MAP[t.color || 'default']}`}
                                     title={formatValue(t.value, { prefix: t.prefix, suffix: t.suffix, decimals: t.decimals ?? 2 })}
                                 >
                                     {formatValue(t.value, { prefix: t.prefix, suffix: t.suffix, decimals: t.decimals ?? 2 })}
@@ -1692,7 +1692,7 @@ function ExecutiveDashboard({ data, layout }: { data: any, layout: { tarjetas: C
             )}
 
             {tarjetaValues.length === 0 && !layout.graficos?.length && !layout.show_country_breakdown && (
-                <div className="flex flex-col items-center justify-center p-12 text-center text-zinc-500">
+                <div className="flex flex-col items-center justify-center p-12 text-center text-muted-foreground/70">
                     <p>No hay tarjetas ni gráficos configurados para este reporte.</p>
                 </div>
             )}
@@ -1713,7 +1713,7 @@ export function DashboardClient({
 
     if (!cliente) {
         return (
-            <div className="flex flex-col items-center justify-center p-12 text-center text-zinc-400">
+            <div className="flex flex-col items-center justify-center p-12 text-center text-muted-foreground">
                 <p>No tienes ningún cliente asignado para visualizar métricas.</p>
             </div>
         )

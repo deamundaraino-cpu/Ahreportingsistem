@@ -74,23 +74,22 @@ export function HotmartIntegrationCard({
 
     if (!integration) {
         return (
-            <div className="rounded-2xl border border-zinc-200 dark:border-white/[0.06] bg-white dark:bg-zinc-950/50 p-6">
+            <div className="rounded-2xl border border-border bg-card p-6">
                 <div className="flex items-start gap-3">
                     <div className="h-10 w-10 rounded-lg flex items-center justify-center bg-emerald-50 dark:bg-emerald-500/10">
                         <Webhook className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
                     </div>
                     <div className="flex-1">
-                        <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                        <h3 className="text-sm font-semibold text-foreground">
                             Hotmart · Webhook
                         </h3>
-                        <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                        <p className="mt-1 text-xs text-muted-foreground">
                             Activá para generar un webhook secret y la URL para configurar en Hotmart.
                         </p>
                         <button
                             onClick={onActivate}
                             disabled={pending}
-                            className="mt-4 inline-flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium text-white shadow-sm transition-opacity disabled:opacity-50"
-                            style={{ background: 'linear-gradient(135deg, #10B981 0%, #059669 100%)' }}
+                            className="mt-4 inline-flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium text-white shadow-sm nav-active-emerald transition-opacity disabled:opacity-50"
                         >
                             <KeyRound className="h-3.5 w-3.5" />
                             {pending ? 'Activando…' : 'Activar integración Hotmart'}
@@ -105,17 +104,17 @@ export function HotmartIntegrationCard({
     const isActive = integration.status === 'active'
 
     return (
-        <div className="rounded-2xl border border-zinc-200 dark:border-white/[0.06] bg-white dark:bg-zinc-950/50 p-6 space-y-5">
+        <div className="rounded-2xl border border-border bg-card p-6 space-y-5">
             <div className="flex items-start justify-between gap-4">
                 <div className="flex items-start gap-3">
                     <div className="h-10 w-10 rounded-lg flex items-center justify-center bg-emerald-50 dark:bg-emerald-500/10">
                         <Webhook className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
                     </div>
                     <div>
-                        <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                        <h3 className="text-sm font-semibold text-foreground">
                             Hotmart · Webhook
                         </h3>
-                        <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-0.5">
+                        <p className="text-xs text-muted-foreground mt-0.5">
                             {integration.last_sync_at
                                 ? `Última venta: ${new Date(integration.last_sync_at).toLocaleString()}`
                                 : 'Sin eventos recibidos todavía'}
@@ -126,7 +125,7 @@ export function HotmartIntegrationCard({
                     className={`text-[10px] font-semibold uppercase tracking-wider px-2 py-1 rounded-md ${
                         isActive
                             ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400'
-                            : 'bg-zinc-100 text-zinc-600 dark:bg-white/[0.06] dark:text-zinc-400'
+                            : 'bg-muted text-muted-foreground'
                     }`}
                 >
                     {integration.status}
@@ -165,24 +164,24 @@ export function HotmartIntegrationCard({
                     />
                     <p className="mt-2 text-[11px] text-emerald-700 dark:text-emerald-400">
                         Solo se muestra una vez. Configuralo en Hotmart como
-                        <code className="mx-1 px-1 py-0.5 rounded bg-white/50 dark:bg-white/[0.04]">hottok</code>
+                        <code className="mx-1 px-1 py-0.5 rounded bg-card/50">hottok</code>
                         o usalo como secret HMAC.
                     </p>
                 </div>
             ) : (
-                <p className="text-[11px] text-zinc-500 dark:text-zinc-500">
+                <p className="text-[11px] text-muted-foreground">
                     El secret está guardado y nunca se muestra después de activar. Si lo perdiste, rotalo.
                 </p>
             )}
 
-            <div className="flex flex-wrap gap-2 pt-2 border-t border-zinc-100 dark:border-white/[0.04]">
+            <div className="flex flex-wrap gap-2 pt-2 border-t border-border">
                 <button
                     onClick={onRotate}
                     disabled={pending}
                     className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium
-                               text-zinc-700 dark:text-zinc-300
-                               border border-zinc-200 dark:border-white/[0.08]
-                               hover:bg-zinc-50 dark:hover:bg-white/[0.04]
+                               text-foreground/90
+                               border border-border
+                               hover:bg-accent
                                disabled:opacity-50 transition-colors"
                 >
                     <RefreshCw className="h-3.5 w-3.5" />
@@ -224,20 +223,20 @@ function Field({
     return (
         <div>
             {label && (
-                <p className="text-[11px] font-medium text-zinc-600 dark:text-zinc-400 mb-1">{label}</p>
+                <p className="text-[11px] font-medium text-muted-foreground mb-1">{label}</p>
             )}
-            <div className="flex items-center gap-2 rounded-lg border border-zinc-200 dark:border-white/[0.06] bg-zinc-50 dark:bg-white/[0.04] px-3 py-2">
+            <div className="flex items-center gap-2 rounded-lg border border-border bg-muted px-3 py-2">
                 <code
                     className={`flex-1 text-xs ${
                         mono ? 'font-mono' : ''
-                    } text-zinc-700 dark:text-zinc-300 truncate`}
+                    } text-foreground/90 truncate`}
                 >
                     {value}
                 </code>
                 <button
                     type="button"
                     onClick={onCopy}
-                    className="p-1.5 rounded text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 hover:bg-white dark:hover:bg-white/[0.06] transition-colors"
+                    className="p-1.5 rounded text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
                 >
                     {copied ? (
                         <Check className="h-3.5 w-3.5 text-emerald-500" />

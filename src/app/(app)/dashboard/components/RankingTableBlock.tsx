@@ -172,27 +172,27 @@ export function RankingTableBlock({ def, metrics, campaignGroups, sourceMapping,
             : def.dimension === 'tiktok_adgroups' ? 'grupos de anuncios de TikTok'
             : null
         return (
-            <div className="col-span-1 md:col-span-4 bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
-                <div className="px-4 py-3 border-b border-zinc-800 bg-zinc-950/40">
-                    <h3 className="text-sm font-semibold text-white">{def.title}</h3>
+            <div className="col-span-1 md:col-span-4 bg-card border border-border rounded-xl overflow-hidden">
+                <div className="px-4 py-3 border-b border-border bg-background/40">
+                    <h3 className="text-sm font-semibold text-foreground">{def.title}</h3>
                 </div>
                 <div className="p-8 flex flex-col items-center gap-3 text-center">
                     <div className="text-2xl">📅</div>
                     {needsSync && dimLabel ? (
                         <>
-                            <p className="text-sm text-zinc-300 font-medium">
+                            <p className="text-sm text-foreground/90 font-medium">
                                 No hay datos de {dimLabel} para este rango de fechas
                             </p>
-                            <p className="text-xs text-zinc-500 max-w-xs">
+                            <p className="text-xs text-muted-foreground/70 max-w-xs">
                                 El desglose por {dimLabel} requiere sincronizar el rango seleccionado.
-                                Usa el botón <span className="text-blue-400 font-medium">Sincronizar Datos</span> en la parte superior del dashboard para cargar los datos.
+                                Usa el botón <span className="text-blue-600 dark:text-blue-400 font-medium">Sincronizar Datos</span> en la parte superior del dashboard para cargar los datos.
                             </p>
-                            <div className="mt-1 text-[11px] text-zinc-600 bg-zinc-800/60 rounded-lg px-3 py-1.5">
+                            <div className="mt-1 text-[11px] text-muted-foreground/70 bg-muted/60 rounded-lg px-3 py-1.5">
                                 {totalDays} día{totalDays !== 1 ? 's' : ''} en el rango · {daysNeedingSync} con gasto sin sincronizar
                             </div>
                         </>
                     ) : (
-                        <p className="text-sm text-zinc-500">Sin datos para este rango de fechas</p>
+                        <p className="text-sm text-muted-foreground/70">Sin datos para este rango de fechas</p>
                     )}
                 </div>
             </div>
@@ -200,7 +200,7 @@ export function RankingTableBlock({ def, metrics, campaignGroups, sourceMapping,
     }
 
     return (
-        <div className="col-span-1 md:col-span-4 bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
+        <div className="col-span-1 md:col-span-4 bg-card border border-border rounded-xl overflow-hidden">
             {/* Popup de preview en hover — posición fija para no ser cortado por overflow */}
             {hoverPreview && (
                 <div
@@ -215,7 +215,7 @@ export function RankingTableBlock({ def, metrics, campaignGroups, sourceMapping,
                     <img
                         src={hoverPreview.url}
                         alt=""
-                        className="w-72 rounded-2xl shadow-2xl border border-zinc-700 object-cover"
+                        className="w-72 rounded-2xl shadow-2xl border border-border object-cover"
                     />
                 </div>
             )}
@@ -227,34 +227,34 @@ export function RankingTableBlock({ def, metrics, campaignGroups, sourceMapping,
                     onClick={() => setConsolidateModal(null)}
                 >
                     <div
-                        className="bg-zinc-900 border border-zinc-700 rounded-2xl shadow-2xl w-full max-w-md mx-4 overflow-hidden"
+                        className="bg-card border border-border rounded-2xl shadow-2xl w-full max-w-md mx-4 overflow-hidden"
                         onClick={e => e.stopPropagation()}
                     >
-                        <div className="flex items-start justify-between px-5 py-4 border-b border-zinc-800 bg-zinc-950/50">
+                        <div className="flex items-start justify-between px-5 py-4 border-b border-border bg-background/50">
                             <div>
                                 <div className="flex items-center gap-2 mb-1">
-                                    <Layers className="w-4 h-4 text-indigo-400" />
-                                    <span className="text-white font-semibold text-sm">Métricas consolidadas</span>
+                                    <Layers className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+                                    <span className="text-foreground font-semibold text-sm">Métricas consolidadas</span>
                                 </div>
-                                <p className="text-zinc-400 text-xs truncate max-w-[300px]" title={consolidateModal.name}>
+                                <p className="text-muted-foreground text-xs truncate max-w-[300px]" title={consolidateModal.name}>
                                     {consolidateModal.name}
                                 </p>
-                                <p className="text-zinc-500 text-[11px] mt-0.5">
-                                    Suma de <span className="text-indigo-300 font-semibold">{consolidateModal.count}</span> anuncio{consolidateModal.count !== 1 ? 's' : ''} con este nombre
+                                <p className="text-muted-foreground/70 text-[11px] mt-0.5">
+                                    Suma de <span className="text-indigo-600 dark:text-indigo-300 font-semibold">{consolidateModal.count}</span> anuncio{consolidateModal.count !== 1 ? 's' : ''} con este nombre
                                 </p>
                             </div>
                             <button
                                 onClick={() => setConsolidateModal(null)}
-                                className="text-zinc-500 hover:text-white transition mt-0.5"
+                                className="text-muted-foreground/70 hover:text-foreground transition mt-0.5"
                             >
                                 <X className="w-4 h-4" />
                             </button>
                         </div>
-                        <div className="px-5 py-3 divide-y divide-zinc-800">
+                        <div className="px-5 py-3 divide-y divide-border">
                             {def.columns.map((col, i) => (
                                 <div key={col.label} className="flex items-center justify-between py-2.5">
-                                    <span className="text-zinc-400 text-xs">{col.label}</span>
-                                    <span className="text-white font-mono text-sm font-semibold">
+                                    <span className="text-muted-foreground text-xs">{col.label}</span>
+                                    <span className="text-foreground font-mono text-sm font-semibold">
                                         {formatValue(consolidateModal.colValues[i], { prefix: col.prefix, suffix: col.suffix, decimals: col.decimals })}
                                     </span>
                                 </div>
@@ -264,12 +264,12 @@ export function RankingTableBlock({ def, metrics, campaignGroups, sourceMapping,
                 </div>
             )}
 
-            <div className="px-4 py-3 border-b border-zinc-800 bg-zinc-950/40">
+            <div className="px-4 py-3 border-b border-border bg-background/40">
                 <div className="flex items-center justify-between gap-2">
-                    <h3 className="text-sm font-semibold text-white">{def.title}</h3>
+                    <h3 className="text-sm font-semibold text-foreground">{def.title}</h3>
                     {(def.dimension === 'ads' || def.dimension === 'adsets' || def.dimension === 'tiktok_ads' || def.dimension === 'tiktok_adgroups') && daysNeedingSync > 0 && (
                         <span
-                            className="text-[10px] text-amber-400/80 bg-amber-500/10 border border-amber-500/20 rounded px-2 py-0.5 cursor-help"
+                            className="text-[10px] text-amber-600 dark:text-amber-400/80 bg-amber-500/10 border border-amber-500/20 rounded px-2 py-0.5 cursor-help"
                             title={`${daysNeedingSync} día(s) tuvieron gasto pero no tienen desglose. Sincroniza para completar.`}
                         >
                             ⚠ {daysNeedingSync} día{daysNeedingSync !== 1 ? 's' : ''} sin sincronizar · Sincroniza para completar
@@ -280,19 +280,19 @@ export function RankingTableBlock({ def, metrics, campaignGroups, sourceMapping,
             <div className="overflow-x-auto custom-scrollbar">
                 <table className="w-full text-xs whitespace-nowrap">
                     <thead>
-                        <tr className="border-b border-zinc-800 bg-zinc-950">
+                        <tr className="border-b border-border bg-background">
                             {def.showRank !== false && (
-                                <th style={{ width: colWidths['rank'] || undefined, position: 'relative' }} className="px-3 py-2 text-left text-zinc-500 font-medium">
+                                <th style={{ width: colWidths['rank'] || undefined, position: 'relative' }} className="px-3 py-2 text-left text-muted-foreground/70 font-medium">
                                     #
                                     <div onMouseDown={e => startColResize('rank', e)} onClick={e => e.stopPropagation()} className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-indigo-400/30 transition-colors z-10" />
                                 </th>
                             )}
                             {def.dimension === 'ads' && (
-                                <th style={{ width: colWidths['thumb'] || 96, minWidth: 96, position: 'relative' }} className="px-3 py-2 text-left text-zinc-500 font-medium">
+                                <th style={{ width: colWidths['thumb'] || 96, minWidth: 96, position: 'relative' }} className="px-3 py-2 text-left text-muted-foreground/70 font-medium">
                                     <div onMouseDown={e => startColResize('thumb', e)} onClick={e => e.stopPropagation()} className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-indigo-400/30 transition-colors z-10" />
                                 </th>
                             )}
-                            <th style={{ width: colWidths['name'] || undefined, position: 'relative' }} className="px-3 py-2 text-left text-zinc-500 font-medium">
+                            <th style={{ width: colWidths['name'] || undefined, position: 'relative' }} className="px-3 py-2 text-left text-muted-foreground/70 font-medium">
                                 Nombre
                                 <div onMouseDown={e => startColResize('name', e)} onClick={e => e.stopPropagation()} className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-indigo-400/30 transition-colors z-10" />
                             </th>
@@ -300,15 +300,15 @@ export function RankingTableBlock({ def, metrics, campaignGroups, sourceMapping,
                                 <th
                                     key={col.label}
                                     style={{ width: colWidths[`col_${i}`] || undefined, position: 'relative' }}
-                                    className="px-3 py-2 text-right text-zinc-500 font-medium cursor-pointer select-none hover:text-zinc-300 transition-colors"
+                                    className="px-3 py-2 text-right text-muted-foreground/70 font-medium cursor-pointer select-none hover:text-foreground/90 transition-colors"
                                     onClick={() => handleSortClick(i)}
                                 >
                                     <span className="inline-flex items-center justify-end gap-1">
                                         {col.label}
                                         {sortColIdx === i
                                             ? sortDir === 'desc'
-                                                ? <ChevronDown className="w-3 h-3 text-indigo-400" />
-                                                : <ChevronUp className="w-3 h-3 text-indigo-400" />
+                                                ? <ChevronDown className="w-3 h-3 text-indigo-600 dark:text-indigo-400" />
+                                                : <ChevronUp className="w-3 h-3 text-indigo-600 dark:text-indigo-400" />
                                             : <ChevronsUpDown className="w-3 h-3 opacity-30" />
                                         }
                                     </span>
@@ -319,9 +319,9 @@ export function RankingTableBlock({ def, metrics, campaignGroups, sourceMapping,
                     </thead>
                     <tbody>
                         {rows.map(({ row, colValues }, idx) => (
-                            <tr key={row._id || idx} className="border-b border-zinc-800/50 hover:bg-zinc-800/30 transition">
+                            <tr key={row._id || idx} className="border-b border-border hover:bg-accent transition">
                                 {def.showRank !== false && (
-                                    <td className="px-3 py-2 text-zinc-600 font-mono text-[10px]">#{idx + 1}</td>
+                                    <td className="px-3 py-2 text-muted-foreground/70 font-mono text-[10px]">#{idx + 1}</td>
                                 )}
                                 {def.dimension === 'ads' && (
                                     <td className="px-2 py-1.5" style={{ minWidth: 96 }}>
@@ -329,7 +329,7 @@ export function RankingTableBlock({ def, metrics, campaignGroups, sourceMapping,
                                             <img
                                                 src={adInfoMap[row._id].thumbnail!}
                                                 alt=""
-                                                className="w-24 h-24 rounded-lg object-cover bg-zinc-800 flex-shrink-0 cursor-zoom-in"
+                                                className="w-24 h-24 rounded-lg object-cover bg-muted flex-shrink-0 cursor-zoom-in"
                                                 onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
                                                 onMouseEnter={e => {
                                                     const rect = (e.currentTarget as HTMLImageElement).getBoundingClientRect()
@@ -340,11 +340,11 @@ export function RankingTableBlock({ def, metrics, campaignGroups, sourceMapping,
                                                 onMouseLeave={() => setHoverPreview(null)}
                                             />
                                         ) : (
-                                            <div className="w-24 h-24 rounded-lg bg-zinc-800 animate-pulse flex-shrink-0" />
+                                            <div className="w-24 h-24 rounded-lg bg-muted animate-pulse flex-shrink-0" />
                                         )}
                                     </td>
                                 )}
-                                <td className="px-3 py-2 text-zinc-200 max-w-[220px]">
+                                <td className="px-3 py-2 text-foreground max-w-[220px]">
                                     <div className="flex items-center gap-1.5">
                                         <span className="truncate">{row._name}</span>
                                         {/* Consolidate button — only shown when multiple entries share this name */}
@@ -352,7 +352,7 @@ export function RankingTableBlock({ def, metrics, campaignGroups, sourceMapping,
                                             <button
                                                 onClick={() => openConsolidate(row._name)}
                                                 title={`Consolidar ${nameCount[row._name]} anuncios con este nombre`}
-                                                className="flex-shrink-0 flex items-center gap-0.5 text-[10px] text-amber-400/70 hover:text-amber-300 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/20 rounded px-1 py-0.5 transition"
+                                                className="flex-shrink-0 flex items-center gap-0.5 text-[10px] text-amber-600 dark:text-amber-400/70 hover:text-amber-300 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/20 rounded px-1 py-0.5 transition"
                                             >
                                                 <Layers className="w-2.5 h-2.5" />
                                                 <span>{nameCount[row._name]}</span>
@@ -363,7 +363,7 @@ export function RankingTableBlock({ def, metrics, campaignGroups, sourceMapping,
                                                 href={adInfoMap[row._id]?.previewUrl || `https://www.facebook.com/ads/library/?id=${row._id}`}
                                                 target="_blank"
                                                 rel="noopener noreferrer"
-                                                className="flex-shrink-0 text-zinc-500 hover:text-blue-400 transition"
+                                                className="flex-shrink-0 text-muted-foreground/70 hover:text-blue-400 transition"
                                                 title={adInfoMap[row._id]?.previewUrl ? 'Ver preview del anuncio' : 'Ver en Facebook Ad Library'}
                                             >
                                                 <ExternalLink className="w-3 h-3" />
@@ -380,7 +380,7 @@ export function RankingTableBlock({ def, metrics, campaignGroups, sourceMapping,
                                         bgStyle = { background: `rgba(99,102,241,${intensity * 0.3})` }
                                     }
                                     return (
-                                        <td key={col.label} className="px-3 py-2 text-right font-mono text-zinc-300" style={bgStyle}>
+                                        <td key={col.label} className="px-3 py-2 text-right font-mono text-foreground/90" style={bgStyle}>
                                             {formatValue(val, { prefix: col.prefix, suffix: col.suffix, decimals: col.decimals })}
                                         </td>
                                     )

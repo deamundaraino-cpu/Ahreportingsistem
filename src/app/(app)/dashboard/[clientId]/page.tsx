@@ -58,7 +58,7 @@ export default async function DashboardPage(props: {
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <div>
                     <div className="flex items-center gap-3 mb-1">
-                        <h2 className="text-2xl font-bold tracking-tight text-white">Embudo de Ventas V2</h2>
+                        <h2 className="text-2xl font-bold tracking-tight text-foreground">Embudo de Ventas V2</h2>
                         <CopyLinkButton clientId={clientId} />
                         <PublicLinkButton
                             clienteId={clientId}
@@ -66,7 +66,7 @@ export default async function DashboardPage(props: {
                             initialTabIds={dashboardData?.layoutPublico?.type === 'tab_mirror' ? (dashboardData.layoutPublico.tab_ids ?? []) : []}
                         />
                     </div>
-                    <p className="text-zinc-400">Datos consolidados de Meta, Hotmart y Google Analytics 4.</p>
+                    <p className="text-muted-foreground">Datos consolidados de Meta, Hotmart y Google Analytics 4.</p>
                 </div>
                 <DateRangeSelector />
             </div>
@@ -81,8 +81,8 @@ export default async function DashboardPage(props: {
 
             {/* Google Sheets Leads Section — only show if enabled */}
             {dashboardData?.cliente?.config_api?.google_sheets?.enabled && (
-                <div className="pt-6 border-t border-zinc-800">
-                    <h3 className="text-lg font-semibold text-white mb-4">📊 Leads desde Google Sheets</h3>
+                <div className="pt-6 border-t border-border">
+                    <h3 className="text-lg font-semibold text-foreground mb-4">📊 Leads desde Google Sheets</h3>
                     <GoogleSheetsLeadsCard dailyData={leadsResult.data || []} error={leadsResult.error} />
                 </div>
             )}

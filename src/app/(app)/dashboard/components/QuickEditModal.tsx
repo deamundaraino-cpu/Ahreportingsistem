@@ -41,14 +41,14 @@ function CardEditor({ card, onChange, availableMetrics, campaignGroups, campaign
                         <button
                             key={opt.val}
                             onClick={() => onChange({ ...card, color: opt.val })}
-                            className={`w-4 h-4 rounded-full ${opt.bg} transition ${card.color === opt.val ? 'ring-2 ring-white ring-offset-2 ring-offset-zinc-900 scale-110' : 'opacity-40 hover:opacity-100'}`}
+                            className={`w-4 h-4 rounded-full ${opt.bg} transition ${card.color === opt.val ? 'ring-2 ring-ring ring-offset-2 ring-offset-background scale-110' : 'opacity-40 hover:opacity-100'}`}
                         />
                     ))}
                 </div>
                 <Input
                     value={card.label}
                     onChange={e => onChange({ ...card, label: e.target.value })}
-                    className="h-7 text-xs bg-zinc-950 border-zinc-700 text-zinc-200 w-32 flex-shrink-0"
+                    className="h-7 text-xs bg-background border-border text-foreground w-32 flex-shrink-0"
                     placeholder="Etiqueta"
                 />
                 <FormulaInput
@@ -116,7 +116,7 @@ function ChartEditor({ chart, onChange, availableMetrics, campaignGroups, campai
                 <select
                     value={chart.type}
                     onChange={e => onChange({ ...chart, type: e.target.value as any })}
-                    className="h-7 text-xs bg-zinc-950 border border-zinc-700 text-zinc-200 rounded px-1.5"
+                    className="h-7 text-xs bg-background border border-border text-foreground rounded px-1.5"
                 >
                     {CHART_TYPES.map(t => (
                         <option key={t.val} value={t.val}>{t.icon} {t.label}</option>
@@ -125,13 +125,13 @@ function ChartEditor({ chart, onChange, availableMetrics, campaignGroups, campai
                 <Input
                     value={chart.title}
                     onChange={e => onChange({ ...chart, title: e.target.value })}
-                    className="h-7 text-xs bg-zinc-950 border-zinc-700 text-zinc-200 flex-1"
+                    className="h-7 text-xs bg-background border-border text-foreground flex-1"
                     placeholder="Título del gráfico"
                 />
             </div>
 
             <div className="space-y-2">
-                <p className="text-[10px] text-zinc-500 uppercase font-medium tracking-wider">Métricas</p>
+                <p className="text-[10px] text-muted-foreground/70 uppercase font-medium tracking-wider">Métricas</p>
                 {chart.valueFormulas.map((formula, i) => (
                     <div key={i} className="flex items-center gap-1.5">
                         <select
@@ -159,20 +159,20 @@ function ChartEditor({ chart, onChange, availableMetrics, campaignGroups, campai
                             />
                         </div>
                         {chart.valueFormulas.length > 1 && (
-                            <button onClick={() => removeMetric(i)} className="text-zinc-700 hover:text-red-400 transition flex-shrink-0">
+                            <button onClick={() => removeMetric(i)} className="text-muted-foreground/50 hover:text-red-400 transition flex-shrink-0">
                                 <X className="w-3 h-3" />
                             </button>
                         )}
                     </div>
                 ))}
                 {chart.valueFormulas.length < 5 && (
-                    <button onClick={addMetric} className="flex items-center gap-1 text-[10px] text-zinc-500 hover:text-amber-400 transition mt-1">
+                    <button onClick={addMetric} className="flex items-center gap-1 text-[10px] text-muted-foreground/70 hover:text-amber-400 transition mt-1">
                         <Plus className="w-3 h-3" /> Añadir métrica
                     </button>
                 )}
             </div>
 
-            <div className="flex flex-col gap-1.5 pt-1 border-t border-zinc-800/60">
+            <div className="flex flex-col gap-1.5 pt-1 border-t border-border">
                 {chart.valueFormulas.some(hasTikTokFormula) && (
                     <TikTokAccountPicker
                         value={chart.account_id}
@@ -188,16 +188,16 @@ function ChartEditor({ chart, onChange, availableMetrics, campaignGroups, campai
                     campaignNames={campaignNames}
                 />
                 <div className="flex items-center gap-1 flex-shrink-0">
-                    <span className="text-[10px] text-zinc-500">Alto:</span>
+                    <span className="text-[10px] text-muted-foreground/70">Alto:</span>
                     <input
                         type="number"
                         value={chart.height || 240}
                         onChange={e => onChange({ ...chart, height: Math.max(100, Number(e.target.value)) })}
-                        className="w-14 h-6 text-xs text-center bg-zinc-950 border border-zinc-700 text-zinc-300 rounded outline-none"
+                        className="w-14 h-6 text-xs text-center bg-background border border-border text-foreground/90 rounded outline-none"
                         min={100}
                         max={600}
                     />
-                    <span className="text-[9px] text-zinc-700">px</span>
+                    <span className="text-[9px] text-muted-foreground/50">px</span>
                 </div>
                 </div>
             </div>
@@ -216,14 +216,14 @@ function TextEditor({ block, onChange }: {
             <Input
                 value={block.content || ''}
                 onChange={e => onChange({ ...block, content: e.target.value })}
-                className="h-9 text-sm bg-zinc-950 border-zinc-700 text-white"
+                className="h-9 text-sm bg-background border-border text-foreground"
                 placeholder="Texto del título..."
             />
             <div className="flex flex-wrap gap-2">
                 <select
                     value={block.style}
                     onChange={e => onChange({ ...block, style: e.target.value as any })}
-                    className="bg-zinc-950 border border-zinc-800 rounded px-2 py-1.5 text-xs text-zinc-300 outline-none hover:border-zinc-700 cursor-pointer"
+                    className="bg-background border border-border rounded px-2 py-1.5 text-xs text-foreground/90 outline-none hover:border-muted-foreground/30 cursor-pointer"
                 >
                     <option value="h1">H1 (Bold)</option>
                     <option value="h2">H2 (Semibold)</option>
@@ -233,7 +233,7 @@ function TextEditor({ block, onChange }: {
                 <select
                     value={block.fontSize || ''}
                     onChange={e => onChange({ ...block, fontSize: e.target.value as any })}
-                    className="bg-zinc-950 border border-zinc-800 rounded px-2 py-1.5 text-xs text-zinc-300 outline-none hover:border-zinc-700 cursor-pointer"
+                    className="bg-background border border-border rounded px-2 py-1.5 text-xs text-foreground/90 outline-none hover:border-muted-foreground/30 cursor-pointer"
                 >
                     <option value="">Tamaño Default</option>
                     <option value="sm">Pequeño</option>
@@ -247,7 +247,7 @@ function TextEditor({ block, onChange }: {
                 <select
                     value={block.fontFamily || ''}
                     onChange={e => onChange({ ...block, fontFamily: e.target.value as any })}
-                    className="bg-zinc-950 border border-zinc-800 rounded px-2 py-1.5 text-xs text-zinc-300 outline-none hover:border-zinc-700 cursor-pointer"
+                    className="bg-background border border-border rounded px-2 py-1.5 text-xs text-foreground/90 outline-none hover:border-muted-foreground/30 cursor-pointer"
                 >
                     <option value="">Sans</option>
                     <option value="serif">Serif</option>
@@ -256,7 +256,7 @@ function TextEditor({ block, onChange }: {
                 <select
                     value={block.color || 'white'}
                     onChange={e => onChange({ ...block, color: e.target.value as any })}
-                    className="bg-zinc-950 border border-zinc-800 rounded px-2 py-1.5 text-xs text-zinc-300 outline-none hover:border-zinc-700 cursor-pointer"
+                    className="bg-background border border-border rounded px-2 py-1.5 text-xs text-foreground/90 outline-none hover:border-muted-foreground/30 cursor-pointer"
                 >
                     <option value="white">Blanco</option>
                     <option value="zinc">Gris</option>
@@ -270,7 +270,7 @@ function TextEditor({ block, onChange }: {
                 <select
                     value={block.align || 'left'}
                     onChange={e => onChange({ ...block, align: e.target.value as any })}
-                    className="bg-zinc-950 border border-zinc-800 rounded px-2 py-1.5 text-xs text-zinc-300 outline-none hover:border-zinc-700 cursor-pointer"
+                    className="bg-background border border-border rounded px-2 py-1.5 text-xs text-foreground/90 outline-none hover:border-muted-foreground/30 cursor-pointer"
                 >
                     <option value="left">Izquierda</option>
                     <option value="center">Centro</option>
@@ -279,11 +279,11 @@ function TextEditor({ block, onChange }: {
                 <select
                     value={block.backgroundColor || ''}
                     onChange={e => onChange({ ...block, backgroundColor: e.target.value })}
-                    className="bg-zinc-950 border border-zinc-800 rounded px-2 py-1.5 text-xs text-zinc-300 outline-none hover:border-zinc-700 cursor-pointer"
+                    className="bg-background border border-border rounded px-2 py-1.5 text-xs text-foreground/90 outline-none hover:border-muted-foreground/30 cursor-pointer"
                 >
                     <option value="">Sin Fondo</option>
-                    <option value="bg-zinc-900/60 border-zinc-800">Gris Suave</option>
-                    <option value="bg-zinc-900 border-zinc-700">Gris Sólido</option>
+                    <option value="bg-card/60 border-border">Gris Suave</option>
+                    <option value="bg-card border-border">Gris Sólido</option>
                     <option value="bg-indigo-500/10 border-indigo-500/20">Índigo Sutil</option>
                     <option value="bg-emerald-500/10 border-emerald-500/20">Verde Sutil</option>
                     <option value="bg-amber-500/10 border-amber-500/20">Ámbar Sutil</option>
@@ -293,7 +293,7 @@ function TextEditor({ block, onChange }: {
                 <select
                     value={block.borderRadius || 'xl'}
                     onChange={e => onChange({ ...block, borderRadius: e.target.value as any })}
-                    className="bg-zinc-950 border border-zinc-800 rounded px-2 py-1.5 text-xs text-zinc-300 outline-none hover:border-zinc-700 cursor-pointer"
+                    className="bg-background border border-border rounded px-2 py-1.5 text-xs text-foreground/90 outline-none hover:border-muted-foreground/30 cursor-pointer"
                 >
                     <option value="none">Esquinas Rectas</option>
                     <option value="sm">Redondeado SM</option>
@@ -323,17 +323,17 @@ function RankingEditor({ ranking, onChange, availableMetrics, campaignGroups, ca
             <Input
                 value={ranking.title}
                 onChange={e => onChange({ ...ranking, title: e.target.value })}
-                className="h-7 text-xs bg-zinc-950 border-zinc-700 text-white"
+                className="h-7 text-xs bg-background border-border text-foreground"
                 placeholder="Título de la tabla"
             />
 
             <div className="flex flex-wrap items-center gap-2 text-[10px]">
                 <div className="flex items-center gap-1">
-                    <span className="text-zinc-500">Dimensión:</span>
+                    <span className="text-muted-foreground/70">Dimensión:</span>
                     <select
                         value={ranking.dimension}
                         onChange={e => onChange({ ...ranking, dimension: e.target.value as any })}
-                        className="h-6 bg-zinc-950 border border-zinc-700 text-zinc-300 rounded px-1.5"
+                        className="h-6 bg-background border border-border text-foreground/90 rounded px-1.5"
                     >
                         <optgroup label="Meta">
                             <option value="campaigns">Campañas</option>
@@ -348,32 +348,32 @@ function RankingEditor({ ranking, onChange, availableMetrics, campaignGroups, ca
                     </select>
                 </div>
                 <div className="flex items-center gap-1">
-                    <span className="text-zinc-500">Top:</span>
+                    <span className="text-muted-foreground/70">Top:</span>
                     <select
                         value={ranking.topN}
                         onChange={e => onChange({ ...ranking, topN: Number(e.target.value) })}
-                        className="h-6 bg-zinc-950 border border-zinc-700 text-zinc-300 rounded px-1.5"
+                        className="h-6 bg-background border border-border text-foreground/90 rounded px-1.5"
                     >
                         {[5, 10, 20, 50].map(n => <option key={n} value={n}>{n}</option>)}
                     </select>
                 </div>
                 <div className="flex items-center gap-1">
-                    <span className="text-zinc-500">Orden:</span>
+                    <span className="text-muted-foreground/70">Orden:</span>
                     <select
                         value={ranking.sortOrder}
                         onChange={e => onChange({ ...ranking, sortOrder: e.target.value as 'desc' | 'asc' })}
-                        className="h-6 bg-zinc-950 border border-zinc-700 text-zinc-300 rounded px-1.5"
+                        className="h-6 bg-background border border-border text-foreground/90 rounded px-1.5"
                     >
                         <option value="desc">Mayor → Menor</option>
                         <option value="asc">Menor → Mayor</option>
                     </select>
                 </div>
                 <div className="flex items-center gap-1">
-                    <span className="text-zinc-500">Columna ord.:</span>
+                    <span className="text-muted-foreground/70">Columna ord.:</span>
                     <select
                         value={ranking.sortColumnIndex}
                         onChange={e => onChange({ ...ranking, sortColumnIndex: Number(e.target.value) })}
-                        className="h-6 bg-zinc-950 border border-zinc-700 text-zinc-300 rounded px-1.5"
+                        className="h-6 bg-background border border-border text-foreground/90 rounded px-1.5"
                     >
                         {ranking.columns.map((col, ci) => (
                             <option key={ci} value={ci}>{col.label || `Col ${ci + 1}`}</option>
@@ -387,7 +387,7 @@ function RankingEditor({ ranking, onChange, availableMetrics, campaignGroups, ca
                         onChange={e => onChange({ ...ranking, showRank: e.target.checked })}
                         className="w-3 h-3 accent-cyan-500"
                     />
-                    <span className="text-zinc-400">Mostrar #</span>
+                    <span className="text-muted-foreground">Mostrar #</span>
                 </label>
             </div>
 
@@ -407,8 +407,8 @@ function RankingEditor({ ranking, onChange, availableMetrics, campaignGroups, ca
                 />
             )}
 
-            <div className="space-y-2 pt-2 border-t border-zinc-800">
-                <p className="text-[10px] text-zinc-500 font-medium uppercase tracking-wider">Columnas de métricas</p>
+            <div className="space-y-2 pt-2 border-t border-border">
+                <p className="text-[10px] text-muted-foreground/70 font-medium uppercase tracking-wider">Columnas de métricas</p>
                 {ranking.columns.map((col, ci) => (
                     <div key={ci} className="flex items-center gap-1.5">
                         <Input
@@ -418,7 +418,7 @@ function RankingEditor({ ranking, onChange, availableMetrics, campaignGroups, ca
                                 cols[ci] = { ...col, label: e.target.value }
                                 onChange({ ...ranking, columns: cols })
                             }}
-                            className="h-6 text-xs bg-zinc-950 border-zinc-700 text-zinc-200 w-24 flex-shrink-0"
+                            className="h-6 text-xs bg-background border-border text-foreground w-24 flex-shrink-0"
                             placeholder="Etiqueta"
                         />
                         <div className="flex-1">
@@ -448,7 +448,7 @@ function RankingEditor({ ranking, onChange, availableMetrics, campaignGroups, ca
                                 onChange({ ...ranking, columns: cols })
                             }}
                             title="Heatmap"
-                            className={`flex-shrink-0 w-6 h-6 rounded border text-xs transition ${col.highlight ? 'bg-indigo-500/20 border-indigo-500/40 text-indigo-400' : 'bg-zinc-900 border-zinc-700 text-zinc-600 hover:text-zinc-400'}`}
+                            className={`flex-shrink-0 w-6 h-6 rounded border text-xs transition ${col.highlight ? 'bg-indigo-500/20 border-indigo-500/40 text-indigo-600 dark:text-indigo-400' : 'bg-card border-border text-muted-foreground/70 hover:text-muted-foreground'}`}
                         >
                             ✦
                         </button>
@@ -459,7 +459,7 @@ function RankingEditor({ ranking, onChange, availableMetrics, campaignGroups, ca
                                     const newSortIdx = ranking.sortColumnIndex >= cols.length ? cols.length - 1 : ranking.sortColumnIndex
                                     onChange({ ...ranking, columns: cols, sortColumnIndex: newSortIdx })
                                 }}
-                                className="flex-shrink-0 text-zinc-700 hover:text-red-400 transition"
+                                className="flex-shrink-0 text-muted-foreground/50 hover:text-red-400 transition"
                             >
                                 <X className="w-3 h-3" />
                             </button>
@@ -491,9 +491,9 @@ function TableColumnsEditor({ columns, onChange, availableMetrics, campaignGroup
 }) {
     return (
         <div className="space-y-2">
-            <p className="text-[10px] text-zinc-500 uppercase font-medium tracking-wider">Columnas visibles en la tabla</p>
+            <p className="text-[10px] text-muted-foreground/70 uppercase font-medium tracking-wider">Columnas visibles en la tabla</p>
             {columns.map((col, i) => (
-                <div key={col.id} className="flex items-center gap-2 bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2">
+                <div key={col.id} className="flex items-center gap-2 bg-card border border-border rounded-lg px-3 py-2">
                     <Input
                         value={col.label}
                         onChange={e => {
@@ -501,7 +501,7 @@ function TableColumnsEditor({ columns, onChange, availableMetrics, campaignGroup
                             next[i] = { ...col, label: e.target.value }
                             onChange(next)
                         }}
-                        className="h-6 text-xs bg-zinc-950 border-zinc-700 text-zinc-200 w-28 flex-shrink-0"
+                        className="h-6 text-xs bg-background border-border text-foreground w-28 flex-shrink-0"
                         placeholder="Etiqueta"
                     />
                     <div className="flex-1">
@@ -539,7 +539,7 @@ function TableColumnsEditor({ columns, onChange, availableMetrics, campaignGroup
                             />
                             <button
                                 onClick={() => onChange(columns.filter((_, idx) => idx !== i))}
-                                className="flex-shrink-0 text-zinc-700 hover:text-red-400 transition"
+                                className="flex-shrink-0 text-muted-foreground/50 hover:text-red-400 transition"
                                 title="Eliminar columna"
                             >
                                 <X className="w-3.5 h-3.5" />
@@ -550,7 +550,7 @@ function TableColumnsEditor({ columns, onChange, availableMetrics, campaignGroup
             ))}
             <button
                 onClick={() => onChange([...columns, { id: crypto.randomUUID(), label: 'Nueva', formula: 'meta_spend', prefix: '$', suffix: '', decimals: 2, align: 'right' }])}
-                className="text-[10px] text-indigo-400 hover:text-indigo-300 flex items-center gap-1 mt-1"
+                className="text-[10px] text-indigo-600 dark:text-indigo-400 hover:text-indigo-300 flex items-center gap-1 mt-1"
             >
                 <Plus className="w-3 h-3" /> Nueva columna
             </button>
@@ -668,14 +668,14 @@ export function QuickEditModal({
             onClick={onClose}
         >
             <div
-                className="relative bg-[#0a0a0c] border border-zinc-800 rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden"
+                className="relative bg-[#0a0a0c] border border-border rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden"
                 onClick={e => e.stopPropagation()}
             >
                 {/* Header */}
-                <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-800 bg-zinc-950/60 flex-shrink-0">
+                <div className="flex items-center justify-between px-5 py-3 border-b border-border bg-background/60 flex-shrink-0">
                     <div className="flex items-center gap-2">
-                        <Pencil className="w-3.5 h-3.5 text-indigo-400" />
-                        <h2 className="text-sm font-semibold text-white truncate">{modalTitle}</h2>
+                        <Pencil className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
+                        <h2 className="text-sm font-semibold text-foreground truncate">{modalTitle}</h2>
                     </div>
                     <div className="flex items-center gap-2 flex-shrink-0">
                         <Button
@@ -694,7 +694,7 @@ export function QuickEditModal({
                         </Button>
                         <button
                             onClick={onClose}
-                            className="text-zinc-500 hover:text-white transition p-1 hover:bg-zinc-800 rounded-lg"
+                            className="text-muted-foreground/70 hover:text-foreground transition p-1 hover:bg-accent rounded-lg"
                         >
                             <X className="w-4 h-4" />
                         </button>

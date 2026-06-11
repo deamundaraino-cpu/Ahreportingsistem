@@ -71,17 +71,17 @@ export default async function ClienteDetailPage({
             <div>
                 <Link
                     href="/report-utm/clientes"
-                    className="inline-flex items-center gap-1.5 text-xs font-medium text-zinc-500 dark:text-zinc-500 hover:text-emerald-600 dark:hover:text-emerald-400 transition-colors"
+                    className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-emerald-600 dark:hover:text-emerald-400 transition-colors"
                 >
                     <ArrowLeft className="h-3.5 w-3.5" />
                     Clientes
                 </Link>
                 <div className="flex items-end justify-between gap-4 flex-wrap mt-2">
                     <div>
-                        <h1 className="text-3xl font-bold tracking-tight text-zinc-900 dark:text-zinc-50">
+                        <h1 className="text-3xl font-bold tracking-tight text-foreground">
                             {cliente.nombre}
                         </h1>
-                        <p className="text-xs font-mono text-zinc-500 dark:text-zinc-500 mt-1">
+                        <p className="text-xs font-mono text-muted-foreground mt-1">
                             {cliente.slug} · {cliente.id}
                         </p>
                     </div>
@@ -119,17 +119,17 @@ export default async function ClienteDetailPage({
             />
 
             {/* Recent sales */}
-            <div className="rounded-2xl border border-zinc-200 dark:border-white/[0.06] bg-white dark:bg-zinc-950/50 overflow-hidden">
-                <div className="px-6 py-4 border-b border-zinc-200 dark:border-white/[0.06]">
-                    <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+            <div className="rounded-2xl border border-border bg-card overflow-hidden">
+                <div className="px-6 py-4 border-b border-border">
+                    <h2 className="text-sm font-semibold text-foreground">
                         Ventas recientes
                     </h2>
                 </div>
                 {ventasList.length > 0 ? (
                     <div className="overflow-x-auto">
                         <table className="w-full">
-                            <thead className="bg-zinc-50 dark:bg-white/[0.02]">
-                                <tr className="text-left text-[10px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-500">
+                            <thead className="bg-muted/60">
+                                <tr className="text-left text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                                     <th className="px-6 py-3">Fecha</th>
                                     <th className="px-6 py-3">Cliente</th>
                                     <th className="px-6 py-3">Producto</th>
@@ -139,25 +139,25 @@ export default async function ClienteDetailPage({
                                     <th className="px-6 py-3 text-right">Monto</th>
                                 </tr>
                             </thead>
-                            <tbody className="divide-y divide-zinc-100 dark:divide-white/[0.04]">
+                            <tbody className="divide-y divide-border">
                                 {ventasList.map((s) => (
-                                    <tr key={s.id} className="hover:bg-zinc-50 dark:hover:bg-white/[0.02]">
-                                        <td className="px-6 py-3 text-xs text-zinc-600 dark:text-zinc-400">
+                                    <tr key={s.id} className="hover:bg-accent">
+                                        <td className="px-6 py-3 text-xs text-muted-foreground">
                                             {s.sale_timestamp
                                                 ? new Date(s.sale_timestamp).toLocaleString()
                                                 : '—'}
                                         </td>
                                         <td className="px-6 py-3">
-                                            <p className="text-xs font-medium text-zinc-900 dark:text-zinc-100">
+                                            <p className="text-xs font-medium text-foreground">
                                                 {s.customer_name ?? '—'}
                                             </p>
                                             {s.customer_email && (
-                                                <p className="text-[11px] text-zinc-500 dark:text-zinc-500">
+                                                <p className="text-[11px] text-muted-foreground">
                                                     {s.customer_email}
                                                 </p>
                                             )}
                                         </td>
-                                        <td className="px-6 py-3 text-xs text-zinc-600 dark:text-zinc-400">
+                                        <td className="px-6 py-3 text-xs text-muted-foreground">
                                             {s.product_name ?? '—'}
                                         </td>
                                         <td className="px-6 py-3 text-xs">
@@ -165,18 +165,18 @@ export default async function ClienteDetailPage({
                                                 {s.utm_source ?? '—'}
                                             </p>
                                             {s.utm_campaign && (
-                                                <p className="text-[11px] text-zinc-500 dark:text-zinc-500 font-mono">
+                                                <p className="text-[11px] text-muted-foreground font-mono">
                                                     {s.utm_campaign}
                                                 </p>
                                             )}
                                         </td>
-                                        <td className="px-6 py-3 text-[10px] uppercase tracking-wider text-zinc-500 dark:text-zinc-500">
+                                        <td className="px-6 py-3 text-[10px] uppercase tracking-wider text-muted-foreground">
                                             {s.transaction_type ?? 'principal'}
                                         </td>
                                         <td className="px-6 py-3">
                                             <StatusPill status={s.status} />
                                         </td>
-                                        <td className="px-6 py-3 text-right text-xs font-semibold text-zinc-900 dark:text-zinc-100">
+                                        <td className="px-6 py-3 text-right text-xs font-semibold text-foreground">
                                             {s.currency} {Number(s.amount).toFixed(2)}
                                         </td>
                                     </tr>
@@ -185,7 +185,7 @@ export default async function ClienteDetailPage({
                         </table>
                     </div>
                 ) : (
-                    <div className="px-6 py-12 text-center text-sm text-zinc-500 dark:text-zinc-500">
+                    <div className="px-6 py-12 text-center text-sm text-muted-foreground">
                         Sin ventas recibidas todavía. Configurá el webhook arriba para empezar a recibir eventos.
                     </div>
                 )}
@@ -204,14 +204,14 @@ function Stat({
     icon: typeof ShoppingBag
 }) {
     return (
-        <div className="rounded-2xl border border-zinc-200 dark:border-white/[0.06] bg-white dark:bg-zinc-950/50 p-5">
+        <div className="rounded-2xl border border-border bg-card p-5">
             <div className="flex items-center justify-between">
-                <p className="text-xs font-medium text-zinc-500 dark:text-zinc-500">{label}</p>
+                <p className="text-xs font-medium text-muted-foreground">{label}</p>
                 <div className="h-8 w-8 rounded-lg flex items-center justify-center bg-emerald-50 dark:bg-emerald-500/10">
                     <Icon className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
                 </div>
             </div>
-            <p className="mt-3 text-2xl font-bold text-zinc-900 dark:text-zinc-50">{value}</p>
+            <p className="mt-3 text-2xl font-bold text-foreground">{value}</p>
         </div>
     )
 }

@@ -148,10 +148,10 @@ export default async function AtribucionPage({
                     <p className="text-[10px] font-semibold uppercase tracking-widest text-emerald-500 dark:text-emerald-400">
                         Report-UTM · Fase 2
                     </p>
-                    <h1 className="text-3xl font-bold tracking-tight text-zinc-900 dark:text-zinc-50 mt-1">
+                    <h1 className="text-3xl font-bold tracking-tight text-foreground mt-1">
                         Atribución UTM
                     </h1>
-                    <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
+                    <p className="mt-1 text-sm text-muted-foreground">
                         Últimos {days} días · {totalEvents.toLocaleString()} eventos
                         {sp.clienteId
                             ? ` · ${clientesList.find((c) => c.id === sp.clienteId)?.nombre ?? ''}`
@@ -164,11 +164,11 @@ export default async function AtribucionPage({
             {/* Filtros */}
             <form
                 method="GET"
-                className="rounded-2xl border border-zinc-200 dark:border-white/[0.06] bg-white dark:bg-zinc-950/50 p-4"
+                className="rounded-2xl border border-border bg-card p-4"
             >
                 <div className="flex items-center gap-2 mb-3">
-                    <Filter className="h-4 w-4 text-zinc-400" />
-                    <p className="text-xs font-medium text-zinc-600 dark:text-zinc-400">Filtros</p>
+                    <Filter className="h-4 w-4 text-muted-foreground" />
+                    <p className="text-xs font-medium text-muted-foreground">Filtros</p>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                     <SelectField label="Cliente" name="clienteId" defaultValue={sp.clienteId ?? ''}>
@@ -187,14 +187,13 @@ export default async function AtribucionPage({
                     <div className="flex items-end gap-2">
                         <button
                             type="submit"
-                            className="px-3 py-2 rounded-lg text-xs font-medium text-white shadow-sm"
-                            style={{ background: 'linear-gradient(135deg, #10B981 0%, #059669 100%)' }}
+                            className="px-3 py-2 rounded-lg text-xs font-medium text-white shadow-sm nav-active-emerald"
                         >
                             Aplicar
                         </button>
                         <Link
                             href="/report-utm/atribucion"
-                            className="px-3 py-2 rounded-lg text-xs font-medium text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-white/[0.04] transition-colors"
+                            className="px-3 py-2 rounded-lg text-xs font-medium text-muted-foreground hover:bg-accent transition-colors"
                         >
                             Limpiar
                         </Link>
@@ -218,14 +217,14 @@ export default async function AtribucionPage({
 
             {/* Charts */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-                <div className="lg:col-span-2 rounded-2xl border border-zinc-200 dark:border-white/[0.06] bg-white dark:bg-zinc-950/50 p-5">
-                    <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100 mb-4">
+                <div className="lg:col-span-2 rounded-2xl border border-border bg-card p-5">
+                    <h3 className="text-sm font-semibold text-foreground mb-4">
                         Revenue diario
                     </h3>
                     <RevenueTrendChart data={trend} currency={currency} />
                 </div>
-                <div className="rounded-2xl border border-zinc-200 dark:border-white/[0.06] bg-white dark:bg-zinc-950/50 p-5">
-                    <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100 mb-4">
+                <div className="rounded-2xl border border-border bg-card p-5">
+                    <h3 className="text-sm font-semibold text-foreground mb-4">
                         Distribución por source
                     </h3>
                     <SourceDistributionChart data={sourceDist} />
@@ -233,16 +232,16 @@ export default async function AtribucionPage({
             </div>
 
             {/* Top sources */}
-            <div className="rounded-2xl border border-zinc-200 dark:border-white/[0.06] bg-white dark:bg-zinc-950/50 overflow-hidden">
-                <div className="px-6 py-4 border-b border-zinc-200 dark:border-white/[0.06]">
-                    <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+            <div className="rounded-2xl border border-border bg-card overflow-hidden">
+                <div className="px-6 py-4 border-b border-border">
+                    <h2 className="text-sm font-semibold text-foreground">
                         Top sources
                     </h2>
                 </div>
                 {sourceDist.length > 0 ? (
                     <table className="w-full">
-                        <thead className="bg-zinc-50 dark:bg-white/[0.02]">
-                            <tr className="text-left text-[10px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-500">
+                        <thead className="bg-muted/60">
+                            <tr className="text-left text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                                 <th className="px-6 py-3">Source</th>
                                 <th className="px-6 py-3 text-right">Ventas</th>
                                 <th className="px-6 py-3 text-right">Revenue</th>
@@ -250,27 +249,27 @@ export default async function AtribucionPage({
                                 <th className="px-6 py-3 text-right">% del total</th>
                             </tr>
                         </thead>
-                        <tbody className="divide-y divide-zinc-100 dark:divide-white/[0.04]">
+                        <tbody className="divide-y divide-border">
                             {sourceDist.map((s) => {
                                 const pct = totalRevenue > 0 ? (s.revenue / totalRevenue) * 100 : 0
                                 const sourceAov = s.sales > 0 ? s.revenue / s.sales : 0
                                 return (
-                                    <tr key={s.source} className="hover:bg-zinc-50 dark:hover:bg-white/[0.02]">
+                                    <tr key={s.source} className="hover:bg-accent">
                                         <td className="px-6 py-3 text-xs font-mono text-emerald-600 dark:text-emerald-400">
                                             {s.source}
                                         </td>
-                                        <td className="px-6 py-3 text-right text-xs text-zinc-600 dark:text-zinc-400">
+                                        <td className="px-6 py-3 text-right text-xs text-muted-foreground">
                                             {s.sales.toLocaleString()}
                                         </td>
-                                        <td className="px-6 py-3 text-right text-xs font-semibold text-zinc-900 dark:text-zinc-100">
+                                        <td className="px-6 py-3 text-right text-xs font-semibold text-foreground">
                                             {currency} {s.revenue.toFixed(2)}
                                         </td>
-                                        <td className="px-6 py-3 text-right text-xs text-zinc-600 dark:text-zinc-400">
+                                        <td className="px-6 py-3 text-right text-xs text-muted-foreground">
                                             {currency} {sourceAov.toFixed(2)}
                                         </td>
-                                        <td className="px-6 py-3 text-right text-xs text-zinc-600 dark:text-zinc-400">
+                                        <td className="px-6 py-3 text-right text-xs text-muted-foreground">
                                             <div className="flex items-center gap-2 justify-end">
-                                                <div className="w-16 h-1.5 rounded-full bg-zinc-100 dark:bg-white/[0.06] overflow-hidden">
+                                                <div className="w-16 h-1.5 rounded-full bg-muted overflow-hidden">
                                                     <div
                                                         className="h-full bg-emerald-500"
                                                         style={{ width: `${Math.min(100, pct)}%` }}
@@ -292,23 +291,23 @@ export default async function AtribucionPage({
             </div>
 
             {/* Matriz UTM */}
-            <div className="rounded-2xl border border-zinc-200 dark:border-white/[0.06] bg-white dark:bg-zinc-950/50 overflow-hidden">
-                <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-200 dark:border-white/[0.06]">
+            <div className="rounded-2xl border border-border bg-card overflow-hidden">
+                <div className="flex items-center justify-between px-6 py-4 border-b border-border">
                     <div className="flex items-center gap-2">
                         <BarChart2 className="h-4 w-4 text-emerald-500" />
-                        <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                        <h2 className="text-sm font-semibold text-foreground">
                             Matriz UTM source × campaign
                         </h2>
                     </div>
-                    <p className="text-[10px] text-zinc-500 dark:text-zinc-500 font-mono">
+                    <p className="text-[10px] text-muted-foreground font-mono">
                         {matrixRows.length} combinaciones
                     </p>
                 </div>
                 {matrixRows.length > 0 ? (
                     <div className="overflow-x-auto max-h-[500px] overflow-y-auto">
                         <table className="w-full">
-                            <thead className="bg-zinc-50 dark:bg-white/[0.02] sticky top-0">
-                                <tr className="text-left text-[10px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-500">
+                            <thead className="bg-muted/60 sticky top-0">
+                                <tr className="text-left text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                                     <th className="px-6 py-3">Source</th>
                                     <th className="px-6 py-3">Campaign</th>
                                     <th className="px-6 py-3 text-right">Ventas</th>
@@ -317,24 +316,24 @@ export default async function AtribucionPage({
                                     <th className="px-6 py-3 text-right">Reembolsos</th>
                                 </tr>
                             </thead>
-                            <tbody className="divide-y divide-zinc-100 dark:divide-white/[0.04]">
+                            <tbody className="divide-y divide-border">
                                 {matrixRows.map((c) => {
                                     const cellAov = c.sales > 0 ? c.revenue / c.sales : 0
                                     return (
-                                        <tr key={`${c.source}-${c.campaign}`} className="hover:bg-zinc-50 dark:hover:bg-white/[0.02]">
+                                        <tr key={`${c.source}-${c.campaign}`} className="hover:bg-accent">
                                             <td className="px-6 py-3 text-xs font-mono text-emerald-600 dark:text-emerald-400">
                                                 {c.source}
                                             </td>
-                                            <td className="px-6 py-3 text-xs font-mono text-zinc-700 dark:text-zinc-300">
+                                            <td className="px-6 py-3 text-xs font-mono text-foreground/90">
                                                 {c.campaign}
                                             </td>
-                                            <td className="px-6 py-3 text-right text-xs text-zinc-600 dark:text-zinc-400">
+                                            <td className="px-6 py-3 text-right text-xs text-muted-foreground">
                                                 {c.sales}
                                             </td>
-                                            <td className="px-6 py-3 text-right text-xs font-semibold text-zinc-900 dark:text-zinc-100">
+                                            <td className="px-6 py-3 text-right text-xs font-semibold text-foreground">
                                                 {currency} {c.revenue.toFixed(2)}
                                             </td>
-                                            <td className="px-6 py-3 text-right text-xs text-zinc-600 dark:text-zinc-400">
+                                            <td className="px-6 py-3 text-right text-xs text-muted-foreground">
                                                 {currency} {cellAov.toFixed(2)}
                                             </td>
                                             <td className="px-6 py-3 text-right text-xs">
@@ -343,7 +342,7 @@ export default async function AtribucionPage({
                                                         -{currency} {c.refundsAmount.toFixed(2)} ({c.refunds})
                                                     </span>
                                                 ) : (
-                                                    <span className="text-zinc-400 dark:text-zinc-600">—</span>
+                                                    <span className="text-muted-foreground/70">—</span>
                                                 )}
                                             </td>
                                         </tr>
@@ -357,10 +356,10 @@ export default async function AtribucionPage({
                 )}
             </div>
 
-            <p className="text-[11px] text-zinc-500 dark:text-zinc-500">
-                Datos calculados en vivo desde <code className="font-mono px-1 py-0.5 rounded bg-zinc-100 dark:bg-white/[0.04]">report_utm.sales_events</code>.
-                El cron <code className="font-mono px-1 py-0.5 rounded bg-zinc-100 dark:bg-white/[0.04]">/api/cron/report-utm/aggregate</code> actualiza
-                {' '}<code className="font-mono px-1 py-0.5 rounded bg-zinc-100 dark:bg-white/[0.04]">hourly_metrics</code> cada 15 min para queries más rápidas a futuro.
+            <p className="text-[11px] text-muted-foreground">
+                Datos calculados en vivo desde <code className="font-mono px-1 py-0.5 rounded bg-muted">report_utm.sales_events</code>.
+                El cron <code className="font-mono px-1 py-0.5 rounded bg-muted">/api/cron/report-utm/aggregate</code> actualiza
+                {' '}<code className="font-mono px-1 py-0.5 rounded bg-muted">hourly_metrics</code> cada 15 min para queries más rápidas a futuro.
             </p>
         </div>
     )
@@ -376,14 +375,14 @@ function Stat({
     icon: typeof DollarSign
 }) {
     return (
-        <div className="rounded-2xl border border-zinc-200 dark:border-white/[0.06] bg-white dark:bg-zinc-950/50 p-5">
+        <div className="rounded-2xl border border-border bg-card p-5">
             <div className="flex items-center justify-between">
-                <p className="text-xs font-medium text-zinc-500 dark:text-zinc-500">{label}</p>
+                <p className="text-xs font-medium text-muted-foreground">{label}</p>
                 <div className="h-8 w-8 rounded-lg flex items-center justify-center bg-emerald-50 dark:bg-emerald-500/10">
                     <Icon className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
                 </div>
             </div>
-            <p className="mt-3 text-xl font-bold text-zinc-900 dark:text-zinc-50 truncate">{value}</p>
+            <p className="mt-3 text-xl font-bold text-foreground truncate">{value}</p>
         </div>
     )
 }
@@ -401,11 +400,11 @@ function SelectField({
 }) {
     return (
         <label className="block">
-            <span className="block text-[11px] font-medium text-zinc-600 dark:text-zinc-400 mb-1">{label}</span>
+            <span className="block text-[11px] font-medium text-muted-foreground mb-1">{label}</span>
             <select
                 name={name}
                 defaultValue={defaultValue}
-                className="w-full px-3 py-2 text-sm rounded-lg bg-zinc-50 dark:bg-white/[0.04] border border-zinc-200 dark:border-white/[0.06] text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/40 transition-colors"
+                className="w-full px-3 py-2 text-sm rounded-lg bg-muted border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500/40 transition-colors"
             >
                 {children}
             </select>
@@ -415,7 +414,7 @@ function SelectField({
 
 function EmptyTableMsg() {
     return (
-        <div className="px-6 py-12 text-center text-sm text-zinc-500 dark:text-zinc-500">
+        <div className="px-6 py-12 text-center text-sm text-muted-foreground">
             Sin datos en este rango. Probá ampliar el rango o aplicar el webhook desde la página del cliente.
         </div>
     )

@@ -21,8 +21,8 @@ export default async function AdminReportsPage() {
                     <FileText className="h-6 w-6 text-indigo-400" />
                 </div>
                 <div>
-                    <h2 className="text-2xl font-bold text-white">Reportes Mensuales</h2>
-                    <p className="text-zinc-400 text-sm">Genera y publica reportes de rendimiento para tus clientes.</p>
+                    <h2 className="text-2xl font-bold text-foreground">Reportes Mensuales</h2>
+                    <p className="text-muted-foreground text-sm">Genera y publica reportes de rendimiento para tus clientes.</p>
                 </div>
             </div>
 

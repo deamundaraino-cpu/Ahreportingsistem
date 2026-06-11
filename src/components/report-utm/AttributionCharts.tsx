@@ -110,7 +110,7 @@ export function SourceDistributionChart({
 
 function EmptyChart({ label }: { label: string }) {
     return (
-        <div className="h-[260px] flex items-center justify-center text-xs text-zinc-400 dark:text-zinc-600">
+        <div className="h-[260px] flex items-center justify-center text-xs text-muted-foreground/70">
             {label}
         </div>
     )

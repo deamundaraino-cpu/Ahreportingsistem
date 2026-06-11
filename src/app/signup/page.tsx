@@ -48,39 +48,36 @@ export default function SignupPage() {
     }
 
     return (
-        <div className="min-h-screen flex flex-col items-center justify-center bg-zinc-50 dark:bg-[#0E0E0E] p-4 relative overflow-hidden">
+        <div className="min-h-screen flex flex-col items-center justify-center bg-background p-4 relative overflow-hidden">
             {/* Brand ambient glows */}
-            <div className="absolute top-[-15%] left-[-10%] w-[45%] h-[45%] rounded-full opacity-[0.08] blur-[130px] pointer-events-none"
-                 style={{ background: '#E53529' }} />
-            <div className="absolute bottom-[-15%] right-[-10%] w-[45%] h-[45%] rounded-full opacity-[0.08] blur-[130px] pointer-events-none"
-                 style={{ background: '#1E6AB5' }} />
+            <div className="absolute top-[-15%] left-[-10%] w-[45%] h-[45%] pointer-events-none ambient-glow-red" />
+            <div className="absolute bottom-[-15%] right-[-10%] w-[45%] h-[45%] pointer-events-none ambient-glow-blue" />
 
             {/* Logo mark */}
             <div className="flex items-center gap-3 mb-8 relative">
-                <div className="flex h-12 w-12 items-center justify-center rounded-xl shadow-lg"
-                     style={{ background: 'linear-gradient(135deg, #E53529 0%, #1E6AB5 100%)' }}>
+                <div className="flex h-12 w-12 items-center justify-center rounded-xl shadow-lg brand-gradient-reporting">
                     <BarChart3 className="h-6 w-6 text-white" />
                 </div>
                 <div className="flex flex-col leading-tight">
-                    <span className="text-2xl font-bold tracking-tight text-zinc-900 dark:text-zinc-50">
+                    <span className="text-2xl font-bold tracking-tight text-foreground">
                         AdsHouse
                     </span>
-                    <span className="text-xs font-medium text-zinc-400 dark:text-zinc-500 tracking-widest uppercase">
+                    <span className="text-xs font-medium text-muted-foreground/70 tracking-widest uppercase">
                         Reporting
                     </span>
                 </div>
             </div>
 
             <Card className="w-full max-w-md relative
-                             bg-white dark:bg-zinc-900/80
-                             border border-zinc-200 dark:border-zinc-800
+                             bg-card/80
+                             border border-border
                              shadow-xl dark:shadow-none
                              backdrop-blur-xl">
                 <CardHeader className="space-y-1 pb-4">
-                    <CardTitle className="text-2xl font-bold text-zinc-900 dark:text-zinc-50 text-center">
+                    <CardTitle className="text-2xl font-bold text-foreground text-center">
                         Crear Cuenta
                     </CardTitle>
-                    <CardDescription className="text-zinc-500 dark:text-zinc-400 text-center">
+                    <CardDescription className="text-muted-foreground text-center">
                         Regístrate para empezar a gestionar tus métricas.
                     </CardDescription>
                 </CardHeader>
@@ -96,7 +93,7 @@ export default function SignupPage() {
                     <form onSubmit={handleSignup}>
                         <CardContent className="space-y-4">
                             <div className="space-y-2">
-                                <Label htmlFor="fullName" className="text-zinc-700 dark:text-zinc-300 font-medium">
+                                <Label htmlFor="fullName" className="text-foreground/90 font-medium">
                                     Nombre Completo
                                 </Label>
                                 <Input
@@ -104,12 +101,12 @@ export default function SignupPage() {
                                     placeholder="Juan Pérez"
                                     value={fullName}
                                     onChange={(e) => setFullName(e.target.value)}
-                                    className="bg-zinc-50 dark:bg-zinc-950 border-zinc-300 dark:border-zinc-800 text-zinc-900 dark:text-white placeholder:text-zinc-400 dark:placeholder:text-zinc-600"
+                                    className="bg-muted/60 border-input text-foreground placeholder:text-muted-foreground/70"
                                     required
                                 />
                             </div>
                             <div className="space-y-2">
-                                <Label htmlFor="email" className="text-zinc-700 dark:text-zinc-300 font-medium">
+                                <Label htmlFor="email" className="text-foreground/90 font-medium">
                                     Email profesional
                                 </Label>
                                 <Input
@@ -118,12 +115,12 @@ export default function SignupPage() {
                                     placeholder="tu@empresa.com"
                                     value={email}
                                     onChange={(e) => setEmail(e.target.value)}
-                                    className="bg-zinc-50 dark:bg-zinc-950 border-zinc-300 dark:border-zinc-800 text-zinc-900 dark:text-white placeholder:text-zinc-400 dark:placeholder:text-zinc-600"
+                                    className="bg-muted/60 border-input text-foreground placeholder:text-muted-foreground/70"
                                     required
                                 />
                             </div>
                             <div className="space-y-2">
-                                <Label htmlFor="password" className="text-zinc-700 dark:text-zinc-300 font-medium">
+                                <Label htmlFor="password" className="text-foreground/90 font-medium">
                                     Contraseña
                                 </Label>
                                 <Input
@@ -131,7 +128,7 @@ export default function SignupPage() {
                                     type="password"
                                     value={password}
                                     onChange={(e) => setPassword(e.target.value)}
-                                    className="bg-zinc-50 dark:bg-zinc-950 border-zinc-300 dark:border-zinc-800 text-zinc-900 dark:text-white"
+                                    className="bg-muted/60 border-input text-foreground"
                                     required
                                 />
                             </div>
@@ -144,15 +141,14 @@ export default function SignupPage() {
                         <CardFooter className="flex flex-col gap-4 pt-2">
                             <Button
                                 type="submit"
-                                className="w-full text-white font-semibold py-6 transition-all duration-200 shadow-md hover:shadow-lg hover:opacity-90 active:scale-[0.98]"
-                                style={{ background: 'linear-gradient(135deg, #1E6AB5 0%, #155a9a 100%)' }}
+                                className="w-full text-white font-semibold py-6 transition-all duration-200 shadow-md hover:shadow-lg hover:opacity-90 active:scale-[0.98] nav-active-blue"
                                 disabled={loading}
                             >
                                 {loading ? 'Creando cuenta...' : 'Registrarse'}
                             </Button>
-                            <p className="text-sm text-zinc-500 dark:text-zinc-500 text-center">
+                            <p className="text-sm text-muted-foreground/70 text-center">
                                 ¿Ya tienes cuenta?{' '}
-                                <Link href="/login" className="text-[#1E6AB5] dark:text-[#5a9fd4] hover:underline underline-offset-4 font-medium transition-colors">
+                                <Link href="/login" className="text-brand-blue dark:text-brand-blue-light hover:underline underline-offset-4 font-medium transition-colors">
                                     Inicia sesión
                                 </Link>
                             </p>

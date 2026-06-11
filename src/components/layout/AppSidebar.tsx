@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { createClient } from '@/utils/supabase/client'
+import { ThemeToggle } from '@/components/theme/ThemeToggle'
 import {
     Users,
     BarChart3,
@@ -101,10 +102,10 @@ export function AppSidebar({ initialRole = 'viewer', userId = '' }: { initialRol
             <button
                 onClick={() => setIsOpen(!isOpen)}
                 className="lg:hidden fixed top-4 left-4 z-50 p-2 rounded-md
-                           bg-white dark:bg-zinc-900
-                           border border-zinc-200 dark:border-zinc-800
-                           text-zinc-500 dark:text-zinc-400
-                           hover:text-zinc-900 dark:hover:text-white
+                           bg-card
+                           border border-border
+                           text-muted-foreground
+                           hover:text-foreground
                            shadow-sm transition-colors"
             >
                 {isOpen ? <X size={20} /> : <Menu size={20} />}
@@ -121,8 +122,8 @@ export function AppSidebar({ initialRole = 'viewer', userId = '' }: { initialRol
             {/* Sidebar */}
             <aside className={`
                 fixed top-0 left-0 z-40 h-screen w-64
-                bg-white dark:bg-[#0E0E0E]
-                border-r border-zinc-200 dark:border-white/[0.06]
+                bg-sidebar
+                border-r border-sidebar-border
                 shadow-lg dark:shadow-none
                 flex flex-col
                 transition-transform duration-300 ease-in-out
@@ -130,18 +131,17 @@ export function AppSidebar({ initialRole = 'viewer', userId = '' }: { initialRol
             `}>
 
                 {/* Logo area */}
-                <div className="flex h-[68px] items-center px-5 border-b border-zinc-200 dark:border-white/[0.06]">
+                <div className="flex h-[68px] items-center px-5 border-b border-sidebar-border">
                     <div className="flex items-center gap-3">
                         {/* Brand icon: red-to-blue gradient matching logo */}
-                        <div className="flex h-9 w-9 items-center justify-center rounded-lg shadow-md"
-                             style={{ background: 'linear-gradient(135deg, #E53529 0%, #1E6AB5 100%)' }}>
+                        <div className="flex h-9 w-9 items-center justify-center rounded-lg shadow-md brand-gradient-reporting">
                             <BarChart3 className="h-4.5 w-4.5 text-white" />
                         </div>
                         <div className="flex flex-col leading-tight">
-                            <span className="text-base font-bold tracking-tight text-zinc-900 dark:text-zinc-50">
+                            <span className="text-base font-bold tracking-tight text-foreground">
                                 AdsHouse
                             </span>
-                            <span className="text-[10px] font-medium text-zinc-400 dark:text-zinc-500 tracking-wide uppercase">
+                            <span className="text-[10px] font-medium text-muted-foreground tracking-wide uppercase">
                                 Reporting
                             </span>
                         </div>
@@ -168,7 +168,7 @@ export function AppSidebar({ initialRole = 'viewer', userId = '' }: { initialRol
 
                     {/* Dashboard section */}
                     <div>
-                        <p className="px-3 text-[10px] font-semibold text-zinc-400 dark:text-zinc-600 uppercase tracking-widest mb-2">
+                        <p className="px-3 text-[10px] font-semibold text-muted-foreground/70 uppercase tracking-widest mb-2">
                             Dashboard
                         </p>
                         <div className="space-y-0.5">
@@ -183,20 +183,16 @@ export function AppSidebar({ initialRole = 'viewer', userId = '' }: { initialRol
                                             group flex items-center px-3 py-2.5 text-sm font-medium rounded-lg
                                             transition-all duration-200 cursor-pointer
                                             ${active
-                                                ? 'text-white dark:text-white'
-                                                : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100 hover:bg-zinc-100 dark:hover:bg-white/[0.06]'
+                                                ? 'text-white nav-active-red'
+                                                : 'text-muted-foreground hover:text-foreground hover:bg-accent'
                                             }
                                         `}
-                                        style={active ? {
-                                            background: 'linear-gradient(135deg, #E53529 0%, #c42d22 100%)',
-                                            boxShadow: '0 2px 8px rgba(229, 53, 41, 0.35)'
-                                        } : undefined}
                                     >
                                         <item.icon
                                             className={`
                                                 mr-3 flex-shrink-0 h-4.5 w-4.5 transition-transform duration-200
                                                 group-hover:scale-110
-                                                ${active ? 'text-white' : 'text-zinc-400 dark:text-zinc-500 group-hover:text-zinc-600 dark:group-hover:text-zinc-300'}
+                                                ${active ? 'text-white' : 'text-muted-foreground/80 group-hover:text-foreground'}
                                             `}
                                         />
                                         <span className="flex-1">{item.name}</span>
@@ -211,7 +207,7 @@ export function AppSidebar({ initialRole = 'viewer', userId = '' }: { initialRol
 
                     {/* Settings section */}
                     <div>
-                        <p className="px-3 text-[10px] font-semibold text-zinc-400 dark:text-zinc-600 uppercase tracking-widest mb-2">
+                        <p className="px-3 text-[10px] font-semibold text-muted-foreground/70 uppercase tracking-widest mb-2">
                             Configuración
                         </p>
                         <div className="space-y-0.5">
@@ -226,20 +222,16 @@ export function AppSidebar({ initialRole = 'viewer', userId = '' }: { initialRol
                                             group flex items-center px-3 py-2.5 text-sm font-medium rounded-lg
                                             transition-all duration-200 cursor-pointer
                                             ${active
-                                                ? 'text-white dark:text-white'
-                                                : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100 hover:bg-zinc-100 dark:hover:bg-white/[0.06]'
+                                                ? 'text-white nav-active-blue'
+                                                : 'text-muted-foreground hover:text-foreground hover:bg-accent'
                                             }
                                         `}
-                                        style={active ? {
-                                            background: 'linear-gradient(135deg, #1E6AB5 0%, #155a9a 100%)',
-                                            boxShadow: '0 2px 8px rgba(30, 106, 181, 0.35)'
-                                        } : undefined}
                                     >
                                         <item.icon
                                             className={`
                                                 mr-3 flex-shrink-0 h-4.5 w-4.5 transition-transform duration-200
                                                 group-hover:rotate-6
-                                                ${active ? 'text-white' : 'text-zinc-400 dark:text-zinc-500 group-hover:text-zinc-600 dark:group-hover:text-zinc-300'}
+                                                ${active ? 'text-white' : 'text-muted-foreground/80 group-hover:text-foreground'}
                                             `}
                                         />
                                         <span className="flex-1">{item.name}</span>
@@ -261,7 +253,7 @@ export function AppSidebar({ initialRole = 'viewer', userId = '' }: { initialRol
                         className={`flex items-center gap-3 rounded-xl border px-3 py-2.5 text-sm font-semibold transition-all duration-200
                             ${isActive('/soporte')
                                 ? 'border-blue-500/50 bg-blue-600 text-white shadow-lg shadow-blue-500/20'
-                                : 'border-blue-500/30 bg-gradient-to-r from-blue-900/40 to-blue-800/20 text-blue-300 hover:from-blue-800/50 hover:border-blue-400/50'
+                                : 'border-blue-500/30 bg-blue-500/10 text-blue-700 dark:text-blue-300 hover:bg-blue-500/15 hover:border-blue-400/50'
                             }`}
                     >
                         <span className="text-base">🗺️</span>
@@ -270,15 +262,21 @@ export function AppSidebar({ initialRole = 'viewer', userId = '' }: { initialRol
                 </div>
 
                 {/* Role badge + Logout */}
-                <div className="p-3 border-t border-zinc-200 dark:border-white/[0.06] space-y-2">
+                <div className="p-3 border-t border-sidebar-border space-y-2">
+                    <div className="flex items-center justify-between px-3">
+                        <span className="text-[10px] font-semibold text-muted-foreground/70 uppercase tracking-widest">
+                            Tema
+                        </span>
+                        <ThemeToggle />
+                    </div>
                     {role && (
-                        <div className="px-3 py-2 rounded-lg bg-zinc-50 dark:bg-white/[0.04] flex items-center gap-2">
-                            <Shield className="h-3.5 w-3.5 flex-shrink-0 text-zinc-400 dark:text-zinc-500" />
+                        <div className="px-3 py-2 rounded-lg bg-muted/60 flex items-center gap-2">
+                            <Shield className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground/80" />
                             <span className={`text-xs font-semibold capitalize ${
                                 role === 'superadmin' ? 'text-amber-500 dark:text-amber-400' :
                                 role === 'admin'      ? 'text-purple-500 dark:text-purple-400' :
                                 role === 'trafficker' ? 'text-blue-500 dark:text-blue-400' :
-                                'text-zinc-400 dark:text-zinc-500'
+                                'text-muted-foreground'
                             }`}>
                                 {role === 'superadmin' ? 'Super Admin' :
                                  role === 'admin'      ? 'Admin' :
@@ -289,12 +287,12 @@ export function AppSidebar({ initialRole = 'viewer', userId = '' }: { initialRol
                     <form action="/auth/signout" method="post" className="w-full">
                         <button className="
                             flex w-full items-center px-3 py-2.5 text-sm font-medium rounded-lg
-                            text-zinc-500 dark:text-zinc-400
-                            hover:bg-red-50 dark:hover:bg-red-500/10
+                            text-muted-foreground
+                            hover:bg-red-500/10
                             hover:text-red-600 dark:hover:text-red-400
                             transition-all duration-200 group cursor-pointer
                         ">
-                            <LogOut className="mr-3 h-4.5 w-4.5 text-zinc-400 group-hover:text-red-500 dark:group-hover:text-red-400 transition-colors" />
+                            <LogOut className="mr-3 h-4.5 w-4.5 text-muted-foreground/80 group-hover:text-red-500 dark:group-hover:text-red-400 transition-colors" />
                             Cerrar Sesión
                         </button>
                     </form>

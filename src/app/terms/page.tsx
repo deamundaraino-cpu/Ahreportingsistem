@@ -1,4 +1,4 @@
-import type { Metadata } from 'next'
+﻿import type { Metadata } from 'next'
 import Link from 'next/link'
 import { BarChart3 } from 'lucide-react'
 
@@ -13,42 +13,39 @@ const CONTACT_EMAIL = 'adminrinconpentecostal@gmail.com'
 
 export default function TermsOfServicePage() {
     return (
-        <div className="min-h-screen bg-zinc-50 dark:bg-[#0E0E0E] relative overflow-hidden">
+        <div className="min-h-screen bg-background relative overflow-hidden">
             {/* Brand ambient glows */}
             <div
-                className="absolute top-[-15%] left-[-10%] w-[45%] h-[45%] rounded-full opacity-[0.08] blur-[130px] pointer-events-none"
-                style={{ background: '#E53529' }}
+                className="absolute top-[-15%] left-[-10%] w-[45%] h-[45%] ambient-glow-red"
             />
             <div
-                className="absolute bottom-[-15%] right-[-10%] w-[45%] h-[45%] rounded-full opacity-[0.08] blur-[130px] pointer-events-none"
-                style={{ background: '#1E6AB5' }}
+                className="absolute bottom-[-15%] right-[-10%] w-[45%] h-[45%] ambient-glow-blue"
             />
 
             <div className="relative mx-auto max-w-3xl px-6 py-16">
                 {/* Header / brand mark */}
                 <Link href="/" className="flex items-center gap-3 mb-12 w-fit group">
                     <div
-                        className="flex h-11 w-11 items-center justify-center rounded-xl shadow-lg"
-                        style={{ background: 'linear-gradient(135deg, #E53529 0%, #1E6AB5 100%)' }}
+                        className="flex h-11 w-11 items-center justify-center rounded-xl shadow-lg brand-gradient-reporting"
                     >
                         <BarChart3 className="h-5 w-5 text-white" />
                     </div>
                     <div className="flex flex-col leading-tight">
-                        <span className="text-xl font-bold tracking-tight text-zinc-900 dark:text-zinc-50">
+                        <span className="text-xl font-bold tracking-tight text-foreground">
                             AdsHouse
                         </span>
-                        <span className="text-[10px] font-medium text-zinc-400 dark:text-zinc-500 tracking-widest uppercase">
+                        <span className="text-[10px] font-medium text-muted-foreground/70 tracking-widest uppercase">
                             Reporting
                         </span>
                     </div>
                 </Link>
 
                 <article className="space-y-8">
-                    <header className="space-y-2 border-b border-zinc-200 dark:border-zinc-800 pb-8">
-                        <h1 className="text-3xl font-bold tracking-tight text-zinc-900 dark:text-zinc-50">
+                    <header className="space-y-2 border-b border-border pb-8">
+                        <h1 className="text-3xl font-bold tracking-tight text-foreground">
                             Términos de Servicio
                         </h1>
-                        <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                        <p className="text-sm text-muted-foreground">
                             Última actualización: {LAST_UPDATED}
                         </p>
                     </header>
@@ -172,8 +169,8 @@ export default function TermsOfServicePage() {
                     </Section>
                 </article>
 
-                <footer className="mt-16 pt-8 border-t border-zinc-200 dark:border-zinc-800">
-                    <p className="text-sm text-zinc-400 dark:text-zinc-500">
+                <footer className="mt-16 pt-8 border-t border-border">
+                    <p className="text-sm text-muted-foreground/70">
                         © {LAST_UPDATED.split(' ').pop()} AdsHouse Reporting. Todos los derechos reservados.
                     </p>
                 </footer>
@@ -185,8 +182,8 @@ export default function TermsOfServicePage() {
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
     return (
         <section className="space-y-3">
-            <h2 className="text-xl font-semibold text-zinc-900 dark:text-zinc-50">{title}</h2>
-            <div className="space-y-3 text-[15px] leading-relaxed text-zinc-600 dark:text-zinc-400 [&_ul]:list-disc [&_ul]:pl-6 [&_ul]:space-y-2 [&_strong]:text-zinc-800 dark:[&_strong]:text-zinc-200 [&_a]:text-[#1E6AB5] dark:[&_a]:text-[#5a9fd4] [&_a]:underline [&_a]:underline-offset-4 hover:[&_a]:opacity-80">
+            <h2 className="text-xl font-semibold text-foreground">{title}</h2>
+            <div className="space-y-3 text-[15px] leading-relaxed text-muted-foreground [&_ul]:list-disc [&_ul]:pl-6 [&_ul]:space-y-2 [&_strong]:text-foreground [&_a]:text-brand-blue dark:[&_a]:text-brand-blue-light [&_a]:underline [&_a]:underline-offset-4 hover:[&_a]:opacity-80">
                 {children}
             </div>
         </section>

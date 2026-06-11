@@ -29,41 +29,41 @@ function MetaAccountRow({ account, sharedToken, testStatus, onChange, onRemove, 
     onTest: () => void
 }) {
     return (
-        <div className="bg-zinc-950/60 border border-zinc-800 rounded-lg p-4 space-y-3">
+        <div className="bg-muted/40 border border-border rounded-lg p-4 space-y-3">
             <div className="flex items-center gap-2">
                 <Input
                     placeholder="Nombre de la cuenta (ej: Cuenta Principal)"
                     value={account.label}
                     onChange={(e) => onChange({ ...account, label: e.target.value })}
-                    className="bg-zinc-900 border-zinc-700 h-8 text-sm"
+                    className="bg-background border-input h-8 text-sm"
                 />
                 <Button
                     variant="ghost"
                     size="sm"
                     onClick={onRemove}
-                    className="text-zinc-500 hover:text-red-400 shrink-0 h-8 w-8 p-0"
+                    className="text-muted-foreground/70 hover:text-red-600 dark:hover:text-red-400 shrink-0 h-8 w-8 p-0"
                 >
                     <Trash2 className="w-4 h-4" />
                 </Button>
             </div>
             <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1.5">
-                    <Label className="text-zinc-400 text-xs">Ad Account ID</Label>
+                    <Label className="text-muted-foreground text-xs">Ad Account ID</Label>
                     <Input
                         placeholder="act_1234567890"
                         value={account.account_id}
                         onChange={(e) => onChange({ ...account, account_id: e.target.value })}
-                        className="bg-zinc-900 border-zinc-700 h-8 text-sm"
+                        className="bg-background border-input h-8 text-sm"
                     />
                 </div>
                 <div className="space-y-1.5">
-                    <Label className="text-zinc-400 text-xs">Token propio (opcional)</Label>
+                    <Label className="text-muted-foreground text-xs">Token propio (opcional)</Label>
                     <Input
                         type="password"
                         placeholder={sharedToken ? 'Usa token compartido' : 'EAA...'}
                         value={account.token}
                         onChange={(e) => onChange({ ...account, token: e.target.value })}
-                        className="bg-zinc-900 border-zinc-700 h-8 text-sm"
+                        className="bg-background border-input h-8 text-sm"
                     />
                 </div>
             </div>
@@ -82,7 +82,7 @@ function MetaAccountRow({ account, sharedToken, testStatus, onChange, onRemove, 
                     Probar conexión
                 </Button>
                 {testStatus?.success && (
-                    <span className="text-green-500 text-xs flex items-center gap-1">
+                    <span className="text-green-600 dark:text-green-500 text-xs flex items-center gap-1">
                         <CheckCircle2 className="w-3 h-3" /> Conexión exitosa
                     </span>
                 )}
@@ -114,41 +114,41 @@ function TikTokAccountRow({ account, sharedToken, testStatus, onChange, onRemove
     onTest: () => void
 }) {
     return (
-        <div className="bg-zinc-950/60 border border-zinc-800 rounded-lg p-4 space-y-3">
+        <div className="bg-muted/40 border border-border rounded-lg p-4 space-y-3">
             <div className="flex items-center gap-2">
                 <Input
                     placeholder="Nombre de la cuenta (ej: Cuenta Principal)"
                     value={account.label}
                     onChange={(e) => onChange({ ...account, label: e.target.value })}
-                    className="bg-zinc-900 border-zinc-700 h-8 text-sm"
+                    className="bg-background border-input h-8 text-sm"
                 />
                 <Button
                     variant="ghost"
                     size="sm"
                     onClick={onRemove}
-                    className="text-zinc-500 hover:text-red-400 shrink-0 h-8 w-8 p-0"
+                    className="text-muted-foreground/70 hover:text-red-600 dark:hover:text-red-400 shrink-0 h-8 w-8 p-0"
                 >
                     <Trash2 className="w-4 h-4" />
                 </Button>
             </div>
             <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1.5">
-                    <Label className="text-zinc-400 text-xs">Advertiser ID</Label>
+                    <Label className="text-muted-foreground text-xs">Advertiser ID</Label>
                     <Input
                         placeholder="1234567890123456789"
                         value={account.advertiser_id}
                         onChange={(e) => onChange({ ...account, advertiser_id: e.target.value })}
-                        className="bg-zinc-900 border-zinc-700 h-8 text-sm"
+                        className="bg-background border-input h-8 text-sm"
                     />
                 </div>
                 <div className="space-y-1.5">
-                    <Label className="text-zinc-400 text-xs">Token propio (opcional)</Label>
+                    <Label className="text-muted-foreground text-xs">Token propio (opcional)</Label>
                     <Input
                         type="password"
                         placeholder={sharedToken ? 'Usa token compartido' : 'Token...'}
                         value={account.access_token}
                         onChange={(e) => onChange({ ...account, access_token: e.target.value })}
-                        className="bg-zinc-900 border-zinc-700 h-8 text-sm"
+                        className="bg-background border-input h-8 text-sm"
                     />
                 </div>
             </div>
@@ -167,7 +167,7 @@ function TikTokAccountRow({ account, sharedToken, testStatus, onChange, onRemove
                     Probar conexión
                 </Button>
                 {testStatus?.success && (
-                    <span className="text-green-500 text-xs flex items-center gap-1">
+                    <span className="text-green-600 dark:text-green-500 text-xs flex items-center gap-1">
                         <CheckCircle2 className="w-3 h-3" /> Conexión exitosa
                     </span>
                 )}
@@ -460,14 +460,14 @@ const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean
             {error && <p className="text-red-500 bg-red-500/10 p-4 rounded">{error}</p>}
 
             {/* ─── Meta Ads ─────────────────────────────────────────────────── */}
-            <Card className="bg-zinc-900 border-zinc-800">
+            <Card className="bg-card border-border">
                 <CardHeader>
                     <CardTitle>Meta Ads Configuration</CardTitle>
                     <CardDescription>
                         Conecta una o más cuentas publicitarias de Meta. Los datos de todas las cuentas se consolidarán en el reporte.
                     </CardDescription>
                     {testStatus.metaSync?.success && (
-                        <p className="text-emerald-400 text-sm flex items-center mt-2 p-2 bg-emerald-500/10 rounded">
+                        <p className="text-emerald-600 dark:text-emerald-400 text-sm flex items-center mt-2 p-2 bg-emerald-500/10 rounded">
                             <CheckCircle2 className="w-4 h-4 mr-2" /> {testStatus.metaSync.message}
                         </p>
                     )}
@@ -479,7 +479,7 @@ const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean
                 </CardHeader>
                 <CardContent className="space-y-5">
                     {/* OAuth connect + estado de conexión */}
-                    <div className="flex flex-col gap-2 pb-4 border-b border-zinc-800">
+                    <div className="flex flex-col gap-2 pb-4 border-b border-border">
                         <a href={`/api/auth/meta?client_id=${cliente.id}`}>
                             <Button variant="default" size="sm" className="w-full bg-[#1877f2] hover:bg-[#0f5ed8] text-white">
                                 {config.meta_token ? '🔄 Reconectar con Facebook Ads' : '🔗 Conectar con Facebook Ads'}
@@ -500,13 +500,13 @@ const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean
                             }
                             return null
                         })()}
-                        {metaOAuthStatus?.success && <p className="text-green-500 text-xs flex items-center gap-1"><CheckCircle2 className="w-3 h-3" /> Cuenta de Facebook conectada exitosamente</p>}
+                        {metaOAuthStatus?.success && <p className="text-green-600 dark:text-green-500 text-xs flex items-center gap-1"><CheckCircle2 className="w-3 h-3" /> Cuenta de Facebook conectada exitosamente</p>}
                         {metaOAuthStatus?.error && <p className="text-red-500 text-xs flex items-center gap-1"><AlertCircle className="w-3 h-3" /> {metaOAuthStatus.error}</p>}
                     </div>
 
                     {/* Shared token */}
                     <div className="space-y-2">
-                        <Label htmlFor="meta_token" className="text-zinc-300">
+                        <Label htmlFor="meta_token" className="text-foreground/90">
                             Access Token Compartido
                         </Label>
                         <Input
@@ -515,9 +515,9 @@ const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean
                             placeholder="EAA..."
                             value={config.meta_token || ''}
                             onChange={(e) => setConfig({ ...config, meta_token: e.target.value })}
-                            className="bg-zinc-950 border-zinc-700"
+                            className="bg-background border-input"
                         />
-                        <p className="text-xs text-zinc-500">
+                        <p className="text-xs text-muted-foreground/70">
                             Se completa automáticamente al conectar por OAuth. Si una cuenta no tiene token propio, se usará este.
                             Para una conexión que <strong>no caduca</strong>, pega aquí un <strong>System User token</strong> del Business Manager.
                         </p>
@@ -526,7 +526,7 @@ const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean
                     {/* Account list */}
                     <div className="space-y-3">
                         <div className="flex items-center justify-between">
-                            <Label className="text-zinc-300">Cuentas Publicitarias</Label>
+                            <Label className="text-foreground/90">Cuentas Publicitarias</Label>
                             <div className="flex items-center gap-2">
                                 <Button size="sm" variant="outline" onClick={openMetaAccountPicker} disabled={loadingMetaAccounts || !config.meta_token} className="h-7 text-xs">
                                     {loadingMetaAccounts ? <RefreshCw className="w-3 h-3 mr-1 animate-spin" /> : <DownloadCloud className="w-3 h-3 mr-1" />} Elegir cuentas
@@ -539,31 +539,31 @@ const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean
 
                         {/* Selector de cuentas disponibles desde el token */}
                         {availableMetaAccounts && (
-                            <div className="bg-zinc-950/80 border border-indigo-500/30 rounded-lg p-4 space-y-3">
+                            <div className="bg-muted/40 border border-indigo-500/30 rounded-lg p-4 space-y-3">
                                 <div className="flex items-center justify-between">
-                                    <p className="text-sm text-zinc-200 font-medium">Cuentas disponibles en tu Facebook</p>
-                                    <Button variant="ghost" size="sm" onClick={() => setAvailableMetaAccounts(null)} className="h-6 text-xs text-zinc-500 hover:text-zinc-300">Cancelar</Button>
+                                    <p className="text-sm text-foreground font-medium">Cuentas disponibles en tu Facebook</p>
+                                    <Button variant="ghost" size="sm" onClick={() => setAvailableMetaAccounts(null)} className="h-6 text-xs text-muted-foreground/70 hover:text-foreground/90">Cancelar</Button>
                                 </div>
                                 {metaPickerError && (
                                     <p className="text-red-500 text-xs flex items-center gap-1"><AlertCircle className="w-3 h-3" /> {metaPickerError}</p>
                                 )}
                                 {availableMetaAccounts.length === 0 && !metaPickerError && (
-                                    <p className="text-xs text-zinc-500">No se encontraron cuentas publicitarias para este token.</p>
+                                    <p className="text-xs text-muted-foreground/70">No se encontraron cuentas publicitarias para este token.</p>
                                 )}
                                 <div className="space-y-1 max-h-64 overflow-y-auto">
                                     {availableMetaAccounts.map(a => {
                                         const alreadyAdded = metaAccounts.some(m => m.account_id === a.account_id)
                                         return (
-                                            <label key={a.account_id} className={`flex items-center gap-3 p-2 rounded-md ${alreadyAdded ? 'opacity-50' : 'hover:bg-zinc-900 cursor-pointer'}`}>
+                                            <label key={a.account_id} className={`flex items-center gap-3 p-2 rounded-md ${alreadyAdded ? 'opacity-50' : 'hover:bg-accent cursor-pointer'}`}>
                                                 <input
                                                     type="checkbox"
                                                     disabled={alreadyAdded}
                                                     checked={alreadyAdded || selectedMetaIds.has(a.account_id)}
                                                     onChange={() => toggleMetaSelection(a.account_id)}
-                                                    className="rounded border-zinc-600 bg-zinc-950 text-indigo-500 focus:ring-indigo-500"
+                                                    className="rounded border-input bg-background text-indigo-500 focus:ring-indigo-500"
                                                 />
-                                                <span className="text-sm text-zinc-200 flex-1">{a.name}</span>
-                                                <span className="text-xs text-zinc-500 font-mono">{a.account_id}</span>
+                                                <span className="text-sm text-foreground flex-1">{a.name}</span>
+                                                <span className="text-xs text-muted-foreground/70 font-mono">{a.account_id}</span>
                                                 {alreadyAdded && <span className="text-xs text-green-500">ya agregada</span>}
                                             </label>
                                         )
@@ -580,7 +580,7 @@ const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean
                         )}
 
                         {metaAccounts.length === 0 && (
-                            <p className="text-xs text-zinc-500 py-3 text-center border border-dashed border-zinc-800 rounded-lg">
+                            <p className="text-xs text-muted-foreground/70 py-3 text-center border border-dashed border-border rounded-lg">
                                 Sin cuentas configuradas. Agrega al menos una para activar Meta Ads.
                             </p>
                         )}
@@ -601,16 +601,16 @@ const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean
                     </div>
 
                     {/* Conversiones personalizadas */}
-                    <div className="pt-4 mt-2 border-t border-zinc-800">
-                        <div className="flex justify-between items-center bg-zinc-950/50 p-3 rounded-lg border border-zinc-800">
+                    <div className="pt-4 mt-2 border-t border-border">
+                        <div className="flex justify-between items-center bg-muted/50 p-3 rounded-lg border border-border">
                             <div>
-                                <h4 className="text-sm font-medium text-zinc-200">Conversiones Personalizadas</h4>
-                                <p className="text-xs text-zinc-500 mt-1">Busca y actualiza todos los eventos personalizados detectados en Meta durante los últimos 30 días.</p>
+                                <h4 className="text-sm font-medium text-foreground">Conversiones Personalizadas</h4>
+                                <p className="text-xs text-muted-foreground/70 mt-1">Busca y actualiza todos los eventos personalizados detectados en Meta durante los últimos 30 días.</p>
                             </div>
                             <Button
                                 variant="secondary"
                                 size="sm"
-                                className="bg-indigo-500/20 text-indigo-300 hover:bg-indigo-500/30 border border-indigo-500/30 whitespace-nowrap"
+                                className="bg-indigo-500/20 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-500/30 border border-indigo-500/30 whitespace-nowrap"
                                 onClick={() => runTest('metaSync', () => refreshMetaCustomConversions(cliente.id, config))}
                                 disabled={testStatus.metaSync?.loading || !hasMetaConfig}
                             >
@@ -623,24 +623,24 @@ const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean
             </Card>
 
             {/* ─── Sincronización de Datos ──────────────────────────────────── */}
-            <Card className="bg-zinc-900 border-zinc-800 border-indigo-500/20">
+            <Card className="bg-card border-indigo-500/20">
                 <CardHeader>
-                    <CardTitle className="flex items-center gap-2 text-indigo-300">
+                    <CardTitle className="flex items-center gap-2 text-indigo-700 dark:text-indigo-300">
                         <DatabaseZap className="w-5 h-5" />
                         Sincronizar Datos Diarios
                     </CardTitle>
-                    <CardDescription className="text-zinc-400">
+                    <CardDescription className="text-muted-foreground">
                         Carga o recarga los datos de Meta y Hotmart para el rango de fechas seleccionado.
                         Usa esto cuando falten datos o para actualizar métricas históricas.
                     </CardDescription>
                     {testStatus.dataSync?.success && (
-                        <p className="text-emerald-400 text-sm flex items-start gap-2 mt-2 p-3 bg-emerald-500/10 rounded">
+                        <p className="text-emerald-600 dark:text-emerald-400 text-sm flex items-start gap-2 mt-2 p-3 bg-emerald-500/10 rounded">
                             <CheckCircle2 className="w-4 h-4 mt-0.5 shrink-0" />
                             <span>{testStatus.dataSync.message}</span>
                         </p>
                     )}
                     {testStatus.dataSync?.error && (
-                        <p className="text-red-400 text-sm flex items-start gap-2 mt-2 p-3 bg-red-500/10 rounded">
+                        <p className="text-red-600 dark:text-red-400 text-sm flex items-start gap-2 mt-2 p-3 bg-red-500/10 rounded">
                             <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
                             <span>{testStatus.dataSync.error}</span>
                         </p>
@@ -649,21 +649,21 @@ const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean
                 <CardContent>
                     <div className="flex items-end gap-3 flex-wrap">
                         <div className="space-y-1.5 flex-1 min-w-[140px]">
-                            <Label className="text-zinc-400 text-xs">Fecha inicio</Label>
+                            <Label className="text-muted-foreground text-xs">Fecha inicio</Label>
                             <Input
                                 type="date"
                                 value={syncStart}
                                 onChange={e => setSyncStart(e.target.value)}
-                                className="bg-zinc-950 border-zinc-700 text-zinc-100 h-9"
+                                className="bg-background border-input text-foreground h-9"
                             />
                         </div>
                         <div className="space-y-1.5 flex-1 min-w-[140px]">
-                            <Label className="text-zinc-400 text-xs">Fecha fin</Label>
+                            <Label className="text-muted-foreground text-xs">Fecha fin</Label>
                             <Input
                                 type="date"
                                 value={syncEnd}
                                 onChange={e => setSyncEnd(e.target.value)}
-                                className="bg-zinc-950 border-zinc-700 text-zinc-100 h-9"
+                                className="bg-background border-input text-foreground h-9"
                             />
                         </div>
                         <Button
@@ -681,7 +681,7 @@ const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean
             </Card>
 
             {/* ─── Hotmart ──────────────────────────────────────────────────── */}
-            <Card className="bg-zinc-900 border-zinc-800">
+            <Card className="bg-card border-border">
                 <CardHeader>
                     <div className="flex justify-between items-center">
                         <CardTitle>Hotmart</CardTitle>
@@ -696,12 +696,12 @@ const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean
                         </Button>
                     </div>
                     <CardDescription>Conecta la cuenta de Hotmart del cliente para sincronizar ventas, comisiones y afiliados.</CardDescription>
-                    {testStatus.hotmart?.success && <p className="text-green-500 text-xs flex items-center mt-2"><CheckCircle2 className="w-3 h-3 mr-1" /> Conexión Exitosa</p>}
+                    {testStatus.hotmart?.success && <p className="text-green-600 dark:text-green-500 text-xs flex items-center mt-2"><CheckCircle2 className="w-3 h-3 mr-1" /> Conexión Exitosa</p>}
                     {testStatus.hotmart?.error && <p className="text-red-500 text-xs flex items-center mt-2"><AlertCircle className="w-3 h-3 mr-1" /> {testStatus.hotmart.error}</p>}
                 </CardHeader>
                 <CardContent className="space-y-5">
                     {/* OAuth (HotConnect) connect + estado de conexión */}
-                    <div className="flex flex-col gap-2 pb-4 border-b border-zinc-800">
+                    <div className="flex flex-col gap-2 pb-4 border-b border-border">
                         <a href={`/api/auth/hotmart?client_id=${cliente.id}`}>
                             <Button variant="default" size="sm" className="w-full bg-[#ef4a23] hover:bg-[#d63d18] text-white">
                                 {config.hotmart_auth_mode === 'hotconnect' ? '🔄 Reconectar con Hotmart' : '🔗 Conectar con Hotmart'}
@@ -712,21 +712,21 @@ const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean
                                 return <p className="text-red-500 text-xs flex items-center gap-1"><AlertCircle className="w-3 h-3" /> Token vencido, reconecta con Hotmart</p>
                             }
                             if (config.hotmart_auth_mode === 'hotconnect' && config.hotmart_connection_status === 'connected') {
-                                return <p className="text-green-500 text-xs flex items-center gap-1"><CheckCircle2 className="w-3 h-3" /> Conectado por HotConnect · el token se renueva automáticamente</p>
+                                return <p className="text-green-600 dark:text-green-500 text-xs flex items-center gap-1"><CheckCircle2 className="w-3 h-3" /> Conectado por HotConnect · el token se renueva automáticamente</p>
                             }
                             if (config.hotmart_connection_status === 'connected') {
-                                return <p className="text-green-500 text-xs flex items-center gap-1"><CheckCircle2 className="w-3 h-3" /> Conectado con credenciales</p>
+                                return <p className="text-green-600 dark:text-green-500 text-xs flex items-center gap-1"><CheckCircle2 className="w-3 h-3" /> Conectado con credenciales</p>
                             }
                             return null
                         })()}
-                        {hotmartOAuthStatus?.success && <p className="text-green-500 text-xs flex items-center gap-1"><CheckCircle2 className="w-3 h-3" /> Cuenta de Hotmart conectada exitosamente</p>}
+                        {hotmartOAuthStatus?.success && <p className="text-green-600 dark:text-green-500 text-xs flex items-center gap-1"><CheckCircle2 className="w-3 h-3" /> Cuenta de Hotmart conectada exitosamente</p>}
                         {hotmartOAuthStatus?.error && <p className="text-red-500 text-xs flex items-center gap-1"><AlertCircle className="w-3 h-3" /> {hotmartOAuthStatus.error}</p>}
                     </div>
 
                     {/* Guía paso a paso para pegar credenciales */}
                     <div className="bg-orange-500/5 border border-orange-500/20 rounded-lg p-3">
-                        <p className="text-xs text-orange-300/90 leading-relaxed">
-                            <strong className="text-orange-400">¿Prefieres pegar credenciales?</strong> En la cuenta de Hotmart del cliente:
+                        <p className="text-xs text-orange-700 dark:text-orange-300/90 leading-relaxed">
+                            <strong className="text-orange-600 dark:text-orange-400">¿Prefieres pegar credenciales?</strong> En la cuenta de Hotmart del cliente:
                             <br />1. Entra a <strong>Herramientas → Credenciales de Desarrollador</strong>.
                             <br />2. Crea una credencial (entorno <strong>Producción</strong>).
                             <br />3. Copia el <strong>Client ID</strong> y <strong>Client Secret</strong> y pégalos abajo.
@@ -734,22 +734,22 @@ const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean
                     </div>
 
                     <div className="space-y-2">
-                        <Label htmlFor="hotmart_client_id" className="text-zinc-300">Client ID</Label>
+                        <Label htmlFor="hotmart_client_id" className="text-foreground/90">Client ID</Label>
                         <Input
                             id="hotmart_client_id"
                             value={config.hotmart_client_id || ''}
                             onChange={(e) => setConfig({ ...config, hotmart_client_id: e.target.value })}
-                            className="bg-zinc-950 border-zinc-700"
+                            className="bg-background border-input"
                         />
                     </div>
                     <div className="space-y-2">
-                        <Label htmlFor="hotmart_client_secret" className="text-zinc-300">Client Secret</Label>
+                        <Label htmlFor="hotmart_client_secret" className="text-foreground/90">Client Secret</Label>
                         <Input
                             id="hotmart_client_secret"
                             type="password"
                             value={config.hotmart_client_secret || ''}
                             onChange={(e) => setConfig({ ...config, hotmart_client_secret: e.target.value })}
-                            className="bg-zinc-950 border-zinc-700"
+                            className="bg-background border-input"
                         />
                     </div>
 
@@ -758,41 +758,41 @@ const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean
                         <button
                             type="button"
                             onClick={() => setShowHotmartAdvanced(v => !v)}
-                            className="text-xs text-zinc-500 hover:text-zinc-300"
+                            className="text-xs text-muted-foreground/70 hover:text-foreground/90"
                         >
                             {showHotmartAdvanced ? '▾ Ocultar avanzado' : '▸ Opciones avanzadas'}
                         </button>
                         {showHotmartAdvanced && (
                             <div className="space-y-4 mt-3">
                                 <div className="space-y-2">
-                                    <Label htmlFor="hotmart_token" className="text-zinc-300">Access Token Temporal (opcional)</Label>
+                                    <Label htmlFor="hotmart_token" className="text-foreground/90">Access Token Temporal (opcional)</Label>
                                     <Input
                                         id="hotmart_token"
                                         type="password"
                                         value={config.hotmart_token || ''}
                                         onChange={(e) => setConfig({ ...config, hotmart_token: e.target.value })}
-                                        className="bg-zinc-950 border-zinc-700"
+                                        className="bg-background border-input"
                                     />
                                 </div>
                                 <div className="space-y-2">
-                                    <Label htmlFor="hotmart_basic" className="text-zinc-300">Basic Auth (Base64 Client ID:Secret)</Label>
+                                    <Label htmlFor="hotmart_basic" className="text-foreground/90">Basic Auth (Base64 Client ID:Secret)</Label>
                                     <Input
                                         id="hotmart_basic"
                                         type="password"
                                         value={config.hotmart_basic || ''}
                                         onChange={(e) => setConfig({ ...config, hotmart_basic: e.target.value })}
-                                        className="bg-zinc-950 border-zinc-700"
+                                        className="bg-background border-input"
                                     />
-                                    <p className="text-xs text-zinc-500">Se calcula automáticamente desde Client ID + Secret al guardar. Solo edítalo si tienes el token Basic directamente.</p>
+                                    <p className="text-xs text-muted-foreground/70">Se calcula automáticamente desde Client ID + Secret al guardar. Solo edítalo si tienes el token Basic directamente.</p>
                                 </div>
                             </div>
                         )}
                     </div>
 
-                    <div className="pt-4 border-t border-zinc-800">
-                        <div className="bg-zinc-800/40 border border-zinc-700/50 rounded-lg p-3">
-                            <p className="text-xs text-zinc-400 leading-relaxed">
-                                <strong className="text-zinc-300">Filtros de productos por funnel</strong> — La configuración de productos (Principal / Order Bump / Upsell) y URLs de página se hace <strong>por pestaña</strong> desde el dashboard del cliente. Cada pestaña representa un funnel independiente con sus propias métricas.
+                    <div className="pt-4 border-t border-border">
+                        <div className="bg-muted/40 border border-border/50 rounded-lg p-3">
+                            <p className="text-xs text-muted-foreground leading-relaxed">
+                                <strong className="text-foreground/90">Filtros de productos por funnel</strong> — La configuración de productos (Principal / Order Bump / Upsell) y URLs de página se hace <strong>por pestaña</strong> desde el dashboard del cliente. Cada pestaña representa un funnel independiente con sus propias métricas.
                             </p>
                         </div>
                     </div>
@@ -800,7 +800,7 @@ const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean
             </Card>
 
             {/* ─── Google Analytics 4 (GA4) ─────────────────────────────────── */}
-            <Card className="bg-zinc-900 border-zinc-800">
+            <Card className="bg-card border-border">
                 <CardHeader>
                     <div className="flex justify-between items-center">
                         <CardTitle>Google Analytics (GA4)</CardTitle>
@@ -821,43 +821,43 @@ const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean
                     <CardDescription>
                         Conecta una cuenta de servicio de Google Cloud para extraer métricas de GA4 (Sesiones, Rebote).
                     </CardDescription>
-                    {testStatus.ga4?.success && <p className="text-green-500 text-xs flex items-start mt-2"><CheckCircle2 className="w-4 h-4 mr-1 shrink-0" /> <span dangerouslySetInnerHTML={{ __html: testStatus.ga4.message || 'Conexión Exitosa' }} /></p>}
+                    {testStatus.ga4?.success && <p className="text-green-600 dark:text-green-500 text-xs flex items-start mt-2"><CheckCircle2 className="w-4 h-4 mr-1 shrink-0" /> <span dangerouslySetInnerHTML={{ __html: testStatus.ga4.message || 'Conexión Exitosa' }} /></p>}
                     {testStatus.ga4?.error && <p className="text-red-500 text-xs flex items-start mt-2"><AlertCircle className="w-4 h-4 mr-1 shrink-0" /> <span>{testStatus.ga4.error}</span></p>}
                 </CardHeader>
                 <CardContent className="space-y-4">
                     <div className="space-y-2">
-                        <Label htmlFor="ga_property_id" className="text-zinc-300">Property ID <span className="text-zinc-500 font-normal ml-1">(ej: 400123456)</span></Label>
+                        <Label htmlFor="ga_property_id" className="text-foreground/90">Property ID <span className="text-muted-foreground/70 font-normal ml-1">(ej: 400123456)</span></Label>
                         <Input
                             id="ga_property_id"
                             value={config.ga_property_id || ''}
                             onChange={(e) => setConfig({ ...config, ga_property_id: e.target.value })}
-                            className="bg-zinc-950 border-zinc-700"
+                            className="bg-background border-input"
                         />
                     </div>
 
-                    <p className="text-xs text-emerald-400/80 bg-emerald-500/5 border border-emerald-500/20 rounded p-2">
+                    <p className="text-xs text-emerald-700 dark:text-emerald-400/80 bg-emerald-500/5 border border-emerald-500/20 rounded p-2">
                         Si conectaste la cuenta de Google de la agencia (en Ajustes → Conexión Google), solo necesitas el
                         Property ID. Las credenciales de Service Account de abajo son opcionales (modo legacy).
                     </p>
 
-                    <div className="bg-zinc-950/60 border border-zinc-800 p-4 rounded-lg space-y-4 relative overflow-hidden">
+                    <div className="bg-muted/40 border border-border p-4 rounded-lg space-y-4 relative overflow-hidden">
                         <div className="absolute top-0 left-0 w-1 h-full bg-indigo-500/50"></div>
                         
                         <div className="flex items-center gap-3">
                             <div className="w-10 h-10 rounded-full bg-indigo-500/10 flex items-center justify-center shrink-0">
-                                <DownloadCloud className="w-5 h-5 text-indigo-400" />
+                                <DownloadCloud className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
                             </div>
                             <div>
-                                <h4 className="text-sm font-medium text-zinc-200">Credenciales de Autenticación</h4>
-                                <p className="text-xs text-zinc-500 mt-0.5">Sube el archivo JSON de tu Service Account de Google Cloud. Automáticamente extraeremos el Email y la Private Key aplicando el formato correcto.</p>
+                                <h4 className="text-sm font-medium text-foreground">Credenciales de Autenticación</h4>
+                                <p className="text-xs text-muted-foreground/70 mt-0.5">Sube el archivo JSON de tu Service Account de Google Cloud. Automáticamente extraeremos el Email y la Private Key aplicando el formato correcto.</p>
                             </div>
                         </div>
 
                         <div className="mt-3">
                             <Label className="cursor-pointer">
-                                <div className="border border-dashed border-zinc-700 hover:border-indigo-500/50 bg-zinc-900/50 hover:bg-zinc-900 transition-colors p-4 rounded-lg text-center flex flex-col items-center justify-center gap-2">
-                                    <DatabaseZap className="w-6 h-6 text-zinc-500" />
-                                    <span className="text-sm text-zinc-400">Seleccionar o arrastrar archivo <strong>.json</strong></span>
+                                <div className="border border-dashed border-input hover:border-indigo-500/50 bg-muted/50 hover:bg-muted transition-colors p-4 rounded-lg text-center flex flex-col items-center justify-center gap-2">
+                                    <DatabaseZap className="w-6 h-6 text-muted-foreground/70" />
+                                    <span className="text-sm text-muted-foreground">Seleccionar o arrastrar archivo <strong>.json</strong></span>
                                 </div>
                                 <input
                                     type="file"
@@ -870,21 +870,21 @@ const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean
 
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
                             <div className="space-y-2">
-                                <Label htmlFor="ga_client_email" className="text-zinc-400 text-xs">Client Email (Auto-extraído)</Label>
+                                <Label htmlFor="ga_client_email" className="text-muted-foreground text-xs">Client Email (Auto-extraído)</Label>
                                 <Input
                                     id="ga_client_email"
                                     value={config.ga_client_email || ''}
                                     readOnly
-                                    className="bg-zinc-950/50 border-zinc-800 text-zinc-500 text-xs focus-visible:ring-0"
+                                    className="bg-muted/50 border-border text-muted-foreground/70 text-xs focus-visible:ring-0"
                                 />
                             </div>
                             <div className="space-y-2">
-                                <Label htmlFor="ga_private_key" className="text-zinc-400 text-xs">Private Key (Auto-extraída)</Label>
+                                <Label htmlFor="ga_private_key" className="text-muted-foreground text-xs">Private Key (Auto-extraída)</Label>
                                 <textarea
                                     id="ga_private_key"
                                     value={config.ga_private_key ? '•••••••••••••••••••••••••••• PRIVATE KEY LOADED ••••••••••••••••••••••••••••' : ''}
                                     readOnly
-                                    className="w-full h-9 rounded-md bg-zinc-950/50 border border-zinc-800 px-3 py-2 text-xs text-zinc-500 resize-none focus-visible:outline-none focus-visible:ring-0"
+                                    className="w-full h-9 rounded-md bg-muted/50 border border-border px-3 py-2 text-xs text-muted-foreground/70 resize-none focus-visible:outline-none focus-visible:ring-0"
                                 />
                             </div>
                         </div>
@@ -893,7 +893,7 @@ const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean
             </Card>
 
             {/* ─── TikTok ───────────────────────────────────────────────────── */}
-            <Card className="bg-zinc-900 border-zinc-800">
+            <Card className="bg-card border-border">
                 <CardHeader>
                     <CardTitle>TikTok Ads</CardTitle>
                     <CardDescription>Conecta una o más cuentas publicitarias de TikTok Ads. Los datos de todas las cuentas se consolidan en el reporte y pueden filtrarse por cuenta en el layout.</CardDescription>
@@ -901,15 +901,15 @@ const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean
                 <CardContent className="space-y-4">
                     {/* Shared token */}
                     <div className="space-y-2">
-                        <Label className="text-zinc-300">Access Token Compartido</Label>
+                        <Label className="text-foreground/90">Access Token Compartido</Label>
                         <Input
                             type="password"
                             placeholder="Tu TikTok Marketing API Access Token"
                             value={config.tiktok_access_token || ''}
                             onChange={(e) => setConfig({ ...config, tiktok_access_token: e.target.value })}
-                            className="bg-zinc-950 border-zinc-700"
+                            className="bg-background border-input"
                         />
-                        <p className="text-xs text-zinc-500">Token OAuth o token manual. Las cuentas sin token propio usarán este.</p>
+                        <p className="text-xs text-muted-foreground/70">Token OAuth o token manual. Las cuentas sin token propio usarán este.</p>
                     </div>
 
                     {/* OAuth button */}
@@ -919,23 +919,23 @@ const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean
                                 {config.tiktok_access_token ? '🔄 Reconectar con TikTok Ads' : '🔗 Conectar con TikTok Ads'}
                             </Button>
                         </a>
-                        {tiktokOAuthStatus?.success && <p className="text-green-500 text-xs flex items-center gap-1"><CheckCircle2 className="w-3 h-3" /> Cuenta TikTok conectada exitosamente</p>}
+                        {tiktokOAuthStatus?.success && <p className="text-green-600 dark:text-green-500 text-xs flex items-center gap-1"><CheckCircle2 className="w-3 h-3" /> Cuenta TikTok conectada exitosamente</p>}
                         {tiktokOAuthStatus?.error && <p className="text-red-500 text-xs flex items-center gap-1"><AlertCircle className="w-3 h-3" /> {tiktokOAuthStatus.error}</p>}
-                        {testStatus.tiktok?.success && <p className="text-green-500 text-xs flex items-center gap-1"><CheckCircle2 className="w-3 h-3" /> Conexión Exitosa</p>}
+                        {testStatus.tiktok?.success && <p className="text-green-600 dark:text-green-500 text-xs flex items-center gap-1"><CheckCircle2 className="w-3 h-3" /> Conexión Exitosa</p>}
                         {testStatus.tiktok?.error && <p className="text-red-500 text-xs flex items-center gap-1"><AlertCircle className="w-3 h-3" /> {testStatus.tiktok.error}</p>}
                     </div>
 
                     {/* Multi-account list */}
-                    <div className="space-y-3 pt-2 border-t border-zinc-800">
+                    <div className="space-y-3 pt-2 border-t border-border">
                         <div className="flex items-center justify-between">
-                            <Label className="text-zinc-300">Cuentas Publicitarias TikTok</Label>
+                            <Label className="text-foreground/90">Cuentas Publicitarias TikTok</Label>
                             <Button size="sm" variant="outline" onClick={addTikTokAccount} className="h-7 text-xs">
                                 <Plus className="w-3 h-3 mr-1" /> Agregar Cuenta
                             </Button>
                         </div>
 
                         {tiktokAccounts.length === 0 && (
-                            <p className="text-xs text-zinc-500 py-3 text-center border border-dashed border-zinc-800 rounded-lg">
+                            <p className="text-xs text-muted-foreground/70 py-3 text-center border border-dashed border-border rounded-lg">
                                 Sin cuentas configuradas. Conéctate via OAuth o agrega manualmente.
                             </p>
                         )}
@@ -958,7 +958,7 @@ const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean
             </Card>
 
             {/* ─── Google Sheets (Leads) ────────────────────────────────────── */}
-            <Card className="bg-zinc-900 border-zinc-800">
+            <Card className="bg-card border-border">
                 <CardHeader>
                     <CardTitle>Google Sheets — Leads</CardTitle>
                     <CardDescription>
@@ -975,36 +975,36 @@ const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean
                                 ...config,
                                 google_sheets: { ...config.google_sheets, enabled: e.target.checked }
                             })}
-                            className="rounded border-zinc-600 bg-zinc-950 text-indigo-500 focus:ring-indigo-500"
+                            className="rounded border-input bg-background text-indigo-500 focus:ring-indigo-500"
                         />
-                        <Label htmlFor="gs_enabled" className="text-zinc-300 cursor-pointer">Activar integración de Google Sheets</Label>
+                        <Label htmlFor="gs_enabled" className="text-foreground/90 cursor-pointer">Activar integración de Google Sheets</Label>
                     </div>
 
                     {config.google_sheets?.enabled && (
                         <>
-                            <p className="text-xs text-emerald-400/80 bg-emerald-500/5 border border-emerald-500/20 rounded p-2">
+                            <p className="text-xs text-emerald-700 dark:text-emerald-400/80 bg-emerald-500/5 border border-emerald-500/20 rounded p-2">
                                 Si conectaste la cuenta de Google de la agencia (en Ajustes → Conexión Google), solo necesitas
                                 la URL del Sheet. Las credenciales de Service Account de abajo son opcionales (modo legacy).
                             </p>
                             {/* ── Credenciales de Autenticación (JSON upload) ── */}
-                            <div className="bg-zinc-950/60 border border-zinc-800 p-4 rounded-lg space-y-4 relative overflow-hidden">
+                            <div className="bg-muted/40 border border-border p-4 rounded-lg space-y-4 relative overflow-hidden">
                                 <div className="absolute top-0 left-0 w-1 h-full bg-green-500/50"></div>
 
                                 <div className="flex items-center gap-3">
                                     <div className="w-10 h-10 rounded-full bg-green-500/10 flex items-center justify-center shrink-0">
-                                        <DownloadCloud className="w-5 h-5 text-green-400" />
+                                        <DownloadCloud className="w-5 h-5 text-green-600 dark:text-green-400" />
                                     </div>
                                     <div>
-                                        <h4 className="text-sm font-medium text-zinc-200">Credenciales de Autenticación</h4>
-                                        <p className="text-xs text-zinc-500 mt-0.5">Sube el archivo JSON de tu Service Account de Google Cloud. Automáticamente extraeremos el Email y la Private Key aplicando el formato correcto.</p>
+                                        <h4 className="text-sm font-medium text-foreground">Credenciales de Autenticación</h4>
+                                        <p className="text-xs text-muted-foreground/70 mt-0.5">Sube el archivo JSON de tu Service Account de Google Cloud. Automáticamente extraeremos el Email y la Private Key aplicando el formato correcto.</p>
                                     </div>
                                 </div>
 
                                 <div className="mt-3">
                                     <Label className="cursor-pointer">
-                                        <div className="border border-dashed border-zinc-700 hover:border-green-500/50 bg-zinc-900/50 hover:bg-zinc-900 transition-colors p-4 rounded-lg text-center flex flex-col items-center justify-center gap-2">
-                                            <DatabaseZap className="w-6 h-6 text-zinc-500" />
-                                            <span className="text-sm text-zinc-400">Seleccionar o arrastrar archivo <strong>.json</strong></span>
+                                        <div className="border border-dashed border-input hover:border-green-500/50 bg-muted/50 hover:bg-muted transition-colors p-4 rounded-lg text-center flex flex-col items-center justify-center gap-2">
+                                            <DatabaseZap className="w-6 h-6 text-muted-foreground/70" />
+                                            <span className="text-sm text-muted-foreground">Seleccionar o arrastrar archivo <strong>.json</strong></span>
                                         </div>
                                         <input
                                             type="file"
@@ -1017,26 +1017,26 @@ const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean
 
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
                                     <div className="space-y-2">
-                                        <Label className="text-zinc-400 text-xs">Client Email (Auto-extraído)</Label>
+                                        <Label className="text-muted-foreground text-xs">Client Email (Auto-extraído)</Label>
                                         <Input
                                             value={config.google_sheets?.client_email || ''}
                                             readOnly
-                                            className="bg-zinc-950/50 border-zinc-800 text-zinc-500 text-xs focus-visible:ring-0"
+                                            className="bg-muted/50 border-border text-muted-foreground/70 text-xs focus-visible:ring-0"
                                         />
                                     </div>
                                     <div className="space-y-2">
-                                        <Label className="text-zinc-400 text-xs">Private Key (Auto-extraída)</Label>
+                                        <Label className="text-muted-foreground text-xs">Private Key (Auto-extraída)</Label>
                                         <textarea
                                             value={config.google_sheets?.private_key ? '•••••••••••••••••••••••••••• PRIVATE KEY LOADED ••••••••••••••••••••••••••••' : ''}
                                             readOnly
-                                            className="w-full h-9 rounded-md bg-zinc-950/50 border border-zinc-800 px-3 py-2 text-xs text-zinc-500 resize-none focus-visible:outline-none focus-visible:ring-0"
+                                            className="w-full h-9 rounded-md bg-muted/50 border border-border px-3 py-2 text-xs text-muted-foreground/70 resize-none focus-visible:outline-none focus-visible:ring-0"
                                         />
                                     </div>
                                 </div>
                             </div>
 
                             <div className="space-y-2">
-                                <Label htmlFor="gs_url" className="text-zinc-300">URL del Google Sheet</Label>
+                                <Label htmlFor="gs_url" className="text-foreground/90">URL del Google Sheet</Label>
                                 <Input
                                     id="gs_url"
                                     placeholder="https://docs.google.com/spreadsheets/d/..."
@@ -1045,14 +1045,14 @@ const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean
                                         ...config,
                                         google_sheets: { ...config.google_sheets, sheet_url: e.target.value }
                                     })}
-                                    className="bg-zinc-950 border-zinc-700"
+                                    className="bg-background border-input"
                                 />
-                                <p className="text-xs text-zinc-500">Asegúrate de compartir el Sheet con la cuenta de servicio de Google.</p>
+                                <p className="text-xs text-muted-foreground/70">Asegúrate de compartir el Sheet con la cuenta de servicio de Google.</p>
                             </div>
 
                             <div className="space-y-2">
-                                <Label className="text-zinc-300">Hojas a leer (pestañas del documento)</Label>
-                                <p className="text-xs text-zinc-500 mb-2">Escribe el nombre exacto de cada pestaña, una por línea. Si dejas vacío, leerá la primera hoja. Los datos de todas las hojas se combinan.</p>
+                                <Label className="text-foreground/90">Hojas a leer (pestañas del documento)</Label>
+                                <p className="text-xs text-muted-foreground/70 mb-2">Escribe el nombre exacto de cada pestaña, una por línea. Si dejas vacío, leerá la primera hoja. Los datos de todas las hojas se combinan.</p>
                                 <textarea
                                     value={(config.google_sheets?.sheet_names || []).join('\n')}
                                     onChange={(e) => {
@@ -1064,13 +1064,13 @@ const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean
                                     }}
                                     placeholder={"Mes enero\nform filtro logico"}
                                     rows={3}
-                                    className="w-full rounded-md bg-zinc-950 border border-zinc-700 px-3 py-2 text-sm text-zinc-200 resize-none focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-indigo-500"
+                                    className="w-full rounded-md bg-background border border-input px-3 py-2 text-sm text-foreground resize-none focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-indigo-500"
                                 />
-                                <p className="text-xs text-zinc-500">Ejemplo: <span className="text-zinc-400 font-mono">Mes enero</span>, <span className="text-zinc-400 font-mono">form filtro logico</span></p>
+                                <p className="text-xs text-muted-foreground/70">Ejemplo: <span className="text-muted-foreground font-mono">Mes enero</span>, <span className="text-muted-foreground font-mono">form filtro logico</span></p>
                             </div>
 
                             <div className="space-y-2">
-                                <Label htmlFor="gs_quality_field" className="text-zinc-300">Campo de calidad (columna del Sheet)</Label>
+                                <Label htmlFor="gs_quality_field" className="text-foreground/90">Campo de calidad (columna del Sheet)</Label>
                                 <Input
                                     id="gs_quality_field"
                                     placeholder="cual_es_tu_rango_de_ingresos"
@@ -1079,13 +1079,13 @@ const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean
                                         ...config,
                                         google_sheets: { ...config.google_sheets, quality_field: e.target.value }
                                     })}
-                                    className="bg-zinc-950 border-zinc-700"
+                                    className="bg-background border-input"
                                 />
                             </div>
 
                             <div className="space-y-2">
-                                <Label className="text-zinc-300">Valores que califican como &quot;Lead Calificado&quot;</Label>
-                                <p className="text-xs text-zinc-500 mb-2">Separar valores por línea. Un lead se considera calificado si su respuesta coincide con alguno de estos valores.</p>
+                                <Label className="text-foreground/90">Valores que califican como &quot;Lead Calificado&quot;</Label>
+                                <p className="text-xs text-muted-foreground/70 mb-2">Separar valores por línea. Un lead se considera calificado si su respuesta coincide con alguno de estos valores.</p>
                                 <textarea
                                     value={(config.google_sheets?.qualified_values || []).join('\n')}
                                     onChange={(e) => {
@@ -1097,11 +1097,11 @@ const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean
                                     }}
                                     placeholder={"$5,000 - $20,000 USD\n$20,000+ USD\nMás de $50,000 USD"}
                                     rows={4}
-                                    className="w-full rounded-md bg-zinc-950 border border-zinc-700 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                    className="w-full rounded-md bg-background border border-input px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground/70 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                                 />
                             </div>
 
-                            <div className="pt-4 border-t border-zinc-800">
+                            <div className="pt-4 border-t border-border">
                                 <div className="flex gap-2 items-center">
                                     <Button
                                         variant="outline"
@@ -1117,7 +1117,7 @@ const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean
                                         Sincronizar ahora
                                     </Button>
                                     {testStatus['googleSheets']?.success && (
-                                        <span className="text-green-500 text-xs flex items-center gap-1">
+                                        <span className="text-green-600 dark:text-green-500 text-xs flex items-center gap-1">
                                             <CheckCircle2 className="w-3 h-3" /> {testStatus['googleSheets']?.message || 'Sincronizado'}
                                         </span>
                                     )}
@@ -1134,42 +1134,42 @@ const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean
             </Card>
 
             {/* ─── Filtros de Dashboard ─────────────────────────────────────── */}
-            <Card className="bg-zinc-900 border-zinc-800">
+            <Card className="bg-card border-border">
                 <CardHeader>
                     <CardTitle>Filtros de Dashboard</CardTitle>
                     <CardDescription>Configura botones de filtrado rápido para el Dashboard (ej. nombres de campañas o proyectos).</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
                     <div className="space-y-2">
-                        <Label htmlFor="meta_keywords" className="text-zinc-300">Keywords de Campañas (Separadas por comas)</Label>
+                        <Label htmlFor="meta_keywords" className="text-foreground/90">Keywords de Campañas (Separadas por comas)</Label>
                         <Input
                             id="meta_keywords"
                             placeholder="Psicología, Pedagogía, Diplomado"
                             value={config.meta_keywords || ''}
                             onChange={(e) => setConfig({ ...config, meta_keywords: e.target.value })}
-                            className="bg-zinc-950 border-zinc-700"
+                            className="bg-background border-input"
                         />
-                        <p className="text-xs text-zinc-500">Estos textos aparecerán como botones de filtro rápido en la vista superior del embudo de Meta Ads.</p>
+                        <p className="text-xs text-muted-foreground/70">Estos textos aparecerán como botones de filtro rápido en la vista superior del embudo de Meta Ads.</p>
                     </div>
                 </CardContent>
             </Card>
 
             {/* ─── Plantilla de Reporte ─────────────────────────────────────── */}
-            <Card className="bg-zinc-900 border-zinc-800 border-indigo-500/30">
+            <Card className="bg-card border-indigo-500/30">
                 <CardHeader>
                     <div className="flex items-center gap-3">
                         <div className="p-2 bg-indigo-500/10 rounded-lg">
-                            <LayoutDashboard className="w-5 h-5 text-indigo-400" />
+                            <LayoutDashboard className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
                         </div>
                         <div>
-                            <CardTitle className="text-white">Plantilla de Reporte</CardTitle>
-                            <CardDescription className="text-zinc-400 mt-1">Selecciona la plantilla de métricas que quieres ver en el Dashboard de este cliente.</CardDescription>
+                            <CardTitle className="text-foreground">Plantilla de Reporte</CardTitle>
+                            <CardDescription className="text-muted-foreground mt-1">Selecciona la plantilla de métricas que quieres ver en el Dashboard de este cliente.</CardDescription>
                         </div>
                     </div>
                 </CardHeader>
                 <CardContent className="space-y-4">
                     <div className="space-y-3">
-                        <Label className="text-zinc-300">Layout Activo</Label>
+                        <Label className="text-foreground/90">Layout Activo</Label>
                         <select
                             value={selectedLayoutId}
                             onChange={async (e) => {
@@ -1179,7 +1179,7 @@ const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean
                                 await assignLayoutToCliente(cliente.id, newId || null)
                                 setLayoutSaving(false)
                             }}
-                            className="flex h-10 w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 ring-offset-zinc-950 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                            className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground ring-offset-background focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
                         >
                             <option value="">— Sin plantilla (Vista clásica) —</option>
                             {layouts.map((l: any) => (
@@ -1188,7 +1188,7 @@ const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean
                         </select>
 
                         {layoutSaving && (
-                            <div className="flex items-center gap-2 text-xs text-indigo-400">
+                            <div className="flex items-center gap-2 text-xs text-indigo-600 dark:text-indigo-400">
                                 <Loader2 className="w-3 h-3 animate-spin" />
                                 Guardando asignación...
                             </div>
@@ -1200,15 +1200,15 @@ const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean
                             return (
                                 <div className="bg-indigo-500/5 border border-indigo-500/20 rounded-lg p-4 space-y-2">
                                     <div className="flex items-center gap-2">
-                                        <CheckCircle2 className="w-4 h-4 text-indigo-400" />
-                                        <span className="text-sm font-medium text-indigo-300">{activeLayout.nombre}</span>
+                                        <CheckCircle2 className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+                                        <span className="text-sm font-medium text-indigo-700 dark:text-indigo-300">{activeLayout.nombre}</span>
                                     </div>
                                     {activeLayout.descripcion && (
-                                        <p className="text-xs text-zinc-400 ml-6">{activeLayout.descripcion}</p>
+                                        <p className="text-xs text-muted-foreground ml-6">{activeLayout.descripcion}</p>
                                     )}
                                     <div className="ml-6 flex flex-wrap gap-2 mt-2">
                                         {(activeLayout.tarjetas || []).map((t: any) => (
-                                            <span key={t.id} className="text-xs bg-zinc-800 text-zinc-300 px-2 py-1 rounded-md border border-zinc-700">{t.label}</span>
+                                            <span key={t.id} className="text-xs bg-muted text-foreground/90 px-2 py-1 rounded-md border border-border">{t.label}</span>
                                         ))}
                                     </div>
                                 </div>
@@ -1216,11 +1216,11 @@ const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean
                         })()}
 
                         {!selectedLayoutId && (
-                            <p className="text-xs text-zinc-500">Sin plantilla activa → el Dashboard usará la vista clásica con columnas basadas en APIs conectadas.</p>
+                            <p className="text-xs text-muted-foreground/70">Sin plantilla activa → el Dashboard usará la vista clásica con columnas basadas en APIs conectadas.</p>
                         )}
                     </div>
                 </CardContent>
-                <CardFooter className="bg-zinc-950/50 border-t border-zinc-800 flex justify-between pt-6">
+                <CardFooter className="bg-muted/30 border-t border-border flex justify-between pt-6">
                     {isAdmin && (
                         <Button variant="destructive" onClick={handleDelete} className="gap-2">
                             <Trash2 className="w-4 h-4" />

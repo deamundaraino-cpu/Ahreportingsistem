@@ -1,4 +1,4 @@
-'use client'
+﻿'use client'
 
 import React, { useState, useMemo, useEffect } from 'react'
 import {
@@ -344,16 +344,16 @@ function SingleMetricChart({
     const isCartesian = ['area', 'stacked_area', 'bar', 'stacked_bar', 'line', 'composed'].includes(chart.type)
 
     return (
-        <div className="rounded-xl border border-zinc-800 bg-zinc-900/80 p-5 shadow-lg relative group/chart">
+        <div className="rounded-xl border border-border bg-card/80 p-5 shadow-lg relative group/chart">
             {/* Header */}
             <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3 mb-4">
                 <div>
-                    <h3 className="text-sm font-semibold text-zinc-100">{chart.title}</h3>
+                    <h3 className="text-sm font-semibold text-foreground">{chart.title}</h3>
                     <div className="flex flex-wrap gap-2.5 mt-2">
                         {categories.map((cat, i) => {
                             if (!isCartesian) {
                                 return (
-                                    <span key={cat} className="flex items-center gap-1.5 text-[11px] text-zinc-400">
+                                    <span key={cat} className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
                                         <span style={{ width: 8, height: 8, borderRadius: '50%', background: colors[i], display: 'inline-block', flexShrink: 0 }} />
                                         {cat}
                                     </span>
@@ -361,9 +361,9 @@ function SingleMetricChart({
                             }
                             const currentType = localTypes[i] || ''
                             return (
-                                <div key={cat} className="flex items-center gap-1.5 bg-zinc-950/40 border border-zinc-800/80 px-2 py-0.5 rounded-lg text-[10px] text-zinc-400 hover:border-zinc-700 transition">
+                                <div key={cat} className="flex items-center gap-1.5 bg-background/40 border border-border px-2 py-0.5 rounded-lg text-[10px] text-muted-foreground hover:border-muted-foreground/30 transition">
                                     <span style={{ width: 6, height: 6, borderRadius: '50%', background: colors[i], display: 'inline-block', flexShrink: 0 }} />
-                                    <span className="font-medium text-zinc-300">{cat}</span>
+                                    <span className="font-medium text-foreground/90">{cat}</span>
                                     <select
                                         value={currentType}
                                         onChange={(e) => {
@@ -376,7 +376,7 @@ function SingleMetricChart({
                                                 onUpdateChart(chart.id, { ...chart, types: newTypes })
                                             }
                                         }}
-                                        className="bg-zinc-900/60 border-none text-[9px] text-zinc-400 rounded px-1.5 py-0.5 outline-none hover:text-white cursor-pointer transition font-medium"
+                                        className="bg-card/60 border-none text-[9px] text-muted-foreground rounded px-1.5 py-0.5 outline-none hover:text-foreground cursor-pointer transition font-medium"
                                     >
                                         <option value="">Defecto</option>
                                         <option value="line">Línea</option>
@@ -392,12 +392,12 @@ function SingleMetricChart({
                 {/* Periodicity Selector & Info Badge */}
                 <div className="flex items-center gap-3 self-end sm:self-start">
                     {isCartesian && (
-                        <div className="inline-flex bg-zinc-950 p-0.5 rounded-lg border border-zinc-800">
+                        <div className="inline-flex bg-background p-0.5 rounded-lg border border-border">
                             {(['day', 'week', 'month', 'year'] as const).map(p => (
                                 <button
                                     key={p}
                                     onClick={() => setPeriodicity(p)}
-                                    className={`px-2.5 py-1 text-[10px] font-medium rounded-md transition ${periodicity === p ? 'bg-zinc-800 text-white' : 'text-zinc-400 hover:text-zinc-200'}`}
+                                    className={`px-2.5 py-1 text-[10px] font-medium rounded-md transition ${periodicity === p ? 'bg-muted text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
                                 >
                                     {p === 'day' ? 'Día' : p === 'week' ? 'Semana' : p === 'month' ? 'Mes' : 'Año'}
                                 </button>
@@ -405,8 +405,8 @@ function SingleMetricChart({
                         </div>
                     )}
                     
-                    <div className="flex items-center gap-2 text-[10px] text-zinc-500">
-                        <span className="border border-zinc-800 px-2 py-0.5 rounded font-mono">
+                    <div className="flex items-center gap-2 text-[10px] text-muted-foreground/70">
+                        <span className="border border-border px-2 py-0.5 rounded font-mono">
                             {TYPE_LABELS[chart.type] ?? chart.type}
                         </span>
                         <span>{data.length} {data.length === 1 ? 'punto' : 'puntos'}</span>
@@ -415,7 +415,7 @@ function SingleMetricChart({
             </div>
 
             {/* Chart Body */}
-            <div className="chart-dark-wrapper">
+            <div className="chart-wrapper">
                 <ChartBody
                     chart={chart}
                     data={data}
@@ -672,7 +672,7 @@ function ChartBody({ chart, data, categories, colors, totals, chartId, localType
     }
 
     return (
-        <div className="h-40 flex items-center justify-center text-zinc-600 text-sm">
+        <div className="h-40 flex items-center justify-center text-muted-foreground/70 text-sm">
             Tipo &quot;{type}&quot; no reconocido
         </div>
     )

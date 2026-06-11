@@ -16,6 +16,7 @@ import {
     ArrowLeftRight,
     Activity,
 } from 'lucide-react'
+import { ThemeToggle } from '@/components/theme/ThemeToggle'
 
 const NAV_PRIMARY = [
     { name: 'Overview', href: '/report-utm', icon: LayoutDashboard, exact: true },
@@ -50,7 +51,7 @@ export function ReportUtmSidebar({ role }: { role: string }) {
         items: { name: string; href: string; icon: typeof LayoutDashboard; exact?: boolean }[]
     }) => (
         <div>
-            <p className="px-3 text-[10px] font-semibold text-zinc-400 dark:text-zinc-600 uppercase tracking-widest mb-2">
+            <p className="px-3 text-[10px] font-semibold text-muted-foreground/70 uppercase tracking-widest mb-2">
                 {title}
             </p>
             <div className="space-y-0.5">
@@ -65,20 +66,16 @@ export function ReportUtmSidebar({ role }: { role: string }) {
                                 group flex items-center px-3 py-2.5 text-sm font-medium rounded-lg
                                 transition-all duration-200 cursor-pointer
                                 ${active
-                                    ? 'text-white dark:text-white'
-                                    : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100 hover:bg-zinc-100 dark:hover:bg-white/[0.06]'
+                                    ? 'text-white nav-active-emerald'
+                                    : 'text-muted-foreground hover:text-foreground hover:bg-accent'
                                 }
                             `}
-                            style={active ? {
-                                background: 'linear-gradient(135deg, #10B981 0%, #059669 100%)',
-                                boxShadow: '0 2px 8px rgba(16, 185, 129, 0.35)'
-                            } : undefined}
                         >
                             <item.icon
                                 className={`
                                     mr-3 flex-shrink-0 h-4.5 w-4.5 transition-transform duration-200
                                     group-hover:scale-110
-                                    ${active ? 'text-white' : 'text-zinc-400 dark:text-zinc-500 group-hover:text-zinc-600 dark:group-hover:text-zinc-300'}
+                                    ${active ? 'text-white' : 'text-muted-foreground/80 group-hover:text-foreground'}
                                 `}
                             />
                             <span className="flex-1">{item.name}</span>
@@ -97,10 +94,10 @@ export function ReportUtmSidebar({ role }: { role: string }) {
             <button
                 onClick={() => setIsOpen(!isOpen)}
                 className="lg:hidden fixed top-4 left-4 z-50 p-2 rounded-md
-                           bg-white dark:bg-zinc-900
-                           border border-zinc-200 dark:border-zinc-800
-                           text-zinc-500 dark:text-zinc-400
-                           hover:text-zinc-900 dark:hover:text-white
+                           bg-card
+                           border border-border
+                           text-muted-foreground
+                           hover:text-foreground
                            shadow-sm transition-colors"
             >
                 {isOpen ? <X size={20} /> : <Menu size={20} />}
@@ -115,22 +112,21 @@ export function ReportUtmSidebar({ role }: { role: string }) {
 
             <aside className={`
                 fixed top-0 left-0 z-40 h-screen w-64
-                bg-white dark:bg-[#0E0E0E]
-                border-r border-zinc-200 dark:border-white/[0.06]
+                bg-sidebar
+                border-r border-sidebar-border
                 shadow-lg dark:shadow-none
                 flex flex-col
                 transition-transform duration-300 ease-in-out
                 ${isOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
             `}>
                 {/* Logo + Workspace label */}
-                <div className="flex h-[68px] items-center px-5 border-b border-zinc-200 dark:border-white/[0.06]">
+                <div className="flex h-[68px] items-center px-5 border-b border-sidebar-border">
                     <div className="flex items-center gap-3">
-                        <div className="flex h-9 w-9 items-center justify-center rounded-lg shadow-md"
-                             style={{ background: 'linear-gradient(135deg, #10B981 0%, #8B5CF6 100%)' }}>
+                        <div className="flex h-9 w-9 items-center justify-center rounded-lg shadow-md brand-gradient-utm">
                             <BarChart2 className="h-4.5 w-4.5 text-white" />
                         </div>
                         <div className="flex flex-col leading-tight">
-                            <span className="text-base font-bold tracking-tight text-zinc-900 dark:text-zinc-50">
+                            <span className="text-base font-bold tracking-tight text-foreground">
                                 Report-UTM
                             </span>
                             <span className="text-[10px] font-medium text-emerald-500 dark:text-emerald-400 tracking-wide uppercase">
@@ -144,10 +140,10 @@ export function ReportUtmSidebar({ role }: { role: string }) {
                 <Link
                     href="/dashboard"
                     className="mx-3 mt-3 flex items-center gap-2 px-3 py-2 text-xs font-medium rounded-lg
-                               text-zinc-500 dark:text-zinc-400
-                               border border-dashed border-zinc-200 dark:border-white/[0.06]
-                               hover:bg-zinc-50 dark:hover:bg-white/[0.04]
-                               hover:text-zinc-900 dark:hover:text-zinc-100
+                               text-muted-foreground
+                               border border-dashed border-border
+                               hover:bg-accent
+                               hover:text-foreground
                                transition-colors"
                 >
                     <ArrowLeftRight className="h-3.5 w-3.5" />
@@ -160,8 +156,14 @@ export function ReportUtmSidebar({ role }: { role: string }) {
                     <Section title="Configuración" items={NAV_CONFIG} />
                 </nav>
 
-                <div className="p-3 border-t border-zinc-200 dark:border-white/[0.06] space-y-2">
-                    <div className="px-3 py-2 rounded-lg bg-zinc-50 dark:bg-white/[0.04] flex items-center gap-2">
+                <div className="p-3 border-t border-sidebar-border space-y-2">
+                    <div className="flex items-center justify-between px-3">
+                        <span className="text-[10px] font-semibold text-muted-foreground/70 uppercase tracking-widest">
+                            Tema
+                        </span>
+                        <ThemeToggle />
+                    </div>
+                    <div className="px-3 py-2 rounded-lg bg-muted/60 flex items-center gap-2">
                         <span className="text-[10px] font-semibold text-emerald-500 dark:text-emerald-400 uppercase tracking-wider">
                             Local · {role}
                         </span>
@@ -169,12 +171,12 @@ export function ReportUtmSidebar({ role }: { role: string }) {
                     <form action="/auth/signout" method="post" className="w-full">
                         <button className="
                             flex w-full items-center px-3 py-2.5 text-sm font-medium rounded-lg
-                            text-zinc-500 dark:text-zinc-400
-                            hover:bg-red-50 dark:hover:bg-red-500/10
+                            text-muted-foreground
+                            hover:bg-red-500/10
                             hover:text-red-600 dark:hover:text-red-400
                             transition-all duration-200 group cursor-pointer
                         ">
-                            <LogOut className="mr-3 h-4.5 w-4.5 text-zinc-400 group-hover:text-red-500 dark:group-hover:text-red-400 transition-colors" />
+                            <LogOut className="mr-3 h-4.5 w-4.5 text-muted-foreground/80 group-hover:text-red-500 dark:group-hover:text-red-400 transition-colors" />
                             Cerrar Sesión
                         </button>
                     </form>

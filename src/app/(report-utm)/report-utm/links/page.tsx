@@ -54,10 +54,10 @@ export default async function LinksPage({
                 <p className="text-[10px] font-semibold uppercase tracking-widest text-emerald-500 dark:text-emerald-400">
                     Report-UTM · Fase 3
                 </p>
-                <h1 className="text-3xl font-bold tracking-tight text-zinc-900 dark:text-zinc-50 mt-1">
+                <h1 className="text-3xl font-bold tracking-tight text-foreground mt-1">
                     Tracking Links
                 </h1>
-                <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
+                <p className="mt-1 text-sm text-muted-foreground">
                     {linksList.length} link{linksList.length === 1 ? '' : 's'} ·{' '}
                     {totalClicks.toLocaleString()} click{totalClicks === 1 ? '' : 's'} totales. Cada redirect
                     setea cookies de atribución first-touch / last-touch (90d).
@@ -67,17 +67,17 @@ export default async function LinksPage({
             {/* Filtro */}
             <form
                 method="GET"
-                className="rounded-2xl border border-zinc-200 dark:border-white/[0.06] bg-white dark:bg-zinc-950/50 p-4"
+                className="rounded-2xl border border-border bg-card p-4"
             >
                 <div className="flex items-center gap-2 mb-3">
-                    <Filter className="h-4 w-4 text-zinc-400" />
-                    <p className="text-xs font-medium text-zinc-600 dark:text-zinc-400">Filtrar por cliente</p>
+                    <Filter className="h-4 w-4 text-muted-foreground" />
+                    <p className="text-xs font-medium text-muted-foreground">Filtrar por cliente</p>
                 </div>
                 <div className="flex gap-2 items-end">
                     <select
                         name="clienteId"
                         defaultValue={sp.clienteId ?? ''}
-                        className="flex-1 max-w-sm px-3 py-2 text-sm rounded-lg bg-zinc-50 dark:bg-white/[0.04] border border-zinc-200 dark:border-white/[0.06] text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/40 transition-colors"
+                        className="flex-1 max-w-sm px-3 py-2 text-sm rounded-lg bg-muted border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500/40 transition-colors"
                     >
                         <option value="">Todos los clientes</option>
                         {clientesList.map((c) => (
@@ -86,14 +86,13 @@ export default async function LinksPage({
                     </select>
                     <button
                         type="submit"
-                        className="px-3 py-2 rounded-lg text-xs font-medium text-white shadow-sm"
-                        style={{ background: 'linear-gradient(135deg, #10B981 0%, #059669 100%)' }}
+                        className="px-3 py-2 rounded-lg text-xs font-medium text-white shadow-sm nav-active-emerald"
                     >
                         Aplicar
                     </button>
                     <Link
                         href="/report-utm/links"
-                        className="px-3 py-2 rounded-lg text-xs font-medium text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-white/[0.04] transition-colors"
+                        className="px-3 py-2 rounded-lg text-xs font-medium text-muted-foreground hover:bg-accent transition-colors"
                     >
                         Limpiar
                     </Link>
@@ -106,11 +105,11 @@ export default async function LinksPage({
                     'use server'
                     await createTrackingLinkAction(fd)
                 }}
-                className="rounded-2xl border border-zinc-200 dark:border-white/[0.06] bg-white dark:bg-zinc-950/50 p-6 space-y-4"
+                className="rounded-2xl border border-border bg-card p-6 space-y-4"
             >
                 <div className="flex items-center gap-2">
                     <Plus className="h-4 w-4 text-emerald-500" />
-                    <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Nuevo link</h2>
+                    <h2 className="text-sm font-semibold text-foreground">Nuevo link</h2>
                 </div>
 
                 {clientesList.length === 0 ? (
@@ -173,8 +172,7 @@ export default async function LinksPage({
                         <div className="flex justify-end">
                             <button
                                 type="submit"
-                                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-white shadow-sm"
-                                style={{ background: 'linear-gradient(135deg, #10B981 0%, #059669 100%)' }}
+                                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-white shadow-sm nav-active-emerald"
                             >
                                 <Plus className="h-4 w-4" />
                                 Crear link
@@ -191,12 +189,12 @@ export default async function LinksPage({
             )}
 
             {/* Tabla */}
-            <div className="rounded-2xl border border-zinc-200 dark:border-white/[0.06] bg-white dark:bg-zinc-950/50 overflow-hidden">
+            <div className="rounded-2xl border border-border bg-card overflow-hidden">
                 {linksList.length > 0 ? (
                     <div className="overflow-x-auto">
                         <table className="w-full">
-                            <thead className="bg-zinc-50 dark:bg-white/[0.02]">
-                                <tr className="text-left text-[10px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-500">
+                            <thead className="bg-muted/60">
+                                <tr className="text-left text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                                     <th className="px-4 py-3">Link</th>
                                     <th className="px-4 py-3">Slug → Destino</th>
                                     <th className="px-4 py-3">UTM</th>
@@ -205,7 +203,7 @@ export default async function LinksPage({
                                     <th className="px-4 py-3 text-right">Acciones</th>
                                 </tr>
                             </thead>
-                            <tbody className="divide-y divide-zinc-100 dark:divide-white/[0.04]">
+                            <tbody className="divide-y divide-border">
                                 {linksList.map((l) => (
                                     <TrackingLinkRow
                                         key={l.id}
@@ -219,11 +217,11 @@ export default async function LinksPage({
                     </div>
                 ) : (
                     <div className="px-6 py-12 text-center">
-                        <div className="inline-flex h-12 w-12 items-center justify-center rounded-full bg-zinc-100 dark:bg-white/[0.04] mb-3">
-                            <Link2 className="h-5 w-5 text-zinc-400" />
+                        <div className="inline-flex h-12 w-12 items-center justify-center rounded-full bg-muted mb-3">
+                            <Link2 className="h-5 w-5 text-muted-foreground" />
                         </div>
-                        <p className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Sin tracking links</p>
-                        <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-1">
+                        <p className="text-sm font-medium text-foreground/90">Sin tracking links</p>
+                        <p className="text-xs text-muted-foreground mt-1">
                             Creá el primero arriba.
                         </p>
                     </div>
@@ -234,7 +232,7 @@ export default async function LinksPage({
 }
 
 const INPUT_CLASS =
-    'w-full px-3 py-2 text-sm rounded-lg bg-zinc-50 dark:bg-white/[0.04] border border-zinc-200 dark:border-white/[0.06] text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 dark:placeholder:text-zinc-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500/40 transition-colors'
+    'w-full px-3 py-2 text-sm rounded-lg bg-muted border border-border text-foreground placeholder:text-muted-foreground/70 focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500/40 transition-colors'
 
 function Field({
     label,
@@ -249,7 +247,7 @@ function Field({
 }) {
     return (
         <label className={`block ${colSpan ? 'md:col-span-2' : ''}`}>
-            <span className="block text-[11px] font-medium text-zinc-600 dark:text-zinc-400 mb-1">
+            <span className="block text-[11px] font-medium text-muted-foreground mb-1">
                 {label}
                 {required && <span className="text-red-500"> *</span>}
             </span>

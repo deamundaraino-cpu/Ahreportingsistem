@@ -215,16 +215,16 @@ const METRIC_CATALOG = [
 
 // Colores de categoría
 const CATEGORY_COLORS: Record<string, string> = {
-    blue:    'bg-blue-500/10 text-blue-300 border-blue-500/20 hover:bg-blue-500/20',
-    indigo:  'bg-indigo-500/10 text-indigo-300 border-indigo-500/20 hover:bg-indigo-500/20',
-    emerald: 'bg-emerald-500/10 text-emerald-300 border-emerald-500/20 hover:bg-emerald-500/20',
-    amber:   'bg-amber-500/10 text-amber-300 border-amber-500/20 hover:bg-amber-500/20',
-    purple:  'bg-purple-500/10 text-purple-300 border-purple-500/20 hover:bg-purple-500/20',
-    pink:    'bg-pink-500/10 text-pink-300 border-pink-500/20 hover:bg-pink-500/20',
-    orange:  'bg-orange-500/10 text-orange-300 border-orange-500/20 hover:bg-orange-500/20',
-    red:     'bg-red-500/10 text-red-300 border-red-500/20 hover:bg-red-500/20',
-    zinc:    'bg-zinc-700/40 text-zinc-300 border-zinc-600/30 hover:bg-zinc-700/60',
-    green:   'bg-green-500/10 text-green-300 border-green-500/20 hover:bg-green-500/20',
+    blue:    'bg-blue-500/10 text-blue-700 dark:text-blue-300 border-blue-500/20 hover:bg-blue-500/20',
+    indigo:  'bg-indigo-500/10 text-indigo-700 dark:text-indigo-300 border-indigo-500/20 hover:bg-indigo-500/20',
+    emerald: 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-500/20 hover:bg-emerald-500/20',
+    amber:   'bg-amber-500/10 text-amber-700 dark:text-amber-300 border-amber-500/20 hover:bg-amber-500/20',
+    purple:  'bg-purple-500/10 text-purple-700 dark:text-purple-300 border-purple-500/20 hover:bg-purple-500/20',
+    pink:    'bg-pink-500/10 text-pink-700 dark:text-pink-300 border-pink-500/20 hover:bg-pink-500/20',
+    orange:  'bg-orange-500/10 text-orange-700 dark:text-orange-300 border-orange-500/20 hover:bg-orange-500/20',
+    red:     'bg-red-500/10 text-red-700 dark:text-red-300 border-red-500/20 hover:bg-red-500/20',
+    zinc:    'bg-muted text-muted-foreground border-border hover:bg-accent',
+    green:   'bg-green-500/10 text-green-700 dark:text-green-300 border-green-500/20 hover:bg-green-500/20',
 }
 
 // ─── Quick formula templates ──────────────────────────────────────────────────
@@ -256,33 +256,33 @@ function MetricCatalog({ onInsert }: { onInsert: (id: string) => void }) {
         : METRIC_CATALOG
 
     return (
-        <div className="border border-zinc-700 rounded-lg bg-zinc-950/80 overflow-hidden">
+        <div className="border border-border rounded-lg bg-muted/40 overflow-hidden">
             <button
                 onClick={() => setExpanded(v => !v)}
-                className="w-full flex items-center justify-between px-3 py-2 text-xs font-medium text-zinc-300 hover:bg-zinc-800/50 transition"
+                className="w-full flex items-center justify-between px-3 py-2 text-xs font-medium text-foreground/90 hover:bg-accent/50 transition"
             >
                 <span className="flex items-center gap-2">
-                    <Search className="w-3.5 h-3.5 text-zinc-500" />
+                    <Search className="w-3.5 h-3.5 text-muted-foreground/70" />
                     Catálogo de métricas — haz click en una para insertarla en la fórmula
                 </span>
-                {expanded ? <ChevronUp className="w-3.5 h-3.5 text-zinc-500" /> : <ChevronDown className="w-3.5 h-3.5 text-zinc-500" />}
+                {expanded ? <ChevronUp className="w-3.5 h-3.5 text-muted-foreground/70" /> : <ChevronDown className="w-3.5 h-3.5 text-muted-foreground/70" />}
             </button>
 
             {expanded && (
-                <div className="border-t border-zinc-800">
+                <div className="border-t border-border">
                     <div className="p-2">
                         <Input
                             placeholder="Buscar métrica..."
                             value={query}
                             onChange={e => setQuery(e.target.value)}
-                            className="bg-zinc-900 border-zinc-700 text-zinc-100 h-7 text-xs"
+                            className="bg-background border-input text-foreground h-7 text-xs"
                             autoFocus
                         />
                     </div>
                     <div className="max-h-72 overflow-y-auto px-2 pb-2 space-y-3">
                         {filtered.map(cat => (
                             <div key={cat.category}>
-                                <p className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider mb-1 px-1">{cat.category}</p>
+                                <p className="text-[10px] font-semibold text-muted-foreground/70 uppercase tracking-wider mb-1 px-1">{cat.category}</p>
                                 <div className="flex flex-wrap gap-1">
                                     {cat.metrics.map(m => (
                                         <button
@@ -298,7 +298,7 @@ function MetricCatalog({ onInsert }: { onInsert: (id: string) => void }) {
                             </div>
                         ))}
                         {filtered.length === 0 && (
-                            <p className="text-xs text-zinc-500 text-center py-4">Sin resultados para "{query}"</p>
+                            <p className="text-xs text-muted-foreground/70 text-center py-4">Sin resultados para "{query}"</p>
                         )}
                     </div>
                 </div>
@@ -315,34 +315,34 @@ const emptyLayout = () => ({ nombre: '', descripcion: '', columnas: [{ ...emptyC
 // ─── Column/Tarjeta row editor ────────────────────────────────────────────────
 function FieldRow({ item, onChange, onRemove }: { item: any; onChange: (v: any) => void; onRemove: () => void }) {
     return (
-        <div className="grid grid-cols-12 gap-2 items-start bg-zinc-950/60 border border-zinc-800 rounded-lg p-3">
-            <div className="col-span-1 flex justify-center pt-2.5 text-zinc-600">
+        <div className="grid grid-cols-12 gap-2 items-start bg-muted/40 border border-border rounded-lg p-3">
+            <div className="col-span-1 flex justify-center pt-2.5 text-muted-foreground/70">
                 <GripVertical className="w-4 h-4" />
             </div>
             <div className="col-span-3">
-                <Input placeholder="Etiqueta" value={item.label} onChange={e => onChange({ ...item, label: e.target.value })} className="bg-zinc-900 border-zinc-700 text-zinc-100 h-8 text-xs" />
+                <Input placeholder="Etiqueta" value={item.label} onChange={e => onChange({ ...item, label: e.target.value })} className="bg-background border-input text-foreground h-8 text-xs" />
             </div>
             <div className="col-span-4">
-                <Input placeholder="Fórmula (ej: meta_spend / meta_clicks)" value={item.formula} onChange={e => onChange({ ...item, formula: e.target.value })} className="bg-zinc-900 border-zinc-700 text-zinc-100 h-8 text-xs font-mono" />
+                <Input placeholder="Fórmula (ej: meta_spend / meta_clicks)" value={item.formula} onChange={e => onChange({ ...item, formula: e.target.value })} className="bg-background border-input text-foreground h-8 text-xs font-mono" />
                 <div className="flex flex-wrap gap-1 mt-1">
                     {FORMULA_PRESETS.map(p => (
-                        <button key={p.label} onClick={() => onChange({ ...item, label: item.label || p.label, formula: p.formula, prefix: p.prefix, suffix: p.suffix })} className="text-[10px] bg-zinc-800 hover:bg-indigo-500/20 hover:text-indigo-300 text-zinc-400 px-1.5 py-0.5 rounded transition">
+                        <button key={p.label} onClick={() => onChange({ ...item, label: item.label || p.label, formula: p.formula, prefix: p.prefix, suffix: p.suffix })} className="text-[10px] bg-muted hover:bg-indigo-500/20 hover:text-indigo-700 dark:hover:text-indigo-300 text-muted-foreground px-1.5 py-0.5 rounded transition">
                             {p.label}
                         </button>
                     ))}
                 </div>
             </div>
             <div className="col-span-1">
-                <Input placeholder="$" value={item.prefix || ''} onChange={e => onChange({ ...item, prefix: e.target.value })} className="bg-zinc-900 border-zinc-700 text-zinc-100 h-8 text-xs" />
+                <Input placeholder="$" value={item.prefix || ''} onChange={e => onChange({ ...item, prefix: e.target.value })} className="bg-background border-input text-foreground h-8 text-xs" />
             </div>
             <div className="col-span-1">
-                <Input placeholder="%" value={item.suffix || ''} onChange={e => onChange({ ...item, suffix: e.target.value })} className="bg-zinc-900 border-zinc-700 text-zinc-100 h-8 text-xs" />
+                <Input placeholder="%" value={item.suffix || ''} onChange={e => onChange({ ...item, suffix: e.target.value })} className="bg-background border-input text-foreground h-8 text-xs" />
             </div>
             <div className="col-span-1">
-                <Input placeholder="2" type="number" min={0} max={6} value={item.decimals ?? 2} onChange={e => onChange({ ...item, decimals: parseInt(e.target.value) || 0 })} className="bg-zinc-900 border-zinc-700 text-zinc-100 h-8 text-xs" />
+                <Input placeholder="2" type="number" min={0} max={6} value={item.decimals ?? 2} onChange={e => onChange({ ...item, decimals: parseInt(e.target.value) || 0 })} className="bg-background border-input text-foreground h-8 text-xs" />
             </div>
             <div className="col-span-1 flex justify-end">
-                <button onClick={onRemove} className="p-1.5 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 rounded transition">
+                <button onClick={onRemove} className="p-1.5 text-muted-foreground/70 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-500/10 rounded transition">
                     <X className="w-4 h-4" />
                 </button>
             </div>
@@ -396,7 +396,7 @@ function LayoutEditor({ initial, onSave, onCancel }: { initial: any; onSave: (l:
     }
 
     const colHeaders = (
-        <div className="grid grid-cols-12 gap-2 text-[10px] text-zinc-500 font-medium px-1 mb-1">
+        <div className="grid grid-cols-12 gap-2 text-[10px] text-muted-foreground/70 font-medium px-1 mb-1">
             <div className="col-span-1" />
             <div className="col-span-3">Etiqueta</div>
             <div className="col-span-4">Fórmula</div>
@@ -409,18 +409,18 @@ function LayoutEditor({ initial, onSave, onCancel }: { initial: any; onSave: (l:
 
     return (
         <div className="space-y-6">
-            <Card className="bg-zinc-900 border-zinc-800">
+            <Card className="bg-card border-border">
                 <CardHeader>
-                    <CardTitle className="text-white text-base">Información de la Plantilla</CardTitle>
+                    <CardTitle className="text-foreground text-base">Información de la Plantilla</CardTitle>
                 </CardHeader>
                 <CardContent className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
-                        <Label className="text-zinc-300">Nombre de la Plantilla</Label>
-                        <Input value={layout.nombre} onChange={e => setLayout({ ...layout, nombre: e.target.value })} placeholder="ej: Plantilla Camaradictos" className="bg-zinc-950 border-zinc-700 text-zinc-100" />
+                        <Label className="text-foreground/90">Nombre de la Plantilla</Label>
+                        <Input value={layout.nombre} onChange={e => setLayout({ ...layout, nombre: e.target.value })} placeholder="ej: Plantilla Camaradictos" className="bg-background border-input text-foreground" />
                     </div>
                     <div className="space-y-2">
-                        <Label className="text-zinc-300">Descripción (opcional)</Label>
-                        <Input value={layout.descripcion || ''} onChange={e => setLayout({ ...layout, descripcion: e.target.value })} placeholder="Para qué tipo de cliente..." className="bg-zinc-950 border-zinc-700 text-zinc-100" />
+                        <Label className="text-foreground/90">Descripción (opcional)</Label>
+                        <Input value={layout.descripcion || ''} onChange={e => setLayout({ ...layout, descripcion: e.target.value })} placeholder="Para qué tipo de cliente..." className="bg-background border-input text-foreground" />
                     </div>
                 </CardContent>
             </Card>
@@ -428,7 +428,7 @@ function LayoutEditor({ initial, onSave, onCancel }: { initial: any; onSave: (l:
             {/* Catálogo de métricas */}
             <MetricCatalog onInsert={handleInsertMetric} />
             {activeField && (
-                <p className="text-[11px] text-indigo-400 text-center -mt-3">
+                <p className="text-[11px] text-indigo-600 dark:text-indigo-400 text-center -mt-3">
                     Insertando en: <span className="font-mono font-semibold">
                         {activeField.section === 'col'
                             ? layout.columnas[activeField.idx]?.label || `columna ${activeField.idx + 1}`
@@ -437,14 +437,14 @@ function LayoutEditor({ initial, onSave, onCancel }: { initial: any; onSave: (l:
                 </p>
             )}
 
-            <Card className="bg-zinc-900 border-zinc-800">
+            <Card className="bg-card border-border">
                 <CardHeader>
                     <div className="flex items-center justify-between">
                         <div>
-                            <CardTitle className="text-white text-base">Columnas de la Tabla</CardTitle>
-                            <CardDescription className="text-zinc-400">Define cada columna que aparecerá en la tabla diaria. Haz click en una fila para activarla como destino del catálogo.</CardDescription>
+                            <CardTitle className="text-foreground text-base">Columnas de la Tabla</CardTitle>
+                            <CardDescription className="text-muted-foreground">Define cada columna que aparecerá en la tabla diaria. Haz click en una fila para activarla como destino del catálogo.</CardDescription>
                         </div>
-                        <Button size="sm" variant="outline" onClick={addCol} className="gap-1 border-zinc-700 text-zinc-300 hover:bg-zinc-800">
+                        <Button size="sm" variant="outline" onClick={addCol} className="gap-1 border-input text-foreground/90 hover:bg-accent">
                             <Plus className="w-3.5 h-3.5" /> Añadir columna
                         </Button>
                     </div>
@@ -457,19 +457,19 @@ function LayoutEditor({ initial, onSave, onCancel }: { initial: any; onSave: (l:
                         </div>
                     ))}
                     {layout.columnas.length === 0 && (
-                        <p className="text-xs text-zinc-500 text-center py-4">Sin columnas. Añade al menos la columna "fecha".</p>
+                        <p className="text-xs text-muted-foreground/70 text-center py-4">Sin columnas. Añade al menos la columna "fecha".</p>
                     )}
                 </CardContent>
             </Card>
 
-            <Card className="bg-zinc-900 border-zinc-800">
+            <Card className="bg-card border-border">
                 <CardHeader>
                     <div className="flex items-center justify-between">
                         <div>
-                            <CardTitle className="text-white text-base">Tarjetas de Resumen</CardTitle>
-                            <CardDescription className="text-zinc-400">Métricas que aparecerán como tarjetas grandes en la parte superior.</CardDescription>
+                            <CardTitle className="text-foreground text-base">Tarjetas de Resumen</CardTitle>
+                            <CardDescription className="text-muted-foreground">Métricas que aparecerán como tarjetas grandes en la parte superior.</CardDescription>
                         </div>
-                        <Button size="sm" variant="outline" onClick={addCard} className="gap-1 border-zinc-700 text-zinc-300 hover:bg-zinc-800">
+                        <Button size="sm" variant="outline" onClick={addCard} className="gap-1 border-input text-foreground/90 hover:bg-accent">
                             <Plus className="w-3.5 h-3.5" /> Añadir tarjeta
                         </Button>
                     </div>
@@ -482,28 +482,28 @@ function LayoutEditor({ initial, onSave, onCancel }: { initial: any; onSave: (l:
                         </div>
                     ))}
                     {layout.tarjetas.length === 0 && (
-                        <p className="text-xs text-zinc-500 text-center py-4">Sin tarjetas de resumen todavía.</p>
+                        <p className="text-xs text-muted-foreground/70 text-center py-4">Sin tarjetas de resumen todavía.</p>
                     )}
                 </CardContent>
             </Card>
 
             {/* Source Mapping */}
-            <Card className="bg-zinc-900 border-zinc-800">
+            <Card className="bg-card border-border">
                 <CardHeader>
                     <div className="flex items-center gap-2">
-                        <Database className="w-4 h-4 text-cyan-400" />
+                        <Database className="w-4 h-4 text-cyan-600 dark:text-cyan-400" />
                         <div>
-                            <CardTitle className="text-white text-base">Mapeo de Fuentes de Datos</CardTitle>
-                            <CardDescription className="text-zinc-400">
-                                Define de dónde se obtiene cada métrica clave. Usa <code className="text-cyan-400 bg-zinc-800 px-1 rounded">$visitas</code>, <code className="text-cyan-400 bg-zinc-800 px-1 rounded">$pagos_iniciados</code>, etc. en tus fórmulas.
+                            <CardTitle className="text-foreground text-base">Mapeo de Fuentes de Datos</CardTitle>
+                            <CardDescription className="text-muted-foreground">
+                                Define de dónde se obtiene cada métrica clave. Usa <code className="text-cyan-600 dark:text-cyan-400 bg-muted px-1 rounded">$visitas</code>, <code className="text-cyan-600 dark:text-cyan-400 bg-muted px-1 rounded">$pagos_iniciados</code>, etc. en tus fórmulas.
                             </CardDescription>
                         </div>
                     </div>
                 </CardHeader>
                 <CardContent className="space-y-4">
                     {/* Attribution Strategy Preset */}
-                    <div className="pb-3 border-b border-zinc-800">
-                        <label className="text-xs font-medium text-zinc-400 mb-2 block">Preset de Estrategia</label>
+                    <div className="pb-3 border-b border-border">
+                        <label className="text-xs font-medium text-muted-foreground mb-2 block">Preset de Estrategia</label>
                         <select
                             value={layout.attribution_strategy || 'custom'}
                             onChange={e => {
@@ -539,7 +539,7 @@ function LayoutEditor({ initial, onSave, onCancel }: { initial: any; onSave: (l:
                                 }
                                 setLayout({ ...layout, attribution_strategy: strategy, source_mapping: newMapping })
                             }}
-                            className="w-full h-8 text-xs bg-zinc-950 border border-zinc-700 text-zinc-100 rounded-md px-2 focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500/30 transition"
+                            className="w-full h-8 text-xs bg-background border border-input text-foreground rounded-md px-2 focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500/30 transition"
                         >
                             <option value="custom">Custom — Configuración manual</option>
                             <option value="hybrid">Híbrido — Visitas: GA4, Pagos: Hotmart, Conversiones: Meta</option>
@@ -552,15 +552,15 @@ function LayoutEditor({ initial, onSave, onCancel }: { initial: any; onSave: (l:
                         <div key={alias} className="grid grid-cols-12 gap-3 items-center">
                             <div className="col-span-4">
                                 <div className="flex items-center gap-2">
-                                    <code className="text-xs text-cyan-400 bg-cyan-500/10 px-2 py-1 rounded border border-cyan-500/20 font-mono">{alias}</code>
-                                    <span className="text-xs text-zinc-400">{config.label}</span>
+                                    <code className="text-xs text-cyan-600 dark:text-cyan-400 bg-cyan-500/10 px-2 py-1 rounded border border-cyan-500/20 font-mono">{alias}</code>
+                                    <span className="text-xs text-muted-foreground">{config.label}</span>
                                 </div>
                             </div>
                             <div className="col-span-8">
                                 <select
                                     value={(layout.source_mapping || {})[alias] || config.defaultSource}
                                     onChange={e => setLayout({ ...layout, source_mapping: { ...(layout.source_mapping || {}), [alias]: e.target.value } })}
-                                    className="w-full h-8 text-xs bg-zinc-950 border border-zinc-700 text-zinc-100 rounded-md px-2 focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500/30 transition"
+                                    className="w-full h-8 text-xs bg-background border border-input text-foreground rounded-md px-2 focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500/30 transition"
                                 >
                                     {config.options.map(opt => (
                                         <option key={opt.value} value={opt.value}>{opt.label}</option>
@@ -570,8 +570,8 @@ function LayoutEditor({ initial, onSave, onCancel }: { initial: any; onSave: (l:
                         </div>
                     ))}
                 </CardContent>
-                <CardFooter className="border-t border-zinc-800 flex justify-between pt-4">
-                    <Button variant="outline" onClick={onCancel} className="border-zinc-700 text-zinc-400">Cancelar</Button>
+                <CardFooter className="border-t border-border flex justify-between pt-4">
+                    <Button variant="outline" onClick={onCancel} className="border-input text-muted-foreground">Cancelar</Button>
                     <Button disabled={saving || !layout.nombre} onClick={async () => { setSaving(true); await onSave(layout); setSaving(false) }} className="gap-2 bg-indigo-600 hover:bg-indigo-700 text-white">
                         {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
                         Guardar Plantilla
@@ -622,32 +622,32 @@ export function LayoutBuilderClient({ layouts: initial, isAdmin = false }: { lay
             </div>
 
             {layouts.length === 0 && (
-                <Card className="bg-zinc-900 border-zinc-800 text-center p-12">
-                    <LayoutDashboard className="w-10 h-10 text-zinc-600 mx-auto mb-3" />
-                    <p className="text-zinc-400">No hay plantillas. Crea la primera usando el botón de arriba.</p>
+                <Card className="bg-card border-border text-center p-12">
+                    <LayoutDashboard className="w-10 h-10 text-muted-foreground/50 mx-auto mb-3" />
+                    <p className="text-muted-foreground">No hay plantillas. Crea la primera usando el botón de arriba.</p>
                 </Card>
             )}
 
             <div className="grid gap-4">
                 {layouts.map(layout => (
-                    <Card key={layout.id} className="bg-zinc-900 border-zinc-800 hover:border-zinc-700 transition">
+                    <Card key={layout.id} className="bg-card border-border hover:border-ring transition">
                         <CardHeader>
                             <div className="flex items-start justify-between">
                                 <div className="flex items-center gap-3">
                                     <div className="p-2 bg-indigo-500/10 rounded-lg">
-                                        <LayoutDashboard className="w-5 h-5 text-indigo-400" />
+                                        <LayoutDashboard className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
                                     </div>
                                     <div>
-                                        <CardTitle className="text-white">{layout.nombre}</CardTitle>
-                                        {layout.descripcion && <CardDescription className="text-zinc-400 mt-0.5">{layout.descripcion}</CardDescription>}
+                                        <CardTitle className="text-foreground">{layout.nombre}</CardTitle>
+                                        {layout.descripcion && <CardDescription className="text-muted-foreground mt-0.5">{layout.descripcion}</CardDescription>}
                                     </div>
                                 </div>
                                 <div className="flex gap-2">
-                                    <Button size="sm" variant="outline" onClick={() => setEditing(layout)} className="gap-1.5 border-zinc-700 text-zinc-300 hover:text-white hover:bg-zinc-800">
+                                    <Button size="sm" variant="outline" onClick={() => setEditing(layout)} className="gap-1.5 border-input text-foreground/90 hover:text-foreground hover:bg-accent">
                                         <PenSquare className="w-3.5 h-3.5" /> Editar
                                     </Button>
                                     {isAdmin && (
-                                        <Button size="sm" variant="outline" onClick={() => handleDelete(layout.id)} className="border-zinc-700 text-zinc-500 hover:text-red-400 hover:border-red-500/30 hover:bg-red-500/5">
+                                        <Button size="sm" variant="outline" onClick={() => handleDelete(layout.id)} className="border-input text-muted-foreground/70 hover:text-red-600 dark:hover:text-red-400 hover:border-red-500/30 hover:bg-red-500/5">
                                             <Trash2 className="w-3.5 h-3.5" />
                                         </Button>
                                     )}
@@ -657,19 +657,19 @@ export function LayoutBuilderClient({ layouts: initial, isAdmin = false }: { lay
                         <CardContent>
                             <div className="space-y-3">
                                 <div>
-                                    <p className="text-xs text-zinc-500 mb-1.5 font-medium uppercase tracking-wider">Columnas ({(layout.columnas || []).length})</p>
+                                    <p className="text-xs text-muted-foreground/70 mb-1.5 font-medium uppercase tracking-wider">Columnas ({(layout.columnas || []).length})</p>
                                     <div className="flex flex-wrap gap-1.5">
                                         {(layout.columnas || []).map((c: any) => (
-                                            <span key={c.id} className="text-xs bg-zinc-800 text-zinc-300 px-2 py-1 rounded border border-zinc-700 font-mono">{c.label}</span>
+                                            <span key={c.id} className="text-xs bg-muted text-foreground/90 px-2 py-1 rounded border border-border font-mono">{c.label}</span>
                                         ))}
                                     </div>
                                 </div>
                                 {(layout.tarjetas || []).length > 0 && (
                                     <div>
-                                        <p className="text-xs text-zinc-500 mb-1.5 font-medium uppercase tracking-wider">Tarjetas ({layout.tarjetas.length})</p>
+                                        <p className="text-xs text-muted-foreground/70 mb-1.5 font-medium uppercase tracking-wider">Tarjetas ({layout.tarjetas.length})</p>
                                         <div className="flex flex-wrap gap-1.5">
                                             {layout.tarjetas.map((t: any) => (
-                                                <span key={t.id} className="text-xs bg-indigo-500/10 text-indigo-300 px-2 py-1 rounded border border-indigo-500/20">{t.label}</span>
+                                                <span key={t.id} className="text-xs bg-indigo-500/10 text-indigo-700 dark:text-indigo-300 px-2 py-1 rounded border border-indigo-500/20">{t.label}</span>
                                             ))}
                                         </div>
                                     </div>

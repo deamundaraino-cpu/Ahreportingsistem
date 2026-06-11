@@ -60,10 +60,10 @@ export function TrackingLinkRow({
     }
 
     return (
-        <tr className={`hover:bg-zinc-50 dark:hover:bg-white/[0.02] ${!link.enabled ? 'opacity-60' : ''}`}>
+        <tr className={`hover:bg-accent ${!link.enabled ? 'opacity-60' : ''}`}>
             <td className="px-4 py-3">
-                <p className="text-xs font-medium text-zinc-900 dark:text-zinc-100">{link.nombre}</p>
-                <p className="text-[11px] text-zinc-500 dark:text-zinc-500 mt-0.5">{clienteName}</p>
+                <p className="text-xs font-medium text-foreground">{link.nombre}</p>
+                <p className="text-[11px] text-muted-foreground mt-0.5">{clienteName}</p>
             </td>
             <td className="px-4 py-3">
                 <div className="flex items-center gap-1.5">
@@ -72,13 +72,13 @@ export function TrackingLinkRow({
                     </code>
                     <button
                         onClick={copy}
-                        className="p-1 rounded text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-white/[0.06] transition-colors"
+                        className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
                         title="Copiar URL completa"
                     >
                         {copied ? <Check className="h-3 w-3 text-emerald-500" /> : <Copy className="h-3 w-3" />}
                     </button>
                 </div>
-                <p className="text-[11px] text-zinc-500 dark:text-zinc-500 mt-1 truncate max-w-xs">
+                <p className="text-[11px] text-muted-foreground mt-1 truncate max-w-xs">
                     → {link.destination_url}
                 </p>
             </td>
@@ -87,17 +87,17 @@ export function TrackingLinkRow({
                     {link.utm_source ?? '—'}
                 </p>
                 {link.utm_campaign && (
-                    <p className="font-mono text-[11px] text-zinc-500 dark:text-zinc-500">
+                    <p className="font-mono text-[11px] text-muted-foreground">
                         {link.utm_campaign}
                     </p>
                 )}
             </td>
             <td className="px-4 py-3 text-right">
-                <p className="text-sm font-bold text-zinc-900 dark:text-zinc-100">
+                <p className="text-sm font-bold text-foreground">
                     {link.clicks_count.toLocaleString()}
                 </p>
                 {link.last_click_at && (
-                    <p className="text-[11px] text-zinc-500 dark:text-zinc-500 mt-0.5">
+                    <p className="text-[11px] text-muted-foreground mt-0.5">
                         {new Date(link.last_click_at).toLocaleDateString()}
                     </p>
                 )}
@@ -107,7 +107,7 @@ export function TrackingLinkRow({
                     className={`text-[10px] font-semibold uppercase tracking-wider px-2 py-1 rounded-md ${
                         link.enabled
                             ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400'
-                            : 'bg-zinc-100 text-zinc-600 dark:bg-white/[0.06] dark:text-zinc-400'
+                            : 'bg-muted text-muted-foreground'
                     }`}
                 >
                     {link.enabled ? 'activo' : 'pausado'}
@@ -119,7 +119,7 @@ export function TrackingLinkRow({
                         href={shortUrl}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="p-1.5 rounded text-zinc-400 hover:text-emerald-600 dark:hover:text-emerald-400 hover:bg-zinc-100 dark:hover:bg-white/[0.06] transition-colors"
+                        className="p-1.5 rounded text-muted-foreground hover:text-emerald-600 dark:hover:text-emerald-400 hover:bg-accent transition-colors"
                         title="Abrir link"
                     >
                         <ExternalLink className="h-3.5 w-3.5" />
@@ -127,7 +127,7 @@ export function TrackingLinkRow({
                     <button
                         onClick={onToggle}
                         disabled={pending}
-                        className="p-1.5 rounded text-zinc-400 hover:text-amber-600 dark:hover:text-amber-400 hover:bg-zinc-100 dark:hover:bg-white/[0.06] transition-colors disabled:opacity-50"
+                        className="p-1.5 rounded text-muted-foreground hover:text-amber-600 dark:hover:text-amber-400 hover:bg-accent transition-colors disabled:opacity-50"
                         title={link.enabled ? 'Pausar' : 'Activar'}
                     >
                         <Power className="h-3.5 w-3.5" />
@@ -135,7 +135,7 @@ export function TrackingLinkRow({
                     <button
                         onClick={onDelete}
                         disabled={pending}
-                        className="p-1.5 rounded text-zinc-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-zinc-100 dark:hover:bg-white/[0.06] transition-colors disabled:opacity-50"
+                        className="p-1.5 rounded text-muted-foreground hover:text-red-600 dark:hover:text-red-400 hover:bg-accent transition-colors disabled:opacity-50"
                         title="Eliminar"
                     >
                         <Trash2 className="h-3.5 w-3.5" />

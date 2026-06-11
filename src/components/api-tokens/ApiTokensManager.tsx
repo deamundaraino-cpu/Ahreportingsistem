@@ -1,4 +1,4 @@
-'use client'
+﻿'use client'
 
 import { useState, useEffect, useCallback } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -93,28 +93,28 @@ function NewTokenModal({ onClose, onCreate }: {
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-            <div className="bg-zinc-900 border border-zinc-800 rounded-xl shadow-2xl w-full max-w-md">
-                <div className="p-5 border-b border-zinc-800 flex items-center justify-between">
-                    <h3 className="font-semibold text-white flex items-center gap-2">
-                        <Key className="h-4 w-4 text-[#1E6AB5]" /> Nuevo API Token
+            <div className="bg-card border border-border rounded-xl shadow-2xl w-full max-w-md">
+                <div className="p-5 border-b border-border flex items-center justify-between">
+                    <h3 className="font-semibold text-foreground flex items-center gap-2">
+                        <Key className="h-4 w-4 text-brand-blue dark:text-brand-blue-light" /> Nuevo API Token
                     </h3>
-                    <button onClick={onClose} className="text-zinc-500 hover:text-white transition-colors text-lg leading-none">✕</button>
+                    <button onClick={onClose} className="text-muted-foreground/70 hover:text-foreground transition-colors text-lg leading-none">✕</button>
                 </div>
 
                 <div className="p-5 space-y-4">
                     <div>
-                        <label className="block text-sm font-medium text-zinc-300 mb-1.5">Nombre del token</label>
+                        <label className="block text-sm font-medium text-foreground/90 mb-1.5">Nombre del token</label>
                         <input
                             type="text"
                             value={name}
                             onChange={e => setName(e.target.value)}
                             placeholder="Ej: Zapier Integration, n8n Workflow..."
-                            className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-white placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-[#1E6AB5]/50 focus:border-[#1E6AB5]"
+                            className="w-full bg-background border border-input rounded-lg px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground/70 focus:outline-none focus:ring-2 focus:ring-ring/50 focus:border-ring"
                         />
                     </div>
 
                     <div>
-                        <label className="block text-sm font-medium text-zinc-300 mb-2">Permisos</label>
+                        <label className="block text-sm font-medium text-foreground/90 mb-2">Permisos</label>
                         <div className="space-y-2">
                             {ALL_PERMISSIONS.map(p => (
                                 <label key={p} className="flex items-center gap-2.5 cursor-pointer group">
@@ -122,23 +122,23 @@ function NewTokenModal({ onClose, onCreate }: {
                                         type="checkbox"
                                         checked={permissions.includes(p)}
                                         onChange={() => togglePerm(p)}
-                                        className="accent-[#1E6AB5] h-4 w-4 rounded"
+                                        className="accent-brand-blue h-4 w-4 rounded"
                                     />
-                                    <span className="text-sm text-zinc-300 group-hover:text-white transition-colors">
+                                    <span className="text-sm text-foreground/90 group-hover:text-foreground transition-colors">
                                         {PERMISSION_LABELS[p]}
                                     </span>
-                                    <code className="ml-auto text-[10px] text-zinc-500 bg-zinc-800 px-1.5 py-0.5 rounded">{p}</code>
+                                    <code className="ml-auto text-[10px] text-muted-foreground/70 bg-muted px-1.5 py-0.5 rounded">{p}</code>
                                 </label>
                             ))}
                         </div>
                     </div>
 
                     <div>
-                        <label className="block text-sm font-medium text-zinc-300 mb-1.5">Expiración</label>
+                        <label className="block text-sm font-medium text-foreground/90 mb-1.5">Expiración</label>
                         <select
                             value={expires}
                             onChange={e => setExpires(e.target.value as typeof expires)}
-                            className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-[#1E6AB5]/50"
+                            className="w-full bg-background border border-input rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring/50"
                         >
                             <option value="never">Sin expiración</option>
                             <option value="30d">30 días</option>
@@ -155,15 +155,14 @@ function NewTokenModal({ onClose, onCreate }: {
                     )}
                 </div>
 
-                <div className="p-5 border-t border-zinc-800 flex gap-3 justify-end">
-                    <Button variant="ghost" onClick={onClose} className="text-zinc-400 hover:text-white">
+                <div className="p-5 border-t border-border flex gap-3 justify-end">
+                    <Button variant="ghost" onClick={onClose} className="text-muted-foreground hover:text-foreground">
                         Cancelar
                     </Button>
                     <Button
                         onClick={submit}
                         disabled={loading}
-                        style={{ background: 'linear-gradient(135deg, #1E6AB5 0%, #155a9a 100%)' }}
-                        className="text-white border-0 hover:opacity-90"
+                        className="nav-active-blue text-white border-0 hover:opacity-90"
                     >
                         {loading ? <RefreshCw className="h-4 w-4 animate-spin mr-2" /> : <Key className="h-4 w-4 mr-2" />}
                         Generar Token
@@ -178,13 +177,13 @@ function CreatedTokenModal({ token, onClose }: { token: string; onClose: () => v
     const [visible, setVisible] = useState(false)
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
-            <div className="bg-zinc-900 border border-emerald-500/30 rounded-xl shadow-2xl w-full max-w-lg">
-                <div className="p-5 border-b border-zinc-800 flex items-center gap-2">
-                    <Check className="h-5 w-5 text-emerald-400" />
-                    <h3 className="font-semibold text-white">Token creado — guárdalo ahora</h3>
+            <div className="bg-card border border-emerald-500/30 rounded-xl shadow-2xl w-full max-w-lg">
+                <div className="p-5 border-b border-border flex items-center gap-2">
+                    <Check className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
+                    <h3 className="font-semibold text-foreground">Token creado — guárdalo ahora</h3>
                 </div>
                 <div className="p-5 space-y-4">
-                    <div className="flex items-start gap-2 text-amber-400 text-sm bg-amber-500/10 border border-amber-500/20 rounded-lg p-3">
+                    <div className="flex items-start gap-2 text-amber-600 dark:text-amber-400 text-sm bg-amber-500/10 border border-amber-500/20 rounded-lg p-3">
                         <AlertTriangle className="h-4 w-4 flex-shrink-0 mt-0.5" />
                         <span>Este token solo se muestra <strong>una vez</strong>. Cópialo ahora y guárdalo en un lugar seguro.</span>
                     </div>
@@ -198,8 +197,8 @@ function CreatedTokenModal({ token, onClose }: { token: string; onClose: () => v
                         <CopyButton value={token} />
                     </div>
                 </div>
-                <div className="p-5 border-t border-zinc-800 flex justify-end">
-                    <Button onClick={onClose} style={{ background: 'linear-gradient(135deg, #1E6AB5 0%, #155a9a 100%)' }} className="text-white border-0">
+                <div className="p-5 border-t border-border flex justify-end">
+                    <Button onClick={onClose} className="nav-active-blue text-white border-0">
                         Ya lo guardé
                     </Button>
                 </div>
@@ -259,14 +258,14 @@ export function ApiTokensManager({ baseUrl }: Props) {
             {newToken && <CreatedTokenModal token={newToken} onClose={() => setNewToken(null)} />}
 
             {/* Tabs */}
-            <div className="flex gap-1 bg-zinc-900/50 border border-zinc-800 rounded-lg p-1 w-fit">
+            <div className="flex gap-1 bg-card/50 border border-border rounded-lg p-1 w-fit">
                 {([['tokens', 'Mis Tokens', Key], ['docs', 'REST API', Terminal], ['mcp', 'MCP Server', Zap]] as const).map(([tab, label, Icon]) => (
                     <button
                         key={tab}
                         onClick={() => setActiveTab(tab)}
                         className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-all ${activeTab === tab
-                            ? 'bg-[#1E6AB5] text-white shadow'
-                            : 'text-zinc-400 hover:text-white hover:bg-white/5'
+                            ? 'bg-brand-blue text-white shadow'
+                            : 'text-muted-foreground hover:text-foreground hover:bg-accent'
                             }`}
                     >
                         <Icon className="h-3.5 w-3.5" />
@@ -281,30 +280,28 @@ export function ApiTokensManager({ baseUrl }: Props) {
                     <div className="flex justify-end">
                         <Button
                             onClick={() => setShowNew(true)}
-                            style={{ background: 'linear-gradient(135deg, #1E6AB5 0%, #155a9a 100%)' }}
-                            className="text-white border-0 hover:opacity-90"
+                            className="nav-active-blue text-white border-0 hover:opacity-90"
                         >
                             <Plus className="h-4 w-4 mr-2" /> Nuevo Token
                         </Button>
                     </div>
 
                     {loading ? (
-                        <Card className="bg-zinc-900 border-zinc-800">
+                        <Card className="bg-card border-border">
                             <CardContent className="p-8 flex justify-center">
-                                <RefreshCw className="h-6 w-6 animate-spin text-zinc-500" />
+                                <RefreshCw className="h-6 w-6 animate-spin text-muted-foreground/70" />
                             </CardContent>
                         </Card>
                     ) : tokens.length === 0 ? (
-                        <Card className="bg-zinc-900 border-zinc-800">
+                        <Card className="bg-card border-border">
                             <CardContent className="p-12 flex flex-col items-center gap-3 text-center">
-                                <div className="h-12 w-12 rounded-full bg-zinc-800 flex items-center justify-center">
-                                    <Key className="h-6 w-6 text-zinc-600" />
+                                <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center">
+                                    <Key className="h-6 w-6 text-muted-foreground/60" />
                                 </div>
-                                <p className="text-zinc-400 text-sm">No tienes tokens generados aún.</p>
+                                <p className="text-muted-foreground text-sm">No tienes tokens generados aún.</p>
                                 <Button
                                     onClick={() => setShowNew(true)}
-                                    style={{ background: 'linear-gradient(135deg, #1E6AB5 0%, #155a9a 100%)' }}
-                                    className="text-white border-0 mt-2"
+                                    className="nav-active-blue text-white border-0 mt-2"
                                 >
                                     <Plus className="h-4 w-4 mr-2" /> Crear primer token
                                 </Button>
@@ -313,32 +310,32 @@ export function ApiTokensManager({ baseUrl }: Props) {
                     ) : (
                         <div className="space-y-3">
                             {tokens.map(t => (
-                                <Card key={t.id} className={`bg-zinc-900 border-zinc-800 transition-opacity ${!t.is_active ? 'opacity-50' : ''}`}>
+                                <Card key={t.id} className={`bg-card border-border transition-opacity ${!t.is_active ? 'opacity-50' : ''}`}>
                                     <CardContent className="p-4">
                                         <div className="flex items-start justify-between gap-4">
                                             <div className="flex-1 min-w-0">
                                                 <div className="flex items-center gap-2 flex-wrap">
-                                                    <span className="font-medium text-white">{t.name}</span>
-                                                    <Badge className={`text-xs ${t.is_active ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' : 'bg-zinc-700 text-zinc-400 border-zinc-600'}`}>
+                                                    <span className="font-medium text-foreground">{t.name}</span>
+                                                    <Badge className={`text-xs ${t.is_active ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/20' : 'bg-muted text-muted-foreground border-border'}`}>
                                                         {t.is_active ? 'Activo' : 'Inactivo'}
                                                     </Badge>
                                                     {t.expires_at && new Date(t.expires_at) < new Date() && (
-                                                        <Badge className="text-xs bg-red-500/20 text-red-400 border-red-500/30">Expirado</Badge>
+                                                        <Badge className="text-xs bg-red-500/10 text-red-700 dark:text-red-400 border-red-500/20">Expirado</Badge>
                                                     )}
                                                 </div>
                                                 <div className="flex items-center gap-2 mt-1">
-                                                    <code className="text-xs text-zinc-400 font-mono bg-zinc-800 px-2 py-0.5 rounded">
+                                                    <code className="text-xs text-muted-foreground font-mono bg-muted px-2 py-0.5 rounded">
                                                         {t.token_prefix}••••••••••••••••••••
                                                     </code>
                                                 </div>
                                                 <div className="flex flex-wrap gap-1.5 mt-2">
                                                     {t.permissions.map(p => (
-                                                        <span key={p} className="text-[10px] bg-zinc-800 text-zinc-400 px-1.5 py-0.5 rounded font-mono">
+                                                        <span key={p} className="text-[10px] bg-muted text-muted-foreground px-1.5 py-0.5 rounded font-mono">
                                                             {p}
                                                         </span>
                                                     ))}
                                                 </div>
-                                                <div className="flex gap-4 mt-2 text-xs text-zinc-600">
+                                                <div className="flex gap-4 mt-2 text-xs text-muted-foreground/60">
                                                     <span>Creado: {formatDate(t.created_at)}</span>
                                                     <span>Último uso: {formatDate(t.last_used_at)}</span>
                                                     {t.expires_at && <span>Expira: {formatDate(t.expires_at)}</span>}
@@ -348,14 +345,14 @@ export function ApiTokensManager({ baseUrl }: Props) {
                                                 <button
                                                     onClick={() => handleToggle(t.id, t.is_active)}
                                                     title={t.is_active ? 'Desactivar' : 'Activar'}
-                                                    className="p-2 rounded-lg hover:bg-zinc-800 text-zinc-400 hover:text-white transition-colors"
+                                                    className="p-2 rounded-lg hover:bg-accent text-muted-foreground hover:text-foreground transition-colors"
                                                 >
                                                     <Shield className="h-4 w-4" />
                                                 </button>
                                                 <button
                                                     onClick={() => handleDelete(t.id)}
                                                     title="Eliminar token"
-                                                    className="p-2 rounded-lg hover:bg-red-500/10 text-zinc-500 hover:text-red-400 transition-colors"
+                                                    className="p-2 rounded-lg hover:bg-red-500/10 text-muted-foreground/70 hover:text-red-500 dark:hover:text-red-400 transition-colors"
                                                 >
                                                     <Trash2 className="h-4 w-4" />
                                                 </button>
@@ -372,14 +369,14 @@ export function ApiTokensManager({ baseUrl }: Props) {
             {/* REST API Docs tab */}
             {activeTab === 'docs' && (
                 <div className="space-y-4">
-                    <Card className="bg-zinc-900 border-zinc-800">
+                    <Card className="bg-card border-border">
                         <CardHeader>
-                            <CardTitle className="text-white text-base flex items-center gap-2">
-                                <Shield className="h-4 w-4 text-[#1E6AB5]" /> Autenticación
+                            <CardTitle className="text-foreground text-base flex items-center gap-2">
+                                <Shield className="h-4 w-4 text-brand-blue dark:text-brand-blue-light" /> Autenticación
                             </CardTitle>
                         </CardHeader>
-                        <CardContent className="space-y-3 text-sm text-zinc-300">
-                            <p>Incluye tu token en el header <code className="bg-zinc-800 px-1 rounded text-xs">Authorization</code> de cada solicitud:</p>
+                        <CardContent className="space-y-3 text-sm text-foreground/90">
+                            <p>Incluye tu token en el header <code className="bg-muted px-1 rounded text-xs">Authorization</code> de cada solicitud:</p>
                             <pre className="bg-zinc-950 border border-zinc-800 rounded-lg p-3 text-xs text-emerald-300 overflow-x-auto">
                                 {`Authorization: Bearer ads_xxxxxxxxxxxxxxxxxxxxxxxxxxxx`}
                             </pre>
@@ -406,14 +403,14 @@ export function ApiTokensManager({ baseUrl }: Props) {
   "${appUrl}/api/v1/campaigns?client_id=UUID"`,
                         },
                     ].map(ep => (
-                        <Card key={ep.path} className="bg-zinc-900 border-zinc-800">
+                        <Card key={ep.path} className="bg-card border-border">
                             <CardContent className="p-4 space-y-3">
                                 <div className="flex items-center gap-2 flex-wrap">
                                     <span className="text-xs font-bold bg-emerald-500/20 text-emerald-400 px-2 py-0.5 rounded">{ep.method}</span>
-                                    <code className="text-sm text-white font-mono">{ep.path}</code>
-                                    <span className="ml-auto text-[10px] bg-zinc-800 text-zinc-400 px-1.5 py-0.5 rounded">{ep.scope}</span>
+                                    <code className="text-sm text-foreground font-mono">{ep.path}</code>
+                                    <span className="ml-auto text-[10px] bg-muted text-muted-foreground px-1.5 py-0.5 rounded">{ep.scope}</span>
                                 </div>
-                                <p className="text-sm text-zinc-400">{ep.desc}</p>
+                                <p className="text-sm text-muted-foreground">{ep.desc}</p>
                                 <div className="relative">
                                     <pre className="bg-zinc-950 border border-zinc-800 rounded-lg p-3 text-xs text-zinc-300 overflow-x-auto whitespace-pre-wrap">{ep.example}</pre>
                                     <div className="absolute top-2 right-2"><CopyButton value={ep.example} /></div>
@@ -427,20 +424,20 @@ export function ApiTokensManager({ baseUrl }: Props) {
             {/* MCP Server tab */}
             {activeTab === 'mcp' && (
                 <div className="space-y-4">
-                    <Card className="bg-zinc-900 border-zinc-800">
+                    <Card className="bg-card border-border">
                         <CardHeader>
-                            <CardTitle className="text-white text-base flex items-center gap-2">
-                                <Zap className="h-4 w-4 text-[#1E6AB5]" /> MCP Server — Integración con IA
+                            <CardTitle className="text-foreground text-base flex items-center gap-2">
+                                <Zap className="h-4 w-4 text-brand-blue dark:text-brand-blue-light" /> MCP Server — Integración con IA
                             </CardTitle>
                         </CardHeader>
-                        <CardContent className="space-y-3 text-sm text-zinc-300">
+                        <CardContent className="space-y-3 text-sm text-foreground/90">
                             <p>
                                 El servidor MCP permite que asistentes de IA como <strong>Claude</strong>, <strong>Cursor</strong> o <strong>Windsurf</strong> consulten
                                 tus datos directamente usando lenguaje natural.
                             </p>
                             <div className="bg-zinc-950 border border-zinc-800 rounded-lg p-3 space-y-1">
                                 <div className="flex items-center justify-between">
-                                    <span className="text-zinc-400 text-xs">Endpoint MCP</span>
+                                    <span className="text-zinc-500 text-xs">Endpoint MCP</span>
                                 </div>
                                 <div className="flex items-center gap-2">
                                     <code className="text-emerald-300 text-sm font-mono flex-1">{appUrl}/api/mcp</code>
@@ -450,14 +447,14 @@ export function ApiTokensManager({ baseUrl }: Props) {
                         </CardContent>
                     </Card>
 
-                    <Card className="bg-zinc-900 border-zinc-800">
+                    <Card className="bg-card border-border">
                         <CardHeader>
-                            <CardTitle className="text-white text-base flex items-center gap-2">
-                                <BookOpen className="h-4 w-4 text-zinc-400" /> Configurar en Claude Desktop
+                            <CardTitle className="text-foreground text-base flex items-center gap-2">
+                                <BookOpen className="h-4 w-4 text-muted-foreground" /> Configurar en Claude Desktop
                             </CardTitle>
                         </CardHeader>
                         <CardContent className="space-y-3 text-sm">
-                            <p className="text-zinc-400">Agrega esto a tu archivo <code className="bg-zinc-800 px-1 rounded text-xs">claude_desktop_config.json</code>:</p>
+                            <p className="text-muted-foreground">Agrega esto a tu archivo <code className="bg-muted px-1 rounded text-xs">claude_desktop_config.json</code>:</p>
                             <div className="relative">
                                 <pre className="bg-zinc-950 border border-zinc-800 rounded-lg p-3 text-xs text-zinc-300 overflow-x-auto">{`{
   "mcpServers": {
@@ -478,10 +475,10 @@ export function ApiTokensManager({ baseUrl }: Props) {
                         </CardContent>
                     </Card>
 
-                    <Card className="bg-zinc-900 border-zinc-800">
+                    <Card className="bg-card border-border">
                         <CardHeader>
-                            <CardTitle className="text-white text-base flex items-center gap-2">
-                                <Terminal className="h-4 w-4 text-zinc-400" /> Herramientas disponibles
+                            <CardTitle className="text-foreground text-base flex items-center gap-2">
+                                <Terminal className="h-4 w-4 text-muted-foreground" /> Herramientas disponibles
                             </CardTitle>
                         </CardHeader>
                         <CardContent className="space-y-3">
@@ -491,25 +488,25 @@ export function ApiTokensManager({ baseUrl }: Props) {
                                 { name: 'get_campaign_groups', scope: 'read:campaigns', desc: 'Grupos de campañas y sus mapeos.' },
                                 { name: 'get_summary', scope: 'read:metrics', desc: 'Resumen agregado: ROAS, CPC, CTR, ingresos totales.' },
                             ].map(tool => (
-                                <div key={tool.name} className="flex items-start gap-3 p-3 rounded-lg bg-zinc-950/50 border border-zinc-800">
-                                    <code className="text-emerald-300 text-xs font-mono mt-0.5 min-w-[160px]">{tool.name}</code>
+                                <div key={tool.name} className="flex items-start gap-3 p-3 rounded-lg bg-muted/40 border border-border">
+                                    <code className="text-emerald-600 dark:text-emerald-400 text-xs font-mono mt-0.5 min-w-[160px]">{tool.name}</code>
                                     <div className="flex-1">
-                                        <p className="text-sm text-zinc-300">{tool.desc}</p>
-                                        <span className="text-[10px] text-zinc-500 mt-0.5 block">{tool.scope}</span>
+                                        <p className="text-sm text-foreground/90">{tool.desc}</p>
+                                        <span className="text-[10px] text-muted-foreground/70 mt-0.5 block">{tool.scope}</span>
                                     </div>
                                 </div>
                             ))}
                         </CardContent>
                     </Card>
 
-                    <Card className="bg-zinc-900 border-zinc-800">
+                    <Card className="bg-card border-border">
                         <CardHeader>
-                            <CardTitle className="text-white text-base flex items-center gap-2">
-                                <Terminal className="h-4 w-4 text-zinc-400" /> Test rápido con curl
+                            <CardTitle className="text-foreground text-base flex items-center gap-2">
+                                <Terminal className="h-4 w-4 text-muted-foreground" /> Test rápido con curl
                             </CardTitle>
                         </CardHeader>
                         <CardContent className="space-y-3 text-sm">
-                            <p className="text-zinc-400">Prueba el servidor MCP directamente desde la terminal:</p>
+                            <p className="text-muted-foreground">Prueba el servidor MCP directamente desde la terminal:</p>
                             <div className="relative">
                                 <pre className="bg-zinc-950 border border-zinc-800 rounded-lg p-3 text-xs text-zinc-300 overflow-x-auto whitespace-pre-wrap">{`curl -X POST ${appUrl}/api/mcp \\
   -H "Authorization: Bearer ads_TU_TOKEN_AQUI" \\

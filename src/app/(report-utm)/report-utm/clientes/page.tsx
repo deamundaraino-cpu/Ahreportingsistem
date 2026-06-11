@@ -20,10 +20,10 @@ export default async function ClientesPage() {
                     <p className="text-[10px] font-semibold uppercase tracking-widest text-emerald-500 dark:text-emerald-400">
                         Report-UTM · Workspace
                     </p>
-                    <h1 className="text-3xl font-bold tracking-tight text-zinc-900 dark:text-zinc-50 mt-1">
+                    <h1 className="text-3xl font-bold tracking-tight text-foreground mt-1">
                         Clientes
                     </h1>
-                    <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
+                    <p className="mt-1 text-sm text-muted-foreground">
                         Clientes propios de este módulo. No se mezclan con los clientes del reporting principal.
                     </p>
                 </div>
@@ -35,11 +35,11 @@ export default async function ClientesPage() {
                     'use server'
                     await createClienteAction(formData)
                 }}
-                className="rounded-2xl border border-zinc-200 dark:border-white/[0.06] bg-white dark:bg-zinc-950/50 p-6 space-y-4"
+                className="rounded-2xl border border-border bg-card p-6 space-y-4"
             >
                 <div className="flex items-center gap-2">
                     <Plus className="h-4 w-4 text-emerald-500" />
-                    <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                    <h2 className="text-sm font-semibold text-foreground">
                         Nuevo cliente
                     </h2>
                 </div>
@@ -54,8 +54,7 @@ export default async function ClientesPage() {
                 <div className="flex justify-end">
                     <button
                         type="submit"
-                        className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-white shadow-sm transition-colors"
-                        style={{ background: 'linear-gradient(135deg, #10B981 0%, #059669 100%)' }}
+                        className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-white shadow-sm nav-active-emerald transition-colors"
                     >
                         <Plus className="h-4 w-4" />
                         Crear cliente
@@ -64,9 +63,9 @@ export default async function ClientesPage() {
             </form>
 
             {/* Listado */}
-            <div className="rounded-2xl border border-zinc-200 dark:border-white/[0.06] bg-white dark:bg-zinc-950/50 overflow-hidden">
-                <div className="px-6 py-4 border-b border-zinc-200 dark:border-white/[0.06]">
-                    <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+            <div className="rounded-2xl border border-border bg-card overflow-hidden">
+                <div className="px-6 py-4 border-b border-border">
+                    <h2 className="text-sm font-semibold text-foreground">
                         Listado ({clientes?.length ?? 0})
                     </h2>
                 </div>
@@ -79,8 +78,8 @@ export default async function ClientesPage() {
 
                 {clientes && clientes.length > 0 ? (
                     <table className="w-full">
-                        <thead className="bg-zinc-50 dark:bg-white/[0.02]">
-                            <tr className="text-left text-[10px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-500">
+                        <thead className="bg-muted/60">
+                            <tr className="text-left text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                                 <th className="px-6 py-3">Cliente</th>
                                 <th className="px-6 py-3">Slug</th>
                                 <th className="px-6 py-3">Status</th>
@@ -88,24 +87,24 @@ export default async function ClientesPage() {
                                 <th className="px-6 py-3"></th>
                             </tr>
                         </thead>
-                        <tbody className="divide-y divide-zinc-100 dark:divide-white/[0.04]">
+                        <tbody className="divide-y divide-border">
                             {(clientes as ReportUtmCliente[]).map((c) => (
-                                <tr key={c.id} className="hover:bg-zinc-50 dark:hover:bg-white/[0.02]">
+                                <tr key={c.id} className="hover:bg-accent">
                                     <td className="px-6 py-3">
-                                        <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">{c.nombre}</p>
+                                        <p className="text-sm font-medium text-foreground">{c.nombre}</p>
                                         {c.descripcion && (
-                                            <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-0.5 line-clamp-1">
+                                            <p className="text-xs text-muted-foreground mt-0.5 line-clamp-1">
                                                 {c.descripcion}
                                             </p>
                                         )}
                                     </td>
-                                    <td className="px-6 py-3 text-xs font-mono text-zinc-600 dark:text-zinc-400">
+                                    <td className="px-6 py-3 text-xs font-mono text-muted-foreground">
                                         {c.slug}
                                     </td>
                                     <td className="px-6 py-3">
                                         <StatusPill status={c.status} />
                                     </td>
-                                    <td className="px-6 py-3 text-xs text-zinc-500 dark:text-zinc-500">
+                                    <td className="px-6 py-3 text-xs text-muted-foreground">
                                         {new Date(c.created_at).toLocaleDateString()}
                                     </td>
                                     <td className="px-6 py-3 text-right">
@@ -121,7 +120,7 @@ export default async function ClientesPage() {
                         </tbody>
                     </table>
                 ) : (
-                    <div className="px-6 py-12 text-center text-sm text-zinc-500 dark:text-zinc-500">
+                    <div className="px-6 py-12 text-center text-sm text-muted-foreground">
                         No hay clientes todavía. Crea el primero arriba.
                     </div>
                 )}
@@ -145,15 +144,15 @@ function Field({
 }) {
     const baseClass = `
         w-full px-3 py-2 text-sm rounded-lg
-        bg-zinc-50 dark:bg-white/[0.04]
-        border border-zinc-200 dark:border-white/[0.06]
-        text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 dark:placeholder:text-zinc-600
+        bg-muted
+        border border-border
+        text-foreground placeholder:text-muted-foreground/70
         focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500/40
         transition-colors
     `
     return (
         <label className={textarea ? 'col-span-full block' : 'block'}>
-            <span className="block text-[11px] font-medium text-zinc-600 dark:text-zinc-400 mb-1">
+            <span className="block text-[11px] font-medium text-muted-foreground mb-1">
                 {label}{required && <span className="text-red-500"> *</span>}
             </span>
             {textarea ? (
@@ -171,7 +170,7 @@ function StatusPill({ status }: { status: string }) {
             ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400'
             : status === 'paused'
             ? 'bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400'
-            : 'bg-zinc-100 text-zinc-600 dark:bg-white/[0.06] dark:text-zinc-400'
+            : 'bg-muted text-muted-foreground'
     return (
         <span className={`text-[10px] font-semibold uppercase tracking-wider px-2 py-1 rounded-md ${cls}`}>
             {status}

@@ -104,17 +104,17 @@ export default async function SaleDetailPage({
             <div>
                 <Link
                     href="/report-utm/ventas"
-                    className="inline-flex items-center gap-1.5 text-xs font-medium text-zinc-500 dark:text-zinc-500 hover:text-emerald-600 dark:hover:text-emerald-400 transition-colors"
+                    className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-emerald-600 dark:hover:text-emerald-400 transition-colors"
                 >
                     <ArrowLeft className="h-3.5 w-3.5" />
                     Ventas
                 </Link>
                 <div className="flex items-end justify-between gap-4 flex-wrap mt-2">
                     <div>
-                        <h1 className="text-3xl font-bold tracking-tight text-zinc-900 dark:text-zinc-50">
+                        <h1 className="text-3xl font-bold tracking-tight text-foreground">
                             {sale.customer_name ?? 'Venta sin nombre'}
                         </h1>
-                        <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-1 font-mono">
+                        <p className="text-xs text-muted-foreground mt-1 font-mono">
                             {sale.platform} · {sale.platform_sale_id} · {sale.id.slice(0, 8)}
                         </p>
                     </div>
@@ -124,8 +124,8 @@ export default async function SaleDetailPage({
 
             {/* Resumen */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="rounded-2xl border border-zinc-200 dark:border-white/[0.06] bg-white dark:bg-zinc-950/50 p-5 space-y-3">
-                    <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Venta</h2>
+                <div className="rounded-2xl border border-border bg-card p-5 space-y-3">
+                    <h2 className="text-sm font-semibold text-foreground">Venta</h2>
                     <KV label="Monto" value={`${sale.currency} ${Number(sale.amount).toFixed(2)}`} bold />
                     <KV label="Status" value={sale.status} />
                     <KV label="Tipo" value={sale.transaction_type ?? 'principal'} />
@@ -141,8 +141,8 @@ export default async function SaleDetailPage({
                     <KV label="Cliente" value={cliente?.nombre ?? sale.cliente_id} />
                 </div>
 
-                <div className="rounded-2xl border border-zinc-200 dark:border-white/[0.06] bg-white dark:bg-zinc-950/50 p-5 space-y-3">
-                    <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Comprador</h2>
+                <div className="rounded-2xl border border-border bg-card p-5 space-y-3">
+                    <h2 className="text-sm font-semibold text-foreground">Comprador</h2>
                     <KV label="Nombre" value={sale.customer_name ?? '—'} />
                     <KV label="Email" value={sale.customer_email ?? '—'} mono />
                     <KV label="Teléfono" value={sale.customer_phone ?? '—'} mono />
@@ -157,24 +157,24 @@ export default async function SaleDetailPage({
             </div>
 
             {/* Visitor journey */}
-            <div className="rounded-2xl border border-zinc-200 dark:border-white/[0.06] bg-white dark:bg-zinc-950/50 overflow-hidden">
-                <div className="px-6 py-4 border-b border-zinc-200 dark:border-white/[0.06]">
-                    <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+            <div className="rounded-2xl border border-border bg-card overflow-hidden">
+                <div className="px-6 py-4 border-b border-border">
+                    <h2 className="text-sm font-semibold text-foreground">
                         Journey del visitor
                     </h2>
                     {sale.visitor_id ? (
-                        <p className="text-[11px] text-zinc-500 dark:text-zinc-500 mt-0.5 font-mono">
+                        <p className="text-[11px] text-muted-foreground mt-0.5 font-mono">
                             visitor_id: {sale.visitor_id}
                         </p>
                     ) : (
-                        <p className="text-[11px] text-zinc-500 dark:text-zinc-500 mt-0.5">
+                        <p className="text-[11px] text-muted-foreground mt-0.5">
                             Sin visitor_id resuelto — no hay cruce con pixel_events.
                         </p>
                     )}
                 </div>
                 {journey.length > 0 ? (
                     <ol className="relative px-6 py-5 space-y-4">
-                        <div className="absolute left-9 top-7 bottom-7 w-px bg-zinc-200 dark:bg-white/[0.06]" />
+                        <div className="absolute left-9 top-7 bottom-7 w-px bg-muted" />
                         {journey.map((e, i) => {
                             const Icon =
                                 e.event_type === 'pageview'
@@ -185,7 +185,7 @@ export default async function SaleDetailPage({
                             return (
                                 <li key={e.id} className="relative flex gap-4">
                                     <div
-                                        className={`relative z-10 flex h-7 w-7 items-center justify-center rounded-full border-2 border-white dark:border-zinc-950 ${
+                                        className={`relative z-10 flex h-7 w-7 items-center justify-center rounded-full border-2 border-background ${
                                             e.event_type === 'click'
                                                 ? 'bg-emerald-500'
                                                 : e.event_type === 'pageview'
@@ -197,16 +197,16 @@ export default async function SaleDetailPage({
                                     </div>
                                     <div className="flex-1 min-w-0 pt-0.5">
                                         <div className="flex items-center gap-2 flex-wrap">
-                                            <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-500">
+                                            <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                                                 #{i + 1} · {e.event_type}
                                                 {e.event_name ? ` · ${e.event_name}` : ''}
                                             </span>
-                                            <span className="text-[10px] text-zinc-400 dark:text-zinc-600">
+                                            <span className="text-[10px] text-muted-foreground/70">
                                                 {new Date(e.created_at).toLocaleString()}
                                             </span>
                                         </div>
                                         {e.page_url && (
-                                            <p className="text-xs text-zinc-700 dark:text-zinc-300 mt-0.5 truncate">
+                                            <p className="text-xs text-foreground/90 mt-0.5 truncate">
                                                 {e.page_url}
                                             </p>
                                         )}
@@ -219,7 +219,7 @@ export default async function SaleDetailPage({
                                                     </span>
                                                 )}
                                                 {e.click_id && (
-                                                    <span className="text-zinc-500 dark:text-zinc-500 ml-2">
+                                                    <span className="text-muted-foreground ml-2">
                                                         click_id: {e.click_id.slice(0, 20)}…
                                                     </span>
                                                 )}
@@ -230,21 +230,21 @@ export default async function SaleDetailPage({
                             )
                         })}
                         <li className="relative flex gap-4">
-                            <div className="relative z-10 flex h-7 w-7 items-center justify-center rounded-full border-2 border-white dark:border-zinc-950 bg-amber-500">
+                            <div className="relative z-10 flex h-7 w-7 items-center justify-center rounded-full border-2 border-background bg-amber-500">
                                 <ShoppingBag className="h-3.5 w-3.5 text-white" />
                             </div>
                             <div className="flex-1 pt-0.5">
                                 <span className="text-[10px] font-semibold uppercase tracking-wider text-amber-600 dark:text-amber-400">
                                     venta · {sale.currency} {Number(sale.amount).toFixed(2)}
                                 </span>
-                                <p className="text-xs text-zinc-700 dark:text-zinc-300 mt-0.5">
+                                <p className="text-xs text-foreground/90 mt-0.5">
                                     {sale.product_name ?? sale.platform}
                                 </p>
                             </div>
                         </li>
                     </ol>
                 ) : (
-                    <div className="px-6 py-8 text-center text-xs text-zinc-500 dark:text-zinc-500">
+                    <div className="px-6 py-8 text-center text-xs text-muted-foreground">
                         Sin eventos del pixel cruzados con esta venta.
                     </div>
                 )}
@@ -252,23 +252,23 @@ export default async function SaleDetailPage({
 
             {/* Deliveries */}
             {deliveries && deliveries.length > 0 && (
-                <div className="rounded-2xl border border-zinc-200 dark:border-white/[0.06] bg-white dark:bg-zinc-950/50 overflow-hidden">
-                    <div className="px-6 py-4 border-b border-zinc-200 dark:border-white/[0.06]">
-                        <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100 flex items-center gap-2">
+                <div className="rounded-2xl border border-border bg-card overflow-hidden">
+                    <div className="px-6 py-4 border-b border-border">
+                        <h2 className="text-sm font-semibold text-foreground flex items-center gap-2">
                             <Send className="h-4 w-4 text-violet-500" />
                             Outbound webhooks emitidos
                         </h2>
                     </div>
                     <table className="w-full">
-                        <thead className="bg-zinc-50 dark:bg-white/[0.02]">
-                            <tr className="text-left text-[10px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-500">
+                        <thead className="bg-muted/60">
+                            <tr className="text-left text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                                 <th className="px-4 py-2">Hora</th>
                                 <th className="px-4 py-2">Evento</th>
                                 <th className="px-4 py-2">Status</th>
                                 <th className="px-4 py-2 text-right">Duración</th>
                             </tr>
                         </thead>
-                        <tbody className="divide-y divide-zinc-100 dark:divide-white/[0.04]">
+                        <tbody className="divide-y divide-border">
                             {(deliveries as Array<{
                                 id: string
                                 event_type: string
@@ -280,7 +280,7 @@ export default async function SaleDetailPage({
                                 const ok = d.response_status && d.response_status >= 200 && d.response_status < 300
                                 return (
                                     <tr key={d.id}>
-                                        <td className="px-4 py-2 text-[11px] text-zinc-600 dark:text-zinc-400">
+                                        <td className="px-4 py-2 text-[11px] text-muted-foreground">
                                             {new Date(d.created_at).toLocaleTimeString()}
                                         </td>
                                         <td className="px-4 py-2 text-xs font-mono text-violet-600 dark:text-violet-400">
@@ -303,7 +303,7 @@ export default async function SaleDetailPage({
                                                 </p>
                                             )}
                                         </td>
-                                        <td className="px-4 py-2 text-right text-[11px] text-zinc-500 dark:text-zinc-500 font-mono">
+                                        <td className="px-4 py-2 text-right text-[11px] text-muted-foreground font-mono">
                                             {d.duration_ms != null ? `${d.duration_ms}ms` : '—'}
                                         </td>
                                     </tr>
@@ -320,9 +320,9 @@ export default async function SaleDetailPage({
 function KV({ label, value, mono, bold }: { label: string; value: string; mono?: boolean; bold?: boolean }) {
     return (
         <div className="flex items-baseline justify-between gap-4">
-            <span className="text-[11px] text-zinc-500 dark:text-zinc-500">{label}</span>
+            <span className="text-[11px] text-muted-foreground">{label}</span>
             <span
-                className={`text-xs text-right text-zinc-900 dark:text-zinc-100 ${
+                className={`text-xs text-right text-foreground ${
                     mono ? 'font-mono' : ''
                 } ${bold ? 'font-bold text-base' : ''}`}
             >
@@ -345,7 +345,7 @@ function TouchCard({
         ? 'text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-500/10'
         : 'text-violet-600 dark:text-violet-400 bg-violet-50 dark:bg-violet-500/10'
     return (
-        <div className="rounded-2xl border border-zinc-200 dark:border-white/[0.06] bg-white dark:bg-zinc-950/50 p-5">
+        <div className="rounded-2xl border border-border bg-card p-5">
             <div className="flex items-center gap-2 mb-3">
                 <span
                     className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded ${cls}`}
@@ -353,7 +353,7 @@ function TouchCard({
                     {label}
                 </span>
                 {touch?.ts && (
-                    <span className="text-[10px] text-zinc-500 dark:text-zinc-500">
+                    <span className="text-[10px] text-muted-foreground">
                         {new Date(touch.ts).toLocaleString()}
                     </span>
                 )}
@@ -370,7 +370,7 @@ function TouchCard({
                     )}
                 </div>
             ) : (
-                <p className="text-xs text-zinc-500 dark:text-zinc-500">Sin datos.</p>
+                <p className="text-xs text-muted-foreground">Sin datos.</p>
             )}
         </div>
     )

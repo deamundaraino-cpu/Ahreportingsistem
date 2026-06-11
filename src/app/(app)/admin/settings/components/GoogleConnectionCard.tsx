@@ -25,9 +25,9 @@ export function GoogleConnectionCard({ connected, email }: Props) {
     }
 
     return (
-        <Card className="bg-zinc-900 border-zinc-800">
+        <Card className="bg-card border-border">
             <CardHeader>
-                <CardTitle className="flex items-center gap-2 text-white text-lg">
+                <CardTitle className="flex items-center gap-2 text-foreground text-lg">
                     <svg className="h-5 w-5" viewBox="0 0 24 24" aria-hidden>
                         <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.27-4.74 3.27-8.1Z" />
                         <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84A11 11 0 0 0 12 23Z" />
@@ -38,19 +38,19 @@ export function GoogleConnectionCard({ connected, email }: Props) {
                 </CardTitle>
             </CardHeader>
             <CardContent>
-                <p className="text-sm text-zinc-400 mb-4">
-                    Conecta <span className="text-zinc-200">una sola cuenta de Google de la agencia</span> con acceso a
+                <p className="text-sm text-muted-foreground mb-4">
+                    Conecta <span className="text-foreground">una sola cuenta de Google de la agencia</span> con acceso a
                     todas las propiedades de GA4 y a los Sheets de tus clientes. Una vez conectada, dar de alta un cliente
-                    solo requiere su <span className="text-zinc-200">ID de propiedad GA4</span> y la{' '}
-                    <span className="text-zinc-200">URL del Sheet</span> — sin subir JSON ni compartir credenciales por
+                    solo requiere su <span className="text-foreground">ID de propiedad GA4</span> y la{' '}
+                    <span className="text-foreground">URL del Sheet</span> — sin subir JSON ni compartir credenciales por
                     cliente.
                 </p>
 
                 {connected ? (
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-zinc-950/60 p-3 rounded">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-muted/60 p-3 rounded">
                         <div className="text-sm">
-                            <span className="text-emerald-400 font-medium">● Conectado</span>
-                            {email && <span className="text-zinc-400 ml-2">como {email}</span>}
+                            <span className="text-emerald-600 dark:text-emerald-400 font-medium">● Conectado</span>
+                            {email && <span className="text-muted-foreground ml-2">como {email}</span>}
                         </div>
                         <div className="flex gap-2">
                             <a href="/api/auth/google">
@@ -62,8 +62,8 @@ export function GoogleConnectionCard({ connected, email }: Props) {
                         </div>
                     </div>
                 ) : (
-                    <div className="flex items-center justify-between gap-3 bg-zinc-950/60 p-3 rounded">
-                        <span className="text-amber-400 text-sm font-medium">● No conectado</span>
+                    <div className="flex items-center justify-between gap-3 bg-muted/60 p-3 rounded">
+                        <span className="text-amber-600 dark:text-amber-400 text-sm font-medium">● No conectado</span>
                         <a href="/api/auth/google">
                             <Button size="sm">Conectar con Google</Button>
                         </a>

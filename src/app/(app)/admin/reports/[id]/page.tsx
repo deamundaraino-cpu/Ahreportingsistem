@@ -16,10 +16,10 @@ import {
 } from '../_actions'
 
 const ESTADO_CONFIG: Record<string, { label: string; color: string }> = {
-    borrador:   { label: 'Borrador',  color: 'bg-zinc-700 text-zinc-300' },
-    revision:   { label: 'Revisión',  color: 'bg-amber-500/20 text-amber-300 border border-amber-500/30' },
-    aprobado:   { label: 'Aprobado',  color: 'bg-blue-500/20 text-blue-300 border border-blue-500/30' },
-    publicado:  { label: 'Publicado', color: 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' },
+    borrador:   { label: 'Borrador',  color: 'bg-muted text-muted-foreground' },
+    revision:   { label: 'Revisión',  color: 'bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-500/20' },
+    aprobado:   { label: 'Aprobado',  color: 'bg-blue-500/10 text-blue-700 dark:text-blue-400 border border-blue-500/20' },
+    publicado:  { label: 'Publicado', color: 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-500/20' },
 }
 
 const NEXT_ACTION: Record<string, string> = {
@@ -125,14 +125,14 @@ export default function ReportEditorPage() {
     if (loading) {
         return (
             <div className="flex items-center justify-center h-64">
-                <Loader2 className="w-6 h-6 animate-spin text-zinc-500" />
+                <Loader2 className="w-6 h-6 animate-spin text-muted-foreground/70" />
             </div>
         )
     }
 
     if (!report) {
         return (
-            <div className="text-center py-12 text-zinc-400">
+            <div className="text-center py-12 text-muted-foreground">
                 <p>Reporte no encontrado.</p>
                 <Button variant="ghost" onClick={() => router.push('/admin/reports')} className="mt-4">
                     <ArrowLeft className="w-4 h-4 mr-2" /> Volver
@@ -150,17 +150,17 @@ export default function ReportEditorPage() {
         <div className="space-y-6">
             {/* Header */}
             <div className="flex items-center gap-3">
-                <Button variant="ghost" onClick={() => router.push('/admin/reports')} className="text-zinc-400">
+                <Button variant="ghost" onClick={() => router.push('/admin/reports')} className="text-muted-foreground">
                     <ArrowLeft className="w-4 h-4" />
                 </Button>
                 <div className="flex-1">
                     <div className="flex items-center gap-2">
-                        <h2 className="text-xl font-bold text-white">
+                        <h2 className="text-xl font-bold text-foreground">
                             {report.cliente?.nombre} · {report.periodo}
                         </h2>
                         <Badge className={`text-xs ${cfg.color}`}>{cfg.label}</Badge>
                     </div>
-                    <p className="text-zinc-500 text-sm">{report.template?.nombre || 'Sin template asignado'}</p>
+                    <p className="text-muted-foreground/70 text-sm">{report.template?.nombre || 'Sin template asignado'}</p>
                 </div>
 
                 <div className="flex items-center gap-2">
@@ -169,7 +169,7 @@ export default function ReportEditorPage() {
                             href={`/report/monthly/${report.public_slug}`}
                             target="_blank"
                             rel="noreferrer"
-                            className="flex items-center gap-1 text-sm text-emerald-400 hover:underline"
+                            className="flex items-center gap-1 text-sm text-emerald-600 dark:text-emerald-400 hover:underline"
                         >
                             <ExternalLink className="w-4 h-4" /> Ver Público
                         </a>
@@ -179,7 +179,7 @@ export default function ReportEditorPage() {
                         size="sm"
                         variant="outline"
                         onClick={handleDownloadPdf}
-                        className="gap-1.5 border-zinc-700 text-zinc-300"
+                        className="gap-1.5 border-input text-foreground/90"
                     >
                         <Download className="w-4 h-4" /> PDF
                     </Button>
@@ -190,7 +190,7 @@ export default function ReportEditorPage() {
                             variant="outline"
                             disabled={isPending}
                             onClick={handleRevert}
-                            className="border-zinc-700 text-zinc-400"
+                            className="border-input text-muted-foreground"
                         >
                             <ChevronDown className="w-4 h-4 mr-1" /> Revertir
                         </Button>
@@ -213,22 +213,22 @@ export default function ReportEditorPage() {
             <div className="grid grid-cols-12 gap-6">
                 {/* Left: Config */}
                 <div className="col-span-4 space-y-4">
-                    <Card className="bg-zinc-900 border-zinc-800">
+                    <Card className="bg-card border-border">
                         <CardHeader className="pb-3">
-                            <CardTitle className="text-white text-sm">Configuración</CardTitle>
+                            <CardTitle className="text-foreground text-sm">Configuración</CardTitle>
                         </CardHeader>
                         <CardContent className="space-y-4">
                             <div>
-                                <label className="text-xs text-zinc-400 mb-1.5 block">Template de Reporte</label>
+                                <label className="text-xs text-muted-foreground mb-1.5 block">Template de Reporte</label>
                                 <Select
                                     value={selectedTemplate}
                                     onValueChange={setSelectedTemplate}
                                     disabled={!isEditable}
                                 >
-                                    <SelectTrigger className="bg-zinc-950 border-zinc-700 text-zinc-200">
+                                    <SelectTrigger className="bg-background border-input text-foreground">
                                         <SelectValue placeholder="Sin template..." />
                                     </SelectTrigger>
-                                    <SelectContent className="bg-zinc-900 border-zinc-700">
+                                    <SelectContent className="bg-card border-border">
                                         <SelectItem value="none">Sin template</SelectItem>
                                         {templates.map(t => (
                                             <SelectItem key={t.id} value={t.id}>{t.nombre}</SelectItem>
@@ -239,7 +239,7 @@ export default function ReportEditorPage() {
 
                             {isEditable && (
                                 <Button
-                                    className="w-full bg-zinc-800 hover:bg-zinc-700 text-white"
+                                    className="w-full bg-secondary hover:bg-secondary/80 text-secondary-foreground"
                                     onClick={handleSave}
                                     disabled={saving}
                                 >
@@ -251,10 +251,10 @@ export default function ReportEditorPage() {
                     </Card>
 
                     {/* Campaign selector */}
-                    <Card className="bg-zinc-900 border-zinc-800">
+                    <Card className="bg-card border-border">
                         <CardHeader className="pb-3">
-                            <CardTitle className="text-white text-sm">Campañas Descubiertas</CardTitle>
-                            <CardDescription className="text-zinc-500 text-xs">
+                            <CardTitle className="text-foreground text-sm">Campañas Descubiertas</CardTitle>
+                            <CardDescription className="text-muted-foreground/70 text-xs">
                                 {includedKeys.size} de {allDiscovered.length} incluidas
                             </CardDescription>
                         </CardHeader>
@@ -268,16 +268,16 @@ export default function ReportEditorPage() {
                                         disabled={!isEditable}
                                         onClick={() => toggleCampaign(key)}
                                         className={`w-full flex items-center gap-2 p-2 rounded text-left transition ${
-                                            included ? 'bg-indigo-500/10 border border-indigo-500/20' : 'bg-zinc-800/50 border border-transparent'
-                                        } ${isEditable ? 'hover:bg-zinc-800 cursor-pointer' : 'cursor-default'}`}
+                                            included ? 'bg-indigo-500/10 border border-indigo-500/20' : 'bg-muted/50 border border-transparent'
+                                        } ${isEditable ? 'hover:bg-accent cursor-pointer' : 'cursor-default'}`}
                                     >
                                         {included
-                                            ? <CheckSquare className="w-4 h-4 text-indigo-400 shrink-0" />
-                                            : <Square className="w-4 h-4 text-zinc-600 shrink-0" />
+                                            ? <CheckSquare className="w-4 h-4 text-indigo-600 dark:text-indigo-400 shrink-0" />
+                                            : <Square className="w-4 h-4 text-muted-foreground/70 shrink-0" />
                                         }
                                         <div className="flex-1 min-w-0">
-                                            <p className="text-xs text-zinc-200 truncate">{c.name}</p>
-                                            <p className="text-[10px] text-zinc-500">${c.spend?.toFixed(2)} · {c.leads} leads</p>
+                                            <p className="text-xs text-foreground truncate">{c.name}</p>
+                                            <p className="text-[10px] text-muted-foreground/70">${c.spend?.toFixed(2)} · {c.leads} leads</p>
                                         </div>
                                     </button>
                                 )
@@ -288,30 +288,30 @@ export default function ReportEditorPage() {
 
                 {/* Right: Preview */}
                 <div className="col-span-8">
-                    <Card className="bg-zinc-900 border-zinc-800">
+                    <Card className="bg-card border-border">
                         <CardHeader className="pb-3">
-                            <CardTitle className="text-white text-sm">Preview del Reporte</CardTitle>
+                            <CardTitle className="text-foreground text-sm">Preview del Reporte</CardTitle>
                         </CardHeader>
                         <CardContent>
-                            <div id="report-preview" className="bg-zinc-950 rounded-lg p-6 space-y-4">
-                                <div className="border-b border-zinc-800 pb-4">
-                                    <h1 className="text-xl font-bold text-white">{report.cliente?.nombre}</h1>
-                                    <p className="text-zinc-400 text-sm">Reporte de Rendimiento · {report.periodo}</p>
+                            <div id="report-preview" className="bg-background rounded-lg p-6 space-y-4">
+                                <div className="border-b border-border pb-4">
+                                    <h1 className="text-xl font-bold text-foreground">{report.cliente?.nombre}</h1>
+                                    <p className="text-muted-foreground text-sm">Reporte de Rendimiento · {report.periodo}</p>
                                     {report.template && (
-                                        <p className="text-xs text-indigo-400 mt-1">{report.template.nombre}</p>
+                                        <p className="text-xs text-indigo-600 dark:text-indigo-400 mt-1">{report.template.nombre}</p>
                                     )}
                                 </div>
 
                                 {/* Campaign summary */}
                                 <div>
-                                    <h2 className="text-sm font-semibold text-zinc-300 mb-2">Campañas Incluidas</h2>
+                                    <h2 className="text-sm font-semibold text-foreground/90 mb-2">Campañas Incluidas</h2>
                                     <div className="space-y-1.5">
                                         {(report.campaigns_included || [])
                                             .filter((c: any) => includedKeys.has(c.campaign_id || c.name))
                                             .map((c: any) => (
-                                                <div key={c.campaign_id || c.name} className="flex items-center justify-between text-xs py-1.5 border-b border-zinc-800/50">
-                                                    <span className="text-zinc-300">{c.name}</span>
-                                                    <div className="flex gap-4 text-zinc-500">
+                                                <div key={c.campaign_id || c.name} className="flex items-center justify-between text-xs py-1.5 border-b border-border/50">
+                                                    <span className="text-foreground/90">{c.name}</span>
+                                                    <div className="flex gap-4 text-muted-foreground/70">
                                                         <span>${c.spend?.toFixed(2)}</span>
                                                         <span>{c.leads} leads</span>
                                                         <span>{c.impressions?.toLocaleString()} impr.</span>
@@ -323,7 +323,7 @@ export default function ReportEditorPage() {
                                 </div>
 
                                 {allDiscovered.filter((c: any) => includedKeys.has(c.campaign_id || c.name)).length === 0 && (
-                                    <p className="text-zinc-600 text-sm text-center py-8">Selecciona campañas para incluir en el reporte.</p>
+                                    <p className="text-muted-foreground/70 text-sm text-center py-8">Selecciona campañas para incluir en el reporte.</p>
                                 )}
                             </div>
                         </CardContent>

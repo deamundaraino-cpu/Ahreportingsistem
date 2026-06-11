@@ -202,31 +202,31 @@ export function MonthlyReportTab({ clientId: clientIdProp }: { clientId: string 
     return (
         <div className="space-y-6">
             {/* ── Selector de Mes ──────────────────────────────────────────── */}
-            <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6">
+            <div className="bg-card border border-border rounded-2xl p-6">
                 <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 justify-between">
                     <div>
-                        <h3 className="text-white font-semibold text-lg flex items-center gap-2">
+                        <h3 className="text-foreground font-semibold text-lg flex items-center gap-2">
                             <Calendar className="w-5 h-5 text-[#F4A800]" />
                             Reporte Mensual
                         </h3>
-                        <p className="text-zinc-400 text-sm mt-0.5">Selecciona el período y genera el reporte completo del cliente</p>
+                        <p className="text-muted-foreground text-sm mt-0.5">Selecciona el período y genera el reporte completo del cliente</p>
                     </div>
                     <div className="flex items-center gap-3">
                         {/* Month navigator */}
-                        <div className="flex items-center gap-2 bg-zinc-800 rounded-xl px-3 py-2 border border-zinc-700">
+                        <div className="flex items-center gap-2 bg-muted rounded-xl px-3 py-2 border border-border">
                             <button
                                 onClick={prevMonth}
-                                className="p-1 text-zinc-400 hover:text-white transition rounded"
+                                className="p-1 text-muted-foreground hover:text-foreground transition rounded"
                             >
                                 <ChevronLeft className="w-4 h-4" />
                             </button>
-                            <span className="text-white font-semibold capitalize min-w-[140px] text-center text-sm">
+                            <span className="text-foreground font-semibold capitalize min-w-[140px] text-center text-sm">
                                 {periodoLabel}
                             </span>
                             <button
                                 onClick={nextMonth}
                                 disabled={isCurrentOrFuture}
-                                className="p-1 text-zinc-400 hover:text-white transition rounded disabled:opacity-30 disabled:cursor-not-allowed"
+                                className="p-1 text-muted-foreground hover:text-foreground transition rounded disabled:opacity-30 disabled:cursor-not-allowed"
                             >
                                 <ChevronRight className="w-4 h-4" />
                             </button>
@@ -254,10 +254,10 @@ export function MonthlyReportTab({ clientId: clientIdProp }: { clientId: string 
 
             {/* ── Estado inicial ──────────────────────────────────────────── */}
             {!generated && !loading && (
-                <div className="flex flex-col items-center justify-center py-20 text-center border-2 border-dashed border-zinc-800 rounded-2xl bg-zinc-900/30">
-                    <BarChart3 className="w-12 h-12 text-zinc-600 mb-4" />
-                    <p className="text-zinc-400 text-lg font-medium">Selecciona un período y haz clic en <strong className="text-white">Generar Reporte</strong></p>
-                    <p className="text-zinc-600 text-sm mt-1">El reporte completo del cliente aparecerá aquí</p>
+                <div className="flex flex-col items-center justify-center py-20 text-center border-2 border-dashed border-border rounded-2xl bg-card/30">
+                    <BarChart3 className="w-12 h-12 text-muted-foreground/70 mb-4" />
+                    <p className="text-muted-foreground text-lg font-medium">Selecciona un período y haz clic en <strong className="text-foreground">Generar Reporte</strong></p>
+                    <p className="text-muted-foreground/70 text-sm mt-1">El reporte completo del cliente aparecerá aquí</p>
                 </div>
             )}
 
@@ -276,7 +276,7 @@ export function MonthlyReportTab({ clientId: clientIdProp }: { clientId: string 
             {/* ── Error ───────────────────────────────────────────────────── */}
             {error && (
                 <div className="flex flex-col items-center justify-center py-16 text-center">
-                    <AlertCircle className="w-12 h-12 text-red-400 mb-4" />
+                    <AlertCircle className="w-12 h-12 text-red-600 dark:text-red-400 mb-4" />
                     <p className="text-gray-500">{error}</p>
                 </div>
             )}
@@ -532,7 +532,7 @@ export function MonthlyReportTab({ clientId: clientIdProp }: { clientId: string 
                                 {data.creatives.bottom.length > 0 && (
                                     <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 print:shadow-none">
                                         <div className="flex items-center gap-2 mb-4">
-                                            <AlertCircle className="w-5 h-5 text-red-400" />
+                                            <AlertCircle className="w-5 h-5 text-red-600 dark:text-red-400" />
                                             <h2 className="text-base font-bold text-gray-800">Bajo Rendimiento</h2>
                                         </div>
                                         <div className="space-y-3">
@@ -540,7 +540,7 @@ export function MonthlyReportTab({ clientId: clientIdProp }: { clientId: string 
                                                 <div key={i} className="flex gap-3 p-3 rounded-xl bg-red-50/60 border border-red-100">
                                                     {c.thumbnail_url
                                                         ? <img src={c.thumbnail_url} className="w-12 h-12 rounded-lg object-cover flex-shrink-0" alt="" />
-                                                        : <div className="w-12 h-12 rounded-lg bg-red-100 flex-shrink-0 flex items-center justify-center"><AlertCircle className="w-5 h-5 text-red-400" /></div>
+                                                        : <div className="w-12 h-12 rounded-lg bg-red-100 flex-shrink-0 flex items-center justify-center"><AlertCircle className="w-5 h-5 text-red-600 dark:text-red-400" /></div>
                                                     }
                                                     <div className="flex-1 min-w-0">
                                                         <p className="text-xs font-semibold text-gray-800 truncate">{c.name}</p>

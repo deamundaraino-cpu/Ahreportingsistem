@@ -8,11 +8,11 @@ import { MetricCharts } from './MetricCharts'
 import { formatValue } from '@/lib/formula-engine'
 
 const COLOR_MAP: Record<string, string> = {
-    emerald: 'text-emerald-400',
-    red: 'text-red-400',
-    blue: 'text-blue-400',
-    amber: 'text-amber-400',
-    default: 'text-white',
+    emerald: 'text-emerald-600 dark:text-emerald-400',
+    red: 'text-red-600 dark:text-red-400',
+    blue: 'text-blue-600 dark:text-blue-400',
+    amber: 'text-amber-600 dark:text-amber-400',
+    default: 'text-foreground',
 }
 
 export function SortableCard({ id, card, isPuzzleMode, onRemove, onQuickEdit, onDuplicate, isCollapsed, onToggleCollapse }: {
@@ -30,22 +30,22 @@ export function SortableCard({ id, card, isPuzzleMode, onRemove, onQuickEdit, on
 
     if (isCollapsed) {
         return (
-            <div ref={setNodeRef} style={style} className="col-span-1 bg-zinc-900/50 border border-zinc-800/60 rounded-xl px-3 py-2 flex items-center gap-2 cursor-pointer hover:bg-zinc-800/50 hover:border-zinc-700 transition" onClick={onToggleCollapse}>
-                <ChevronRight className="w-3 h-3 text-zinc-600 flex-shrink-0" />
-                <span className="text-xs text-zinc-500 truncate">{card.label}</span>
+            <div ref={setNodeRef} style={style} className="col-span-1 bg-card/50 border border-border rounded-xl px-3 py-2 flex items-center gap-2 cursor-pointer hover:bg-accent hover:border-muted-foreground/30 transition" onClick={onToggleCollapse}>
+                <ChevronRight className="w-3 h-3 text-muted-foreground/70 flex-shrink-0" />
+                <span className="text-xs text-muted-foreground/70 truncate">{card.label}</span>
             </div>
         )
     }
 
     return (
-        <Card ref={setNodeRef} style={style} className={`col-span-1 bg-zinc-900 border-zinc-800 transition relative group ${isPuzzleMode ? 'ring-1 ring-zinc-700/50 hover:border-zinc-500 hover:shadow-lg' : 'hover:border-zinc-700'}`}>
+        <Card ref={setNodeRef} style={style} className={`col-span-1 bg-card border-border transition relative group ${isPuzzleMode ? 'ring-1 ring-border hover:border-muted-foreground/50 hover:shadow-lg' : 'hover:border-muted-foreground/30'}`}>
             {isPuzzleMode ? (
                 <div className="absolute top-2 right-2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-10">
-                    <button {...attributes} {...listeners} className="p-1 text-zinc-400 hover:text-white cursor-grab active:cursor-grabbing bg-zinc-800 rounded">
+                    <button {...attributes} {...listeners} className="p-1 text-muted-foreground hover:text-foreground cursor-grab active:cursor-grabbing bg-muted rounded">
                         <GripVertical className="w-3.5 h-3.5" />
                     </button>
                     {onRemove && (
-                        <button onClick={onRemove} className="p-1 text-zinc-400 hover:text-red-400 bg-zinc-800 rounded">
+                        <button onClick={onRemove} className="p-1 text-muted-foreground hover:text-red-400 bg-muted rounded">
                             <Trash2 className="w-3.5 h-3.5" />
                         </button>
                     )}
@@ -53,27 +53,27 @@ export function SortableCard({ id, card, isPuzzleMode, onRemove, onQuickEdit, on
             ) : (
                 <div className="absolute top-2 right-2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-10">
                     {onDuplicate && (
-                        <button onClick={e => { e.stopPropagation(); onDuplicate() }} className="p-1 text-zinc-600 hover:text-emerald-400 bg-zinc-900/80 border border-zinc-800 hover:border-emerald-500/40 rounded transition" title="Duplicar">
+                        <button onClick={e => { e.stopPropagation(); onDuplicate() }} className="p-1 text-muted-foreground/70 hover:text-emerald-400 bg-card/80 border border-border hover:border-emerald-500/40 rounded transition" title="Duplicar">
                             <Copy className="w-3 h-3" />
                         </button>
                     )}
                     {onQuickEdit && (
-                        <button onClick={e => { e.stopPropagation(); onQuickEdit() }} className="p-1 text-zinc-600 hover:text-indigo-400 bg-zinc-900/80 border border-zinc-800 hover:border-indigo-500/40 rounded transition" title="Editar">
+                        <button onClick={e => { e.stopPropagation(); onQuickEdit() }} className="p-1 text-muted-foreground/70 hover:text-indigo-400 bg-card/80 border border-border hover:border-indigo-500/40 rounded transition" title="Editar">
                             <Pencil className="w-3 h-3" />
                         </button>
                     )}
                     {onToggleCollapse && (
-                        <button onClick={onToggleCollapse} className="p-1 text-zinc-700 hover:text-zinc-400 bg-zinc-900/80 border border-zinc-800 rounded transition" title="Ocultar">
+                        <button onClick={onToggleCollapse} className="p-1 text-muted-foreground/50 hover:text-muted-foreground bg-card/80 border border-border rounded transition" title="Ocultar">
                             <ChevronUp className="w-3 h-3" />
                         </button>
                     )}
                 </div>
             )}
             <CardHeader className="pb-2">
-                <CardDescription className="text-zinc-400 font-medium pr-8">{card.label}</CardDescription>
+                <CardDescription className="text-muted-foreground font-medium pr-8">{card.label}</CardDescription>
             </CardHeader>
             <CardContent className="overflow-hidden">
-                <p className={`truncate text-2xl lg:text-3xl font-bold font-mono tracking-tight ${COLOR_MAP[card.color || 'default']}`}>
+                <p className={`truncate text-2xl lg:text-3xl font-bold font-mono tabular-nums tracking-tight ${COLOR_MAP[card.color || 'default']}`}>
                     {formatValue(card.value, { prefix: card.prefix, suffix: card.suffix, decimals: card.decimals ?? 2 })}
                 </p>
             </CardContent>
@@ -87,22 +87,22 @@ export function SortableChart({ id, chart, isPuzzleMode, metrics, weeks, varCont
 
     if (isCollapsed) {
         return (
-            <div ref={setNodeRef} style={style} className="col-span-1 md:col-span-4 bg-zinc-900/50 border border-zinc-800/60 rounded-xl px-4 py-2.5 flex items-center gap-2 cursor-pointer hover:bg-zinc-800/50 hover:border-zinc-700 transition" onClick={onToggleCollapse}>
-                <ChevronRight className="w-3.5 h-3.5 text-zinc-600 flex-shrink-0" />
-                <span className="text-sm text-zinc-500 truncate">{chart.title || 'Gráfica'}</span>
+            <div ref={setNodeRef} style={style} className="col-span-1 md:col-span-4 bg-card/50 border border-border rounded-xl px-4 py-2.5 flex items-center gap-2 cursor-pointer hover:bg-accent hover:border-muted-foreground/30 transition" onClick={onToggleCollapse}>
+                <ChevronRight className="w-3.5 h-3.5 text-muted-foreground/70 flex-shrink-0" />
+                <span className="text-sm text-muted-foreground/70 truncate">{chart.title || 'Gráfica'}</span>
             </div>
         )
     }
 
     return (
-        <div ref={setNodeRef} style={style} className={`col-span-1 md:col-span-4 relative group ${isPuzzleMode ? 'ring-1 ring-zinc-700/50 p-1 rounded-xl hover:shadow-lg hover:border-zinc-500' : ''}`}>
+        <div ref={setNodeRef} style={style} className={`col-span-1 md:col-span-4 relative group ${isPuzzleMode ? 'ring-1 ring-border p-1 rounded-xl hover:shadow-lg hover:border-muted-foreground/50' : ''}`}>
             {isPuzzleMode ? (
                 <div className="absolute top-4 right-4 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-20">
-                    <button {...attributes} {...listeners} className="p-1.5 text-zinc-400 hover:text-white cursor-grab active:cursor-grabbing bg-zinc-900 border border-zinc-700 rounded shadow">
+                    <button {...attributes} {...listeners} className="p-1.5 text-muted-foreground hover:text-foreground cursor-grab active:cursor-grabbing bg-card border border-border rounded shadow">
                         <GripVertical className="w-4 h-4" />
                     </button>
                     {onRemove && (
-                        <button onClick={onRemove} className="p-1.5 text-zinc-400 hover:text-red-400 bg-zinc-900 border border-zinc-700 rounded shadow">
+                        <button onClick={onRemove} className="p-1.5 text-muted-foreground hover:text-red-400 bg-card border border-border rounded shadow">
                             <Trash2 className="w-4 h-4" />
                         </button>
                     )}
@@ -110,17 +110,17 @@ export function SortableChart({ id, chart, isPuzzleMode, metrics, weeks, varCont
             ) : (
                 <div className="absolute top-3 right-3 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-20">
                     {onDuplicate && (
-                        <button onClick={e => { e.stopPropagation(); onDuplicate() }} className="p-1.5 text-zinc-600 hover:text-emerald-400 bg-zinc-900/80 border border-zinc-800 hover:border-emerald-500/40 rounded transition" title="Duplicar">
+                        <button onClick={e => { e.stopPropagation(); onDuplicate() }} className="p-1.5 text-muted-foreground/70 hover:text-emerald-400 bg-card/80 border border-border hover:border-emerald-500/40 rounded transition" title="Duplicar">
                             <Copy className="w-3.5 h-3.5" />
                         </button>
                     )}
                     {onQuickEdit && (
-                        <button onClick={e => { e.stopPropagation(); onQuickEdit() }} className="p-1.5 text-zinc-600 hover:text-indigo-400 bg-zinc-900/80 border border-zinc-800 hover:border-indigo-500/40 rounded transition" title="Editar">
+                        <button onClick={e => { e.stopPropagation(); onQuickEdit() }} className="p-1.5 text-muted-foreground/70 hover:text-indigo-400 bg-card/80 border border-border hover:border-indigo-500/40 rounded transition" title="Editar">
                             <Pencil className="w-3.5 h-3.5" />
                         </button>
                     )}
                     {onToggleCollapse && (
-                        <button onClick={onToggleCollapse} className="p-1.5 text-zinc-700 hover:text-zinc-400 bg-zinc-900/80 rounded border border-zinc-800 transition" title="Ocultar">
+                        <button onClick={onToggleCollapse} className="p-1.5 text-muted-foreground/50 hover:text-muted-foreground bg-card/80 rounded border border-border transition" title="Ocultar">
                             <ChevronUp className="w-3.5 h-3.5" />
                         </button>
                     )}
@@ -171,13 +171,13 @@ export function SortableText({ id, block, isPuzzleMode, onRemove, onUpdate, onQu
     // ── Text style class ─────────────────────────────────────────────────────
     const getTextClass = () => {
         const weightMap: Record<string, string> = { h1: 'font-bold tracking-tight', h2: 'font-semibold', h3: 'font-medium', p: 'font-normal' }
-        const colorMap: Record<string, string> = { white: 'text-white', zinc: 'text-zinc-400', indigo: 'text-indigo-400', emerald: 'text-emerald-400', amber: 'text-amber-400', rose: 'text-rose-400', cyan: 'text-cyan-400', blue: 'text-blue-400' }
+        const colorMap: Record<string, string> = { white: 'text-foreground', zinc: 'text-muted-foreground', indigo: 'text-indigo-600 dark:text-indigo-400', emerald: 'text-emerald-600 dark:text-emerald-400', amber: 'text-amber-600 dark:text-amber-400', rose: 'text-rose-600 dark:text-rose-400', cyan: 'text-cyan-600 dark:text-cyan-400', blue: 'text-blue-600 dark:text-blue-400' }
         const fontMap: Record<string, string> = { sans: 'font-sans', serif: 'font-serif', mono: 'font-mono' }
         const sizeMap: Record<string, string> = { sm: 'text-sm', base: 'text-base', lg: 'text-lg', xl: 'text-xl', '2xl': 'text-2xl', '4xl': 'text-4xl', '6xl': 'text-6xl', '8xl': 'text-8xl' }
         const defaultSizes: Record<string, string> = { h1: 'text-3xl lg:text-4xl', h2: 'text-xl', h3: 'text-lg', p: 'text-base' }
         return [
             weightMap[block.style] || 'font-normal',
-            colorMap[block.color || 'white'] || 'text-white',
+            colorMap[block.color || 'white'] || 'text-foreground',
             fontMap[block.fontFamily || ''] || '',
             sizeMap[block.fontSize || ''] || defaultSizes[block.style] || 'text-base',
         ].filter(Boolean).join(' ')
@@ -188,8 +188,8 @@ export function SortableText({ id, block, isPuzzleMode, onRemove, onUpdate, onQu
         const sepStyle = block.separatorStyle || 'line'
         const sepWidth = block.separatorWidth || 'full'
         const widthClass = { full: 'w-full', half: 'w-1/2 mx-auto', small: 'w-1/4 mx-auto' }[sepWidth] || 'w-full'
-        const colorClass: Record<string, string> = { white: 'border-white/30', zinc: 'border-zinc-700', indigo: 'border-indigo-500/40', emerald: 'border-emerald-500/40', amber: 'border-amber-500/40', rose: 'border-rose-500/40', cyan: 'border-cyan-500/40', blue: 'border-blue-500/40' }
-        const borderColor = colorClass[block.color || 'zinc'] || 'border-zinc-700'
+        const colorClass: Record<string, string> = { white: 'border-white/30', zinc: 'border-border', indigo: 'border-indigo-500/40', emerald: 'border-emerald-500/40', amber: 'border-amber-500/40', rose: 'border-rose-500/40', cyan: 'border-cyan-500/40', blue: 'border-blue-500/40' }
+        const borderColor = colorClass[block.color || 'zinc'] || 'border-border'
         if (sepStyle === 'space') return <div className="py-6" />
         const borderStyle = { line: 'border-solid', dashed: 'border-dashed', dots: 'border-dotted' }[sepStyle] || 'border-solid'
         return (
@@ -216,19 +216,19 @@ export function SortableText({ id, block, isPuzzleMode, onRemove, onUpdate, onQu
 
     // ── Shared drag + remove top bar ──────────────────────────────────────────
     const renderPuzzleTopBar = (label: string, accent: string) => (
-        <div className={`flex items-center justify-between mb-2 pb-2 border-b ${accent === 'indigo' ? 'border-indigo-500/20' : 'border-zinc-700/50'}`}>
-            <span className={`text-[10px] font-bold uppercase tracking-widest ${accent === 'indigo' ? 'text-indigo-400/70' : 'text-zinc-500'}`}>{label}</span>
+        <div className={`flex items-center justify-between mb-2 pb-2 border-b ${accent === 'indigo' ? 'border-indigo-500/20' : 'border-border'}`}>
+            <span className={`text-[10px] font-bold uppercase tracking-widest ${accent === 'indigo' ? 'text-indigo-600 dark:text-indigo-400/70' : 'text-muted-foreground/70'}`}>{label}</span>
             <div className="flex items-center gap-1">
                 <button
                     {...attributes}
                     {...listeners}
-                    className="p-1.5 text-zinc-400 hover:text-white cursor-grab active:cursor-grabbing bg-zinc-800 hover:bg-zinc-700 rounded transition"
+                    className="p-1.5 text-muted-foreground hover:text-foreground cursor-grab active:cursor-grabbing bg-muted hover:bg-accent rounded transition"
                     title="Arrastrar para reordenar"
                 >
                     <GripVertical className="w-3.5 h-3.5" />
                 </button>
                 {onRemove && (
-                    <button onClick={onRemove} className="p-1.5 text-zinc-400 hover:text-red-400 bg-zinc-800 hover:bg-zinc-700 rounded transition" title="Eliminar bloque">
+                    <button onClick={onRemove} className="p-1.5 text-muted-foreground hover:text-red-400 bg-muted hover:bg-accent rounded transition" title="Eliminar bloque">
                         <Trash2 className="w-3.5 h-3.5" />
                     </button>
                 )}
@@ -243,12 +243,12 @@ export function SortableText({ id, block, isPuzzleMode, onRemove, onUpdate, onQu
 
             {/* Width */}
             <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-[10px] text-zinc-500 shrink-0 w-12">Ancho:</span>
+                <span className="text-[10px] text-muted-foreground/70 shrink-0 w-12">Ancho:</span>
                 {(['full', 'half', 'small'] as const).map(w => (
                     <button
                         key={w}
                         onClick={() => onUpdate?.({ separatorWidth: w })}
-                        className={`px-2.5 py-1 text-[10px] font-medium rounded border transition ${(block.separatorWidth || 'full') === w ? 'bg-zinc-600 border-zinc-500 text-white' : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:border-zinc-500 hover:text-zinc-200'}`}
+                        className={`px-2.5 py-1 text-[10px] font-medium rounded border transition ${(block.separatorWidth || 'full') === w ? 'bg-secondary border-ring text-secondary-foreground' : 'bg-muted border-border text-muted-foreground hover:border-muted-foreground/50 hover:text-foreground'}`}
                     >
                         {w === 'full' ? '━ Completo' : w === 'half' ? '── 50%' : '· Pequeño'}
                     </button>
@@ -257,12 +257,12 @@ export function SortableText({ id, block, isPuzzleMode, onRemove, onUpdate, onQu
 
             {/* Style */}
             <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-[10px] text-zinc-500 shrink-0 w-12">Estilo:</span>
+                <span className="text-[10px] text-muted-foreground/70 shrink-0 w-12">Estilo:</span>
                 {([['line', '────'], ['dashed', '- - -'], ['dots', '·····'], ['space', 'Espacio']] as [string, string][]).map(([s, label]) => (
                     <button
                         key={s}
                         onClick={() => onUpdate?.({ separatorStyle: s as TextBlockDef['separatorStyle'] })}
-                        className={`px-2.5 py-1 text-[10px] font-mono rounded border transition ${(block.separatorStyle || 'line') === s ? 'bg-zinc-600 border-zinc-500 text-white' : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:border-zinc-500 hover:text-zinc-200'}`}
+                        className={`px-2.5 py-1 text-[10px] font-mono rounded border transition ${(block.separatorStyle || 'line') === s ? 'bg-secondary border-ring text-secondary-foreground' : 'bg-muted border-border text-muted-foreground hover:border-muted-foreground/50 hover:text-foreground'}`}
                     >
                         {label}
                     </button>
@@ -271,22 +271,22 @@ export function SortableText({ id, block, isPuzzleMode, onRemove, onUpdate, onQu
 
             {/* Color */}
             <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-[10px] text-zinc-500 shrink-0 w-12">Color:</span>
+                <span className="text-[10px] text-muted-foreground/70 shrink-0 w-12">Color:</span>
                 {(['zinc', 'white', 'indigo', 'emerald', 'amber', 'rose', 'cyan'] as const).map(c => {
-                    const dotColors: Record<string, string> = { zinc: 'bg-zinc-500', white: 'bg-white', indigo: 'bg-indigo-500', emerald: 'bg-emerald-500', amber: 'bg-amber-500', rose: 'bg-rose-500', cyan: 'bg-cyan-500' }
+                    const dotColors: Record<string, string> = { zinc: 'bg-muted-foreground', white: 'bg-white', indigo: 'bg-indigo-500', emerald: 'bg-emerald-500', amber: 'bg-amber-500', rose: 'bg-rose-500', cyan: 'bg-cyan-500' }
                     return (
                         <button
                             key={c}
                             onClick={() => onUpdate?.({ color: c })}
                             title={c}
-                            className={`w-5 h-5 rounded-full border-2 transition ${dotColors[c]} ${(block.color || 'zinc') === c ? 'border-white scale-125' : 'border-transparent opacity-60 hover:opacity-100 hover:scale-110'}`}
+                            className={`w-5 h-5 rounded-full border-2 transition ${dotColors[c]} ${(block.color || 'zinc') === c ? 'border-ring scale-125' : 'border-transparent opacity-60 hover:opacity-100 hover:scale-110'}`}
                         />
                     )
                 })}
             </div>
 
             {/* Preview */}
-            <div className="rounded-lg bg-zinc-950 border border-zinc-800 px-3 py-1">
+            <div className="rounded-lg bg-background border border-border px-3 py-1">
                 {renderSeparatorView()}
             </div>
         </div>
@@ -304,33 +304,33 @@ export function SortableText({ id, block, isPuzzleMode, onRemove, onUpdate, onQu
                     <button
                         key={s}
                         onClick={() => onUpdate?.({ style: s })}
-                        className={`px-2 py-0.5 text-[10px] font-bold uppercase rounded border transition ${block.style === s ? 'bg-indigo-600 border-indigo-500 text-white' : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:border-zinc-500 hover:text-zinc-200'}`}
+                        className={`px-2 py-0.5 text-[10px] font-bold uppercase rounded border transition ${block.style === s ? 'bg-indigo-600 border-indigo-500 text-white' : 'bg-muted border-border text-muted-foreground hover:border-muted-foreground/50 hover:text-foreground'}`}
                     >
                         {s.toUpperCase()}
                     </button>
                 ))}
 
-                <div className="h-4 w-px bg-zinc-700 mx-0.5" />
+                <div className="h-4 w-px bg-muted-foreground/30 mx-0.5" />
 
                 {/* Alignment */}
                 {([['left', <AlignLeft key="l" className="w-3 h-3" />], ['center', <AlignCenter key="c" className="w-3 h-3" />], ['right', <AlignRight key="r" className="w-3 h-3" />]] as [string, React.ReactNode][]).map(([a, icon]) => (
                     <button
                         key={a}
                         onClick={() => onUpdate?.({ align: a as TextBlockDef['align'] })}
-                        className={`p-1.5 rounded border transition ${(block.align || 'left') === a ? 'bg-indigo-600 border-indigo-500 text-white' : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:border-zinc-500 hover:text-zinc-200'}`}
+                        className={`p-1.5 rounded border transition ${(block.align || 'left') === a ? 'bg-indigo-600 border-indigo-500 text-white' : 'bg-muted border-border text-muted-foreground hover:border-muted-foreground/50 hover:text-foreground'}`}
                     >
                         {icon}
                     </button>
                 ))}
 
-                <div className="h-4 w-px bg-zinc-700 mx-0.5" />
+                <div className="h-4 w-px bg-muted-foreground/30 mx-0.5" />
 
                 {/* Width */}
                 {([4, 2, 1] as const).map(w => (
                     <button
                         key={w}
                         onClick={() => onUpdate?.({ colSpan: w })}
-                        className={`px-2 py-0.5 text-[10px] rounded border transition ${colSpan === w ? 'bg-indigo-600 border-indigo-500 text-white' : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:border-zinc-500 hover:text-zinc-200'}`}
+                        className={`px-2 py-0.5 text-[10px] rounded border transition ${colSpan === w ? 'bg-indigo-600 border-indigo-500 text-white' : 'bg-muted border-border text-muted-foreground hover:border-muted-foreground/50 hover:text-foreground'}`}
                     >
                         {w}/4
                     </button>
@@ -339,15 +339,15 @@ export function SortableText({ id, block, isPuzzleMode, onRemove, onUpdate, onQu
 
             {/* Color row */}
             <div className="flex items-center gap-2">
-                <span className="text-[10px] text-zinc-500 shrink-0">Color:</span>
+                <span className="text-[10px] text-muted-foreground/70 shrink-0">Color:</span>
                 {(['white', 'zinc', 'indigo', 'emerald', 'amber', 'rose', 'cyan', 'blue'] as const).map(c => {
-                    const dotColors: Record<string, string> = { white: 'bg-white', zinc: 'bg-zinc-400', indigo: 'bg-indigo-400', emerald: 'bg-emerald-400', amber: 'bg-amber-400', rose: 'bg-rose-400', cyan: 'bg-cyan-400', blue: 'bg-blue-400' }
+                    const dotColors: Record<string, string> = { white: 'bg-white', zinc: 'bg-muted-foreground/70', indigo: 'bg-indigo-400', emerald: 'bg-emerald-400', amber: 'bg-amber-400', rose: 'bg-rose-400', cyan: 'bg-cyan-400', blue: 'bg-blue-400' }
                     return (
                         <button
                             key={c}
                             onClick={() => onUpdate?.({ color: c })}
                             title={c}
-                            className={`w-4 h-4 rounded-full border-2 transition ${dotColors[c]} ${(block.color || 'white') === c ? 'border-white scale-125' : 'border-transparent opacity-50 hover:opacity-100 hover:scale-110'}`}
+                            className={`w-4 h-4 rounded-full border-2 transition ${dotColors[c]} ${(block.color || 'white') === c ? 'border-ring scale-125' : 'border-transparent opacity-50 hover:opacity-100 hover:scale-110'}`}
                         />
                     )
                 })}
@@ -355,7 +355,7 @@ export function SortableText({ id, block, isPuzzleMode, onRemove, onUpdate, onQu
 
             {/* Content input */}
             <input
-                className={`bg-zinc-950 border border-zinc-700 rounded px-2.5 py-1.5 w-full outline-none focus:border-indigo-500 transition shadow-inner ${getTextClass()}`}
+                className={`bg-background border border-border rounded px-2.5 py-1.5 w-full outline-none focus:border-indigo-500 transition shadow-inner ${getTextClass()}`}
                 value={block.content || ''}
                 onChange={e => onUpdate?.({ content: e.target.value })}
                 placeholder="Escribe el título de sección..."
@@ -366,9 +366,9 @@ export function SortableText({ id, block, isPuzzleMode, onRemove, onUpdate, onQu
 
     if (isCollapsed && !isSeparator && !isPuzzleMode) {
         return (
-            <div ref={setNodeRef} style={style} className={`${colSpanClass} bg-zinc-900/40 border border-zinc-800/50 rounded-lg px-3 py-2 flex items-center gap-2 cursor-pointer hover:bg-zinc-800/40 hover:border-zinc-700 transition`} onClick={onToggleCollapse}>
-                <ChevronRight className="w-3 h-3 text-zinc-600 flex-shrink-0" />
-                <span className="text-xs text-zinc-500 truncate">{block.content || 'Sección'}</span>
+            <div ref={setNodeRef} style={style} className={`${colSpanClass} bg-card/40 border border-border rounded-lg px-3 py-2 flex items-center gap-2 cursor-pointer hover:bg-accent hover:border-muted-foreground/30 transition`} onClick={onToggleCollapse}>
+                <ChevronRight className="w-3 h-3 text-muted-foreground/70 flex-shrink-0" />
+                <span className="text-xs text-muted-foreground/70 truncate">{block.content || 'Sección'}</span>
             </div>
         )
     }
@@ -380,7 +380,7 @@ export function SortableText({ id, block, isPuzzleMode, onRemove, onUpdate, onQu
             className={`${colSpanClass} relative group transition-all duration-200 ${
                 isPuzzleMode
                     ? isSeparator
-                        ? 'ring-1 ring-zinc-600/40 border border-dashed border-zinc-600/30 bg-zinc-900/20 rounded-xl shadow-md'
+                        ? 'ring-1 ring-border border border-dashed border-border bg-card/20 rounded-xl shadow-md'
                         : 'ring-2 ring-indigo-500/30 border-2 border-dashed border-indigo-500/20 bg-indigo-500/5 rounded-xl shadow-xl'
                     : ''
             }`}
@@ -391,17 +391,17 @@ export function SortableText({ id, block, isPuzzleMode, onRemove, onUpdate, onQu
                     <>
                         <div className="absolute top-2 right-2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-10">
                             {onDuplicate && (
-                                <button onClick={e => { e.stopPropagation(); onDuplicate() }} className="p-1 text-zinc-600 hover:text-emerald-400 bg-zinc-900/80 border border-zinc-800 hover:border-emerald-500/40 rounded transition" title="Duplicar">
+                                <button onClick={e => { e.stopPropagation(); onDuplicate() }} className="p-1 text-muted-foreground/70 hover:text-emerald-400 bg-card/80 border border-border hover:border-emerald-500/40 rounded transition" title="Duplicar">
                                     <Copy className="w-3 h-3" />
                                 </button>
                             )}
                             {onQuickEdit && (
-                                <button onClick={e => { e.stopPropagation(); onQuickEdit() }} className="p-1 text-zinc-600 hover:text-indigo-400 bg-zinc-900/80 border border-zinc-800 hover:border-indigo-500/40 rounded transition" title="Editar">
+                                <button onClick={e => { e.stopPropagation(); onQuickEdit() }} className="p-1 text-muted-foreground/70 hover:text-indigo-400 bg-card/80 border border-border hover:border-indigo-500/40 rounded transition" title="Editar">
                                     <Pencil className="w-3 h-3" />
                                 </button>
                             )}
                             {onToggleCollapse && (
-                                <button onClick={onToggleCollapse} className="p-1 text-zinc-700 hover:text-zinc-400 bg-zinc-900/80 border border-zinc-800 rounded transition" title="Ocultar">
+                                <button onClick={onToggleCollapse} className="p-1 text-muted-foreground/50 hover:text-muted-foreground bg-card/80 border border-border rounded transition" title="Ocultar">
                                     <ChevronUp className="w-3 h-3" />
                                 </button>
                             )}
@@ -420,40 +420,40 @@ export function SortableTable({ id, isPuzzleMode, children, title, onQuickEdit, 
 
     if (isCollapsed) {
         return (
-            <div ref={setNodeRef} style={style} className="col-span-1 md:col-span-4 bg-zinc-900/50 border border-zinc-800/60 rounded-xl px-4 py-2.5 flex items-center gap-2 cursor-pointer hover:bg-zinc-800/50 hover:border-zinc-700 transition" onClick={onToggleCollapse}>
-                <ChevronRight className="w-3.5 h-3.5 text-zinc-600 flex-shrink-0" />
-                <span className="text-sm text-zinc-500 truncate">{title || 'Tabla'}</span>
+            <div ref={setNodeRef} style={style} className="col-span-1 md:col-span-4 bg-card/50 border border-border rounded-xl px-4 py-2.5 flex items-center gap-2 cursor-pointer hover:bg-accent hover:border-muted-foreground/30 transition" onClick={onToggleCollapse}>
+                <ChevronRight className="w-3.5 h-3.5 text-muted-foreground/70 flex-shrink-0" />
+                <span className="text-sm text-muted-foreground/70 truncate">{title || 'Tabla'}</span>
             </div>
         )
     }
 
     return (
-        <div ref={setNodeRef} style={style} className={`col-span-1 md:col-span-4 relative group ${isPuzzleMode ? 'ring-1 ring-zinc-700/50 p-1 rounded-xl hover:shadow-lg hover:border-zinc-500' : ''}`}>
+        <div ref={setNodeRef} style={style} className={`col-span-1 md:col-span-4 relative group ${isPuzzleMode ? 'ring-1 ring-border p-1 rounded-xl hover:shadow-lg hover:border-muted-foreground/50' : ''}`}>
             {isPuzzleMode ? (
                 <div className="absolute top-4 right-4 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-20">
                     {onRemove && (
-                        <button type="button" onClick={e => { e.stopPropagation(); onRemove() }} className="p-1.5 text-zinc-400 hover:text-red-400 bg-zinc-900 border border-zinc-700 hover:border-red-500/40 rounded shadow transition" title="Eliminar">
+                        <button type="button" onClick={e => { e.stopPropagation(); onRemove() }} className="p-1.5 text-muted-foreground hover:text-red-400 bg-card border border-border hover:border-red-500/40 rounded shadow transition" title="Eliminar">
                             <Trash2 className="w-4 h-4" />
                         </button>
                     )}
-                    <button {...attributes} {...listeners} className="p-1.5 text-zinc-400 hover:text-white cursor-grab active:cursor-grabbing bg-zinc-900 border border-zinc-700 rounded shadow">
+                    <button {...attributes} {...listeners} className="p-1.5 text-muted-foreground hover:text-foreground cursor-grab active:cursor-grabbing bg-card border border-border rounded shadow">
                         <GripVertical className="w-4 h-4" />
                     </button>
                 </div>
             ) : (
                 <div className="absolute top-4 right-4 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-20">
                     {onDuplicate && (
-                        <button onClick={e => { e.stopPropagation(); onDuplicate() }} className="p-1.5 text-zinc-600 hover:text-emerald-400 bg-zinc-900/80 border border-zinc-800 hover:border-emerald-500/40 rounded transition" title="Duplicar">
+                        <button onClick={e => { e.stopPropagation(); onDuplicate() }} className="p-1.5 text-muted-foreground/70 hover:text-emerald-400 bg-card/80 border border-border hover:border-emerald-500/40 rounded transition" title="Duplicar">
                             <Copy className="w-3.5 h-3.5" />
                         </button>
                     )}
                     {onQuickEdit && (
-                        <button onClick={e => { e.stopPropagation(); onQuickEdit() }} className="p-1.5 text-zinc-600 hover:text-indigo-400 bg-zinc-900/80 border border-zinc-800 hover:border-indigo-500/40 rounded transition" title="Editar">
+                        <button onClick={e => { e.stopPropagation(); onQuickEdit() }} className="p-1.5 text-muted-foreground/70 hover:text-indigo-400 bg-card/80 border border-border hover:border-indigo-500/40 rounded transition" title="Editar">
                             <Pencil className="w-3.5 h-3.5" />
                         </button>
                     )}
                     {onToggleCollapse && (
-                        <button onClick={(e) => { e.stopPropagation(); onToggleCollapse() }} className="p-1.5 text-zinc-700 hover:text-zinc-400 bg-zinc-900/80 rounded border border-zinc-800 transition" title="Ocultar">
+                        <button onClick={(e) => { e.stopPropagation(); onToggleCollapse() }} className="p-1.5 text-muted-foreground/50 hover:text-muted-foreground bg-card/80 rounded border border-border transition" title="Ocultar">
                             <ChevronUp className="w-3.5 h-3.5" />
                         </button>
                     )}

@@ -115,42 +115,42 @@ export function TabConfigModal({
 
     return (
         <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-            <DialogContent className="bg-zinc-950 border-zinc-800 text-zinc-200 max-h-[90vh] overflow-y-auto">
+            <DialogContent className="bg-background border-border text-foreground max-h-[90vh] overflow-y-auto">
                 <DialogHeader>
                     <DialogTitle>{tabToEdit ? 'Editar Pestaña' : 'Nueva Pestaña'}</DialogTitle>
-                    <DialogDescription className="text-zinc-500">
+                    <DialogDescription className="text-muted-foreground/70">
                         Configura un nombre, la palabra clave para filtrar campañas de Meta, y la plantilla de métricas a mostrar.
                     </DialogDescription>
                 </DialogHeader>
 
                 <div className="space-y-4 py-4">
                     <div className="space-y-2">
-                        <label className="text-xs font-semibold text-zinc-400">Nombre de la Pestaña</label>
+                        <label className="text-xs font-semibold text-muted-foreground">Nombre de la Pestaña</label>
                         <Input
                             placeholder="Ej. Diplomado TCC"
                             value={nombre}
                             onChange={e => setNombre(e.target.value)}
-                            className="bg-zinc-900 border-zinc-800"
+                            className="bg-card border-border"
                         />
                     </div>
 
                     <div className="space-y-2">
-                        <label className="text-xs font-semibold text-zinc-400">Palabra Clave (Filtro Meta)</label>
+                        <label className="text-xs font-semibold text-muted-foreground">Palabra Clave (Filtro Meta)</label>
                         <Input
                             placeholder="Ej. EDU-TCC"
                             value={keyword}
                             onChange={e => setKeyword(e.target.value)}
-                            className="bg-zinc-900 border-zinc-800"
+                            className="bg-card border-border"
                         />
                     </div>
 
                     <div className="space-y-2">
-                        <label className="text-xs font-semibold text-zinc-400">Plantilla de Layout Asociada</label>
+                        <label className="text-xs font-semibold text-muted-foreground">Plantilla de Layout Asociada</label>
                         <Select value={layoutId} onValueChange={setLayoutId}>
-                            <SelectTrigger className="w-full bg-zinc-900 border-zinc-800">
+                            <SelectTrigger className="w-full bg-card border-border">
                                 <SelectValue placeholder="Seleccionar plantilla..." />
                             </SelectTrigger>
-                            <SelectContent className="bg-zinc-900 border-zinc-800 text-white z-[120]">
+                            <SelectContent className="bg-card border-border text-foreground z-[120]">
                                 <SelectItem value="none">Por Defecto (Del cliente)</SelectItem>
                                 {allLayouts.map(l => (
                                     <SelectItem key={l.id} value={l.id}>{l.nombre}</SelectItem>
@@ -161,148 +161,148 @@ export function TabConfigModal({
 
                     <div className="grid grid-cols-2 gap-4">
                         <div className="space-y-2">
-                            <label className="text-xs font-semibold text-zinc-400">Fecha de Inicio (Opcional)</label>
+                            <label className="text-xs font-semibold text-muted-foreground">Fecha de Inicio (Opcional)</label>
                             <Input
                                 type="date"
                                 value={fechaInicio}
                                 onChange={e => setFechaInicio(e.target.value)}
-                                className="bg-zinc-900 border-zinc-800"
+                                className="bg-card border-border"
                             />
                         </div>
 
                         <div className="space-y-2">
-                            <label className="text-xs font-semibold text-zinc-400">Fecha de Cierre (Opcional)</label>
+                            <label className="text-xs font-semibold text-muted-foreground">Fecha de Cierre (Opcional)</label>
                             <Input
                                 type="date"
                                 value={fechaFinalizacion}
                                 onChange={e => setFechaFinalizacion(e.target.value)}
-                                className="bg-zinc-900 border-zinc-800"
+                                className="bg-card border-border"
                             />
                         </div>
 
                         <div className="space-y-2 col-span-2">
-                            <label className="text-xs font-semibold text-zinc-400">Presupuesto ($) (Opcional)</label>
+                            <label className="text-xs font-semibold text-muted-foreground">Presupuesto ($) (Opcional)</label>
                             <Input
                                 type="number"
                                 placeholder="Ej. 4000000"
                                 value={presupuestoObjetivo}
                                 onChange={e => setPresupuestoObjetivo(e.target.value)}
-                                className="bg-zinc-900 border-zinc-800"
+                                className="bg-card border-border"
                             />
                         </div>
                     </div>
 
                     {/* ─── Sección Hotmart Funnel (solo si cliente tiene Hotmart conectado) ─── */}
                     {clienteHasHotmart && (
-                        <div className="border border-zinc-800 rounded-lg overflow-hidden">
+                        <div className="border border-border rounded-lg overflow-hidden">
                             <button
                                 type="button"
                                 onClick={() => setFunnelExpanded(v => !v)}
-                                className="w-full flex items-center justify-between px-4 py-3 bg-zinc-900 hover:bg-zinc-800/80 transition"
+                                className="w-full flex items-center justify-between px-4 py-3 bg-card hover:bg-accent transition"
                             >
                                 <div className="flex items-center gap-2">
-                                    <Zap className="w-4 h-4 text-orange-400" />
-                                    <span className="text-sm font-semibold text-zinc-200">Funnel Hotmart</span>
-                                    {funnelEnabled && <span className="text-[10px] bg-emerald-500/20 text-emerald-400 px-2 py-0.5 rounded-full">Activo</span>}
+                                    <Zap className="w-4 h-4 text-orange-600 dark:text-orange-400" />
+                                    <span className="text-sm font-semibold text-foreground">Funnel Hotmart</span>
+                                    {funnelEnabled && <span className="text-[10px] bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 px-2 py-0.5 rounded-full">Activo</span>}
                                 </div>
-                                {funnelExpanded ? <ChevronDown className="w-4 h-4 text-zinc-500" /> : <ChevronRight className="w-4 h-4 text-zinc-500" />}
+                                {funnelExpanded ? <ChevronDown className="w-4 h-4 text-muted-foreground/70" /> : <ChevronRight className="w-4 h-4 text-muted-foreground/70" />}
                             </button>
 
                             {funnelExpanded && (
-                                <div className="p-4 space-y-4 bg-zinc-950">
+                                <div className="p-4 space-y-4 bg-background">
                                     <label className="flex items-center gap-2 cursor-pointer">
                                         <input
                                             type="checkbox"
                                             checked={funnelEnabled}
                                             onChange={e => setFunnelEnabled(e.target.checked)}
-                                            className="w-4 h-4 rounded border-zinc-700 bg-zinc-900"
+                                            className="w-4 h-4 rounded border-border bg-card"
                                         />
-                                        <span className="text-sm text-zinc-300">Esta pestaña representa un funnel de Hotmart</span>
+                                        <span className="text-sm text-foreground/90">Esta pestaña representa un funnel de Hotmart</span>
                                     </label>
 
                                     {funnelEnabled && (
                                         <>
-                                            <p className="text-xs text-zinc-500 leading-relaxed">
-                                                Separa nombres de productos por comas. Soporta wildcards SQL <code className="bg-zinc-900 px-1 rounded">%</code> (cualquier secuencia) y <code className="bg-zinc-900 px-1 rounded">_</code> (un carácter). Ej. <code className="bg-zinc-900 px-1 rounded">Camaradictos%</code>.
+                                            <p className="text-xs text-muted-foreground/70 leading-relaxed">
+                                                Separa nombres de productos por comas. Soporta wildcards SQL <code className="bg-card px-1 rounded">%</code> (cualquier secuencia) y <code className="bg-card px-1 rounded">_</code> (un carácter). Ej. <code className="bg-card px-1 rounded">Camaradictos%</code>.
                                             </p>
 
                                             <div className="space-y-2">
-                                                <label className="text-xs font-semibold text-zinc-400">Productos Principal</label>
+                                                <label className="text-xs font-semibold text-muted-foreground">Productos Principal</label>
                                                 <Input
                                                     placeholder="Ej. Photocards Pro, Curso%"
                                                     value={principalNames}
                                                     onChange={e => setPrincipalNames(e.target.value)}
-                                                    className="bg-zinc-900 border-zinc-800"
+                                                    className="bg-card border-border"
                                                 />
                                             </div>
 
                                             <div className="space-y-2">
-                                                <label className="text-xs font-semibold text-zinc-400">Precio Producto Principal (USD)</label>
+                                                <label className="text-xs font-semibold text-muted-foreground">Precio Producto Principal (USD)</label>
                                                 <Input
                                                     type="number"
                                                     step="0.01"
                                                     placeholder="Ej. 19.00"
                                                     value={principalPriceUsd}
                                                     onChange={e => setPrincipalPriceUsd(e.target.value)}
-                                                    className="bg-zinc-900 border-zinc-800"
+                                                    className="bg-card border-border"
                                                 />
-                                                <p className="text-[10px] text-zinc-600">Precio de venta en USD. Se usa para calcular la Facturación Bruta (ventas × precio). Si no se configura, se usa el valor de la transacción reportado por Hotmart.</p>
+                                                <p className="text-[10px] text-muted-foreground/70">Precio de venta en USD. Se usa para calcular la Facturación Bruta (ventas × precio). Si no se configura, se usa el valor de la transacción reportado por Hotmart.</p>
                                             </div>
 
                                             <div className="space-y-2">
-                                                <label className="text-xs font-semibold text-zinc-400">Productos Order Bump</label>
+                                                <label className="text-xs font-semibold text-muted-foreground">Productos Order Bump</label>
                                                 <Input
                                                     placeholder="Ej. Bump Photocards"
                                                     value={bumpNames}
                                                     onChange={e => setBumpNames(e.target.value)}
-                                                    className="bg-zinc-900 border-zinc-800"
+                                                    className="bg-card border-border"
                                                 />
                                             </div>
 
                                             <div className="space-y-2">
-                                                <label className="text-xs font-semibold text-zinc-400">Productos Upsell</label>
+                                                <label className="text-xs font-semibold text-muted-foreground">Productos Upsell</label>
                                                 <Input
                                                     placeholder="Ej. Upsell Photocards"
                                                     value={upsellNames}
                                                     onChange={e => setUpsellNames(e.target.value)}
-                                                    className="bg-zinc-900 border-zinc-800"
+                                                    className="bg-card border-border"
                                                 />
                                             </div>
 
-                                            <div className="border-t border-zinc-800 pt-3 space-y-3">
-                                                <p className="text-xs text-zinc-500">Páginas en GA4 (las visitas/sesiones se cuentan desde Analytics, no desde Hotmart):</p>
+                                            <div className="border-t border-border pt-3 space-y-3">
+                                                <p className="text-xs text-muted-foreground/70">Páginas en GA4 (las visitas/sesiones se cuentan desde Analytics, no desde Hotmart):</p>
 
                                                 <div className="space-y-2">
-                                                    <label className="text-xs font-semibold text-zinc-400">Landing Page(s) — Visitas al funnel</label>
+                                                    <label className="text-xs font-semibold text-muted-foreground">Landing Page(s) — Visitas al funnel</label>
                                                     <Input
                                                         placeholder="Ej. PH PRO NUEVA VERSION – Camaradictos, /landing-v2"
                                                         value={landingPageUrls}
                                                         onChange={e => setLandingPageUrls(e.target.value)}
-                                                        className="bg-zinc-900 border-zinc-800 font-mono text-xs"
+                                                        className="bg-card border-border font-mono text-xs"
                                                     />
-                                                    <p className="text-[10px] text-zinc-600">Separá por comas. Si empieza con <code className="bg-zinc-900 px-1 rounded">/</code> filtra por URL, si no por título de página (pageTitle en GA4). Para A/B tests podés poner varias: las sesiones se suman.</p>
+                                                    <p className="text-[10px] text-muted-foreground/70">Separá por comas. Si empieza con <code className="bg-card px-1 rounded">/</code> filtra por URL, si no por título de página (pageTitle en GA4). Para A/B tests podés poner varias: las sesiones se suman.</p>
                                                 </div>
 
                                                 <div className="space-y-2">
-                                                    <label className="text-xs font-semibold text-zinc-400">Página de Pago en GA4 (para "Pagos Iniciados")</label>
+                                                    <label className="text-xs font-semibold text-muted-foreground">Página de Pago en GA4 (para "Pagos Iniciados")</label>
                                                     <Input
                                                         placeholder="Ej. /checkout/photocards  o  PHOTOCARDS PRO (KIT COMPLETO)"
                                                         value={paymentPageUrl}
                                                         onChange={e => setPaymentPageUrl(e.target.value)}
-                                                        className="bg-zinc-900 border-zinc-800 font-mono text-xs"
+                                                        className="bg-card border-border font-mono text-xs"
                                                     />
-                                                    <p className="text-[10px] text-zinc-600">Si empieza con <code className="bg-zinc-900 px-1 rounded">/</code> se busca por URL (pagePath). Si no, se busca por título de página (pageTitle) tal como aparece en GA4.</p>
+                                                    <p className="text-[10px] text-muted-foreground/70">Si empieza con <code className="bg-card px-1 rounded">/</code> se busca por URL (pagePath). Si no, se busca por título de página (pageTitle) tal como aparece en GA4.</p>
                                                 </div>
 
                                                 <div className="space-y-2">
-                                                    <label className="text-xs font-semibold text-zinc-400">Página de Upsell en GA4 (para "Visitas pág. Upsell")</label>
+                                                    <label className="text-xs font-semibold text-muted-foreground">Página de Upsell en GA4 (para "Visitas pág. Upsell")</label>
                                                     <Input
                                                         placeholder="Ej. /upsell/photocards  o  UPSELL PHOTOCARDS"
                                                         value={upsellPageUrl}
                                                         onChange={e => setUpsellPageUrl(e.target.value)}
-                                                        className="bg-zinc-900 border-zinc-800 font-mono text-xs"
+                                                        className="bg-card border-border font-mono text-xs"
                                                     />
-                                                    <p className="text-[10px] text-zinc-600">Si empieza con <code className="bg-zinc-900 px-1 rounded">/</code> se busca por URL (pagePath). Si no, se busca por título de página (pageTitle).</p>
+                                                    <p className="text-[10px] text-muted-foreground/70">Si empieza con <code className="bg-card px-1 rounded">/</code> se busca por URL (pagePath). Si no, se busca por título de página (pageTitle).</p>
                                                 </div>
                                             </div>
                                         </>
@@ -313,14 +313,14 @@ export function TabConfigModal({
                     )}
                 </div>
 
-                <div className="flex items-center justify-between gap-2 pt-2 border-t border-zinc-800 mt-2">
+                <div className="flex items-center justify-between gap-2 pt-2 border-t border-border mt-2">
                     <div className="flex items-center gap-2">
                         {tabToEdit && (
                             <Button
                                 variant="destructive"
                                 onClick={handleDelete}
                                 disabled={saving}
-                                className="text-xs h-8 px-3 bg-red-900/30 text-red-400 hover:bg-red-900/50 hover:text-red-300"
+                                className="text-xs h-8 px-3 bg-red-500/10 text-red-600 dark:text-red-400 hover:bg-red-500/20 hover:text-red-700 dark:hover:text-red-300"
                             >
                                 <Trash2 className="w-3.5 h-3.5 mr-1" />
                                 Eliminar
@@ -332,7 +332,7 @@ export function TabConfigModal({
                                 variant="outline"
                                 onClick={handleDuplicate}
                                 disabled={duplicating || saving}
-                                className="text-xs h-8 px-3 border-zinc-700 text-zinc-300 hover:bg-zinc-800 gap-1.5"
+                                className="text-xs h-8 px-3 border-border text-foreground/90 hover:bg-accent gap-1.5"
                             >
                                 <Copy className="w-3.5 h-3.5" />
                                 {duplicating ? 'Duplicando...' : 'Duplicar'}
@@ -340,7 +340,7 @@ export function TabConfigModal({
                         )}
                     </div>
                     <div className="flex items-center gap-2">
-                        <Button variant="outline" onClick={onClose} disabled={saving} className="text-xs h-8 px-3 bg-zinc-900 border-zinc-700 hover:bg-zinc-800">
+                        <Button variant="outline" onClick={onClose} disabled={saving} className="text-xs h-8 px-3 bg-card border-border hover:bg-accent">
                             Cancelar
                         </Button>
                         <Button onClick={handleSave} disabled={saving || !nombre || !keyword} className="text-xs h-8 px-3 bg-blue-600 hover:bg-blue-700 text-white">

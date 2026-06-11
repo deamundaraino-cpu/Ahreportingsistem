@@ -85,10 +85,10 @@ export default async function VentasPage({
                     <p className="text-[10px] font-semibold uppercase tracking-widest text-emerald-500 dark:text-emerald-400">
                         Report-UTM · Fase 1
                     </p>
-                    <h1 className="text-3xl font-bold tracking-tight text-zinc-900 dark:text-zinc-50 mt-1">
+                    <h1 className="text-3xl font-bold tracking-tight text-foreground mt-1">
                         Ventas
                     </h1>
-                    <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
+                    <p className="mt-1 text-sm text-muted-foreground">
                         Eventos de venta crudos recibidos por webhook. {total.toLocaleString()} eventos
                         {sp.clienteId ? ' (filtrados)' : ' totales'}.
                     </p>
@@ -98,11 +98,11 @@ export default async function VentasPage({
             {/* Filtros */}
             <form
                 method="GET"
-                className="rounded-2xl border border-zinc-200 dark:border-white/[0.06] bg-white dark:bg-zinc-950/50 p-4"
+                className="rounded-2xl border border-border bg-card p-4"
             >
                 <div className="flex items-center gap-2 mb-3">
-                    <Filter className="h-4 w-4 text-zinc-400" />
-                    <p className="text-xs font-medium text-zinc-600 dark:text-zinc-400">Filtros</p>
+                    <Filter className="h-4 w-4 text-muted-foreground" />
+                    <p className="text-xs font-medium text-muted-foreground">Filtros</p>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
                     <SelectField label="Cliente" name="clienteId" defaultValue={sp.clienteId ?? ''}>
@@ -127,14 +127,13 @@ export default async function VentasPage({
                 <div className="flex justify-end gap-2 mt-3">
                     <Link
                         href="/report-utm/ventas"
-                        className="px-3 py-1.5 rounded-lg text-xs font-medium text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-white/[0.04] transition-colors"
+                        className="px-3 py-1.5 rounded-lg text-xs font-medium text-muted-foreground hover:bg-accent transition-colors"
                     >
                         Limpiar
                     </Link>
                     <button
                         type="submit"
-                        className="px-3 py-1.5 rounded-lg text-xs font-medium text-white shadow-sm"
-                        style={{ background: 'linear-gradient(135deg, #10B981 0%, #059669 100%)' }}
+                        className="px-3 py-1.5 rounded-lg text-xs font-medium text-white shadow-sm nav-active-emerald"
                     >
                         Aplicar
                     </button>
@@ -148,12 +147,12 @@ export default async function VentasPage({
             )}
 
             {/* Tabla */}
-            <div className="rounded-2xl border border-zinc-200 dark:border-white/[0.06] bg-white dark:bg-zinc-950/50 overflow-hidden">
+            <div className="rounded-2xl border border-border bg-card overflow-hidden">
                 {ventasList.length > 0 ? (
                     <div className="overflow-x-auto">
                         <table className="w-full">
-                            <thead className="bg-zinc-50 dark:bg-white/[0.02]">
-                                <tr className="text-left text-[10px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-500">
+                            <thead className="bg-muted/60">
+                                <tr className="text-left text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                                     <th className="px-6 py-3">Fecha</th>
                                     <th className="px-6 py-3">Cliente</th>
                                     <th className="px-6 py-3">Comprador</th>
@@ -167,10 +166,10 @@ export default async function VentasPage({
                                     <th className="px-6 py-3"></th>
                                 </tr>
                             </thead>
-                            <tbody className="divide-y divide-zinc-100 dark:divide-white/[0.04]">
+                            <tbody className="divide-y divide-border">
                                 {ventasList.map((s) => (
-                                    <tr key={s.id} className="hover:bg-zinc-50 dark:hover:bg-white/[0.02]">
-                                        <td className="px-6 py-3 text-xs text-zinc-600 dark:text-zinc-400 whitespace-nowrap">
+                                    <tr key={s.id} className="hover:bg-accent">
+                                        <td className="px-6 py-3 text-xs text-muted-foreground whitespace-nowrap">
                                             {s.sale_timestamp
                                                 ? new Date(s.sale_timestamp).toLocaleString()
                                                 : '—'}
@@ -184,25 +183,25 @@ export default async function VentasPage({
                                             </Link>
                                         </td>
                                         <td className="px-6 py-3">
-                                            <p className="text-xs font-medium text-zinc-900 dark:text-zinc-100">
+                                            <p className="text-xs font-medium text-foreground">
                                                 {s.customer_name ?? '—'}
                                             </p>
                                             {s.customer_email && (
-                                                <p className="text-[11px] text-zinc-500 dark:text-zinc-500">
+                                                <p className="text-[11px] text-muted-foreground">
                                                     {s.customer_email}
                                                 </p>
                                             )}
                                         </td>
-                                        <td className="px-6 py-3 text-xs text-zinc-600 dark:text-zinc-400">
+                                        <td className="px-6 py-3 text-xs text-muted-foreground">
                                             {s.product_name ?? '—'}
                                         </td>
                                         <td className="px-6 py-3 text-xs font-mono text-emerald-600 dark:text-emerald-400">
                                             {s.utm_source ?? '—'}
                                         </td>
-                                        <td className="px-6 py-3 text-xs font-mono text-zinc-600 dark:text-zinc-400">
+                                        <td className="px-6 py-3 text-xs font-mono text-muted-foreground">
                                             {s.utm_campaign ?? '—'}
                                         </td>
-                                        <td className="px-6 py-3 text-[10px] uppercase tracking-wider text-zinc-500 dark:text-zinc-500">
+                                        <td className="px-6 py-3 text-[10px] uppercase tracking-wider text-muted-foreground">
                                             {s.transaction_type ?? 'principal'}
                                         </td>
                                         <td className="px-6 py-3">
@@ -211,7 +210,7 @@ export default async function VentasPage({
                                         <td className="px-6 py-3">
                                             <AttributionBadge method={s.attribution_method} />
                                         </td>
-                                        <td className="px-6 py-3 text-right text-xs font-semibold text-zinc-900 dark:text-zinc-100 whitespace-nowrap">
+                                        <td className="px-6 py-3 text-right text-xs font-semibold text-foreground whitespace-nowrap">
                                             {s.currency} {Number(s.amount).toFixed(2)}
                                         </td>
                                         <td className="px-6 py-3 text-right">
@@ -229,26 +228,26 @@ export default async function VentasPage({
                     </div>
                 ) : (
                     <div className="px-6 py-16 text-center">
-                        <div className="inline-flex h-12 w-12 items-center justify-center rounded-full bg-zinc-100 dark:bg-white/[0.04] mb-3">
-                            <ShoppingBag className="h-5 w-5 text-zinc-400" />
+                        <div className="inline-flex h-12 w-12 items-center justify-center rounded-full bg-muted mb-3">
+                            <ShoppingBag className="h-5 w-5 text-muted-foreground" />
                         </div>
-                        <p className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
+                        <p className="text-sm font-medium text-foreground/90">
                             Sin ventas {Object.keys(sp).length > 0 ? 'con esos filtros' : 'todavía'}
                         </p>
-                        <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-1">
+                        <p className="text-xs text-muted-foreground mt-1">
                             Configurá el webhook Hotmart en el detalle del cliente para empezar a recibir eventos.
                         </p>
                     </div>
                 )}
 
                 {totalPages > 1 && (
-                    <div className="flex items-center justify-between gap-2 px-6 py-3 border-t border-zinc-100 dark:border-white/[0.04] text-xs text-zinc-500 dark:text-zinc-500">
+                    <div className="flex items-center justify-between gap-2 px-6 py-3 border-t border-border text-xs text-muted-foreground">
                         <span>Página {page} de {totalPages}</span>
                         <div className="flex gap-2">
                             {page > 1 && (
                                 <Link
                                     href={buildHref({ page: String(page - 1) })}
-                                    className="px-2 py-1 rounded hover:bg-zinc-100 dark:hover:bg-white/[0.04]"
+                                    className="px-2 py-1 rounded hover:bg-accent"
                                 >
                                     ← Anterior
                                 </Link>
@@ -256,7 +255,7 @@ export default async function VentasPage({
                             {page < totalPages && (
                                 <Link
                                     href={buildHref({ page: String(page + 1) })}
-                                    className="px-2 py-1 rounded hover:bg-zinc-100 dark:hover:bg-white/[0.04]"
+                                    className="px-2 py-1 rounded hover:bg-accent"
                                 >
                                     Siguiente →
                                 </Link>
@@ -267,9 +266,9 @@ export default async function VentasPage({
             </div>
 
             {ventasList.length > 0 && (
-                <p className="text-[11px] text-zinc-500 dark:text-zinc-500 flex items-center gap-1.5">
+                <p className="text-[11px] text-muted-foreground flex items-center gap-1.5">
                     <ExternalLink className="h-3 w-3" />
-                    El campo <code className="font-mono px-1 py-0.5 rounded bg-zinc-100 dark:bg-white/[0.04]">raw_payload</code> guarda el JSON original completo recibido del webhook.
+                    El campo <code className="font-mono px-1 py-0.5 rounded bg-muted">raw_payload</code> guarda el JSON original completo recibido del webhook.
                 </p>
             )}
         </div>
@@ -289,11 +288,11 @@ function SelectField({
 }) {
     return (
         <label className="block">
-            <span className="block text-[11px] font-medium text-zinc-600 dark:text-zinc-400 mb-1">{label}</span>
+            <span className="block text-[11px] font-medium text-muted-foreground mb-1">{label}</span>
             <select
                 name={name}
                 defaultValue={defaultValue}
-                className="w-full px-3 py-2 text-sm rounded-lg bg-zinc-50 dark:bg-white/[0.04] border border-zinc-200 dark:border-white/[0.06] text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/40 transition-colors"
+                className="w-full px-3 py-2 text-sm rounded-lg bg-muted border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500/40 transition-colors"
             >
                 {children}
             </select>
@@ -316,13 +315,13 @@ function InputField({
 }) {
     return (
         <label className="block">
-            <span className="block text-[11px] font-medium text-zinc-600 dark:text-zinc-400 mb-1">{label}</span>
+            <span className="block text-[11px] font-medium text-muted-foreground mb-1">{label}</span>
             <input
                 type={type}
                 name={name}
                 defaultValue={defaultValue}
                 placeholder={placeholder}
-                className="w-full px-3 py-2 text-sm rounded-lg bg-zinc-50 dark:bg-white/[0.04] border border-zinc-200 dark:border-white/[0.06] text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 dark:placeholder:text-zinc-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/40 transition-colors"
+                className="w-full px-3 py-2 text-sm rounded-lg bg-muted border border-border text-foreground placeholder:text-muted-foreground/70 focus:outline-none focus:ring-2 focus:ring-emerald-500/40 transition-colors"
             />
         </label>
     )

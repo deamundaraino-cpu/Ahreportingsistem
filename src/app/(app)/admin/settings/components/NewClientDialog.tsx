@@ -56,17 +56,17 @@ export function NewClientDialog() {
                     Agregar Cliente
                 </Button>
             </DialogTrigger>
-            <DialogContent className="sm:max-w-[425px] bg-zinc-900 border-zinc-800 text-zinc-50">
+            <DialogContent className="sm:max-w-[425px] bg-card border-border text-foreground">
                 <form onSubmit={handleSubmit}>
                     <DialogHeader>
                         <DialogTitle>Nuevo Cliente</DialogTitle>
-                        <DialogDescription className="text-zinc-400">
+                        <DialogDescription className="text-muted-foreground">
                             Crea un espacio de trabajo para que este cliente consolide sus métricas.
                         </DialogDescription>
                     </DialogHeader>
                     <div className="grid gap-4 py-4">
                         <div className="grid gap-2">
-                            <Label htmlFor="nombre" className="text-zinc-200">
+                            <Label htmlFor="nombre" className="text-foreground">
                                 Nombre del Cliente o Proyecto
                             </Label>
                             <Input
@@ -74,7 +74,7 @@ export function NewClientDialog() {
                                 value={nombre}
                                 onChange={(e) => setNombre(e.target.value)}
                                 placeholder="Ej. Curso de Emprendimiento"
-                                className="col-span-3 bg-zinc-950 border-zinc-700 focus-visible:ring-zinc-600"
+                                className="col-span-3 bg-background border-input focus-visible:ring-ring"
                             />
                         </div>
                         {error && <p className="text-sm text-red-500">{error}</p>}

@@ -140,7 +140,7 @@ export function WhatsAppConfigClient({
   }
 
   const selectCls =
-    'w-full rounded-md bg-zinc-950 border border-zinc-700 px-3 py-2 text-sm text-zinc-200 focus:outline-none focus:border-zinc-500';
+    'w-full rounded-md bg-background border border-input px-3 py-2 text-sm text-foreground focus:outline-none focus:border-ring';
 
   return (
     <div className="space-y-6">
@@ -148,8 +148,8 @@ export function WhatsAppConfigClient({
         <div
           className={`rounded-md px-4 py-2 text-sm ${
             feedback.kind === 'ok'
-              ? 'bg-emerald-500/10 text-emerald-300 border border-emerald-500/30'
-              : 'bg-red-500/10 text-red-300 border border-red-500/30'
+              ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-500/20'
+              : 'bg-red-500/10 text-red-700 dark:text-red-400 border border-red-500/20'
           }`}
         >
           {feedback.text}
@@ -157,30 +157,30 @@ export function WhatsAppConfigClient({
       )}
 
       {/* ── Conexión ─────────────────────────────────────── */}
-      <Card className="bg-zinc-900 border-zinc-800">
+      <Card className="bg-card border-border">
         <CardHeader>
-          <CardTitle className="text-white">Conexión</CardTitle>
+          <CardTitle className="text-foreground">Conexión</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           {gatewayError ? (
-            <p className="text-amber-400 text-sm">
+            <p className="text-amber-600 dark:text-amber-400 text-sm">
               No se pudo contactar al gateway: {gatewayError}
               <br />
-              <span className="text-zinc-500">
+              <span className="text-muted-foreground/70">
                 Verifica WHATSAPP_GATEWAY_URL / WHATSAPP_GATEWAY_API_KEY y que el servicio esté
                 arriba.
               </span>
             </p>
           ) : status?.connected ? (
-            <div className="flex items-center gap-2 text-emerald-400 text-sm">
+            <div className="flex items-center gap-2 text-emerald-600 dark:text-emerald-400 text-sm">
               ● Conectado{status.me?.name ? ` como ${status.me.name}` : ''}
               {status.me?.id ? (
-                <span className="text-zinc-500">({status.me.id.split(':')[0]})</span>
+                <span className="text-muted-foreground/70">({status.me.id.split(':')[0]})</span>
               ) : null}
             </div>
           ) : (
             <div className="space-y-3">
-              <p className="text-amber-400 text-sm">
+              <p className="text-amber-600 dark:text-amber-400 text-sm">
                 Sin conexión. Escanea el QR con el WhatsApp del número de la agencia.
               </p>
               {qr ? (
@@ -193,7 +193,7 @@ export function WhatsAppConfigClient({
                   className="rounded-md bg-white p-2"
                 />
               ) : (
-                <p className="text-zinc-500 text-sm">
+                <p className="text-muted-foreground/70 text-sm">
                   QR no disponible todavía. Refresca en unos segundos.
                 </p>
               )}
@@ -201,7 +201,7 @@ export function WhatsAppConfigClient({
           )}
           <button
             onClick={() => router.refresh()}
-            className="text-xs px-3 py-1.5 rounded bg-zinc-800 text-zinc-300 hover:bg-zinc-700"
+            className="text-xs px-3 py-1.5 rounded bg-secondary text-secondary-foreground hover:bg-accent"
           >
             Refrescar estado
           </button>
@@ -209,9 +209,9 @@ export function WhatsAppConfigClient({
       </Card>
 
       {/* ── Grupos ───────────────────────────────────────── */}
-      <Card className="bg-zinc-900 border-zinc-800">
+      <Card className="bg-card border-border">
         <CardHeader className="flex flex-row items-center justify-between">
-          <CardTitle className="text-white">Grupos ({groups.length})</CardTitle>
+          <CardTitle className="text-foreground">Grupos ({groups.length})</CardTitle>
           <button
             onClick={handleSync}
             disabled={pending}
@@ -222,18 +222,18 @@ export function WhatsAppConfigClient({
         </CardHeader>
         <CardContent>
           {groups.length === 0 ? (
-            <p className="text-zinc-500 text-sm">
+            <p className="text-muted-foreground/70 text-sm">
               Sin grupos. Conecta WhatsApp y pulsa “Sincronizar grupos”.
             </p>
           ) : (
-            <ul className="text-sm text-zinc-300 space-y-1 max-h-48 overflow-y-auto">
+            <ul className="text-sm text-foreground/90 space-y-1 max-h-48 overflow-y-auto">
               {groups.map((g) => (
                 <li
                   key={g.group_id}
-                  className="flex justify-between bg-zinc-950/60 px-3 py-1.5 rounded"
+                  className="flex justify-between bg-muted/60 px-3 py-1.5 rounded"
                 >
                   <span>{g.group_name}</span>
-                  <span className="text-zinc-600 text-xs">{g.group_id.split('@')[0]}</span>
+                  <span className="text-muted-foreground/70 text-xs">{g.group_id.split('@')[0]}</span>
                 </li>
               ))}
             </ul>
@@ -242,9 +242,9 @@ export function WhatsAppConfigClient({
       </Card>
 
       {/* ── Ruteo ────────────────────────────────────────── */}
-      <Card className="bg-zinc-900 border-zinc-800">
+      <Card className="bg-card border-border">
         <CardHeader>
-          <CardTitle className="text-white">Ruteo (cliente o tipo → grupo)</CardTitle>
+          <CardTitle className="text-foreground">Ruteo (cliente o tipo → grupo)</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
@@ -293,12 +293,12 @@ export function WhatsAppConfigClient({
           </div>
 
           {routes.length === 0 ? (
-            <p className="text-zinc-500 text-sm">Sin rutas configuradas.</p>
+            <p className="text-muted-foreground/70 text-sm">Sin rutas configuradas.</p>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full text-sm text-zinc-300">
-                <thead className="text-zinc-500 text-xs uppercase">
-                  <tr className="border-b border-zinc-800">
+              <table className="w-full text-sm text-foreground/90">
+                <thead className="text-muted-foreground/70 text-xs uppercase">
+                  <tr className="border-b border-border">
                     <th className="text-left py-2">Cliente</th>
                     <th className="text-left py-2">Tipo</th>
                     <th className="text-left py-2">Grupo</th>
@@ -307,7 +307,7 @@ export function WhatsAppConfigClient({
                 </thead>
                 <tbody>
                   {routes.map((r) => (
-                    <tr key={r.id} className="border-b border-zinc-900">
+                    <tr key={r.id} className="border-b border-border/50">
                       <td className="py-2">{r.cliente?.nombre ?? 'Global'}</td>
                       <td className="py-2">
                         {NOTIFICATION_TYPE_LABELS[r.notification_type as NotificationType] ??
@@ -320,8 +320,8 @@ export function WhatsAppConfigClient({
                           disabled={pending}
                           className={`text-xs px-2 py-1 rounded ${
                             r.enabled
-                              ? 'bg-emerald-500/10 text-emerald-300'
-                              : 'bg-zinc-700 text-zinc-400'
+                              ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400'
+                              : 'bg-muted text-muted-foreground'
                           }`}
                         >
                           {r.enabled ? 'Activa' : 'Inactiva'}
@@ -329,7 +329,7 @@ export function WhatsAppConfigClient({
                         <button
                           onClick={() => handleDeleteRoute(r.id)}
                           disabled={pending}
-                          className="text-xs px-2 py-1 rounded bg-red-500/10 text-red-300 hover:bg-red-500/20"
+                          className="text-xs px-2 py-1 rounded bg-red-500/10 text-red-700 dark:text-red-400 hover:bg-red-500/20"
                         >
                           Eliminar
                         </button>
@@ -344,9 +344,9 @@ export function WhatsAppConfigClient({
       </Card>
 
       {/* ── Envío manual ─────────────────────────────────── */}
-      <Card className="bg-zinc-900 border-zinc-800">
+      <Card className="bg-card border-border">
         <CardHeader>
-          <CardTitle className="text-white">Envío manual</CardTitle>
+          <CardTitle className="text-foreground">Envío manual</CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
           <select
@@ -374,7 +374,7 @@ export function WhatsAppConfigClient({
           >
             Enviar
           </button>
-          <p className="text-zinc-600 text-xs">
+          <p className="text-muted-foreground/70 text-xs">
             Se envía a los grupos ruteados para el tipo “Envío manual” (del cliente, o global si no
             hay).
           </p>
@@ -382,23 +382,23 @@ export function WhatsAppConfigClient({
       </Card>
 
       {/* ── Log reciente ─────────────────────────────────── */}
-      <Card className="bg-zinc-900 border-zinc-800">
+      <Card className="bg-card border-border">
         <CardHeader>
-          <CardTitle className="text-white">Últimos envíos</CardTitle>
+          <CardTitle className="text-foreground">Últimos envíos</CardTitle>
         </CardHeader>
         <CardContent>
           {messages.length === 0 ? (
-            <p className="text-zinc-500 text-sm">Sin envíos todavía.</p>
+            <p className="text-muted-foreground/70 text-sm">Sin envíos todavía.</p>
           ) : (
             <ul className="space-y-1 text-sm">
               {messages.map((m) => (
                 <li
                   key={m.id}
-                  className="bg-zinc-950/60 px-3 py-2 rounded flex justify-between gap-3"
+                  className="bg-muted/60 px-3 py-2 rounded flex justify-between gap-3"
                 >
                   <div className="min-w-0">
-                    <span className="text-zinc-300 truncate block">{m.message}</span>
-                    <span className="text-zinc-600 text-xs">
+                    <span className="text-foreground/90 truncate block">{m.message}</span>
+                    <span className="text-muted-foreground/70 text-xs">
                       {m.cliente?.nombre ?? 'Global'} ·{' '}
                       {NOTIFICATION_TYPE_LABELS[m.notification_type as NotificationType] ??
                         m.notification_type}{' '}
@@ -407,7 +407,7 @@ export function WhatsAppConfigClient({
                   </div>
                   <span
                     className={`text-xs shrink-0 ${
-                      m.status === 'sent' ? 'text-emerald-400' : 'text-red-400'
+                      m.status === 'sent' ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'
                     }`}
                     title={m.error ?? ''}
                   >

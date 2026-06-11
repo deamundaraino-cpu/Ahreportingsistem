@@ -81,10 +81,10 @@ export default async function PixelPage({
                 <p className="text-[10px] font-semibold uppercase tracking-widest text-emerald-500 dark:text-emerald-400">
                     Report-UTM · Fase 3
                 </p>
-                <h1 className="text-3xl font-bold tracking-tight text-zinc-900 dark:text-zinc-50 mt-1">
+                <h1 className="text-3xl font-bold tracking-tight text-foreground mt-1">
                     Pixel & Eventos
                 </h1>
-                <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
+                <p className="mt-1 text-sm text-muted-foreground">
                     Pixel JavaScript propio servido desde el mismo dominio. Captura pageviews y eventos custom
                     con cookies first-touch / last-touch (90d) para atribución cross-session.
                 </p>
@@ -93,11 +93,11 @@ export default async function PixelPage({
             {/* Selector cliente */}
             <form
                 method="GET"
-                className="rounded-2xl border border-zinc-200 dark:border-white/[0.06] bg-white dark:bg-zinc-950/50 p-4"
+                className="rounded-2xl border border-border bg-card p-4"
             >
                 <div className="flex items-center gap-2 mb-3">
-                    <Filter className="h-4 w-4 text-zinc-400" />
-                    <p className="text-xs font-medium text-zinc-600 dark:text-zinc-400">
+                    <Filter className="h-4 w-4 text-muted-foreground" />
+                    <p className="text-xs font-medium text-muted-foreground">
                         Elegí un cliente para ver el snippet de instalación
                     </p>
                 </div>
@@ -105,7 +105,7 @@ export default async function PixelPage({
                     <select
                         name="clienteId"
                         defaultValue={sp.clienteId ?? ''}
-                        className="flex-1 max-w-sm px-3 py-2 text-sm rounded-lg bg-zinc-50 dark:bg-white/[0.04] border border-zinc-200 dark:border-white/[0.06] text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/40 transition-colors"
+                        className="flex-1 max-w-sm px-3 py-2 text-sm rounded-lg bg-muted border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500/40 transition-colors"
                     >
                         <option value="">Todos los clientes (eventos)</option>
                         {clientesList.map((c) => (
@@ -114,8 +114,7 @@ export default async function PixelPage({
                     </select>
                     <button
                         type="submit"
-                        className="px-3 py-2 rounded-lg text-xs font-medium text-white shadow-sm"
-                        style={{ background: 'linear-gradient(135deg, #10B981 0%, #059669 100%)' }}
+                        className="px-3 py-2 rounded-lg text-xs font-medium text-white shadow-sm nav-active-emerald"
                     >
                         Aplicar
                     </button>
@@ -124,21 +123,21 @@ export default async function PixelPage({
 
             {/* Snippet de instalación */}
             {selectedCliente ? (
-                <div className="rounded-2xl border border-zinc-200 dark:border-white/[0.06] bg-white dark:bg-zinc-950/50 p-5 space-y-4">
+                <div className="rounded-2xl border border-border bg-card p-5 space-y-4">
                     <div className="flex items-center gap-2">
                         <Code2 className="h-4 w-4 text-emerald-500" />
-                        <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                        <h2 className="text-sm font-semibold text-foreground">
                             Snippet de instalación · {selectedCliente.nombre}
                         </h2>
                     </div>
                     <PixelSnippet origin={origin} clienteSlug={selectedCliente.slug} />
-                    <div className="text-[11px] text-zinc-500 dark:text-zinc-400 space-y-1">
+                    <div className="text-[11px] text-muted-foreground space-y-1">
                         <p>
                             <strong>Pageview:</strong> automático al cargar.
                         </p>
                         <p>
                             <strong>Eventos custom:</strong>{' '}
-                            <code className="font-mono px-1 py-0.5 rounded bg-zinc-100 dark:bg-white/[0.04]">
+                            <code className="font-mono px-1 py-0.5 rounded bg-muted">
                                 rutm(&apos;track&apos;, &apos;lead&apos;, {'{'} plan: &apos;pro&apos; {'}'})
                             </code>
                         </p>
@@ -154,8 +153,8 @@ export default async function PixelPage({
                     </div>
                 </div>
             ) : (
-                <div className="rounded-2xl border border-dashed border-zinc-200 dark:border-white/[0.06] bg-zinc-50/50 dark:bg-white/[0.02] p-6">
-                    <p className="text-xs text-zinc-500 dark:text-zinc-500">
+                <div className="rounded-2xl border border-dashed border-border bg-muted/40 p-6">
+                    <p className="text-xs text-muted-foreground">
                         Elegí un cliente arriba para ver su snippet de instalación.
                     </p>
                 </div>
@@ -176,17 +175,17 @@ export default async function PixelPage({
             )}
 
             {/* Stream de eventos */}
-            <div className="rounded-2xl border border-zinc-200 dark:border-white/[0.06] bg-white dark:bg-zinc-950/50 overflow-hidden">
-                <div className="px-6 py-4 border-b border-zinc-200 dark:border-white/[0.06]">
-                    <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+            <div className="rounded-2xl border border-border bg-card overflow-hidden">
+                <div className="px-6 py-4 border-b border-border">
+                    <h2 className="text-sm font-semibold text-foreground">
                         Eventos recientes (50)
                     </h2>
                 </div>
                 {eventsList.length > 0 ? (
                     <div className="overflow-x-auto">
                         <table className="w-full">
-                            <thead className="bg-zinc-50 dark:bg-white/[0.02]">
-                                <tr className="text-left text-[10px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-500">
+                            <thead className="bg-muted/60">
+                                <tr className="text-left text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                                     <th className="px-4 py-3">Hora</th>
                                     <th className="px-4 py-3">Cliente</th>
                                     <th className="px-4 py-3">Tipo</th>
@@ -195,10 +194,10 @@ export default async function PixelPage({
                                     <th className="px-4 py-3">Visitor</th>
                                 </tr>
                             </thead>
-                            <tbody className="divide-y divide-zinc-100 dark:divide-white/[0.04]">
+                            <tbody className="divide-y divide-border">
                                 {eventsList.map((e) => (
-                                    <tr key={e.id} className="hover:bg-zinc-50 dark:hover:bg-white/[0.02]">
-                                        <td className="px-4 py-3 text-[11px] text-zinc-600 dark:text-zinc-400 whitespace-nowrap">
+                                    <tr key={e.id} className="hover:bg-accent">
+                                        <td className="px-4 py-3 text-[11px] text-muted-foreground whitespace-nowrap">
                                             {new Date(e.created_at).toLocaleTimeString()}
                                         </td>
                                         <td className="px-4 py-3 text-xs">
@@ -213,11 +212,11 @@ export default async function PixelPage({
                                             <EventTypeBadge type={e.event_type} name={e.event_name} />
                                         </td>
                                         <td className="px-4 py-3 max-w-xs">
-                                            <p className="text-[11px] text-zinc-700 dark:text-zinc-300 truncate" title={e.page_url ?? ''}>
+                                            <p className="text-[11px] text-foreground/90 truncate" title={e.page_url ?? ''}>
                                                 {e.page_url ?? '—'}
                                             </p>
                                             {e.referrer && (
-                                                <p className="text-[10px] text-zinc-500 dark:text-zinc-500 truncate" title={e.referrer}>
+                                                <p className="text-[10px] text-muted-foreground truncate" title={e.referrer}>
                                                     ← {e.referrer}
                                                 </p>
                                             )}
@@ -230,15 +229,15 @@ export default async function PixelPage({
                                                 </p>
                                             )}
                                             {e.click_id && (
-                                                <p className="text-zinc-500 dark:text-zinc-500 truncate max-w-[12ch]" title={e.click_id}>
+                                                <p className="text-muted-foreground truncate max-w-[12ch]" title={e.click_id}>
                                                     {e.click_id}
                                                 </p>
                                             )}
                                             {!e.utm_source && !e.click_id && (
-                                                <span className="text-zinc-400 dark:text-zinc-600">—</span>
+                                                <span className="text-muted-foreground/70">—</span>
                                             )}
                                         </td>
-                                        <td className="px-4 py-3 text-[10px] font-mono text-zinc-500 dark:text-zinc-500">
+                                        <td className="px-4 py-3 text-[10px] font-mono text-muted-foreground">
                                             {e.visitor_id ? e.visitor_id.slice(0, 8) : '—'}
                                         </td>
                                     </tr>
@@ -248,13 +247,13 @@ export default async function PixelPage({
                     </div>
                 ) : (
                     <div className="px-6 py-12 text-center">
-                        <div className="inline-flex h-12 w-12 items-center justify-center rounded-full bg-zinc-100 dark:bg-white/[0.04] mb-3">
-                            <Activity className="h-5 w-5 text-zinc-400" />
+                        <div className="inline-flex h-12 w-12 items-center justify-center rounded-full bg-muted mb-3">
+                            <Activity className="h-5 w-5 text-muted-foreground" />
                         </div>
-                        <p className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
+                        <p className="text-sm font-medium text-foreground/90">
                             Sin eventos del pixel todavía
                         </p>
-                        <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-1">
+                        <p className="text-xs text-muted-foreground mt-1">
                             Instalá el snippet en el sitio del cliente para empezar a capturar pageviews.
                         </p>
                     </div>
@@ -274,14 +273,14 @@ function Stat({
     icon: typeof Activity
 }) {
     return (
-        <div className="rounded-2xl border border-zinc-200 dark:border-white/[0.06] bg-white dark:bg-zinc-950/50 p-4">
+        <div className="rounded-2xl border border-border bg-card p-4">
             <div className="flex items-center justify-between">
-                <p className="text-xs font-medium text-zinc-500 dark:text-zinc-500">{label}</p>
+                <p className="text-xs font-medium text-muted-foreground">{label}</p>
                 <div className="h-8 w-8 rounded-lg flex items-center justify-center bg-emerald-50 dark:bg-emerald-500/10">
                     <Icon className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
                 </div>
             </div>
-            <p className="mt-2 text-2xl font-bold text-zinc-900 dark:text-zinc-50">{value}</p>
+            <p className="mt-2 text-2xl font-bold text-foreground">{value}</p>
         </div>
     )
 }

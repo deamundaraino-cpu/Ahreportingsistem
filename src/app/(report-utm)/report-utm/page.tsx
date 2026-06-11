@@ -40,10 +40,10 @@ export default async function ReportUtmOverview() {
                 <p className="text-[10px] font-semibold uppercase tracking-widest text-emerald-500 dark:text-emerald-400">
                     Workspace · Tracking
                 </p>
-                <h1 className="text-3xl font-bold tracking-tight text-zinc-900 dark:text-zinc-50 mt-1">
+                <h1 className="text-3xl font-bold tracking-tight text-foreground mt-1">
                     Report-UTM
                 </h1>
-                <p className="mt-2 text-sm text-zinc-500 dark:text-zinc-400 max-w-2xl">
+                <p className="mt-2 text-sm text-muted-foreground max-w-2xl">
                     Panel separado del reporting principal. Tracking de ventas evento-a-evento, atribución por UTM,
                     tracking links cortos y pixel propio. Mismos clientes pueden o no estar en ambos workspaces.
                 </p>
@@ -71,11 +71,11 @@ export default async function ReportUtmOverview() {
                 <StatCard label="Tracking links" value={totalLinks} icon={Link2} accent="violet" hint={totalLinks === 0 ? 'Fase 3' : undefined} />
             </div>
 
-            <div className="rounded-2xl border border-zinc-200 dark:border-white/[0.06] bg-white dark:bg-zinc-950/50 overflow-hidden">
-                <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-200 dark:border-white/[0.06]">
+            <div className="rounded-2xl border border-border bg-card overflow-hidden">
+                <div className="flex items-center justify-between px-6 py-4 border-b border-border">
                     <div>
-                        <h2 className="text-base font-semibold text-zinc-900 dark:text-zinc-50">Clientes recientes</h2>
-                        <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-0.5">
+                        <h2 className="text-base font-semibold text-foreground">Clientes recientes</h2>
+                        <p className="text-xs text-muted-foreground mt-0.5">
                             Clientes propios del módulo (separados del reporting principal)
                         </p>
                     </div>
@@ -88,18 +88,18 @@ export default async function ReportUtmOverview() {
                 </div>
 
                 {clientes && clientes.length > 0 ? (
-                    <ul className="divide-y divide-zinc-100 dark:divide-white/[0.04]">
+                    <ul className="divide-y divide-border">
                         {(clientes as ReportUtmCliente[]).map((c) => (
                             <li key={c.id}>
                                 <Link
                                     href={`/report-utm/clientes/${c.id}`}
-                                    className="flex items-center justify-between px-6 py-4 hover:bg-zinc-50 dark:hover:bg-white/[0.02] transition-colors"
+                                    className="flex items-center justify-between px-6 py-4 hover:bg-accent transition-colors"
                                 >
                                     <div>
-                                        <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">
+                                        <p className="text-sm font-medium text-foreground">
                                             {c.nombre}
                                         </p>
-                                        <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-0.5 font-mono">
+                                        <p className="text-xs text-muted-foreground mt-0.5 font-mono">
                                             {c.slug}
                                         </p>
                                     </div>
@@ -110,7 +110,7 @@ export default async function ReportUtmOverview() {
                     </ul>
                 ) : (
                     <div className="px-6 py-12 text-center">
-                        <p className="text-sm text-zinc-500 dark:text-zinc-500">
+                        <p className="text-sm text-muted-foreground">
                             Aún no hay clientes en el módulo.
                         </p>
                         <Link
@@ -123,23 +123,23 @@ export default async function ReportUtmOverview() {
                 )}
             </div>
 
-            <div className="rounded-2xl border border-zinc-200 dark:border-white/[0.06] bg-zinc-50/50 dark:bg-white/[0.02] p-6">
-                <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Roadmap del módulo</h3>
-                <ul className="mt-3 space-y-2 text-xs text-zinc-600 dark:text-zinc-400">
+            <div className="rounded-2xl border border-border bg-muted/40 p-6">
+                <h3 className="text-sm font-semibold text-foreground">Roadmap del módulo</h3>
+                <ul className="mt-3 space-y-2 text-xs text-muted-foreground">
                     <li className="flex items-center gap-2">
                         <span className="inline-block w-2 h-2 rounded-full bg-emerald-500" />
                         <strong>Fase 0 — Esqueleto.</strong> Schema + clientes propios + navegación. (en curso)
                     </li>
                     <li className="flex items-center gap-2">
-                        <span className="inline-block w-2 h-2 rounded-full bg-zinc-300 dark:bg-zinc-700" />
+                        <span className="inline-block w-2 h-2 rounded-full bg-muted-foreground/30" />
                         <strong>Fase 1 — Ingesta.</strong> Webhook Hotmart con HMAC, dedup, sales_events.
                     </li>
                     <li className="flex items-center gap-2">
-                        <span className="inline-block w-2 h-2 rounded-full bg-zinc-300 dark:bg-zinc-700" />
+                        <span className="inline-block w-2 h-2 rounded-full bg-muted-foreground/30" />
                         <strong>Fase 2 — Dashboard UTM.</strong> Métricas, charts, atribución.
                     </li>
                     <li className="flex items-center gap-2">
-                        <span className="inline-block w-2 h-2 rounded-full bg-zinc-300 dark:bg-zinc-700" />
+                        <span className="inline-block w-2 h-2 rounded-full bg-muted-foreground/30" />
                         <strong>Fase 3 — Tracking links + Pixel.</strong> Links cortos, pixel JS, atribución multi-touch.
                     </li>
                 </ul>
@@ -166,16 +166,16 @@ function StatCard({
         : 'text-violet-500 dark:text-violet-400 bg-violet-50 dark:bg-violet-500/10'
 
     return (
-        <div className="rounded-2xl border border-zinc-200 dark:border-white/[0.06] bg-white dark:bg-zinc-950/50 p-5">
+        <div className="rounded-2xl border border-border bg-card p-5">
             <div className="flex items-center justify-between">
-                <p className="text-xs font-medium text-zinc-500 dark:text-zinc-500">{label}</p>
+                <p className="text-xs font-medium text-muted-foreground">{label}</p>
                 <div className={`h-8 w-8 rounded-lg flex items-center justify-center ${accentClass}`}>
                     <Icon className="h-4 w-4" />
                 </div>
             </div>
-            <p className="mt-3 text-2xl font-bold text-zinc-900 dark:text-zinc-50">{value}</p>
+            <p className="mt-3 text-2xl font-bold text-foreground">{value}</p>
             {hint && (
-                <p className="mt-1 text-[10px] uppercase tracking-wider text-zinc-400 dark:text-zinc-600">
+                <p className="mt-1 text-[10px] uppercase tracking-wider text-muted-foreground/70">
                     {hint}
                 </p>
             )}
@@ -189,7 +189,7 @@ function StatusPill({ status }: { status: string }) {
             ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400'
             : status === 'paused'
             ? 'bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400'
-            : 'bg-zinc-100 text-zinc-600 dark:bg-white/[0.06] dark:text-zinc-400'
+            : 'bg-muted text-muted-foreground'
     return (
         <span className={`text-[10px] font-semibold uppercase tracking-wider px-2 py-1 rounded-md ${cls}`}>
             {status}

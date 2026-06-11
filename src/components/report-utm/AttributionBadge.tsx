@@ -22,7 +22,7 @@ const CONFIG = {
     none: {
         label: 'none',
         icon: MinusCircle,
-        cls: 'bg-zinc-100 text-zinc-500 dark:bg-white/[0.06] dark:text-zinc-500',
+        cls: 'bg-muted text-muted-foreground',
         title: 'Sin información de atribución.',
     },
 } as const

@@ -12,10 +12,10 @@ import { createMonthlyReport, deleteMonthlyReport, updateReportStatus } from './
 import { useRouter } from 'next/navigation'
 
 const ESTADO_CONFIG: Record<string, { label: string; color: string }> = {
-    borrador:   { label: 'Borrador',  color: 'bg-zinc-700 text-zinc-300' },
-    revision:   { label: 'Revisión',  color: 'bg-amber-500/20 text-amber-300' },
-    aprobado:   { label: 'Aprobado',  color: 'bg-blue-500/20 text-blue-300' },
-    publicado:  { label: 'Publicado', color: 'bg-emerald-500/20 text-emerald-300' },
+    borrador:   { label: 'Borrador',  color: 'bg-muted text-muted-foreground' },
+    revision:   { label: 'Revisión',  color: 'bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-500/20' },
+    aprobado:   { label: 'Aprobado',  color: 'bg-blue-500/10 text-blue-700 dark:text-blue-400 border border-blue-500/20' },
+    publicado:  { label: 'Publicado', color: 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-500/20' },
 }
 
 const NEXT_ACTION: Record<string, string> = {
@@ -96,22 +96,22 @@ export function ReportsClient({ initialReports, templates, clientes }: Props) {
     return (
         <div className="space-y-6">
             {/* Create New Report */}
-            <Card className="bg-zinc-900 border-zinc-800">
+            <Card className="bg-card border-border">
                 <CardHeader>
-                    <CardTitle className="text-white text-base">Crear Nuevo Reporte</CardTitle>
-                    <CardDescription className="text-zinc-400">
+                    <CardTitle className="text-foreground text-base">Crear Nuevo Reporte</CardTitle>
+                    <CardDescription className="text-muted-foreground">
                         Selecciona cliente y mes. Las campañas activas se detectan automáticamente.
                     </CardDescription>
                 </CardHeader>
                 <CardContent>
                     <div className="flex flex-wrap gap-3 items-end">
                         <div className="flex-1 min-w-40">
-                            <label className="text-xs text-zinc-400 mb-1 block">Cliente</label>
+                            <label className="text-xs text-muted-foreground mb-1 block">Cliente</label>
                             <Select value={selectedCliente} onValueChange={setSelectedCliente}>
-                                <SelectTrigger className="bg-zinc-950 border-zinc-700 text-zinc-200">
+                                <SelectTrigger className="bg-background border-input text-foreground">
                                     <SelectValue placeholder="Seleccionar cliente..." />
                                 </SelectTrigger>
-                                <SelectContent className="bg-zinc-900 border-zinc-700">
+                                <SelectContent className="bg-card border-border">
                                     {clientes.map(c => (
                                         <SelectItem key={c.id} value={c.id}>{c.nombre}</SelectItem>
                                     ))}
@@ -120,12 +120,12 @@ export function ReportsClient({ initialReports, templates, clientes }: Props) {
                         </div>
 
                         <div className="flex-1 min-w-36">
-                            <label className="text-xs text-zinc-400 mb-1 block">Período</label>
+                            <label className="text-xs text-muted-foreground mb-1 block">Período</label>
                             <Select value={selectedPeriodo} onValueChange={setSelectedPeriodo}>
-                                <SelectTrigger className="bg-zinc-950 border-zinc-700 text-zinc-200">
+                                <SelectTrigger className="bg-background border-input text-foreground">
                                     <SelectValue />
                                 </SelectTrigger>
-                                <SelectContent className="bg-zinc-900 border-zinc-700">
+                                <SelectContent className="bg-card border-border">
                                     {monthOptions.map(m => (
                                         <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
                                     ))}
@@ -134,12 +134,12 @@ export function ReportsClient({ initialReports, templates, clientes }: Props) {
                         </div>
 
                         <div className="flex-1 min-w-44">
-                            <label className="text-xs text-zinc-400 mb-1 block">Template (opcional)</label>
+                            <label className="text-xs text-muted-foreground mb-1 block">Template (opcional)</label>
                             <Select value={selectedTemplate} onValueChange={setSelectedTemplate}>
-                                <SelectTrigger className="bg-zinc-950 border-zinc-700 text-zinc-200">
+                                <SelectTrigger className="bg-background border-input text-foreground">
                                     <SelectValue placeholder="Sin template..." />
                                 </SelectTrigger>
-                                <SelectContent className="bg-zinc-900 border-zinc-700">
+                                <SelectContent className="bg-card border-border">
                                     {templates.map(t => (
                                         <SelectItem key={t.id} value={t.id}>{t.nombre}</SelectItem>
                                     ))}
@@ -162,12 +162,12 @@ export function ReportsClient({ initialReports, templates, clientes }: Props) {
             {/* Filter + Reports List */}
             <div className="space-y-3">
                 <div className="flex items-center justify-between">
-                    <h3 className="text-white font-medium">Reportes ({filteredReports.length})</h3>
+                    <h3 className="text-foreground font-medium">Reportes ({filteredReports.length})</h3>
                     <Select value={filterCliente} onValueChange={setFilterCliente}>
-                        <SelectTrigger className="w-48 h-8 text-xs bg-zinc-900 border-zinc-700 text-zinc-300">
+                        <SelectTrigger className="w-48 h-8 text-xs bg-card border-input text-foreground/90">
                             <SelectValue placeholder="Filtrar por cliente" />
                         </SelectTrigger>
-                        <SelectContent className="bg-zinc-900 border-zinc-700">
+                        <SelectContent className="bg-card border-border">
                             <SelectItem value="all">Todos los clientes</SelectItem>
                             {clientes.map(c => (
                                 <SelectItem key={c.id} value={c.id}>{c.nombre}</SelectItem>
@@ -177,7 +177,7 @@ export function ReportsClient({ initialReports, templates, clientes }: Props) {
                 </div>
 
                 {filteredReports.length === 0 && (
-                    <div className="text-center py-12 text-zinc-500 border border-dashed border-zinc-800 rounded-xl">
+                    <div className="text-center py-12 text-muted-foreground/70 border border-dashed border-border rounded-xl">
                         <p>No hay reportes creados. Usa el formulario de arriba para generar el primero.</p>
                     </div>
                 )}
@@ -193,16 +193,16 @@ export function ReportsClient({ initialReports, templates, clientes }: Props) {
                         return (
                             <div
                                 key={report.id}
-                                className="flex items-center gap-4 p-4 rounded-lg bg-zinc-900 border border-zinc-800 hover:border-zinc-700 transition"
+                                className="flex items-center gap-4 p-4 rounded-lg bg-card border border-border hover:border-ring transition"
                             >
                                 <div className="flex-1 min-w-0">
                                     <div className="flex items-center gap-2 mb-1">
-                                        <span className="text-white font-medium">{clienteNombre}</span>
-                                        <span className="text-zinc-500 text-sm">·</span>
-                                        <span className="text-zinc-400 text-sm font-mono">{periodo}</span>
+                                        <span className="text-foreground font-medium">{clienteNombre}</span>
+                                        <span className="text-muted-foreground/70 text-sm">·</span>
+                                        <span className="text-muted-foreground text-sm font-mono">{periodo}</span>
                                         <Badge className={`text-[10px] px-2 py-0 ${cfg.color}`}>{cfg.label}</Badge>
                                     </div>
-                                    <p className="text-xs text-zinc-500">
+                                    <p className="text-xs text-muted-foreground/70">
                                         {templateNombre} · {(report.campaigns_included || []).length} campañas
                                     </p>
                                 </div>
@@ -213,7 +213,7 @@ export function ReportsClient({ initialReports, templates, clientes }: Props) {
                                             href={`/report/monthly/${report.public_slug}`}
                                             target="_blank"
                                             rel="noreferrer"
-                                            className="p-1.5 rounded text-zinc-500 hover:text-emerald-400 transition"
+                                            className="p-1.5 rounded text-muted-foreground/70 hover:text-emerald-600 dark:hover:text-emerald-400 transition"
                                             title="Ver reporte público"
                                         >
                                             <ExternalLink className="w-4 h-4" />
@@ -226,7 +226,7 @@ export function ReportsClient({ initialReports, templates, clientes }: Props) {
                                             variant="outline"
                                             disabled={isPending}
                                             onClick={() => handleAdvanceStatus(report.id, report.estado)}
-                                            className="h-7 text-xs border-zinc-700 text-zinc-300 hover:bg-zinc-800"
+                                            className="h-7 text-xs border-input text-foreground/90 hover:bg-accent"
                                         >
                                             {isPending ? <RefreshCw className="w-3 h-3 animate-spin" /> : nextAction}
                                         </Button>
@@ -236,7 +236,7 @@ export function ReportsClient({ initialReports, templates, clientes }: Props) {
                                         size="sm"
                                         variant="ghost"
                                         onClick={() => router.push(`/admin/reports/${report.id}`)}
-                                        className="h-7 text-xs text-zinc-400 hover:text-white"
+                                        className="h-7 text-xs text-muted-foreground hover:text-foreground"
                                     >
                                         <ChevronRight className="w-4 h-4" />
                                     </Button>
@@ -246,7 +246,7 @@ export function ReportsClient({ initialReports, templates, clientes }: Props) {
                                         variant="ghost"
                                         disabled={isPending}
                                         onClick={() => handleDelete(report.id)}
-                                        className="h-7 text-zinc-600 hover:text-red-400"
+                                        className="h-7 text-muted-foreground/70 hover:text-red-600 dark:hover:text-red-400"
                                     >
                                         <Trash2 className="w-4 h-4" />
                                     </Button>
