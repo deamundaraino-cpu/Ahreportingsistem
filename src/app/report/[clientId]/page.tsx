@@ -2,6 +2,8 @@ import { getDashboardData } from "@/app/(app)/dashboard/_actions"
 import { DateRangeSelector } from "@/app/(app)/dashboard/components/DateRangeSelector"
 import { DashboardClient } from "@/app/(app)/dashboard/components/DashboardClient"
 import { format, subDays } from "date-fns"
+import { createClient, createAdminClient } from "@/utils/supabase/server"
+import { redirect } from "next/navigation"
 
 export default async function PublicReportPage(props: {
     params: Promise<{ clientId: string }>
@@ -9,6 +11,23 @@ export default async function PublicReportPage(props: {
 }) {
     const params = await props.params;
     const clientId = params.clientId;
+
+    // Auth guard — same rules as the private dashboard
+    const supabase = await createClient()
+    const adminSupabase = await createAdminClient()
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) redirect('/login')
+
+    const { data: profile } = await adminSupabase
+        .from('user_profiles').select('role').eq('id', user.id).single()
+    const role = profile?.role ?? 'viewer'
+    if (!['superadmin', 'admin'].includes(role)) {
+        const { data: assignment } = await adminSupabase
+            .from('user_client_assignments').select('id')
+            .eq('user_id', user.id).eq('client_id', clientId).maybeSingle()
+        if (!assignment) redirect('/dashboard')
+    }
+
     const searchParams = await props.searchParams;
     const now = new Date()
     const fallbackFrom = format(subDays(now, 30), 'yyyy-MM-dd')

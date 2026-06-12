@@ -141,7 +141,10 @@ function SortableTab({ tab, isActive, onSelect, onEdit, isPublic, hasOverride }:
                 className={`px-4 py-2 text-sm font-medium rounded-t-lg transition whitespace-nowrap border-b-2 flex items-center gap-1.5 ${isActive ? 'border-blue-500 text-blue-600 dark:text-blue-400 bg-blue-500/10' : 'border-transparent text-muted-foreground hover:text-foreground hover:bg-accent'}`}
             >
                 {tab.nombre}
-                <span className="text-[10px] bg-muted/80 px-1.5 py-0.5 rounded text-muted-foreground font-mono tracking-wider">{tab.keyword_meta}</span>
+                <span
+                    className={`text-[10px] px-1.5 py-0.5 rounded font-mono tracking-wider transition ${isActive ? 'bg-blue-500/20 text-blue-500 dark:text-blue-300 border border-blue-500/20' : 'bg-muted/80 text-muted-foreground/50'}`}
+                    title={`Filtro de campaña: ${tab.keyword_meta}`}
+                >{tab.keyword_meta}</span>
                 {hasOverride && (
                     <span className="text-[9px] text-indigo-600 dark:text-indigo-400 font-bold" title="Vista personalizada">✦</span>
                 )}
@@ -244,7 +247,7 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
     initialKeyword?: string
     userRole?: string
 }) {
-    const { cliente, metrics, weeks, allLayouts, tabs: initialTabs = [], conversionesCatalogo = [], availablePlatforms: availablePlatformsArr = ['meta'] } = data
+    const { cliente, metrics, prevMetrics = [], weeks, allLayouts, tabs: initialTabs = [], conversionesCatalogo = [], availablePlatforms: availablePlatformsArr = ['meta'] } = data
     const platformSet = useMemo(() => new Set<string>(availablePlatformsArr), [availablePlatformsArr])
     const searchParams = useSearchParams()
     const tabFromUrl = searchParams.get('tab')
@@ -751,6 +754,14 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
         return enriched
     }, [baseRows, effectiveKeyword, activeTabObj, data.campaignGroups])
 
+    // Previous period rows (no tab date filter needed — already a different date range)
+    const prevFilteredMetrics = useMemo(() => {
+        if (!prevMetrics.length) return []
+        return prevMetrics.map((m: any) =>
+            enrichTikTokRow(enrichMetaRow(m, effectiveKeyword, data.campaignGroups), effectiveKeyword, data.campaignGroups)
+        )
+    }, [prevMetrics, effectiveKeyword, data.campaignGroups])
+
     const visibleCols = useMemo(() => {
         return activeLayout.columnas.filter((c: ColDef) => !c.hidden)
     }, [activeLayout.columnas])
@@ -799,6 +810,7 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
     // Summary cards — keyword global primero, luego filtro por tarjeta encadenado
     const tarjetaValues = useMemo(() => {
         return activeLayout.tarjetas.map((t: CardDef) => {
+            // Filtered rows for current period
             let rows = !t.campaignFilter
                 ? filteredMetrics
                 : filteredMetrics.map((m: any) =>
@@ -807,12 +819,39 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
             if (t.account_id) {
                 rows = rows.map((r: any) => filterRowByTikTokAccount(r, t.account_id, effectiveKeyword, data.campaignGroups))
             }
-            return {
-                ...t,
-                value: aggregateFormula(t.formula, rows, varContext, sourceMapping, platformSet, layoutCustomMetrics),
+            const value = aggregateFormula(t.formula, rows, varContext, sourceMapping, platformSet, layoutCustomMetrics)
+
+            // Delta vs previous period
+            let prevValue: number | null = null
+            let delta: number | null = null
+            if (t.showDelta && prevFilteredMetrics.length > 0) {
+                let prevRows = !t.campaignFilter
+                    ? prevFilteredMetrics
+                    : prevFilteredMetrics.map((m: any) =>
+                        applyCompoundFilter(m, effectiveKeyword, t.campaignFilter, data.campaignGroups)
+                    )
+                if (t.account_id) {
+                    prevRows = prevRows.map((r: any) => filterRowByTikTokAccount(r, t.account_id, effectiveKeyword, data.campaignGroups))
+                }
+                prevValue = aggregateFormula(t.formula, prevRows, varContext, sourceMapping, platformSet, layoutCustomMetrics)
+                if (prevValue !== null && value !== null && prevValue !== 0) {
+                    delta = ((value - prevValue) / Math.abs(prevValue)) * 100
+                }
             }
+
+            // Daily values for sparkline variant
+            const dailyValues: Array<{ v: number | null }> = t.variant === 'sparkline'
+                ? rows.map((row: any) => ({ v: evaluateFormula(t.formula, row, varContext, sourceMapping, platformSet, layoutCustomMetrics) }))
+                : []
+
+            // Target value for progress variant
+            const targetValue: number | null = t.variant === 'progress' && t.targetFormula
+                ? aggregateFormula(t.targetFormula, rows, varContext, sourceMapping, platformSet, layoutCustomMetrics)
+                : null
+
+            return { ...t, value, prevValue, delta, dailyValues, targetValue }
         })
-    }, [activeLayout.tarjetas, filteredMetrics, baseRows, effectiveKeyword, varContext, sourceMapping, platformSet, layoutCustomMetrics, data.campaignGroups])
+    }, [activeLayout.tarjetas, filteredMetrics, prevFilteredMetrics, effectiveKeyword, varContext, sourceMapping, platformSet, layoutCustomMetrics, data.campaignGroups])
 
     // Determine formulas for Gasto and Leads based on visible columns
     const { gastoFormula, leadsFormula } = useMemo(() => {
@@ -1332,9 +1371,58 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                                                     </div>
                                                 </div>
                                             </CardHeader>
+                                            {/* Period Summary Strip */}
+                                            {filteredMetrics.length > 0 && visibleCols.filter((c: ColDef) => c.formula !== 'fecha').length > 0 && (
+                                                <div className="px-4 py-2.5 border-b border-border bg-background/40 flex flex-wrap gap-x-6 gap-y-1.5">
+                                                    {visibleCols.filter((c: ColDef) => c.formula !== 'fecha').slice(0, 7).map((col: ColDef) => {
+                                                        const colRows = col.campaignFilter
+                                                            ? filteredMetrics.map((r: any) => applyCompoundFilter(r, effectiveKeyword, col.campaignFilter, data.campaignGroups))
+                                                            : filteredMetrics
+                                                        const val = aggregateFormula(col.formula, colRows, varContext, sourceMapping, platformSet, layoutCustomMetrics)
+                                                        const hl = col.highlight ? highlightClass(val, col) : 'text-foreground'
+                                                        return (
+                                                            <div key={col.id} className="flex flex-col min-w-0">
+                                                                <span className="text-[10px] text-muted-foreground/60 leading-none mb-0.5 truncate">{col.label}</span>
+                                                                <span className={`text-sm font-semibold leading-none ${hl}`}>
+                                                                    {formatValue(val, { prefix: col.prefix, suffix: col.suffix, decimals: col.decimals })}
+                                                                </span>
+                                                            </div>
+                                                        )
+                                                    })}
+                                                </div>
+                                            )}
                                             <CardContent className="p-0 overflow-x-auto custom-scrollbar">
                                                 <Table className="whitespace-nowrap select-none">
                                                     <TableHeader>
+                                                        {/* Column group header row */}
+                                                        {(() => {
+                                                            const getGroup = (f: string) => {
+                                                                if (f === 'fecha') return ''
+                                                                if (f.startsWith('meta_')) return 'Meta Ads'
+                                                                if (f.startsWith('ga_')) return 'GA4'
+                                                                if (f.startsWith('hotmart_') || f.startsWith('ventas_') || f.startsWith('funnel_')) return 'Conversiones'
+                                                                return ''
+                                                            }
+                                                            const groups: { label: string; span: number }[] = []
+                                                            let cur = getGroup(visibleCols[0]?.formula ?? '')
+                                                            let span = 0
+                                                            for (const col of visibleCols) {
+                                                                const g = getGroup(col.formula)
+                                                                if (g === cur) { span++ } else { groups.push({ label: cur, span }); cur = g; span = 1 }
+                                                            }
+                                                            groups.push({ label: cur, span })
+                                                            const distinctGroups = new Set(groups.map(g => g.label).filter(l => l !== ''))
+                                                            if (distinctGroups.size < 2) return null
+                                                            return (
+                                                                <TableRow className="border-b border-border/40 bg-background/60 h-6">
+                                                                    {groups.map((g, i) => (
+                                                                        <TableHead key={i} colSpan={g.span} className={`py-0 text-center text-[10px] font-semibold uppercase tracking-widest ${g.label ? 'text-muted-foreground/60' : ''} ${i > 0 && g.label ? 'border-l border-border/50' : ''}`}>
+                                                                            {g.label}
+                                                                        </TableHead>
+                                                                    ))}
+                                                                </TableRow>
+                                                            )
+                                                        })()}
                                                         <TableRow className="border-border bg-background *:text-foreground/90 *:font-semibold">
                                                             {visibleCols.map((col: ColDef) => (
                                                                 <TableHead
@@ -1374,7 +1462,7 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
 
                                                                 const isWeekend = getDay(currentDate) === 0 || getDay(currentDate) === 6
                                                                 daysInWeek.push(
-                                                                    <TableRow key={dayStr} className={`border-border ${isWeekend ? 'bg-background/60 text-muted-foreground/70' : 'text-foreground'} hover:bg-accent transition-colors`}>
+                                                                    <TableRow key={dayStr} className={`border-border transition-colors hover:bg-accent/60 ${isWeekend ? 'bg-muted/30 text-muted-foreground/60' : 'text-foreground'}`}>
                                                                         {visibleCols.map((col: ColDef) => {
                                                                             if (col.formula === 'fecha') {
                                                                                 return (
@@ -1408,8 +1496,11 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                                                                                 )
                                                                             }
                                                                             return (
-                                                                                <TableCell key={col.id} className={`${col.align === 'right' ? 'text-right' : ''} ${hl}`}>
+                                                                                <TableCell key={col.id} className={`${col.align === 'right' ? 'text-right' : ''} ${hl} relative overflow-hidden`}>
                                                                                     {formatValue(val, { prefix: col.prefix, suffix: col.suffix, decimals: col.decimals })}
+                                                                                    {col.suffix === '%' && col.highlight && val !== null && val > 0 && (
+                                                                                        <div className="absolute bottom-0 left-0 h-0.5 rounded-r-full opacity-40" style={{ width: `${Math.min(100, val)}%`, background: '#34d399' }} />
+                                                                                    )}
                                                                                 </TableCell>
                                                                             )
                                                                         })}
@@ -1421,10 +1512,10 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                                                             return (
                                                                 <React.Fragment key={`week-${wIndex}`}>
                                                                     {daysInWeek}
-                                                                    <TableRow className="border-t-2 border-muted-foreground/40 bg-card/80 font-semibold *:text-foreground">
+                                                                    <TableRow className="border-t-2 border-indigo-500/30 bg-indigo-500/5 dark:bg-indigo-500/10 font-semibold *:text-foreground">
                                                                         {visibleCols.map((col: ColDef) => {
                                                                             if (col.formula === 'fecha') {
-                                                                                return <TableCell key={col.id} className="text-blue-600 dark:text-blue-300">Total Sem {week.weekNumber}</TableCell>
+                                                                                return <TableCell key={col.id} className="text-indigo-600 dark:text-indigo-300 font-bold tracking-tight">Sem {week.weekNumber}</TableCell>
                                                                             }
                                                                             const colWeekRows = col.campaignFilter
                                                                                 ? weekRows.map((r: any) => applyCompoundFilter(r, effectiveKeyword, col.campaignFilter, data.campaignGroups))
@@ -1432,8 +1523,11 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                                                                             const val = aggregateFormula(col.formula, colWeekRows, varContext, sourceMapping, platformSet, layoutCustomMetrics)
                                                                             const hl = col.highlight ? highlightClass(val, col) : ''
                                                                             return (
-                                                                                <TableCell key={col.id} className={`${col.align === 'right' ? 'text-right' : ''} ${hl}`}>
+                                                                                <TableCell key={col.id} className={`${col.align === 'right' ? 'text-right' : ''} ${hl} relative overflow-hidden`}>
                                                                                     {formatValue(val, { prefix: col.prefix, suffix: col.suffix, decimals: col.decimals })}
+                                                                                    {col.suffix === '%' && col.highlight && val !== null && val > 0 && (
+                                                                                        <div className="absolute bottom-0 left-0 h-0.5 rounded-r-full opacity-40" style={{ width: `${Math.min(100, val)}%`, background: '#34d399' }} />
+                                                                                    )}
                                                                                 </TableCell>
                                                                             )
                                                                         })}
@@ -1594,10 +1688,10 @@ const DEFAULT_MEGALAYOUT: ReportLayout = {
         { id: "c_p_vistas_pagos_upsell", label: "% de visitas pagina up sell a pagos de upsell", formula: "(meta_custom_pagos_upsell / meta_custom_vistas_upsell) * 100", suffix: "%", decimals: 2, align: "right" }
     ],
     tarjetas: [
-        { id: "t_gasto", label: "Gasto Total", formula: "meta_spend", prefix: "$", decimals: 2, color: "default" },
-        { id: "t_fact", label: "Facturación Total", formula: "ventas_principal + ventas_bump + ventas_upsell", prefix: "$", decimals: 2, color: "emerald" },
-        { id: "t_roas", label: "ROAS General", formula: "(ventas_principal + ventas_bump + ventas_upsell) / meta_spend", suffix: "x", decimals: 2, color: "default" },
-        { id: "t_roi", label: "ROI General", formula: "(((ventas_principal + ventas_bump + ventas_upsell) - meta_spend) / meta_spend) * 100", suffix: "%", decimals: 1, color: "default" }
+        { id: "t_gasto", label: "Gasto Total", formula: "meta_spend", prefix: "$", decimals: 2, color: "default", variant: "stat", showDelta: true },
+        { id: "t_fact", label: "Facturación Total", formula: "ventas_principal + ventas_bump + ventas_upsell", prefix: "$", decimals: 2, color: "emerald", variant: "stat", showDelta: true },
+        { id: "t_roas", label: "ROAS General", formula: "(ventas_principal + ventas_bump + ventas_upsell) / meta_spend", suffix: "x", decimals: 2, color: "default", variant: "stat", showDelta: true },
+        { id: "t_roi", label: "ROI General", formula: "(((ventas_principal + ventas_bump + ventas_upsell) - meta_spend) / meta_spend) * 100", suffix: "%", decimals: 1, color: "default", variant: "stat", showDelta: true }
     ]
 }
 

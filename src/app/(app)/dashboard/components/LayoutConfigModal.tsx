@@ -10,7 +10,8 @@ import {
     ChevronLeft, Eye, EyeOff, LayoutPanelTop, Plus, Database, BarChart3, Copy
 } from 'lucide-react'
 import { Popover, PopoverContent, PopoverTrigger, PopoverAnchor } from '@/components/ui/popover'
-import type { ColDef, CardDef, ChartDef, ChartType, ReportLayout, CardColor, CampaignFilterSpec, CampaignFilterOperator, RankingTableDef, RankingColumnDef } from '@/lib/layout-types'
+import type { ColDef, CardDef, ChartDef, ChartType, ReportLayout, CardColor, CampaignFilterSpec, CampaignFilterOperator, RankingTableDef, RankingColumnDef, CardVariant, CardThreshold } from '@/lib/layout-types'
+import { toast } from 'sonner'
 
 // ─── Available Metrics for Dropdown ──────────────────────────────────────────
 
@@ -527,6 +528,91 @@ function DraggableCardRow({
                             accounts={tiktokAccounts}
                             onChange={v => onUpdate({ ...card, account_id: v || undefined })}
                         />
+                    )}
+                </div>
+
+                {/* Row 3: visualization variant + delta toggle */}
+                <div className="flex flex-wrap items-center gap-2 pt-0.5">
+                    <div className="flex items-center gap-1.5">
+                        <span className="text-[10px] text-muted-foreground/70 shrink-0">Variante:</span>
+                        <select
+                            value={card.variant || 'default'}
+                            onChange={e => onUpdate({ ...card, variant: e.target.value as CardVariant })}
+                            className="h-6 bg-background border border-border text-foreground/90 rounded px-1.5 text-xs"
+                        >
+                            <option value="default">Estándar</option>
+                            <option value="stat">Stat (con delta)</option>
+                            <option value="sparkline">Sparkline</option>
+                            <option value="threshold">Semáforo</option>
+                            <option value="progress">Progreso</option>
+                        </select>
+                    </div>
+
+                    {/* Delta toggle — available in 'stat' variant or standalone */}
+                    {(card.variant === 'stat' || card.showDelta) && (
+                        <label className="flex items-center gap-1 cursor-pointer select-none">
+                            <input
+                                type="checkbox"
+                                checked={!!card.showDelta}
+                                onChange={e => onUpdate({ ...card, showDelta: e.target.checked })}
+                                className="w-3 h-3 accent-indigo-500"
+                            />
+                            <span className="text-[10px] text-muted-foreground/70">Mostrar delta</span>
+                        </label>
+                    )}
+
+                    {/* Threshold config */}
+                    {card.variant === 'threshold' && (
+                        <div className="flex flex-wrap items-center gap-1.5 w-full">
+                            <span className="text-[10px] text-muted-foreground/70 shrink-0">Verde si:</span>
+                            <select
+                                value={card.threshold?.greenOperator || '>='}
+                                onChange={e => onUpdate({ ...card, threshold: { ...(card.threshold ?? { greenOperator: '>=', greenValue: 0, yellowOperator: '>=', yellowValue: 0 }), greenOperator: e.target.value as CardThreshold['greenOperator'] } })}
+                                className="h-5 bg-background border border-border rounded px-1 text-[10px] text-foreground/90"
+                            >
+                                {['>=', '<=', '>', '<'].map(o => <option key={o} value={o}>{o}</option>)}
+                            </select>
+                            <input
+                                type="number"
+                                value={card.threshold?.greenValue ?? ''}
+                                onChange={e => onUpdate({ ...card, threshold: { ...(card.threshold ?? { greenOperator: '>=', greenValue: 0, yellowOperator: '>=', yellowValue: 0 }), greenValue: parseFloat(e.target.value) || 0 } })}
+                                className="h-5 w-16 bg-background border border-border rounded px-1 text-[10px] text-foreground/90"
+                                placeholder="0"
+                            />
+                            <span className="text-[10px] text-muted-foreground/70 shrink-0">Amarillo si:</span>
+                            <select
+                                value={card.threshold?.yellowOperator || '>='}
+                                onChange={e => onUpdate({ ...card, threshold: { ...(card.threshold ?? { greenOperator: '>=', greenValue: 0, yellowOperator: '>=', yellowValue: 0 }), yellowOperator: e.target.value as CardThreshold['yellowOperator'] } })}
+                                className="h-5 bg-background border border-border rounded px-1 text-[10px] text-foreground/90"
+                            >
+                                {['>=', '<=', '>', '<'].map(o => <option key={o} value={o}>{o}</option>)}
+                            </select>
+                            <input
+                                type="number"
+                                value={card.threshold?.yellowValue ?? ''}
+                                onChange={e => onUpdate({ ...card, threshold: { ...(card.threshold ?? { greenOperator: '>=', greenValue: 0, yellowOperator: '>=', yellowValue: 0 }), yellowValue: parseFloat(e.target.value) || 0 } })}
+                                className="h-5 w-16 bg-background border border-border rounded px-1 text-[10px] text-foreground/90"
+                                placeholder="0"
+                            />
+                        </div>
+                    )}
+
+                    {/* Progress target formula */}
+                    {card.variant === 'progress' && (
+                        <div className="flex items-center gap-1.5 w-full">
+                            <span className="text-[10px] text-muted-foreground/70 shrink-0">Objetivo:</span>
+                            <FormulaInput
+                                value={card.targetFormula || ''}
+                                onChange={val => onUpdate({ ...card, targetFormula: val.trim() })}
+                                availableMetrics={availableMetrics}
+                            />
+                            <input
+                                value={card.targetLabel || ''}
+                                onChange={e => onUpdate({ ...card, targetLabel: e.target.value })}
+                                className="h-6 bg-background border border-border text-foreground/90 rounded px-1.5 text-xs w-24"
+                                placeholder="Etiqueta objetivo"
+                            />
+                        </div>
                     )}
                 </div>
             </div>
@@ -1172,7 +1258,7 @@ export function LayoutConfigModal({
         setLoading(true)
         const res = await cloneLayoutForCliente(clienteId, globalLayoutId)
         setLoading(false)
-        if (res.error) { alert(res.error); return }
+        if (res.error) { toast.error(res.error); return }
         const layout = res.data as ReportLayout
         setWorkingLayout({ ...layout, blocks_order: reconcileOrder(layout) })
         setStep('edit')
@@ -1494,7 +1580,8 @@ export function LayoutConfigModal({
         }
 
         setLoading(false)
-        if (res.error) { alert(res.error); return }
+        if (res.error) { toast.error(res.error); return }
+        toast.success('Layout guardado correctamente')
         setSaved(true)
         onLayoutApplied(workingLayout)
         setTimeout(() => setSaved(false), 2000)

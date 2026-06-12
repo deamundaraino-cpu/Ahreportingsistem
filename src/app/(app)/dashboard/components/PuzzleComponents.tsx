@@ -2,10 +2,11 @@ import React from 'react'
 import { Card, CardHeader, CardDescription, CardContent } from "@/components/ui/card"
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { GripVertical, Trash2, AlignLeft, AlignCenter, AlignRight, ChevronUp, ChevronRight, Pencil, Copy } from 'lucide-react'
-import type { CardDef, ChartDef, TextBlockDef } from '@/lib/layout-types'
+import { GripVertical, Trash2, AlignLeft, AlignCenter, AlignRight, ChevronUp, ChevronRight, Pencil, Copy, TrendingUp, TrendingDown, Minus } from 'lucide-react'
+import type { CardDef, ChartDef, TextBlockDef, CardThreshold } from '@/lib/layout-types'
 import { MetricCharts } from './MetricCharts'
 import { formatValue } from '@/lib/formula-engine'
+import { LineChart, Line, ResponsiveContainer } from 'recharts'
 
 const COLOR_MAP: Record<string, string> = {
     emerald: 'text-emerald-600 dark:text-emerald-400',
@@ -15,9 +16,23 @@ const COLOR_MAP: Record<string, string> = {
     default: 'text-foreground',
 }
 
+function getThresholdColor(value: number | null, threshold?: CardThreshold): string | null {
+    if (!threshold || value === null) return null
+    const check = (op: string, v: number) => {
+        if (op === '>=') return value >= v
+        if (op === '<=') return value <= v
+        if (op === '>') return value > v
+        if (op === '<') return value < v
+        return false
+    }
+    if (check(threshold.greenOperator, threshold.greenValue)) return 'text-emerald-600 dark:text-emerald-400'
+    if (check(threshold.yellowOperator, threshold.yellowValue)) return 'text-amber-500 dark:text-amber-400'
+    return 'text-red-600 dark:text-red-400'
+}
+
 export function SortableCard({ id, card, isPuzzleMode, onRemove, onQuickEdit, onDuplicate, isCollapsed, onToggleCollapse }: {
     id: string
-    card: CardDef & { value: number | null }
+    card: CardDef & { value: number | null; prevValue?: number | null; delta?: number | null; dailyValues?: Array<{ v: number | null }>; targetValue?: number | null }
     isPuzzleMode: boolean
     onRemove?: () => void
     onQuickEdit?: () => void
@@ -37,15 +52,29 @@ export function SortableCard({ id, card, isPuzzleMode, onRemove, onQuickEdit, on
         )
     }
 
+    const thresholdColor = card.variant === 'threshold' ? getThresholdColor(card.value, card.threshold) : null
+    const valueColorClass = thresholdColor ?? COLOR_MAP[card.color || 'default']
+
+    // Progress percentage (clamped 0–100)
+    const targetVal = card.targetValue ?? null
+    const progressPct = card.variant === 'progress' && targetVal !== null && targetVal > 0 && card.value !== null
+        ? Math.min(100, Math.max(0, (card.value / targetVal) * 100))
+        : null
+
+    // Delta display
+    const hasDelta = card.showDelta && card.delta !== null && card.delta !== undefined
+    const deltaPositive = hasDelta && (card.delta ?? 0) >= 0
+    const deltaAbs = hasDelta ? Math.abs(card.delta ?? 0) : 0
+
     return (
         <Card ref={setNodeRef} style={style} className={`col-span-1 bg-card border-border transition relative group ${isPuzzleMode ? 'ring-1 ring-border hover:border-muted-foreground/50 hover:shadow-lg' : 'hover:border-muted-foreground/30'}`}>
             {isPuzzleMode ? (
                 <div className="absolute top-2 right-2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-10">
-                    <button {...attributes} {...listeners} className="p-1 text-muted-foreground hover:text-foreground cursor-grab active:cursor-grabbing bg-muted rounded">
+                    <button {...attributes} {...listeners} className="p-1 text-muted-foreground hover:text-foreground cursor-grab active:cursor-grabbing bg-muted rounded" aria-label="Mover tarjeta">
                         <GripVertical className="w-3.5 h-3.5" />
                     </button>
                     {onRemove && (
-                        <button onClick={onRemove} className="p-1 text-muted-foreground hover:text-red-400 bg-muted rounded">
+                        <button onClick={onRemove} className="p-1 text-muted-foreground hover:text-red-400 bg-muted rounded" aria-label="Eliminar tarjeta">
                             <Trash2 className="w-3.5 h-3.5" />
                         </button>
                     )}
@@ -73,9 +102,56 @@ export function SortableCard({ id, card, isPuzzleMode, onRemove, onQuickEdit, on
                 <CardDescription className="text-muted-foreground font-medium pr-8">{card.label}</CardDescription>
             </CardHeader>
             <CardContent className="overflow-hidden">
-                <p className={`truncate text-2xl lg:text-3xl font-bold font-mono tabular-nums tracking-tight ${COLOR_MAP[card.color || 'default']}`}>
+                {/* Main value */}
+                <p className={`truncate text-2xl lg:text-3xl font-bold font-mono tabular-nums tracking-tight ${valueColorClass}`}>
                     {formatValue(card.value, { prefix: card.prefix, suffix: card.suffix, decimals: card.decimals ?? 2 })}
                 </p>
+
+                {/* Delta badge */}
+                {hasDelta && (
+                    <div className={`flex items-center gap-1 mt-1.5 text-xs font-medium ${deltaPositive ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-500 dark:text-red-400'}`}>
+                        {card.delta === 0
+                            ? <Minus className="w-3 h-3" />
+                            : deltaPositive
+                                ? <TrendingUp className="w-3 h-3" />
+                                : <TrendingDown className="w-3 h-3" />
+                        }
+                        <span>{deltaAbs.toFixed(1)}% vs período anterior</span>
+                    </div>
+                )}
+
+                {/* Sparkline */}
+                {card.variant === 'sparkline' && card.dailyValues && card.dailyValues.length > 1 && (
+                    <div className="mt-2 h-10">
+                        <ResponsiveContainer width="100%" height="100%">
+                            <LineChart data={card.dailyValues}>
+                                <Line type="monotone" dataKey="v" dot={false} strokeWidth={1.5}
+                                    stroke={thresholdColor ? 'currentColor' : 'hsl(var(--primary))'} />
+                            </LineChart>
+                        </ResponsiveContainer>
+                    </div>
+                )}
+
+                {/* Progress bar */}
+                {card.variant === 'progress' && progressPct !== null && (
+                    <div className="mt-2 space-y-1">
+                        <div className="flex justify-between text-xs text-muted-foreground">
+                            <span>{card.targetLabel || 'Objetivo'}</span>
+                            <span>{progressPct.toFixed(1)}%</span>
+                        </div>
+                        <div className="w-full h-1.5 bg-muted rounded-full overflow-hidden">
+                            <div
+                                className={`h-full rounded-full transition-all ${progressPct >= 100 ? 'bg-emerald-500' : progressPct >= 70 ? 'bg-blue-500' : progressPct >= 40 ? 'bg-amber-500' : 'bg-red-500'}`}
+                                style={{ width: `${progressPct}%` }}
+                            />
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                            {formatValue(card.value, { prefix: card.prefix, suffix: card.suffix, decimals: card.decimals ?? 0 })}
+                            {' / '}
+                            {formatValue(targetVal, { prefix: card.prefix, suffix: card.suffix, decimals: card.decimals ?? 0 })}
+                        </p>
+                    </div>
+                )}
             </CardContent>
         </Card>
     )

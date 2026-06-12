@@ -81,8 +81,8 @@ export async function getConversionesOfflineDiarias(clientId: string) {
 export async function getDashboardData(clientId: string, startStr: string, endStr: string) {
   const supabase = await createAdminClient();
 
-  // Fetch client + global assigned layout + client tabs + conversions catalog + campaign groups
-  const [clienteRes, clienteLayoutRes, tabsRes, conversionesRes, campaignGroupsRes] =
+  // Fetch client + global assigned layout + client tabs + conversions catalog + campaign groups + all layout templates
+  const [clienteRes, clienteLayoutRes, tabsRes, conversionesRes, campaignGroupsRes, allLayoutsRes] =
     await Promise.all([
       supabase
         .from('clientes')
@@ -114,6 +114,7 @@ export async function getDashboardData(clientId: string, startStr: string, endSt
         )
         .eq('cliente_id', clientId)
         .order('nombre', { ascending: true }),
+      supabase.from('layouts_reporte').select('*').order('nombre'),
     ]);
 
   const cliente = clienteRes.data?.[0];
@@ -142,7 +143,30 @@ export async function getDashboardData(clientId: string, startStr: string, endSt
   if (startStr !== 'all') convOfflineQuery = convOfflineQuery.gte('fecha', startStr);
   convOfflineQuery = convOfflineQuery.lte('fecha', endStr);
 
-  const [metricsRes, leadsRes, convOfflineRes] = await Promise.all([metricsQuery, leadsQuery, convOfflineQuery]);
+  // Previous period for delta calculation (same duration, ending one day before startStr)
+  const prevMetricsPromise: Promise<{ data: any[] | null; error: any }> = startStr !== 'all'
+    ? (() => {
+        const startMs  = new Date(startStr + 'T00:00:00').getTime()
+        const endMs    = new Date(endStr   + 'T00:00:00').getTime()
+        const prevEndMs   = startMs - 86400000
+        const prevStartMs = prevEndMs - (endMs - startMs)
+        const prevStartStr = new Date(prevStartMs).toISOString().split('T')[0]
+        const prevEndStr   = new Date(prevEndMs).toISOString().split('T')[0]
+        return supabase
+          .from('metricas_diarias').select('*')
+          .eq('cliente_id', cliente.id)
+          .gte('fecha', prevStartStr)
+          .lte('fecha', prevEndStr)
+          .order('fecha', { ascending: true }) as unknown as Promise<{ data: any[] | null; error: any }>
+      })()
+    : Promise.resolve({ data: [] as any[], error: null })
+
+  const [metricsRes, leadsRes, convOfflineRes, prevMetricsRes] = await Promise.all([
+    metricsQuery,
+    leadsQuery,
+    convOfflineQuery,
+    prevMetricsPromise,
+  ]);
 
   // Aggregate conversiones_offline_diarias por fecha
   // (múltiples filas por fecha — una por tipo+fuente — se colapsan en un objeto por fecha)
@@ -181,18 +205,18 @@ export async function getDashboardData(clientId: string, startStr: string, endSt
     };
   });
 
-  // Fetch all global layouts so the selector modal has them available
-  const { data: allLayouts } = await supabase.from('layouts_reporte').select('*').order('nombre');
-
   const effectiveStart = startStr === 'all' ? '2020-01-01' : startStr;
   const weeks = getWeeksInRange(effectiveStart, endStr);
 
   return {
     cliente,
     metrics: metrics || [],
+    prevMetrics: (prevMetricsRes.data || []) as any[],
+    leadsRaw: leadsRes.data || [],
+    conversionesOfflineRaw: convOfflineRes.data || [],
     weeks,
     layout,
-    allLayouts: allLayouts || [],
+    allLayouts: allLayoutsRes.data || [],
     clienteLayoutId: clienteLayoutRes.data?.id || null,
     tabs: tabsRes.data || [],
     conversionesCatalogo: conversionesRes.data || [],

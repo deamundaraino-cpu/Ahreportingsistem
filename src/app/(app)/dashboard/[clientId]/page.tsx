@@ -1,4 +1,4 @@
-import { getDashboardData, getLeadsDiarios, getConversionesOfflineDiarias } from "../_actions"
+import { getDashboardData } from "../_actions"
 import { DateRangeSelector } from "../components/DateRangeSelector"
 import { DashboardClient } from "../components/DashboardClient"
 import { GoogleSheetsLeadsCard } from "../components/GoogleSheetsLeadsCard"
@@ -15,52 +15,48 @@ export default async function DashboardPage(props: {
 }) {
     const params = await props.params;
     const clientId = params.clientId;
-
-    // Guard: traffickers can only access assigned clients
-    const supabase = await createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    let userRole = 'viewer'
-    if (user) {
-        const { data: profile } = await supabase
-            .from('user_profiles')
-            .select('role')
-            .eq('id', user.id)
-            .single()
-
-        if (profile?.role) userRole = profile.role
-
-        if (profile?.role === 'trafficker') {
-            const adminSupabase = await createAdminClient()
-            const { data: assignment } = await adminSupabase
-                .from('user_client_assignments')
-                .select('id')
-                .eq('user_id', user.id)
-                .eq('client_id', clientId)
-                .maybeSingle()
-
-            if (!assignment) redirect('/dashboard')
-        }
-    }
     const searchParams = await props.searchParams;
     const now = new Date()
     const fallbackFrom = format(subDays(now, 30), 'yyyy-MM-dd')
     const fallbackTo = format(now, 'yyyy-MM-dd')
-
     const fromStr = typeof searchParams.from === 'string' ? searchParams.from : fallbackFrom
     const toStr = typeof searchParams.to === 'string' ? searchParams.to : fallbackTo
 
-    const [dashboardData, leadsResult, conversionesResult] = await Promise.all([
+    const supabase = await createClient()
+    const adminSupabase = await createAdminClient()
+
+    // Auth check and data fetch run in parallel to cut latency
+    const authCheck = async (): Promise<{ userRole: string; allowed: boolean }> => {
+        const { data: { user } } = await supabase.auth.getUser()
+        if (!user) return { userRole: 'viewer', allowed: false }
+
+        const { data: profile } = await adminSupabase
+            .from('user_profiles').select('role').eq('id', user.id).single()
+        const role = profile?.role ?? 'viewer'
+
+        // Admins/superadmins can access any client
+        if (['superadmin', 'admin'].includes(role)) return { userRole: role, allowed: true }
+
+        // All other roles (trafficker, viewer, …) must have an explicit assignment
+        const { data: assignment } = await adminSupabase
+            .from('user_client_assignments').select('id')
+            .eq('user_id', user.id).eq('client_id', clientId).maybeSingle()
+        return { userRole: role, allowed: !!assignment }
+    }
+
+    const [{ userRole, allowed }, dashboardData] = await Promise.all([
+        authCheck(),
         getDashboardData(clientId, fromStr, toStr),
-        getLeadsDiarios(clientId),
-        getConversionesOfflineDiarias(clientId),
     ])
+
+    if (!allowed) redirect('/dashboard')
 
     return (
         <div className="space-y-6">
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <div>
                     <div className="flex items-center gap-3 mb-1">
-                        <h2 className="text-2xl font-bold tracking-tight text-foreground">Embudo de Ventas V2</h2>
+                        <h2 className="text-2xl font-bold tracking-tight text-foreground">{dashboardData?.cliente?.nombre ?? 'Dashboard'}</h2>
                         <CopyLinkButton clientId={clientId} />
                         <PublicLinkButton
                             clienteId={clientId}
@@ -68,7 +64,8 @@ export default async function DashboardPage(props: {
                             initialTabIds={dashboardData?.layoutPublico?.type === 'tab_mirror' ? (dashboardData.layoutPublico.tab_ids ?? []) : []}
                         />
                     </div>
-                    <p className="text-muted-foreground">Datos consolidados de Meta, Hotmart y Google Analytics 4.</p>
+                    <p className="text-sm text-muted-foreground font-medium">Embudo de Ventas V2</p>
+                    <p className="text-muted-foreground text-sm">Datos consolidados de Meta, Hotmart y Google Analytics 4.</p>
                 </div>
                 <DateRangeSelector />
             </div>
@@ -85,7 +82,7 @@ export default async function DashboardPage(props: {
             {dashboardData?.cliente?.config_api?.google_sheets?.enabled && (
                 <div className="pt-6 border-t border-border">
                     <h3 className="text-lg font-semibold text-foreground mb-4">Leads desde Google Sheets</h3>
-                    <GoogleSheetsLeadsCard dailyData={leadsResult.data || []} error={leadsResult.error} />
+                    <GoogleSheetsLeadsCard dailyData={dashboardData.leadsRaw || []} error={null} />
                 </div>
             )}
 
@@ -99,8 +96,8 @@ export default async function DashboardPage(props: {
                     <div className="pt-6 border-t border-border">
                         <h3 className="text-lg font-semibold text-foreground mb-4">Conversiones Offline</h3>
                         <ConversionesOfflineCard
-                            dailyData={conversionesResult.data || []}
-                            error={conversionesResult.error}
+                            dailyData={dashboardData?.conversionesOfflineRaw || []}
+                            error={null}
                             clientId={clientId}
                             canSync={userRole === 'admin' || userRole === 'trafficker'}
                         />

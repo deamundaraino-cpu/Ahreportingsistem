@@ -5,6 +5,7 @@ import { X, Save, Loader2, Pencil, Plus } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { saveClienteLayout, saveTabOverrides } from '../_actions'
+import { toast } from 'sonner'
 import {
     FormulaInput, MetricTypeSelector, CampaignFilterPicker,
     CHART_TYPES, CHART_COLOR_OPTIONS, COLOR_OPTIONS, buildAvailableMetrics,
@@ -647,7 +648,8 @@ export function QuickEditModal({
             ? await saveTabOverrides(clienteId, tabId, payload)
             : await saveClienteLayout(clienteId, payload)
         setLoading(false)
-        if (res.error) { alert(res.error); return }
+        if (res.error) { toast.error(res.error); return }
+        toast.success('Cambios guardados')
         setSaved(true)
         onLayoutApplied(updated)
     }

@@ -2,6 +2,17 @@
 
 export type CardColor = 'default' | 'emerald' | 'red' | 'blue' | 'amber'
 
+/** Variante de visualización de una tarjeta */
+export type CardVariant = 'default' | 'stat' | 'sparkline' | 'threshold' | 'progress'
+
+/** Umbrales para la tarjeta tipo semáforo */
+export interface CardThreshold {
+    greenOperator: '>=' | '<=' | '>' | '<'
+    greenValue: number
+    yellowOperator: '>=' | '<=' | '>' | '<'
+    yellowValue: number
+}
+
 /** Operadores de filtro para nombre de campaña */
 export type CampaignFilterOperator =
     | 'includes'    // Incluye
@@ -63,6 +74,12 @@ export interface CardDef {
     campaignFilter?: CampaignFilterSpec
     formFilter?: FormFilterSpec
     account_id?: string
+    // Visualization variants
+    variant?: CardVariant
+    showDelta?: boolean          // Muestra % cambio vs período anterior
+    threshold?: CardThreshold    // Para variant='threshold': colores automáticos por umbral
+    targetFormula?: string       // Para variant='progress': fórmula del valor objetivo
+    targetLabel?: string         // Etiqueta del objetivo en la barra de progreso
 }
 
 export type ChartType =

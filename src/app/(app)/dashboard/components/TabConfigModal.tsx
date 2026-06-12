@@ -7,6 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Button } from '@/components/ui/button'
 import { Trash2, ChevronDown, ChevronRight, Zap, Copy } from 'lucide-react'
 import { saveClienteTab, deleteClienteTab, duplicateClienteTab } from '../_actions'
+import { toast } from 'sonner'
 
 type HotmartFunnel = {
     enabled?: boolean
@@ -68,7 +69,7 @@ export function TabConfigModal({
         setDuplicating(true)
         const res = await duplicateClienteTab(clienteId, tabToEdit.id)
         setDuplicating(false)
-        if (res.error) { alert('Error al duplicar: ' + res.error); return }
+        if (res.error) { toast.error('Error al duplicar: ' + res.error); return }
         onClose()
     }
 

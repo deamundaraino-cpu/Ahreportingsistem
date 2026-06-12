@@ -10,6 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
 import { Plus, Search, AlertCircle, Clock, CheckCircle2, User, Calendar, MessageSquare, History, Edit2, Bug, Sparkles, Wrench, ListTodo } from 'lucide-react'
 import { createSoporteTicket, getSoporteTickets, updateSoporteTicket } from '../_actions'
+import { toast } from 'sonner'
 import { format, isValid } from 'date-fns'
 import { es } from 'date-fns/locale'
 
@@ -122,7 +123,7 @@ export function SupportModule({ clientId, userRole = 'viewer', clienteNombre = '
             setFormData({ nombre_solicitante: '', requerimiento: '', observaciones: '', prioridad: 2, fecha_entrega: '', tipo: 'tarea' })
             fetchTickets()
         } else {
-            alert("Error al crear el ticket: " + res.error)
+            toast.error("Error al crear el ticket: " + res.error)
         }
         setSubmitting(false)
     }
@@ -149,7 +150,7 @@ export function SupportModule({ clientId, userRole = 'viewer', clienteNombre = '
             tipo: editForm.tipo as 'bug' | 'feature' | 'mejora' | 'tarea',
         })
         setEditSaving(false)
-        if (res.error) { alert('Error al guardar: ' + res.error); return }
+        if (res.error) { toast.error('Error al guardar: ' + res.error); return }
         setEditingTicket(null)
         fetchTickets()
     }
