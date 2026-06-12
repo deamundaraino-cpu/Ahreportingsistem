@@ -6,6 +6,7 @@ import { applyAttributionToSale, resolveAttribution } from '@/lib/report-utm/att
 import { emitOutboundForSale, type OutboundEventType } from '@/lib/report-utm/outbound-emitter';
 import { sendWhatsAppNotification } from '@/lib/whatsapp/notify';
 import { NOTIFICATION_TYPES, type NotificationType } from '@/lib/whatsapp/types';
+import { notifyUsers } from '@/lib/notifications/notify';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -214,6 +215,22 @@ export async function POST(
           clienteId: rutmCliente?.public_cliente_id ?? null,
           notificationType: outboundType as NotificationType,
           message,
+        });
+
+        // Espejo in-app (campanita): admins + traffickers asignados al cliente
+        const publicClienteId = rutmCliente?.public_cliente_id ?? null;
+        await notifyUsers({
+          db: supabaseAdmin,
+          type: outboundType === 'sale.approved' ? 'sale_approved' : 'sale_refunded',
+          severity: outboundType === 'sale.approved' ? 'success' : 'warning',
+          clienteId: publicClienteId,
+          title:
+            outboundType === 'sale.approved'
+              ? `Venta aprobada — ${rutmCliente?.nombre ?? 'Cliente'}`
+              : `Venta reembolsada — ${rutmCliente?.nombre ?? 'Cliente'}`,
+          message: `${parsed.product_name ?? 'Producto'} · ${amount} · ${parsed.customer_name ?? parsed.customer_email ?? '—'}`,
+          link: publicClienteId ? `/dashboard/${publicClienteId}` : undefined,
+          metadata: { sale_event_id: inserted.id, platform: 'hotmart' },
         });
       } catch (err) {
         console.error('[report-utm webhook] whatsapp notify failed', err);

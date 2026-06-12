@@ -1,6 +1,7 @@
 'use server'
 
 import { createClient, createAdminClient } from '@/utils/supabase/server'
+import { notifyUsers } from '@/lib/notifications/notify'
 import { revalidatePath } from 'next/cache'
 
 type Role = 'superadmin' | 'admin' | 'trafficker' | 'viewer'
@@ -156,6 +157,13 @@ export async function setClientAssignments(targetUserId: string, clientIds: stri
 
     const adminSupabase = await createAdminClient()
 
+    // Capture previous assignments so we only notify about newly added clients
+    const { data: previous } = await adminSupabase
+        .from('user_client_assignments')
+        .select('client_id')
+        .eq('user_id', targetUserId)
+    const previousIds = new Set((previous ?? []).map(r => r.client_id))
+
     // Delete all current assignments for this user
     await adminSupabase
         .from('user_client_assignments')
@@ -179,8 +187,38 @@ export async function setClientAssignments(targetUserId: string, clientIds: stri
 
     if (error) return { error: error.message }
 
+    const addedIds = clientIds.filter(id => !previousIds.has(id))
+    if (addedIds.length > 0) {
+        void notifyNewAssignments(adminSupabase, targetUserId, addedIds)
+    }
+
     revalidatePath('/admin/users')
     return { success: true }
+}
+
+// Notifica al usuario los clientes recién asignados (fire-and-forget)
+async function notifyNewAssignments(
+    adminSupabase: Awaited<ReturnType<typeof createAdminClient>>,
+    targetUserId: string,
+    clientIds: string[]
+) {
+    const { data: clientes } = await adminSupabase
+        .from('clientes')
+        .select('id, nombre')
+        .in('id', clientIds)
+
+    for (const cliente of clientes ?? []) {
+        await notifyUsers({
+            db: adminSupabase,
+            type: 'client_assigned',
+            severity: 'info',
+            clienteId: cliente.id,
+            audience: { userIds: [targetUserId] },
+            title: `Cliente asignado: ${cliente.nombre}`,
+            message: 'Ya puedes ver y gestionar este cliente en tu dashboard.',
+            link: `/dashboard/${cliente.id}`,
+        })
+    }
 }
 
 export async function getAllClients() {
@@ -251,6 +289,7 @@ export async function createUser(input: {
             assigned_by: current.userId,
         }))
         await adminSupabase.from('user_client_assignments').insert(rows)
+        void notifyNewAssignments(adminSupabase, newUserId, input.clientIds)
     }
 
     revalidatePath('/admin/users')

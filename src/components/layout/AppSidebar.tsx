@@ -17,7 +17,8 @@ import {
     FileText,
     Key,
     ArrowLeftRight,
-    MessageCircle
+    MessageCircle,
+    Bell
 } from 'lucide-react'
 
 const REPORT_UTM_ENABLED = process.env.NEXT_PUBLIC_REPORT_UTM_ENABLED === 'true'
@@ -81,6 +82,7 @@ export function AppSidebar({ initialRole = 'viewer', userId = '' }: { initialRol
 
     const navigation = [
         { name: 'General Overview', href: '/dashboard', icon: LayoutDashboard },
+        { name: 'Notificaciones', href: '/notificaciones', icon: Bell },
     ]
 
     const settingsNavigation = [

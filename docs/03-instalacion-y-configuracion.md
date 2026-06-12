@@ -72,17 +72,34 @@ NEXT_PUBLIC_REPORT_UTM_ENABLED=true   # habilita las rutas /report-utm/*
 
 > GA4 y Hotmart **no usan variables de entorno**: sus credenciales se configuran **por cliente** en `config_api` desde `/admin/settings/[id]`. Ver [doc 08 · Integraciones](./08-integraciones.md).
 
-### Notificaciones de WhatsApp (Baileys)
+### Notificaciones de WhatsApp
+
+Hay **dos proveedores** intercambiables vía `WHATSAPP_PROVIDER` (la app solo habla con
+`src/lib/whatsapp/gateway.ts`, que enruta al elegido):
+
+```bash
+WHATSAPP_PROVIDER=baileys   # 'baileys' (default) | 'evolution'
+```
+
+**Opción A — gateway Baileys propio** (`whatsapp-gateway/`):
 
 ```bash
 WHATSAPP_GATEWAY_URL=https://whatsapp-gateway.example.com   # URL pública del microservicio
 WHATSAPP_GATEWAY_API_KEY=<secreto-largo-compartido>         # debe coincidir con el del gateway
 ```
 
-> Baileys **no corre en Vercel** (necesita un proceso persistente). Se despliega como
-> microservicio aparte (carpeta `whatsapp-gateway/`, en Railway/Render/Fly/VPS) que mantiene
-> la conexión y expone una API REST. La app solo lo llama por HTTP. Ver [doc 08 · Integraciones](./08-integraciones.md)
-> y el README de `whatsapp-gateway/`.
+**Opción B — Evolution API v2** (self-hosted, ya envuelve Baileys):
+
+```bash
+EVOLUTION_API_URL=https://evolution.example.com   # URL de tu instancia Evolution
+EVOLUTION_API_KEY=<apikey-de-evolution>           # header `apikey`
+EVOLUTION_INSTANCE=adshouse                        # nombre de la instancia
+```
+
+> Ninguno corre en Vercel (necesitan un proceso persistente). El gateway propio es un
+> microservicio Node (carpeta `whatsapp-gateway/`); Evolution es un contenedor Docker
+> (con Postgres + Redis). Con Evolution **no** se usa `whatsapp-gateway/` ni la tabla
+> `whatsapp_session` (Evolution gestiona su sesión). Ver [doc 08 · Integraciones](./08-integraciones.md).
 
 ### Resumen de variables
 
@@ -97,8 +114,12 @@ WHATSAPP_GATEWAY_API_KEY=<secreto-largo-compartido>         # debe coincidir con
 | `TIKTOK_APP_ID` / `TIKTOK_APP_SECRET` | servidor | si usas TikTok OAuth | OAuth |
 | `GOOGLE_SERVICE_ACCOUNT_EMAIL` / `_KEY` | servidor | si usas Sheets global | Importar leads |
 | `NEXT_PUBLIC_REPORT_UTM_ENABLED` | público | no | Activa Report-UTM |
-| `WHATSAPP_GATEWAY_URL` | servidor | si usas WhatsApp | URL del microservicio Baileys |
-| `WHATSAPP_GATEWAY_API_KEY` | servidor | si usas WhatsApp | Bearer compartido con el gateway |
+| `WHATSAPP_PROVIDER` | servidor | si usas WhatsApp | `baileys` (default) o `evolution` |
+| `WHATSAPP_GATEWAY_URL` | servidor | si `baileys` | URL del microservicio Baileys |
+| `WHATSAPP_GATEWAY_API_KEY` | servidor | si `baileys` | Bearer compartido con el gateway |
+| `EVOLUTION_API_URL` | servidor | si `evolution` | URL de la instancia Evolution |
+| `EVOLUTION_API_KEY` | servidor | si `evolution` | Header `apikey` de Evolution |
+| `EVOLUTION_INSTANCE` | servidor | si `evolution` | Nombre de la instancia |
 
 \* Necesarias para que funcionen OAuth, enlaces y crons en producción.
 

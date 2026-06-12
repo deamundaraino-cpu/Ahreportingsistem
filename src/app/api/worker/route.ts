@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server'
 import { format, subDays, parseISO, isBefore, addDays, differenceInDays } from 'date-fns'
 import { createClient as createSSRClient } from '@/utils/supabase/server'
 import { getAgencyAccessToken, hasAgencyGoogleConnection } from '@/lib/integrations/google-auth'
+import { notifyUsers } from '@/lib/notifications/notify'
 
 export const maxDuration = 300 // 5 minutos — necesario para sincronizar rangos amplios
 
@@ -1664,6 +1665,24 @@ export async function GET(request: Request) {
             }
         }
     }))
+
+    // Aviso in-app a admins si falló el upsert de algún cliente (un aviso por corrida)
+    const failedClienteIds = [...new Set(results.filter((r: any) => r.status === 'failed').map((r: any) => r.cliente_id))]
+    if (failedClienteIds.length > 0 && process.env.SUPABASE_SERVICE_ROLE_KEY) {
+        const failedNames = clientes
+            .filter((c: any) => failedClienteIds.includes(c.id))
+            .map((c: any) => c.nombre)
+        await notifyUsers({
+            db: adminSupabase,
+            type: 'sync_failed',
+            severity: 'error',
+            audience: 'admins',
+            title: `Fallo de sincronización (${failedClienteIds.length} cliente${failedClienteIds.length > 1 ? 's' : ''})`,
+            message: failedNames.join(', ').slice(0, 300),
+            link: '/dashboard',
+            metadata: { cliente_ids: failedClienteIds, range: { start: startDateStr, end: endDateStr } },
+        })
+    }
 
     return NextResponse.json({ message: 'Sync complete', results, debugLogs })
 }

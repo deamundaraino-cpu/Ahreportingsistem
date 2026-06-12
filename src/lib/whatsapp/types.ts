@@ -34,3 +34,12 @@ export type GatewayStatus = {
   me: { id: string; name?: string } | null;
   lastSeen: string | null;
 };
+
+// Interfaz común que implementa cada proveedor de WhatsApp (gateway Baileys
+// propio o Evolution API). gateway.ts elige uno según WHATSAPP_PROVIDER.
+export type WhatsAppProvider = {
+  getStatus(): Promise<GatewayStatus>;
+  getQr(): Promise<{ qr: string | null; connected: boolean }>;
+  listGroups(): Promise<WhatsAppGroup[]>;
+  sendToGroup(groupId: string, message: string): Promise<{ messageId: string }>;
+};

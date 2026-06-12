@@ -118,22 +118,37 @@ Notificaciones a **grupos de WhatsApp**, ruteables **por cliente** o **por tipo 
 
 ### Arquitectura
 
-Baileys necesita un proceso Node persistente (WebSocket vivo + sesión en disco), incompatible
-con Vercel serverless. Por eso vive en un **microservicio aparte** (`whatsapp-gateway/`, desplegado
-en Railway/Render/Fly/VPS) que mantiene la conexión y expone una API REST. La app (Vercel) nunca
-importa Baileys; solo llama al gateway por HTTP con un Bearer compartido.
+WhatsApp necesita un proceso persistente (WebSocket vivo + sesión), incompatible con Vercel
+serverless. La app nunca importa Baileys; solo habla con `src/lib/whatsapp/gateway.ts`, que
+enruta a uno de **dos proveedores** según `WHATSAPP_PROVIDER`:
+
+- **`baileys`** (default): microservicio propio `whatsapp-gateway/` (Node + Baileys), desplegado
+  en Railway/Render/Fly/VPS. Auth `Bearer`. Sesión en `public.whatsapp_session`.
+- **`evolution`**: [Evolution API v2](https://doc.evolution-api.com/v2) self-hosted (Docker +
+  Postgres + Redis), que ya envuelve Baileys con multi-instancia. Auth header `apikey`. Evolution
+  gestiona su propia sesión (no usa `whatsapp_session` ni `whatsapp-gateway/`).
 
 ```
-[Next.js/Vercel] --HTTP--> [whatsapp-gateway (Baileys)] --WS--> WhatsApp
-       |                            |
-       +------- Supabase -----------+   (sesión, ruteo, logs)
+[Next.js/Vercel] --HTTP--> [gateway.ts dispatcher] --> [whatsapp-gateway propio | Evolution API] --WS--> WhatsApp
+       |                                                          |
+       +---------------------- Supabase --------------------------+   (ruteo, logs; sesión solo en baileys)
 ```
+
+Cambiar de proveedor es solo variables de entorno; `notify.ts`, el ruteo, la UI, el cron y el
+disparador de ventas no cambian. Mapeo de endpoints en `src/lib/whatsapp/providers/`:
+
+| Operación | `baileys` (gateway propio) | `evolution` (v2) |
+|-----------|----------------------------|------------------|
+| Estado | `GET /status` | `GET /instance/connectionState/{instance}` |
+| QR | `GET /qr` | `GET /instance/connect/{instance}` (`base64`) |
+| Grupos | `GET /groups` | `GET /group/fetchAllGroups/{instance}?getParticipants=false` |
+| Enviar | `POST /send` | `POST /message/sendText/{instance}` (`{ number: jid, text }`) |
 
 ### Componentes
 
-- **Gateway** (`whatsapp-gateway/`): endpoints `GET /status`, `GET /qr`, `GET /groups`,
-  `POST /send`. Persiste su sesión en `public.whatsapp_session` (adaptador de auth state Supabase).
-- **Cliente HTTP**: `src/lib/whatsapp/gateway.ts`.
+- **Proveedores**: `src/lib/whatsapp/providers/baileys.ts` (microservicio `whatsapp-gateway/`,
+  sesión en `public.whatsapp_session`) y `src/lib/whatsapp/providers/evolution.ts` (Evolution API v2).
+- **Dispatcher / cliente HTTP**: `src/lib/whatsapp/gateway.ts` (elige proveedor por `WHATSAPP_PROVIDER`).
 - **Lógica de envío**: `src/lib/whatsapp/notify.ts` → `sendWhatsAppNotification({ clienteId, notificationType, message })`.
   Resuelve grupos por `whatsapp_routes` (ruta del cliente → fallback global por tipo) y loguea en `whatsapp_messages`.
 - **UI admin**: `/admin/whatsapp` (QR/estado, sincronizar grupos, editor de rutas, envío manual, log).
@@ -163,4 +178,4 @@ importa Baileys; solo llama al gateway por HTTP con un Bearer compartido.
 | Hotmart (reporting) | Basic/API key por cliente | `config_api.hotmart_*` + funnel por tab | `ventas_*`, `hotmart_funnel_data` |
 | Google Sheets | Cuenta de servicio (global o por cliente) | `config_api.google_sheets` | `leads`, `leads_diarios` |
 | Hotmart (Report-UTM) | Webhook HMAC | `report_utm.integrations` | `report_utm.sales_events` |
-| WhatsApp | Gateway Baileys (Bearer) | `/admin/whatsapp` + env gateway | `whatsapp_groups/routes/messages/session` |
+| WhatsApp | Gateway Baileys (Bearer) **o** Evolution API (apikey), según `WHATSAPP_PROVIDER` | `/admin/whatsapp` + envs del proveedor | `whatsapp_groups/routes/messages` (+ `session` solo en baileys) |

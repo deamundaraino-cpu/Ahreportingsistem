@@ -1,6 +1,7 @@
 import { createClient } from '@supabase/supabase-js'
 import { NextResponse } from 'next/server'
 import { createClient as createSSRClient } from '@/utils/supabase/server'
+import { notifyUsers } from '@/lib/notifications/notify'
 
 const GRAPH = 'https://graph.facebook.com/v19.0'
 
@@ -98,7 +99,21 @@ export async function GET(request: Request) {
   }
 
   const refreshed = results.filter((r) => r.status === 'refreshed').length
-  const failed = results.filter((r) => r.status === 'failed' || r.status === 'error').length
+  const failures = results.filter((r) => r.status === 'failed' || r.status === 'error')
 
-  return NextResponse.json({ ok: true, refreshed, failed, total: results.length, results })
+  // Aviso in-app a admins si algún token no pudo refrescarse (un solo aviso por corrida)
+  if (failures.length > 0 && process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    await notifyUsers({
+      db: supabase,
+      type: 'token_expiring',
+      severity: 'error',
+      audience: 'admins',
+      title: `Fallo al refrescar tokens de Meta (${failures.length})`,
+      message: failures.map((f) => `${f.nombre}: ${f.detail ?? f.status}`).join(' · ').slice(0, 300),
+      link: '/admin/settings',
+      metadata: { failures: failures.map((f) => ({ id: f.id, status: f.status })) },
+    })
+  }
+
+  return NextResponse.json({ ok: true, refreshed, failed: failures.length, total: results.length, results })
 }

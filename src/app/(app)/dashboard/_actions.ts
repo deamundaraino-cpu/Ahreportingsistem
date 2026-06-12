@@ -1,6 +1,7 @@
 'use server'
 
 import { createAdminClient, createClient } from '@/utils/supabase/server'
+import { notifyUsers } from '@/lib/notifications/notify'
 import { getWeeksInRange } from '@/lib/date-utils'
 import { revalidatePath } from 'next/cache'
 import { format, addDays } from 'date-fns'
@@ -602,6 +603,19 @@ export async function createSoporteTicket(payload: {
         .single()
 
     if (error) return { error: error.message }
+
+    // Notificación in-app (fire-and-forget): admins + traffickers del cliente
+    void notifyUsers({
+        db: supabase,
+        type: 'ticket_created',
+        severity: 'info',
+        clienteId: payload.cliente_id || null,
+        title: `Nuevo ticket: ${payload.requerimiento.slice(0, 80)}`,
+        message: `${payload.tipo} · solicitado por ${payload.nombre_solicitante}`,
+        link: '/soporte',
+        metadata: { ticket_id: data.id },
+    })
+
     if (payload.cliente_id) revalidatePath(`/dashboard/${payload.cliente_id}`)
     revalidatePath('/soporte')
     return { success: true, data }
@@ -621,6 +635,18 @@ export async function updateSoporteTicket(ticketId: string, clienteId: string | 
     if (!(await isTeamMember())) return { error: 'No autorizado' }
 
     const supabase = await createAdminClient()
+
+    // Estado previo: solo notificamos si el estado realmente cambió
+    let previousEstado: string | null = null
+    if (payload.estado) {
+        const { data: prev } = await supabase
+            .from('soporte_tickets')
+            .select('estado, requerimiento')
+            .eq('id', ticketId)
+            .maybeSingle()
+        previousEstado = prev?.estado ?? null
+    }
+
     const { error } = await supabase
         .from('soporte_tickets')
         .update({
@@ -630,6 +656,20 @@ export async function updateSoporteTicket(ticketId: string, clienteId: string | 
         .eq('id', ticketId)
 
     if (error) return { error: error.message }
+
+    if (payload.estado && previousEstado && payload.estado !== previousEstado) {
+        void notifyUsers({
+            db: supabase,
+            type: 'ticket_updated',
+            severity: payload.estado === 'cerrado' ? 'success' : 'info',
+            clienteId: clienteId,
+            title: `Ticket actualizado: ${previousEstado} → ${payload.estado}`,
+            message: payload.requerimiento ? payload.requerimiento.slice(0, 120) : undefined,
+            link: '/soporte',
+            metadata: { ticket_id: ticketId, estado: payload.estado },
+        })
+    }
+
     if (clienteId) revalidatePath(`/dashboard/${clienteId}`)
     revalidatePath('/soporte')
     return { success: true }

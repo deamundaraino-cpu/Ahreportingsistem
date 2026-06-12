@@ -355,108 +355,34 @@ function EmptyClients() {
 }
 
 function AlertsPanel({ alerts }: { alerts: ActiveAlert[] }) {
-  const critical = alerts.filter(a => a.level === 100)
-  const warning = alerts.filter(a => a.level === 90)
-
-  return (
-    <section className="space-y-4">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-red-500/15">
-            <Bell className="h-4 w-4 text-red-600 dark:text-red-400" />
-          </div>
-          <div>
-            <h2 className="text-lg font-semibold text-foreground">Alertas de Presupuesto</h2>
-            <p className="text-sm text-muted-foreground/70">
-              {alerts.length} {alerts.length === 1 ? "pestaña" : "pestañas"} con alertas activas
-            </p>
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
-          {critical.length > 0 && (
-            <span className="rounded-full border border-red-500/30 bg-red-500/10 px-2.5 py-1 text-xs font-semibold text-red-600 dark:text-red-400">
-              {critical.length} crítica{critical.length !== 1 ? "s" : ""}
-            </span>
-          )}
-          {warning.length > 0 && (
-            <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 text-xs font-semibold text-amber-600 dark:text-amber-400">
-              {warning.length} advertencia{warning.length !== 1 ? "s" : ""}
-            </span>
-          )}
-        </div>
-      </div>
-
-      <div className="overflow-hidden rounded-xl border border-border bg-card">
-        {alerts.map((alert, i) => (
-          <AlertRow key={alert.tabId} alert={alert} isLast={i === alerts.length - 1} />
-        ))}
-      </div>
-    </section>
-  )
-}
-
-function AlertRow({ alert, isLast }: { alert: ActiveAlert; isLast: boolean }) {
-  const isCritical = alert.level === 100
-  const sentDate = new Date(alert.sentAt).toLocaleDateString("es-CO", {
-    day: "numeric",
-    month: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-  })
-  const budgetFormatted = new Intl.NumberFormat("es-CO", {
-    style: "currency",
-    currency: "COP",
-    maximumFractionDigits: 0,
-  }).format(alert.presupuestoObjetivo)
+  const critical = alerts.filter(a => a.level === 100).length
+  const warning = alerts.filter(a => a.level === 90).length
 
   return (
     <a
-      href={`/dashboard/${alert.clienteId}`}
-      className={`group flex items-center gap-4 px-5 py-4 transition-colors hover:bg-accent ${
-        !isLast ? "border-b border-border" : ""
-      }`}
+      href="/notificaciones?type=alert_threshold"
+      className="group flex items-center gap-3 rounded-xl border border-border bg-card px-5 py-3.5 transition-colors hover:bg-accent"
     >
-      {/* Level badge */}
-      <div
-        className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${
-          isCritical
-            ? "bg-red-500/15 ring-1 ring-red-500/30"
-            : "bg-amber-500/15 ring-1 ring-amber-500/30"
-        }`}
-      >
-        <AlertTriangle
-          className={`h-4 w-4 ${isCritical ? "text-red-600 dark:text-red-400" : "text-amber-600 dark:text-amber-400"}`}
-        />
+      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-red-500/15">
+        <AlertTriangle className="h-4 w-4 text-red-600 dark:text-red-400" />
       </div>
-
-      {/* Info */}
-      <div className="min-w-0 flex-1">
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-          <span className="font-medium text-foreground group-hover:text-brand-blue dark:group-hover:text-brand-blue-light transition-colors">
-            {alert.tabNombre}
+      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
+        <span className="text-sm font-semibold text-foreground">Alertas de presupuesto:</span>
+        {critical > 0 && (
+          <span className="rounded-full border border-red-500/30 bg-red-500/10 px-2.5 py-0.5 text-xs font-semibold text-red-600 dark:text-red-400">
+            {critical} crítica{critical !== 1 ? "s" : ""}
           </span>
-          <span className="text-muted-foreground/70">·</span>
-          <span className="text-sm text-muted-foreground">{alert.clienteNombre}</span>
-        </div>
-        <div className="mt-0.5 flex items-center gap-3">
-          <span className="text-xs text-muted-foreground/70">{budgetFormatted} presupuesto</span>
-          <span className="text-xs text-muted-foreground/70">Alerta enviada {sentDate}</span>
-        </div>
+        )}
+        {warning > 0 && (
+          <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2.5 py-0.5 text-xs font-semibold text-amber-600 dark:text-amber-400">
+            {warning} advertencia{warning !== 1 ? "s" : ""}
+          </span>
+        )}
       </div>
-
-      {/* Level pill */}
-      <div className="flex shrink-0 items-center gap-3">
-        <span
-          className={`rounded-full px-2.5 py-1 text-xs font-bold ${
-            isCritical
-              ? "bg-red-500/15 text-red-600 dark:text-red-400"
-              : "bg-amber-500/15 text-amber-600 dark:text-amber-400"
-          }`}
-        >
-          {isCritical ? "100% — Crítico" : "90% — Advertencia"}
-        </span>
-        <ChevronRight className="h-4 w-4 text-muted-foreground/70 transition-transform group-hover:translate-x-0.5 group-hover:text-muted-foreground" />
-      </div>
+      <span className="flex shrink-0 items-center gap-1 text-xs font-medium text-brand-blue dark:text-brand-blue-light">
+        Ver detalle
+        <ChevronRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" />
+      </span>
     </a>
   )
 }
