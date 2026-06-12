@@ -9,6 +9,8 @@ export const NOTIFICATION_TYPES = [
   'report_ready',
   'sale.approved',
   'sale.refunded',
+  'roadmap_created',
+  'roadmap_updated',
   'manual',
 ] as const;
 
@@ -21,6 +23,8 @@ export const NOTIFICATION_TYPE_LABELS: Record<NotificationType, string> = {
   report_ready: 'Reporte listo',
   'sale.approved': 'Venta aprobada',
   'sale.refunded': 'Venta reembolsada',
+  roadmap_created: 'Roadmap: ítem nuevo',
+  roadmap_updated: 'Roadmap: cambio de estado',
   manual: 'Envío manual',
 };
 

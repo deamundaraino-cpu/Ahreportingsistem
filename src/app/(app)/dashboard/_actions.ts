@@ -1,162 +1,163 @@
-'use server'
+'use server';
 
-import { createAdminClient, createClient } from '@/utils/supabase/server'
-import { notifyUsers } from '@/lib/notifications/notify'
-import { getWeeksInRange } from '@/lib/date-utils'
-import { revalidatePath } from 'next/cache'
-import { format, addDays } from 'date-fns'
-import { headers } from 'next/headers'
-import { after } from 'next/server'
+import { createAdminClient, createClient } from '@/utils/supabase/server';
+import { notifyUsers } from '@/lib/notifications/notify';
+import { sendWhatsAppNotification } from '@/lib/whatsapp/notify';
+import { getWeeksInRange } from '@/lib/date-utils';
+import { revalidatePath } from 'next/cache';
+import { format, addDays } from 'date-fns';
+import { headers } from 'next/headers';
+import { after } from 'next/server';
 
 export async function triggerWorkerSync(clientId: string, from: string, to: string) {
-    if (!clientId || !from || !to) {
-        return { ok: false, error: 'Parámetros inválidos', platform_status: null }
-    }
+  if (!clientId || !from || !to) {
+    return { ok: false, error: 'Parámetros inválidos', platform_status: null };
+  }
 
-    const secret = process.env.CRON_SECRET
-    if (!secret) {
-        return { ok: false, error: 'CRON_SECRET no configurado en el servidor', platform_status: null }
-    }
+  const secret = process.env.CRON_SECRET;
+  if (!secret) {
+    return { ok: false, error: 'CRON_SECRET no configurado en el servidor', platform_status: null };
+  }
 
-    const h = await headers()
-    const host = h.get('host')
-    const proto = h.get('x-forwarded-proto') || (host?.startsWith('localhost') ? 'http' : 'https')
-    if (!host) {
-        return { ok: false, error: 'No se pudo determinar el host', platform_status: null }
-    }
+  const h = await headers();
+  const host = h.get('host');
+  const proto = h.get('x-forwarded-proto') || (host?.startsWith('localhost') ? 'http' : 'https');
+  if (!host) {
+    return { ok: false, error: 'No se pudo determinar el host', platform_status: null };
+  }
 
-    const url = `${proto}://${host}/api/worker?start=${encodeURIComponent(from)}&end=${encodeURIComponent(to)}&client_id=${encodeURIComponent(clientId)}`
+  const url = `${proto}://${host}/api/worker?start=${encodeURIComponent(from)}&end=${encodeURIComponent(to)}&client_id=${encodeURIComponent(clientId)}`;
 
-    try {
-        const res = await fetch(url, {
-            headers: { Authorization: `Bearer ${secret}` },
-            cache: 'no-store',
-        })
-        const data = await res.json().catch(() => ({}))
-        if (!res.ok) {
-            return { ok: false, error: data?.error || `HTTP ${res.status}`, platform_status: null }
-        }
-        const firstResult = Array.isArray(data?.results) ? data.results[0] : null
-        return { ok: true, platform_status: firstResult?.platform_status ?? null }
-    } catch (err: any) {
-        return { ok: false, error: err?.message || 'Error de red', platform_status: null }
+  try {
+    const res = await fetch(url, {
+      headers: { Authorization: `Bearer ${secret}` },
+      cache: 'no-store',
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      return { ok: false, error: data?.error || `HTTP ${res.status}`, platform_status: null };
     }
+    const firstResult = Array.isArray(data?.results) ? data.results[0] : null;
+    return { ok: true, platform_status: firstResult?.platform_status ?? null };
+  } catch (err: any) {
+    return { ok: false, error: err?.message || 'Error de red', platform_status: null };
+  }
 }
 
 export async function getLeadsDiarios(clientId: string) {
-    const supabase = await createAdminClient()
-    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
-    const today = new Date().toISOString().split('T')[0]
+  const supabase = await createAdminClient();
+  const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+  const today = new Date().toISOString().split('T')[0];
 
-    const { data, error } = await supabase
-        .from('leads_diarios')
-        .select('*')
-        .eq('client_id', clientId)
-        .gte('date', thirtyDaysAgo)
-        .lte('date', today)
-        .order('date', { ascending: true })
+  const { data, error } = await supabase
+    .from('leads_diarios')
+    .select('*')
+    .eq('client_id', clientId)
+    .gte('date', thirtyDaysAgo)
+    .lte('date', today)
+    .order('date', { ascending: true });
 
-    if (error) return { data: null, error: error.message }
-    return { data, error: null }
+  if (error) return { data: null, error: error.message };
+  return { data, error: null };
 }
 
 export async function getDashboardData(clientId: string, startStr: string, endStr: string) {
-    const supabase = await createAdminClient()
+  const supabase = await createAdminClient();
 
-    // Fetch client + global assigned layout + client tabs + conversions catalog + campaign groups
-    const [clienteRes, clienteLayoutRes, tabsRes, conversionesRes, campaignGroupsRes] = await Promise.all([
-        supabase.from('clientes')
-            .select('*, global_layout:layouts_reporte(*)')
-            .eq('id', clientId)
-            .limit(1),
-        supabase.from('clientes_layouts')
-            .select('*')
-            .eq('cliente_id', clientId)
-            .maybeSingle(),
-        supabase.from('cliente_tabs')
-            .select('*')
-            .eq('cliente_id', clientId)
-            .order('orden', { ascending: true }),
-        supabase.from('meta_conversiones_catalogo')
-            .select('conversion_key, label, field_id')
-            .eq('cliente_id', clientId)
-            .order('label', { ascending: true }),
-        supabase.from('campaign_groups')
-            .select(`
+  // Fetch client + global assigned layout + client tabs + conversions catalog + campaign groups
+  const [clienteRes, clienteLayoutRes, tabsRes, conversionesRes, campaignGroupsRes] =
+    await Promise.all([
+      supabase
+        .from('clientes')
+        .select('*, global_layout:layouts_reporte(*)')
+        .eq('id', clientId)
+        .limit(1),
+      supabase.from('clientes_layouts').select('*').eq('cliente_id', clientId).maybeSingle(),
+      supabase
+        .from('cliente_tabs')
+        .select('*')
+        .eq('cliente_id', clientId)
+        .order('orden', { ascending: true }),
+      supabase
+        .from('meta_conversiones_catalogo')
+        .select('conversion_key, label, field_id')
+        .eq('cliente_id', clientId)
+        .order('label', { ascending: true }),
+      supabase
+        .from('campaign_groups')
+        .select(
+          `
                 *,
                 campaign_group_mappings (
                     id,
                     campaign_id,
                     campaign_name_pattern
                 )
-            `)
-            .eq('cliente_id', clientId)
-            .order('nombre', { ascending: true }),
-    ])
+            `
+        )
+        .eq('cliente_id', clientId)
+        .order('nombre', { ascending: true }),
+    ]);
 
-    const cliente = clienteRes.data?.[0]
-    if (!cliente) return null
+  const cliente = clienteRes.data?.[0];
+  if (!cliente) return null;
 
-    // Compute available platforms from client API config (used for attribution fallback)
-    const cfg = (cliente.config_api as any) || {}
-    const availablePlatforms = new Set<string>(['meta'])
-    if (cfg.ga_property_id && cfg.ga_client_email) availablePlatforms.add('ga4')
-    if (cfg.hotmart_basic || cfg.hotmart_token) availablePlatforms.add('hotmart')
-    if (cfg.tiktok_advertiser_id && cfg.tiktok_access_token) availablePlatforms.add('tiktok')
+  // Compute available platforms from client API config (used for attribution fallback)
+  const cfg = (cliente.config_api as any) || {};
+  const availablePlatforms = new Set<string>(['meta']);
+  if (cfg.ga_property_id && cfg.ga_client_email) availablePlatforms.add('ga4');
+  if (cfg.hotmart_basic || cfg.hotmart_token) availablePlatforms.add('hotmart');
+  if (cfg.tiktok_advertiser_id && cfg.tiktok_access_token) availablePlatforms.add('tiktok');
 
-    // Priority: client-specific layout → global assigned layout → null (classic)
-    const layout = clienteLayoutRes.data || cliente.global_layout || null
+  // Priority: client-specific layout → global assigned layout → null (classic)
+  const layout = clienteLayoutRes.data || cliente.global_layout || null;
 
-    // Fetch all metrics + leads for that range
-    let metricsQuery = supabase.from('metricas_diarias')
-        .select('*')
-        .eq('cliente_id', cliente.id)
-    if (startStr !== 'all') metricsQuery = metricsQuery.gte('fecha', startStr)
-    metricsQuery = metricsQuery.lte('fecha', endStr).order('fecha', { ascending: true })
+  // Fetch all metrics + leads for that range
+  let metricsQuery = supabase.from('metricas_diarias').select('*').eq('cliente_id', cliente.id);
+  if (startStr !== 'all') metricsQuery = metricsQuery.gte('fecha', startStr);
+  metricsQuery = metricsQuery.lte('fecha', endStr).order('fecha', { ascending: true });
 
-    let leadsQuery = supabase.from('leads_diarios')
-        .select('*')
-        .eq('client_id', cliente.id)
-    if (startStr !== 'all') leadsQuery = leadsQuery.gte('date', startStr)
-    leadsQuery = leadsQuery.lte('date', endStr)
+  let leadsQuery = supabase.from('leads_diarios').select('*').eq('client_id', cliente.id);
+  if (startStr !== 'all') leadsQuery = leadsQuery.gte('date', startStr);
+  leadsQuery = leadsQuery.lte('date', endStr);
 
-    const [metricsRes, leadsRes] = await Promise.all([metricsQuery, leadsQuery])
+  const [metricsRes, leadsRes] = await Promise.all([metricsQuery, leadsQuery]);
 
-    // Merge leads data into metrics by date
-    const leadsMap = new Map((leadsRes.data || []).map((l: any) => [l.date, l]))
-    const metrics = (metricsRes.data || []).map((m: any) => {
-        const leadDay = leadsMap.get(m.fecha)
-        if (leadDay) {
-            return {
-                ...m,
-                leads_totales: leadDay.leads_totales,
-                leads_calificados: leadDay.leads_calificados,
-                leads_no_calificados: leadDay.leads_no_calificados,
-                tasa_calificacion: leadDay.tasa_calificacion,
-            }
-        }
-        return m
-    })
-
-    // Fetch all global layouts so the selector modal has them available
-    const { data: allLayouts } = await supabase.from('layouts_reporte').select('*').order('nombre')
-
-    const effectiveStart = startStr === 'all' ? '2020-01-01' : startStr
-    const weeks = getWeeksInRange(effectiveStart, endStr)
-
-    return {
-        cliente,
-        metrics: metrics || [],
-        weeks,
-        layout,
-        allLayouts: allLayouts || [],
-        clienteLayoutId: clienteLayoutRes.data?.id || null,
-        tabs: tabsRes.data || [],
-        conversionesCatalogo: conversionesRes.data || [],
-        layoutPublico: cliente.layout_publico || null,
-        availablePlatforms: Array.from(availablePlatforms),
-        campaignGroups: campaignGroupsRes.data || [],
+  // Merge leads data into metrics by date
+  const leadsMap = new Map((leadsRes.data || []).map((l: any) => [l.date, l]));
+  const metrics = (metricsRes.data || []).map((m: any) => {
+    const leadDay = leadsMap.get(m.fecha);
+    if (leadDay) {
+      return {
+        ...m,
+        leads_totales: leadDay.leads_totales,
+        leads_calificados: leadDay.leads_calificados,
+        leads_no_calificados: leadDay.leads_no_calificados,
+        tasa_calificacion: leadDay.tasa_calificacion,
+      };
     }
+    return m;
+  });
+
+  // Fetch all global layouts so the selector modal has them available
+  const { data: allLayouts } = await supabase.from('layouts_reporte').select('*').order('nombre');
+
+  const effectiveStart = startStr === 'all' ? '2020-01-01' : startStr;
+  const weeks = getWeeksInRange(effectiveStart, endStr);
+
+  return {
+    cliente,
+    metrics: metrics || [],
+    weeks,
+    layout,
+    allLayouts: allLayouts || [],
+    clienteLayoutId: clienteLayoutRes.data?.id || null,
+    tabs: tabsRes.data || [],
+    conversionesCatalogo: conversionesRes.data || [],
+    layoutPublico: cliente.layout_publico || null,
+    availablePlatforms: Array.from(availablePlatforms),
+    campaignGroups: campaignGroupsRes.data || [],
+  };
 }
 
 // ─── Client layout mutation actions ─────────────────────────────────────────
@@ -166,43 +167,45 @@ export async function getDashboardData(clientId: string, startStr: string, endSt
  * If the client already has a custom layout, it gets replaced.
  */
 export async function cloneLayoutForCliente(clienteId: string, globalLayoutId: string) {
-    const supabase = await createAdminClient()
+  const supabase = await createAdminClient();
 
-    // Fetch the global template
-    const { data: template, error: tErr } = await supabase
-        .from('layouts_reporte')
-        .select('*')
-        .eq('id', globalLayoutId)
-        .single()
+  // Fetch the global template
+  const { data: template, error: tErr } = await supabase
+    .from('layouts_reporte')
+    .select('*')
+    .eq('id', globalLayoutId)
+    .single();
 
-    if (tErr || !template) return { error: 'Plantilla no encontrada' }
+  if (tErr || !template) return { error: 'Plantilla no encontrada' };
 
-    // Upsert into clientes_layouts (one row per client)
-    const { data, error } = await supabase
-        .from('clientes_layouts')
-        .upsert(
-            {
-                cliente_id: clienteId,
-                base_layout_id: globalLayoutId,
-                nombre: template.nombre,
-                columnas: template.columnas,
-                tarjetas: template.tarjetas,
-                updated_at: new Date().toISOString(),
-            },
-            { onConflict: 'cliente_id' }
-        )
-        .select()
-        .single()
+  // Upsert into clientes_layouts (one row per client)
+  const { data, error } = await supabase
+    .from('clientes_layouts')
+    .upsert(
+      {
+        cliente_id: clienteId,
+        base_layout_id: globalLayoutId,
+        nombre: template.nombre,
+        columnas: template.columnas,
+        tarjetas: template.tarjetas,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: 'cliente_id' }
+    )
+    .select()
+    .single();
 
-    if (error) return { error: error.message }
-    revalidatePath(`/dashboard/${clienteId}`)
-    return { success: true, data }
+  if (error) return { error: error.message };
+  revalidatePath(`/dashboard/${clienteId}`);
+  return { success: true, data };
 }
 
 /**
  * Save updated columns/cards for a client's personal layout.
  */
-export async function saveClienteLayout(clienteId: string, payload: {
+export async function saveClienteLayout(
+  clienteId: string,
+  payload: {
     columnas: any[];
     tarjetas: any[];
     graficos?: any[];
@@ -210,33 +213,36 @@ export async function saveClienteLayout(clienteId: string, payload: {
     custom_metrics?: any[];
     blocks_order?: string[];
     ranking_tables?: any[];
-}) {
-    const supabase = await createAdminClient()
+  }
+) {
+  const supabase = await createAdminClient();
 
-    const { error } = await supabase
-        .from('clientes_layouts')
-        .update({ ...payload, updated_at: new Date().toISOString() })
-        .eq('cliente_id', clienteId)
+  const { error } = await supabase
+    .from('clientes_layouts')
+    .update({ ...payload, updated_at: new Date().toISOString() })
+    .eq('cliente_id', clienteId);
 
-    if (error) return { error: error.message }
-    revalidatePath(`/dashboard/${clienteId}`)
-    return { success: true }
+  if (error) return { error: error.message };
+  revalidatePath(`/dashboard/${clienteId}`);
+  return { success: true };
 }
 
 /**
  * Remove the client-specific layout so it falls back to global/classic.
  */
 export async function resetClienteLayout(clienteId: string) {
-    const supabase = await createAdminClient()
-    await supabase.from('clientes_layouts').delete().eq('cliente_id', clienteId)
-    revalidatePath(`/dashboard/${clienteId}`)
-    return { success: true }
+  const supabase = await createAdminClient();
+  await supabase.from('clientes_layouts').delete().eq('cliente_id', clienteId);
+  revalidatePath(`/dashboard/${clienteId}`);
+  return { success: true };
 }
 
 /**
  * Save or update a client tab.
  */
-export async function saveClienteTab(clienteId: string, payload: {
+export async function saveClienteTab(
+  clienteId: string,
+  payload: {
     id?: string;
     nombre: string;
     keyword_meta: string;
@@ -246,121 +252,125 @@ export async function saveClienteTab(clienteId: string, payload: {
     fecha_finalizacion?: string;
     presupuesto_objetivo?: number;
     hotmart_funnel?: {
-        enabled?: boolean
-        principal_names?: string[]
-        bump_names?: string[]
-        upsell_names?: string[]
-        payment_page_url?: string
-        upsell_page_url?: string
+      enabled?: boolean;
+      principal_names?: string[];
+      bump_names?: string[];
+      upsell_names?: string[];
+      payment_page_url?: string;
+      upsell_page_url?: string;
     } | null;
-}) {
-    const supabase = await createAdminClient()
+  }
+) {
+  const supabase = await createAdminClient();
 
-    // hotmart_funnel: undefined = no tocar (solo en edición); null o objeto = setear (incluyendo "deshabilitar")
-    const baseFields: Record<string, any> = {
-        nombre: payload.nombre,
-        keyword_meta: payload.keyword_meta,
-        plantilla_id: payload.plantilla_id || null,
-        fecha_inicio: payload.fecha_inicio || null,
-        fecha_finalizacion: payload.fecha_finalizacion || null,
-        presupuesto_objetivo: payload.presupuesto_objetivo || null,
-    }
-    if (payload.hotmart_funnel !== undefined) {
-        baseFields.hotmart_funnel = payload.hotmart_funnel
-    }
+  // hotmart_funnel: undefined = no tocar (solo en edición); null o objeto = setear (incluyendo "deshabilitar")
+  const baseFields: Record<string, any> = {
+    nombre: payload.nombre,
+    keyword_meta: payload.keyword_meta,
+    plantilla_id: payload.plantilla_id || null,
+    fecha_inicio: payload.fecha_inicio || null,
+    fecha_finalizacion: payload.fecha_finalizacion || null,
+    presupuesto_objetivo: payload.presupuesto_objetivo || null,
+  };
+  if (payload.hotmart_funnel !== undefined) {
+    baseFields.hotmart_funnel = payload.hotmart_funnel;
+  }
 
-    if (payload.id) {
-        const { error } = await supabase
-            .from('cliente_tabs')
-            .update({ ...baseFields, updated_at: new Date().toISOString() })
-            .eq('id', payload.id)
-            .eq('cliente_id', clienteId)
-        if (error) return { error: error.message }
-    } else {
-        const { error } = await supabase
-            .from('cliente_tabs')
-            .insert({
-                cliente_id: clienteId,
-                ...baseFields,
-                orden: payload.orden || 0,
-            })
-        if (error) return { error: error.message }
-    }
+  if (payload.id) {
+    const { error } = await supabase
+      .from('cliente_tabs')
+      .update({ ...baseFields, updated_at: new Date().toISOString() })
+      .eq('id', payload.id)
+      .eq('cliente_id', clienteId);
+    if (error) return { error: error.message };
+  } else {
+    const { error } = await supabase.from('cliente_tabs').insert({
+      cliente_id: clienteId,
+      ...baseFields,
+      orden: payload.orden || 0,
+    });
+    if (error) return { error: error.message };
+  }
 
-    revalidatePath(`/dashboard/${clienteId}`)
-    return { success: true }
+  revalidatePath(`/dashboard/${clienteId}`);
+  return { success: true };
 }
 
 /**
  * Delete a client tab.
  */
 export async function deleteClienteTab(clienteId: string, tabId: string) {
-    const supabase = await createAdminClient()
-    const { error } = await supabase.from('cliente_tabs').delete().eq('id', tabId).eq('cliente_id', clienteId)
-    if (error) return { error: error.message }
-    revalidatePath(`/dashboard/${clienteId}`)
-    return { success: true }
+  const supabase = await createAdminClient();
+  const { error } = await supabase
+    .from('cliente_tabs')
+    .delete()
+    .eq('id', tabId)
+    .eq('cliente_id', clienteId);
+  if (error) return { error: error.message };
+  revalidatePath(`/dashboard/${clienteId}`);
+  return { success: true };
 }
 
 /**
  * Toggle the archived status of a client tab.
  */
 export async function toggleTabArchived(clienteId: string, tabId: string, archived: boolean) {
-    const supabase = await createAdminClient()
-    const { error } = await supabase
-        .from('cliente_tabs')
-        .update({ archived })
-        .eq('id', tabId)
-        .eq('cliente_id', clienteId)
-    if (error) return { error: error.message }
-    revalidatePath(`/dashboard/${clienteId}`)
-    return { success: true }
+  const supabase = await createAdminClient();
+  const { error } = await supabase
+    .from('cliente_tabs')
+    .update({ archived })
+    .eq('id', tabId)
+    .eq('cliente_id', clienteId);
+  if (error) return { error: error.message };
+  revalidatePath(`/dashboard/${clienteId}`);
+  return { success: true };
 }
 
 /**
  * Duplicate a client tab.
  */
 export async function duplicateClienteTab(clienteId: string, tabId: string) {
-    const supabase = await createAdminClient()
+  const supabase = await createAdminClient();
 
-    const { data: source, error: fetchError } = await supabase
-        .from('cliente_tabs')
-        .select('*')
-        .eq('id', tabId)
-        .eq('cliente_id', clienteId)
-        .single()
+  const { data: source, error: fetchError } = await supabase
+    .from('cliente_tabs')
+    .select('*')
+    .eq('id', tabId)
+    .eq('cliente_id', clienteId)
+    .single();
 
-    if (fetchError || !source) return { error: fetchError?.message || 'Tab no encontrada' }
+  if (fetchError || !source) return { error: fetchError?.message || 'Tab no encontrada' };
 
-    const { data: allTabs } = await supabase
-        .from('cliente_tabs')
-        .select('orden')
-        .eq('cliente_id', clienteId)
-        .order('orden', { ascending: false })
-        .limit(1)
+  const { data: allTabs } = await supabase
+    .from('cliente_tabs')
+    .select('orden')
+    .eq('cliente_id', clienteId)
+    .order('orden', { ascending: false })
+    .limit(1);
 
-    const maxOrden = (allTabs?.[0]?.orden ?? 0) as number
+  const maxOrden = (allTabs?.[0]?.orden ?? 0) as number;
 
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const { id, created_at, updated_at, public_token, ...rest } = source
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { id, created_at, updated_at, public_token, ...rest } = source;
 
-    const { error: insertError } = await supabase
-        .from('cliente_tabs')
-        .insert({
-            ...rest,
-            nombre: `${source.nombre} (copia)`,
-            orden: maxOrden + 1,
-        })
+  const { error: insertError } = await supabase.from('cliente_tabs').insert({
+    ...rest,
+    nombre: `${source.nombre} (copia)`,
+    orden: maxOrden + 1,
+  });
 
-    if (insertError) return { error: insertError.message }
-    revalidatePath(`/dashboard/${clienteId}`)
-    return { success: true }
+  if (insertError) return { error: insertError.message };
+  revalidatePath(`/dashboard/${clienteId}`);
+  return { success: true };
 }
 
 /**
  * Save layout overrides (columns, cards) strictly for one tab.
  */
-export async function saveTabOverrides(clienteId: string, tabId: string, payload: {
+export async function saveTabOverrides(
+  clienteId: string,
+  tabId: string,
+  payload: {
     columnas: any[] | null;
     tarjetas: any[] | null;
     graficos?: any[] | null;
@@ -368,177 +378,184 @@ export async function saveTabOverrides(clienteId: string, tabId: string, payload
     custom_metrics?: any[] | null;
     blocks_order?: string[] | null;
     ranking_tables?: any[] | null;
-}) {
-    const supabase = await createAdminClient()
-    const { error } = await supabase
-        .from('cliente_tabs')
-        .update({
-            columnas: payload.columnas,
-            tarjetas: payload.tarjetas,
-            graficos: payload.graficos,
-            text_blocks: payload.text_blocks,
-            custom_metrics: payload.custom_metrics,
-            blocks_order: payload.blocks_order,
-            ranking_tables: payload.ranking_tables,
-            updated_at: new Date().toISOString()
-        })
-        .eq('id', tabId)
-        .eq('cliente_id', clienteId)
+  }
+) {
+  const supabase = await createAdminClient();
+  const { error } = await supabase
+    .from('cliente_tabs')
+    .update({
+      columnas: payload.columnas,
+      tarjetas: payload.tarjetas,
+      graficos: payload.graficos,
+      text_blocks: payload.text_blocks,
+      custom_metrics: payload.custom_metrics,
+      blocks_order: payload.blocks_order,
+      ranking_tables: payload.ranking_tables,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', tabId)
+    .eq('cliente_id', clienteId);
 
-    if (error) return { error: error.message }
-    revalidatePath(`/dashboard/${clienteId}`)
-    return { success: true }
+  if (error) return { error: error.message };
+  revalidatePath(`/dashboard/${clienteId}`);
+  return { success: true };
 }
 
 export async function updateLayoutPuzzleState(
-    clienteId: string,
-    tabId: string,
-    payload: {
-        blocks_order: string[]
-        text_blocks: any[]
-        tarjetas?: any[]
-        graficos?: any[]
-        ranking_tables?: any[]
-        full_layout?: {
-            nombre: string
-            columnas: any[]
-            tarjetas: any[]
-            graficos?: any[]
-            custom_metrics?: any[]
-            attribution_strategy?: string
-        }
-    }
+  clienteId: string,
+  tabId: string,
+  payload: {
+    blocks_order: string[];
+    text_blocks: any[];
+    tarjetas?: any[];
+    graficos?: any[];
+    ranking_tables?: any[];
+    full_layout?: {
+      nombre: string;
+      columnas: any[];
+      tarjetas: any[];
+      graficos?: any[];
+      custom_metrics?: any[];
+      attribution_strategy?: string;
+    };
+  }
 ) {
-    const supabase = await createAdminClient()
+  const supabase = await createAdminClient();
 
-    if (tabId && tabId !== 'general') {
-        // Tab específico: actualizar puzzle state y arrays de bloques
-        const { error } = await supabase
-            .from('cliente_tabs')
-            .update({
-                blocks_order: payload.blocks_order,
-                text_blocks: payload.text_blocks,
-                ...(payload.tarjetas !== undefined && { tarjetas: payload.tarjetas }),
-                ...(payload.graficos !== undefined && { graficos: payload.graficos }),
-                ...(payload.ranking_tables !== undefined && { ranking_tables: payload.ranking_tables }),
-                updated_at: new Date().toISOString(),
-            })
-            .eq('id', tabId)
-            .eq('cliente_id', clienteId)
-        if (error) return { error: error.message }
-        revalidatePath(`/dashboard/${clienteId}`)
-        return { success: true }
+  if (tabId && tabId !== 'general') {
+    // Tab específico: actualizar puzzle state y arrays de bloques
+    const { error } = await supabase
+      .from('cliente_tabs')
+      .update({
+        blocks_order: payload.blocks_order,
+        text_blocks: payload.text_blocks,
+        ...(payload.tarjetas !== undefined && { tarjetas: payload.tarjetas }),
+        ...(payload.graficos !== undefined && { graficos: payload.graficos }),
+        ...(payload.ranking_tables !== undefined && { ranking_tables: payload.ranking_tables }),
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', tabId)
+      .eq('cliente_id', clienteId);
+    if (error) return { error: error.message };
+    revalidatePath(`/dashboard/${clienteId}`);
+    return { success: true };
+  } else {
+    // General tab: verificar si ya existe fila en clientes_layouts
+    const { data: existing } = await supabase
+      .from('clientes_layouts')
+      .select('id')
+      .eq('cliente_id', clienteId)
+      .maybeSingle();
+
+    if (existing) {
+      // Fila existe: actualizar puzzle state y arrays de bloques
+      const { error } = await supabase
+        .from('clientes_layouts')
+        .update({
+          blocks_order: payload.blocks_order,
+          text_blocks: payload.text_blocks,
+          ...(payload.tarjetas !== undefined && { tarjetas: payload.tarjetas }),
+          ...(payload.graficos !== undefined && { graficos: payload.graficos }),
+          ...(payload.ranking_tables !== undefined && { ranking_tables: payload.ranking_tables }),
+          updated_at: new Date().toISOString(),
+        })
+        .eq('cliente_id', clienteId);
+      if (error) return { error: error.message };
+    } else if (payload.full_layout) {
+      // No existe fila: crear una copiando el layout activo + puzzle state
+      const { error } = await supabase.from('clientes_layouts').insert({
+        cliente_id: clienteId,
+        nombre: payload.full_layout.nombre || 'Dashboard',
+        columnas: payload.full_layout.columnas || [],
+        tarjetas: payload.full_layout.tarjetas || [],
+        graficos: payload.full_layout.graficos || null,
+        custom_metrics: payload.full_layout.custom_metrics || null,
+        attribution_strategy: payload.full_layout.attribution_strategy || null,
+        blocks_order: payload.blocks_order,
+        text_blocks: payload.text_blocks,
+      });
+      if (error) return { error: error.message };
     } else {
-        // General tab: verificar si ya existe fila en clientes_layouts
-        const { data: existing } = await supabase
-            .from('clientes_layouts')
-            .select('id')
-            .eq('cliente_id', clienteId)
-            .maybeSingle()
-
-        if (existing) {
-            // Fila existe: actualizar puzzle state y arrays de bloques
-            const { error } = await supabase
-                .from('clientes_layouts')
-                .update({
-                    blocks_order: payload.blocks_order,
-                    text_blocks: payload.text_blocks,
-                    ...(payload.tarjetas !== undefined && { tarjetas: payload.tarjetas }),
-                    ...(payload.graficos !== undefined && { graficos: payload.graficos }),
-                    ...(payload.ranking_tables !== undefined && { ranking_tables: payload.ranking_tables }),
-                    updated_at: new Date().toISOString(),
-                })
-                .eq('cliente_id', clienteId)
-            if (error) return { error: error.message }
-        } else if (payload.full_layout) {
-            // No existe fila: crear una copiando el layout activo + puzzle state
-            const { error } = await supabase
-                .from('clientes_layouts')
-                .insert({
-                    cliente_id: clienteId,
-                    nombre: payload.full_layout.nombre || 'Dashboard',
-                    columnas: payload.full_layout.columnas || [],
-                    tarjetas: payload.full_layout.tarjetas || [],
-                    graficos: payload.full_layout.graficos || null,
-                    custom_metrics: payload.full_layout.custom_metrics || null,
-                    attribution_strategy: payload.full_layout.attribution_strategy || null,
-                    blocks_order: payload.blocks_order,
-                    text_blocks: payload.text_blocks,
-                })
-            if (error) return { error: error.message }
-        } else {
-            return { error: 'No se pudo guardar: layout base no disponible' }
-        }
-
-        revalidatePath(`/dashboard/${clienteId}`)
-        return { success: true }
+      return { error: 'No se pudo guardar: layout base no disponible' };
     }
-}
 
+    revalidatePath(`/dashboard/${clienteId}`);
+    return { success: true };
+  }
+}
 
 /**
  * Update a manual metric value in metricas_diarias.
  */
-export async function updateManualMetric(clienteId: string, fecha: string, key: string, value: number) {
-    const supabase = await createAdminClient()
+export async function updateManualMetric(
+  clienteId: string,
+  fecha: string,
+  key: string,
+  value: number
+) {
+  const supabase = await createAdminClient();
 
-    // Retrieve existing metric row for this date
-    const { data: existing } = await supabase
-        .from('metricas_diarias')
-        .select('id, metricas_manuales')
-        .eq('cliente_id', clienteId)
-        .eq('fecha', fecha)
-        .maybeSingle()
+  // Retrieve existing metric row for this date
+  const { data: existing } = await supabase
+    .from('metricas_diarias')
+    .select('id, metricas_manuales')
+    .eq('cliente_id', clienteId)
+    .eq('fecha', fecha)
+    .maybeSingle();
 
-    const currentManuales = existing?.metricas_manuales || {}
-    currentManuales[key] = value
+  const currentManuales = existing?.metricas_manuales || {};
+  currentManuales[key] = value;
 
-    if (existing) {
-        await supabase
-            .from('metricas_diarias')
-            .update({ metricas_manuales: currentManuales })
-            .eq('id', existing.id)
-    } else {
-        await supabase
-            .from('metricas_diarias')
-            .insert({
-                cliente_id: clienteId,
-                fecha,
-                metricas_manuales: currentManuales
-            })
-    }
+  if (existing) {
+    await supabase
+      .from('metricas_diarias')
+      .update({ metricas_manuales: currentManuales })
+      .eq('id', existing.id);
+  } else {
+    await supabase.from('metricas_diarias').insert({
+      cliente_id: clienteId,
+      fecha,
+      metricas_manuales: currentManuales,
+    });
+  }
 
-    revalidatePath(`/dashboard/${clienteId}`)
-    return { success: true }
+  revalidatePath(`/dashboard/${clienteId}`);
+  return { success: true };
 }
 
 /**
  * Get total historical spend for a specific keyword filter (for budget calculations)
  */
-export async function getTabTotalSpend(clienteId: string, keywordFilter: string, fechaInicio?: string, fechaFin?: string) {
-    const supabase = await createAdminClient()
-    let query = supabase
-        .from('metricas_diarias')
-        .select('meta_campaigns, meta_spend')
-        .eq('cliente_id', clienteId)
-    if (fechaInicio) query = query.gte('fecha', fechaInicio)
-    if (fechaFin) query = query.lte('fecha', fechaFin)
-    const { data: metrics } = await query
+export async function getTabTotalSpend(
+  clienteId: string,
+  keywordFilter: string,
+  fechaInicio?: string,
+  fechaFin?: string
+) {
+  const supabase = await createAdminClient();
+  let query = supabase
+    .from('metricas_diarias')
+    .select('meta_campaigns, meta_spend')
+    .eq('cliente_id', clienteId);
+  if (fechaInicio) query = query.gte('fecha', fechaInicio);
+  if (fechaFin) query = query.lte('fecha', fechaFin);
+  const { data: metrics } = await query;
 
-    if (!metrics) return 0
+  if (!metrics) return 0;
 
-    let totalSpent = 0
-    metrics.forEach(row => {
-        if (!keywordFilter || !row.meta_campaigns) {
-             totalSpent += parseFloat(row.meta_spend || '0')
-        } else {
-            const kw = keywordFilter.toLowerCase()
-            const matching = (Array.isArray(row.meta_campaigns) ? row.meta_campaigns : [])
-                .filter((c: any) => c.name?.toLowerCase().includes(kw))
-            totalSpent += matching.reduce((s: number, c: any) => s + parseFloat(c.spend || '0'), 0)
-        }
-    })
-    return totalSpent
+  let totalSpent = 0;
+  metrics.forEach((row) => {
+    if (!keywordFilter || !row.meta_campaigns) {
+      totalSpent += parseFloat(row.meta_spend || '0');
+    } else {
+      const kw = keywordFilter.toLowerCase();
+      const matching = (Array.isArray(row.meta_campaigns) ? row.meta_campaigns : []).filter(
+        (c: any) => c.name?.toLowerCase().includes(kw)
+      );
+      totalSpent += matching.reduce((s: number, c: any) => s + parseFloat(c.spend || '0'), 0);
+    }
+  });
+  return totalSpent;
 }
 
 /**
@@ -546,341 +563,388 @@ export async function getTabTotalSpend(clienteId: string, keywordFilter: string,
  */
 
 async function getCurrentRole(): Promise<string> {
-    const supabase = await createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return 'viewer'
-    const { data } = await supabase.from('user_profiles').select('role').eq('id', user.id).single()
-    return data?.role ?? 'viewer'
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return 'viewer';
+  const { data } = await supabase.from('user_profiles').select('role').eq('id', user.id).single();
+  return data?.role ?? 'viewer';
 }
 
 async function isTeamMember(): Promise<boolean> {
-    return ['superadmin', 'admin', 'trafficker'].includes(await getCurrentRole())
+  return ['superadmin', 'admin', 'trafficker'].includes(await getCurrentRole());
 }
 
 export async function getAllSoporteTickets() {
-    const supabase = await createAdminClient()
-    const { data, error } = await supabase
-        .from('soporte_tickets')
-        .select('*, cliente:clientes(nombre)')
-        .order('fecha_solicitud', { ascending: false })
-        .limit(100)
+  const supabase = await createAdminClient();
+  const { data, error } = await supabase
+    .from('soporte_tickets')
+    .select('*, cliente:clientes(nombre)')
+    .order('fecha_solicitud', { ascending: false })
+    .limit(100);
 
-    if (error) return { data: null, error: error.message }
-    return { data, error: null }
+  if (error) return { data: null, error: error.message };
+  return { data, error: null };
 }
 
 export async function getSoporteTickets(clienteId: string) {
-    const supabase = await createAdminClient()
-    const { data, error } = await supabase
-        .from('soporte_tickets')
-        .select('*')
-        .eq('cliente_id', clienteId)
-        .order('fecha_solicitud', { ascending: false })
+  const supabase = await createAdminClient();
+  const { data, error } = await supabase
+    .from('soporte_tickets')
+    .select('*')
+    .eq('cliente_id', clienteId)
+    .order('fecha_solicitud', { ascending: false });
 
-    if (error) return { data: null, error: error.message }
-    return { data, error: null }
+  if (error) return { data: null, error: error.message };
+  return { data, error: null };
 }
 
 export async function createSoporteTicket(payload: {
-    cliente_id?: string | null
-    tipo: 'bug' | 'feature' | 'mejora' | 'tarea'
-    nombre_solicitante: string
-    requerimiento: string
-    observaciones?: string
-    prioridad: number
-    fecha_entrega?: string
+  cliente_id?: string | null;
+  tipo: 'bug' | 'feature' | 'mejora' | 'tarea';
+  nombre_solicitante: string;
+  requerimiento: string;
+  observaciones?: string;
+  prioridad: number;
+  fecha_entrega?: string;
 }) {
-    if (!(await isTeamMember())) return { error: 'No autorizado' }
+  if (!(await isTeamMember())) return { error: 'No autorizado' };
 
-    const supabase = await createAdminClient()
-    const { data, error } = await supabase
-        .from('soporte_tickets')
-        .insert({
-            ...payload,
-            cliente_id: payload.cliente_id || null,
-            estado: 'abierto'
-        })
-        .select()
-        .single()
+  const supabase = await createAdminClient();
+  const { data, error } = await supabase
+    .from('soporte_tickets')
+    .insert({
+      ...payload,
+      cliente_id: payload.cliente_id || null,
+      estado: 'abierto',
+    })
+    .select()
+    .single();
 
-    if (error) return { error: error.message }
+  if (error) return { error: error.message };
 
-    // Notificación in-app tras responder; after() evita que Vercel congele
-    // la función antes de completar el insert.
-    after(() => notifyUsers({
-        db: supabase,
-        type: 'ticket_created',
-        severity: 'info',
-        clienteId: payload.cliente_id || null,
-        title: `Nuevo ticket: ${payload.requerimiento.slice(0, 80)}`,
-        message: `${payload.tipo} · solicitado por ${payload.nombre_solicitante}`,
-        link: '/soporte',
-        metadata: { ticket_id: data.id },
-    }))
+  // Notificaciones tras responder; after() evita que Vercel congele la
+  // función antes de completar los inserts. In-app (campanita) + WhatsApp.
+  after(async () => {
+    await notifyUsers({
+      db: supabase,
+      type: 'ticket_created',
+      severity: 'info',
+      clienteId: payload.cliente_id || null,
+      title: `Nuevo ticket: ${payload.requerimiento.slice(0, 80)}`,
+      message: `${payload.tipo} · solicitado por ${payload.nombre_solicitante}`,
+      link: '/soporte',
+      metadata: { ticket_id: data.id },
+    });
+    await sendWhatsAppNotification({
+      db: supabase,
+      clienteId: payload.cliente_id || null,
+      notificationType: 'roadmap_created',
+      message:
+        `🗺️ *Roadmap — nuevo ${payload.tipo}*\n` +
+        `${payload.requerimiento}\n` +
+        `Solicitante: ${payload.nombre_solicitante} · Prioridad: ${payload.prioridad}`,
+    }).catch((e) => console.error('[roadmap whatsapp] create failed', e));
+  });
 
-    if (payload.cliente_id) revalidatePath(`/dashboard/${payload.cliente_id}`)
-    revalidatePath('/soporte')
-    return { success: true, data }
+  if (payload.cliente_id) revalidatePath(`/dashboard/${payload.cliente_id}`);
+  revalidatePath('/soporte');
+  return { success: true, data };
 }
 
-export async function updateSoporteTicket(ticketId: string, clienteId: string | null, payload: {
-    responsable?: string
-    fecha_entrega?: string
-    prioridad?: number
-    estado?: string
-    observaciones?: string
-    nombre_solicitante?: string
-    requerimiento?: string
-    tipo?: 'bug' | 'feature' | 'mejora' | 'tarea'
-    cliente_id?: string | null
-}) {
-    if (!(await isTeamMember())) return { error: 'No autorizado' }
+export async function updateSoporteTicket(
+  ticketId: string,
+  clienteId: string | null,
+  payload: {
+    responsable?: string;
+    fecha_entrega?: string;
+    prioridad?: number;
+    estado?: string;
+    observaciones?: string;
+    nombre_solicitante?: string;
+    requerimiento?: string;
+    tipo?: 'bug' | 'feature' | 'mejora' | 'tarea';
+    cliente_id?: string | null;
+  }
+) {
+  if (!(await isTeamMember())) return { error: 'No autorizado' };
 
-    const supabase = await createAdminClient()
+  const supabase = await createAdminClient();
 
-    // Estado previo: solo notificamos si el estado realmente cambió
-    let previousEstado: string | null = null
-    let previousRequerimiento: string | null = null
-    if (payload.estado) {
-        const { data: prev } = await supabase
-            .from('soporte_tickets')
-            .select('estado, requerimiento')
-            .eq('id', ticketId)
-            .maybeSingle()
-        previousEstado = prev?.estado ?? null
-        previousRequerimiento = prev?.requerimiento ?? null
-    }
+  // Estado previo: solo notificamos si el estado realmente cambió
+  let previousEstado: string | null = null;
+  let previousRequerimiento: string | null = null;
+  if (payload.estado) {
+    const { data: prev } = await supabase
+      .from('soporte_tickets')
+      .select('estado, requerimiento')
+      .eq('id', ticketId)
+      .maybeSingle();
+    previousEstado = prev?.estado ?? null;
+    previousRequerimiento = prev?.requerimiento ?? null;
+  }
 
-    const { error } = await supabase
-        .from('soporte_tickets')
-        .update({
-            ...payload,
-            updated_at: new Date().toISOString()
-        })
-        .eq('id', ticketId)
+  const { error } = await supabase
+    .from('soporte_tickets')
+    .update({
+      ...payload,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', ticketId);
 
-    if (error) return { error: error.message }
+  if (error) return { error: error.message };
 
-    if (payload.estado && previousEstado && payload.estado !== previousEstado) {
-        const requerimiento = payload.requerimiento ?? previousRequerimiento
-        const nuevoEstado = payload.estado
-        after(() => notifyUsers({
-            db: supabase,
-            type: 'ticket_updated',
-            severity: nuevoEstado === 'completado' ? 'success' : 'info',
-            clienteId: clienteId,
-            title: `Ticket actualizado: ${previousEstado} → ${nuevoEstado}`,
-            message: requerimiento ? requerimiento.slice(0, 120) : undefined,
-            link: '/soporte',
-            metadata: { ticket_id: ticketId, estado: nuevoEstado },
-        }))
-    }
+  if (payload.estado && previousEstado && payload.estado !== previousEstado) {
+    const requerimiento = payload.requerimiento ?? previousRequerimiento;
+    const nuevoEstado = payload.estado;
+    after(async () => {
+      await notifyUsers({
+        db: supabase,
+        type: 'ticket_updated',
+        severity: nuevoEstado === 'completado' ? 'success' : 'info',
+        clienteId: clienteId,
+        title: `Ticket actualizado: ${previousEstado} → ${nuevoEstado}`,
+        message: requerimiento ? requerimiento.slice(0, 120) : undefined,
+        link: '/soporte',
+        metadata: { ticket_id: ticketId, estado: nuevoEstado },
+      });
+      await sendWhatsAppNotification({
+        db: supabase,
+        clienteId: clienteId,
+        notificationType: 'roadmap_updated',
+        message:
+          `🗺️ *Roadmap actualizado* — ${previousEstado} → ${nuevoEstado}\n` +
+          `${requerimiento ? requerimiento.slice(0, 160) : ''}`,
+      }).catch((e) => console.error('[roadmap whatsapp] update failed', e));
+    });
+  }
 
-    if (clienteId) revalidatePath(`/dashboard/${clienteId}`)
-    revalidatePath('/soporte')
-    return { success: true }
+  if (clienteId) revalidatePath(`/dashboard/${clienteId}`);
+  revalidatePath('/soporte');
+  return { success: true };
 }
 
 /**
  * Public Mirror Dashboard data retrieval
  */
 export async function getMirrorDashboardData(token: string, from?: string, to?: string) {
-    const supabase = await createAdminClient()
+  const supabase = await createAdminClient();
 
-    // 1. Resolve token: is it a tab-specific token?
-    const { data: tab } = await supabase
-        .from('cliente_tabs')
-        .select('*, cliente:clientes(*, global_layout:layouts_reporte(*))')
-        .eq('public_token', token)
-        .maybeSingle()
+  // 1. Resolve token: is it a tab-specific token?
+  const { data: tab } = await supabase
+    .from('cliente_tabs')
+    .select('*, cliente:clientes(*, global_layout:layouts_reporte(*))')
+    .eq('public_token', token)
+    .maybeSingle();
 
-    let cliente: any = null
-    let activeTabObj: any = null
-    let layout: any = null
+  let cliente: any = null;
+  let activeTabObj: any = null;
+  let layout: any = null;
 
-    if (tab) {
-        cliente = tab.cliente
-        activeTabObj = tab
-        // Use tab override if available
-        if (tab.columnas && tab.tarjetas) {
-            layout = {
-                nombre: tab.nombre,
-                columnas: tab.columnas,
-                tarjetas: tab.tarjetas,
-                graficos: tab.graficos,
-                blocks_order: tab.blocks_order,
-                text_blocks: tab.text_blocks,
-                custom_metrics: tab.custom_metrics,
-            }
-        } else if (tab.plantilla_id) {
-            const { data: global } = await supabase.from('layouts_reporte').select('*').eq('id', tab.plantilla_id).single()
-            layout = global
-        }
-    } else {
-        // 2. Resolve token: is it a client-specific (general tab) token?
-        const { data: c } = await supabase
-            .from('clientes')
-            .select('*, global_layout:layouts_reporte(*)')
-            .eq('public_token', token)
-            .maybeSingle()
-        
-        if (!c) return { error: 'Enlace no válido o expirado' }
-        
-        cliente = c
-        // Fetch client-specific layout
-        const { data: cl } = await supabase.from('clientes_layouts').select('*').eq('cliente_id', cliente.id).maybeSingle()
-        layout = cl || cliente.global_layout || null
+  if (tab) {
+    cliente = tab.cliente;
+    activeTabObj = tab;
+    // Use tab override if available
+    if (tab.columnas && tab.tarjetas) {
+      layout = {
+        nombre: tab.nombre,
+        columnas: tab.columnas,
+        tarjetas: tab.tarjetas,
+        graficos: tab.graficos,
+        blocks_order: tab.blocks_order,
+        text_blocks: tab.text_blocks,
+        custom_metrics: tab.custom_metrics,
+      };
+    } else if (tab.plantilla_id) {
+      const { data: global } = await supabase
+        .from('layouts_reporte')
+        .select('*')
+        .eq('id', tab.plantilla_id)
+        .single();
+      layout = global;
     }
+  } else {
+    // 2. Resolve token: is it a client-specific (general tab) token?
+    const { data: c } = await supabase
+      .from('clientes')
+      .select('*, global_layout:layouts_reporte(*)')
+      .eq('public_token', token)
+      .maybeSingle();
 
-    if (!cliente) return { error: 'Cliente no encontrado' }
+    if (!c) return { error: 'Enlace no válido o expirado' };
 
-    // Use tab dates only if not provided in URL
-    const startStr = from || activeTabObj?.fecha_inicio || format(addDays(new Date(), -30), 'yyyy-MM-dd')
-    const endStr = to || activeTabObj?.fecha_finalizacion || format(new Date(), 'yyyy-MM-dd')
+    cliente = c;
+    // Fetch client-specific layout
+    const { data: cl } = await supabase
+      .from('clientes_layouts')
+      .select('*')
+      .eq('cliente_id', cliente.id)
+      .maybeSingle();
+    layout = cl || cliente.global_layout || null;
+  }
 
-    // Fetch all metrics + leads for that range (identical to getDashboardData)
-    let mirrorMetricsQuery = supabase.from('metricas_diarias')
-        .select('*')
+  if (!cliente) return { error: 'Cliente no encontrado' };
+
+  // Use tab dates only if not provided in URL
+  const startStr =
+    from || activeTabObj?.fecha_inicio || format(addDays(new Date(), -30), 'yyyy-MM-dd');
+  const endStr = to || activeTabObj?.fecha_finalizacion || format(new Date(), 'yyyy-MM-dd');
+
+  // Fetch all metrics + leads for that range (identical to getDashboardData)
+  let mirrorMetricsQuery = supabase
+    .from('metricas_diarias')
+    .select('*')
+    .eq('cliente_id', cliente.id);
+  if (startStr !== 'all') mirrorMetricsQuery = mirrorMetricsQuery.gte('fecha', startStr);
+  mirrorMetricsQuery = mirrorMetricsQuery.lte('fecha', endStr).order('fecha', { ascending: true });
+
+  let mirrorLeadsQuery = supabase.from('leads_diarios').select('*').eq('client_id', cliente.id);
+  if (startStr !== 'all') mirrorLeadsQuery = mirrorLeadsQuery.gte('date', startStr);
+  mirrorLeadsQuery = mirrorLeadsQuery.lte('date', endStr);
+
+  const [metricsRes, leadsRes, conversionesRes, campaignGroupsRes, tabsRes, allLayoutsRes] =
+    await Promise.all([
+      mirrorMetricsQuery,
+      mirrorLeadsQuery,
+      supabase
+        .from('meta_conversiones_catalogo')
+        .select('conversion_key, label, field_id')
         .eq('cliente_id', cliente.id)
-    if (startStr !== 'all') mirrorMetricsQuery = mirrorMetricsQuery.gte('fecha', startStr)
-    mirrorMetricsQuery = mirrorMetricsQuery.lte('fecha', endStr).order('fecha', { ascending: true })
-
-    let mirrorLeadsQuery = supabase.from('leads_diarios')
-        .select('*')
-        .eq('client_id', cliente.id)
-    if (startStr !== 'all') mirrorLeadsQuery = mirrorLeadsQuery.gte('date', startStr)
-    mirrorLeadsQuery = mirrorLeadsQuery.lte('date', endStr)
-
-    const [metricsRes, leadsRes, conversionesRes, campaignGroupsRes, tabsRes, allLayoutsRes] = await Promise.all([
-        mirrorMetricsQuery,
-        mirrorLeadsQuery,
-        supabase.from('meta_conversiones_catalogo')
-            .select('conversion_key, label, field_id')
-            .eq('cliente_id', cliente.id)
-            .order('label', { ascending: true }),
-        supabase.from('campaign_groups')
-            .select(`
+        .order('label', { ascending: true }),
+      supabase
+        .from('campaign_groups')
+        .select(
+          `
                 *,
                 campaign_group_mappings (id, campaign_id, campaign_name_pattern)
-            `)
-            .eq('cliente_id', cliente.id)
-            .order('nombre', { ascending: true }),
-        supabase.from('cliente_tabs').select('*').eq('cliente_id', cliente.id).order('position', { ascending: true }),
-        supabase.from('layouts_reporte').select('*').order('nombre'),
-    ])
+            `
+        )
+        .eq('cliente_id', cliente.id)
+        .order('nombre', { ascending: true }),
+      supabase
+        .from('cliente_tabs')
+        .select('*')
+        .eq('cliente_id', cliente.id)
+        .order('position', { ascending: true }),
+      supabase.from('layouts_reporte').select('*').order('nombre'),
+    ]);
 
-    const leadsMap = new Map((leadsRes.data || []).map((l: any) => [l.date, l]))
-    const metrics = (metricsRes.data || []).map((m: any) => {
-        const leadDay = leadsMap.get(m.fecha)
-        return leadDay ? { ...m, ...leadDay } : m
-    })
+  const leadsMap = new Map((leadsRes.data || []).map((l: any) => [l.date, l]));
+  const metrics = (metricsRes.data || []).map((m: any) => {
+    const leadDay = leadsMap.get(m.fecha);
+    return leadDay ? { ...m, ...leadDay } : m;
+  });
 
-    const effectiveStart = startStr === 'all' ? '2020-01-01' : startStr
-    const weeks = getWeeksInRange(effectiveStart, endStr)
-    const availablePlatforms = new Set<string>(['meta'])
-    const cfg = (cliente.config_api as any) || {}
-    if (cfg.ga_property_id) availablePlatforms.add('ga4')
-    if (cfg.hotmart_token) availablePlatforms.add('hotmart')
-    if (cfg.tiktok_access_token) availablePlatforms.add('tiktok')
+  const effectiveStart = startStr === 'all' ? '2020-01-01' : startStr;
+  const weeks = getWeeksInRange(effectiveStart, endStr);
+  const availablePlatforms = new Set<string>(['meta']);
+  const cfg = (cliente.config_api as any) || {};
+  if (cfg.ga_property_id) availablePlatforms.add('ga4');
+  if (cfg.hotmart_token) availablePlatforms.add('hotmart');
+  if (cfg.tiktok_access_token) availablePlatforms.add('tiktok');
 
-    // Filter tabs by public_tab_ids if configured on client token
-    let allTabs = tabsRes.data || []
-    let defaultActiveTabId: string = activeTabObj?.id || 'general'
-    if (!activeTabObj) {
-        const publicConfig = cliente.layout_publico as any
-        if (publicConfig?.type === 'tab_mirror' && Array.isArray(publicConfig?.tab_ids) && publicConfig.tab_ids.length > 0) {
-            allTabs = allTabs.filter((t: any) => publicConfig.tab_ids.includes(t.id))
-            if (allTabs.length > 0) defaultActiveTabId = allTabs[0].id
-        }
+  // Filter tabs by public_tab_ids if configured on client token
+  let allTabs = tabsRes.data || [];
+  let defaultActiveTabId: string = activeTabObj?.id || 'general';
+  if (!activeTabObj) {
+    const publicConfig = cliente.layout_publico as any;
+    if (
+      publicConfig?.type === 'tab_mirror' &&
+      Array.isArray(publicConfig?.tab_ids) &&
+      publicConfig.tab_ids.length > 0
+    ) {
+      allTabs = allTabs.filter((t: any) => publicConfig.tab_ids.includes(t.id));
+      if (allTabs.length > 0) defaultActiveTabId = allTabs[0].id;
     }
+  }
 
-    return {
-        data: {
-            cliente,
-            metrics: metrics || [],
-            weeks,
-            layout,
-            tabs: allTabs,
-            activeTabId: defaultActiveTabId,
-            allLayouts: allLayoutsRes.data || [],
-            conversionesCatalogo: conversionesRes.data || [],
-            availablePlatforms: Array.from(availablePlatforms),
-            campaignGroups: campaignGroupsRes.data || [],
-            isMirror: true
-        },
-        error: null
-    }
+  return {
+    data: {
+      cliente,
+      metrics: metrics || [],
+      weeks,
+      layout,
+      tabs: allTabs,
+      activeTabId: defaultActiveTabId,
+      allLayouts: allLayoutsRes.data || [],
+      conversionesCatalogo: conversionesRes.data || [],
+      availablePlatforms: Array.from(availablePlatforms),
+      campaignGroups: campaignGroupsRes.data || [],
+      isMirror: true,
+    },
+    error: null,
+  };
 }
 
 export async function savePublicTabConfig(clienteId: string, tabIds: string[]) {
-    const supabase = await createAdminClient()
-    const payload = tabIds.length > 0 ? { type: 'tab_mirror', tab_ids: tabIds } : null
-    const { error } = await supabase
-        .from('clientes')
-        .update({ layout_publico: payload })
-        .eq('id', clienteId)
-    if (error) return { error: error.message }
-    revalidatePath(`/dashboard/${clienteId}`)
-    return { success: true }
+  const supabase = await createAdminClient();
+  const payload = tabIds.length > 0 ? { type: 'tab_mirror', tab_ids: tabIds } : null;
+  const { error } = await supabase
+    .from('clientes')
+    .update({ layout_publico: payload })
+    .eq('id', clienteId);
+  if (error) return { error: error.message };
+  revalidatePath(`/dashboard/${clienteId}`);
+  return { success: true };
 }
 
 export async function getOrCreatePublicToken(id: string, type: 'client' | 'tab') {
-    const supabase = await createAdminClient()
-    const table = type === 'client' ? 'clientes' : 'cliente_tabs'
-    
-    // 1. Try to fetch existing
-    const { data: existing } = await supabase
-        .from(table)
-        .select('public_token')
-        .eq('id', id)
-        .maybeSingle()
-    
-    if (existing?.public_token) return { token: existing.public_token }
+  const supabase = await createAdminClient();
+  const table = type === 'client' ? 'clientes' : 'cliente_tabs';
 
-    // 2. Generate new one
-    const newToken = crypto.randomUUID()
-    const { error } = await supabase
-        .from(table)
-        .update({ public_token: newToken })
-        .eq('id', id)
-    
-    if (error) return { error: error.message }
-    return { token: newToken }
+  // 1. Try to fetch existing
+  const { data: existing } = await supabase
+    .from(table)
+    .select('public_token')
+    .eq('id', id)
+    .maybeSingle();
+
+  if (existing?.public_token) return { token: existing.public_token };
+
+  // 2. Generate new one
+  const newToken = crypto.randomUUID();
+  const { error } = await supabase.from(table).update({ public_token: newToken }).eq('id', id);
+
+  if (error) return { error: error.message };
+  return { token: newToken };
 }
 
 export async function getArchiveMetrics(clientId: string): Promise<{ metrics: any[] } | null> {
-    const supabase = await createAdminClient()
+  const supabase = await createAdminClient();
 
-    const [metricsRes, leadsRes] = await Promise.all([
-        supabase.from('metricas_diarias')
-            .select('*')
-            .eq('cliente_id', clientId)
-            .gte('fecha', '2020-01-01')
-            .order('fecha', { ascending: true })
-            .range(0, 9999),
-        supabase.from('leads_diarios')
-            .select('*')
-            .eq('client_id', clientId)
-            .gte('date', '2020-01-01')
-            .range(0, 9999),
-    ])
+  const [metricsRes, leadsRes] = await Promise.all([
+    supabase
+      .from('metricas_diarias')
+      .select('*')
+      .eq('cliente_id', clientId)
+      .gte('fecha', '2020-01-01')
+      .order('fecha', { ascending: true })
+      .range(0, 9999),
+    supabase
+      .from('leads_diarios')
+      .select('*')
+      .eq('client_id', clientId)
+      .gte('date', '2020-01-01')
+      .range(0, 9999),
+  ]);
 
-    if (metricsRes.error || leadsRes.error) return null
+  if (metricsRes.error || leadsRes.error) return null;
 
-    const leadsMap = new Map((leadsRes.data || []).map((l: any) => [l.date, l]))
-    const metrics = (metricsRes.data || []).map((m: any) => {
-        const leadDay = leadsMap.get(m.fecha)
-        if (leadDay) {
-            return {
-                ...m,
-                leads_totales: leadDay.leads_totales,
-                leads_calificados: leadDay.leads_calificados,
-                leads_no_calificados: leadDay.leads_no_calificados,
-                tasa_calificacion: leadDay.tasa_calificacion,
-            }
-        }
-        return m
-    })
+  const leadsMap = new Map((leadsRes.data || []).map((l: any) => [l.date, l]));
+  const metrics = (metricsRes.data || []).map((m: any) => {
+    const leadDay = leadsMap.get(m.fecha);
+    if (leadDay) {
+      return {
+        ...m,
+        leads_totales: leadDay.leads_totales,
+        leads_calificados: leadDay.leads_calificados,
+        leads_no_calificados: leadDay.leads_no_calificados,
+        tasa_calificacion: leadDay.tasa_calificacion,
+      };
+    }
+    return m;
+  });
 
-    return { metrics }
+  return { metrics };
 }
