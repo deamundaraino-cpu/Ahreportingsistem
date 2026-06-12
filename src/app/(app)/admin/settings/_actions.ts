@@ -4,6 +4,7 @@ import { createClient, createAdminClient } from '@/utils/supabase/server'
 import { revalidatePath } from 'next/cache'
 import { headers } from 'next/headers'
 import { BetaAnalyticsDataClient } from '@google-analytics/data'
+import type { ConversionesConfig, DriveSheet } from '@/lib/integrations/google-sheets-conversiones'
 
 export async function getClientes() {
     const supabase = await createClient()
@@ -661,5 +662,76 @@ export async function disconnectGoogle(): Promise<{ success: boolean; error?: st
         return { success: true }
     } catch (e: any) {
         return { success: false, error: e.message || 'Error al desconectar' }
+    }
+}
+
+// ─── Conversiones Offline ────────────────────────────────────────────────────
+
+export async function detectConversionesColumns(sheetConfig: ConversionesConfig) {
+    try {
+        const headersList = await headers()
+        const host = headersList.get('host') || 'localhost:3001'
+        const protocol = host.includes('localhost') ? 'http' : 'https'
+        const baseUrl = `${protocol}://${host}`
+
+        const res = await fetch(`${baseUrl}/api/admin/detect-sheet-columns`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sheetConfig }),
+            cache: 'no-store',
+        })
+
+        const data = await res.json()
+        if (!res.ok) return { error: data.error || 'Error al detectar columnas' }
+        return { columns: data.columns }
+    } catch (e: any) {
+        return { error: e.message || 'Error al detectar columnas' }
+    }
+}
+
+export async function listDriveSheets() {
+    try {
+        const headersList = await headers()
+        const host = headersList.get('host') || 'localhost:3001'
+        const protocol = host.includes('localhost') ? 'http' : 'https'
+        const baseUrl = `${protocol}://${host}`
+
+        const res = await fetch(`${baseUrl}/api/admin/list-google-sheets`, {
+            cache: 'no-store',
+        })
+
+        const data = await res.json()
+        if (!res.ok) return { error: data.error || 'Error al listar Sheets' }
+        return { sheets: data.sheets as DriveSheet[] }
+    } catch (e: any) {
+        return { error: e.message || 'Error al listar Sheets' }
+    }
+}
+
+export async function syncConversionesOffline(clienteId: string) {
+    try {
+        const headersList = await headers()
+        const host = headersList.get('host') || 'localhost:3001'
+        const protocol = host.includes('localhost') ? 'http' : 'https'
+        const baseUrl = `${protocol}://${host}`
+
+        const res = await fetch(`${baseUrl}/api/admin/sync-conversiones-offline`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ clientId: clienteId }),
+            cache: 'no-store',
+        })
+
+        const data = await res.json()
+
+        if (!res.ok) {
+            return { error: data.error || 'Error al sincronizar conversiones offline' }
+        }
+
+        revalidatePath(`/admin/settings/${clienteId}`)
+        return { success: true, ...data }
+    } catch (e: any) {
+        console.error('Conversiones offline sync error:', e)
+        return { error: e.message || 'Error al sincronizar conversiones offline' }
     }
 }

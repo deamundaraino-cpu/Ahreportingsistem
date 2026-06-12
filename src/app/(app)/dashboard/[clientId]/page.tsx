@@ -1,7 +1,8 @@
-import { getDashboardData, getLeadsDiarios } from "../_actions"
+import { getDashboardData, getLeadsDiarios, getConversionesOfflineDiarias } from "../_actions"
 import { DateRangeSelector } from "../components/DateRangeSelector"
 import { DashboardClient } from "../components/DashboardClient"
 import { GoogleSheetsLeadsCard } from "../components/GoogleSheetsLeadsCard"
+import { ConversionesOfflineCard } from "../components/ConversionesOfflineCard"
 import { CopyLinkButton } from "../components/CopyLinkButton"
 import { PublicLinkButton } from "../components/PublicLinkButton"
 import { format, subDays } from "date-fns"
@@ -48,9 +49,10 @@ export default async function DashboardPage(props: {
     const fromStr = typeof searchParams.from === 'string' ? searchParams.from : fallbackFrom
     const toStr = typeof searchParams.to === 'string' ? searchParams.to : fallbackTo
 
-    const [dashboardData, leadsResult] = await Promise.all([
+    const [dashboardData, leadsResult, conversionesResult] = await Promise.all([
         getDashboardData(clientId, fromStr, toStr),
         getLeadsDiarios(clientId),
+        getConversionesOfflineDiarias(clientId),
     ])
 
     return (
@@ -82,10 +84,29 @@ export default async function DashboardPage(props: {
             {/* Google Sheets Leads Section — only show if enabled */}
             {dashboardData?.cliente?.config_api?.google_sheets?.enabled && (
                 <div className="pt-6 border-t border-border">
-                    <h3 className="text-lg font-semibold text-foreground mb-4">📊 Leads desde Google Sheets</h3>
+                    <h3 className="text-lg font-semibold text-foreground mb-4">Leads desde Google Sheets</h3>
                     <GoogleSheetsLeadsCard dailyData={leadsResult.data || []} error={leadsResult.error} />
                 </div>
             )}
+
+            {/* Conversiones Offline Section — show if at least one sheet is enabled */}
+            {(() => {
+                const raw = dashboardData?.cliente?.config_api?.google_sheets_conversiones
+                const hasEnabled = Array.isArray(raw)
+                    ? raw.some((s: any) => s.enabled)
+                    : raw?.enabled === true
+                return hasEnabled ? (
+                    <div className="pt-6 border-t border-border">
+                        <h3 className="text-lg font-semibold text-foreground mb-4">Conversiones Offline</h3>
+                        <ConversionesOfflineCard
+                            dailyData={conversionesResult.data || []}
+                            error={conversionesResult.error}
+                            clientId={clientId}
+                            canSync={userRole === 'admin' || userRole === 'trafficker'}
+                        />
+                    </div>
+                ) : null
+            })()}
         </div>
     )
 }

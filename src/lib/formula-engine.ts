@@ -128,6 +128,12 @@ const FIELD_MAP: Record<string, string> = {
     leads_calificados: 'leads_calificados',
     leads_no_calificados: 'leads_no_calificados',
     tasa_calificacion: 'tasa_calificacion',
+
+    // ── Conversiones Offline (Google Sheets) ─────────────────────────────
+    offline_leads:   'offline_leads',    // leads que no pasaron por píxel
+    offline_ventas:  'offline_ventas',   // ventas cerradas offline
+    offline_revenue: 'offline_revenue',  // revenue reportado en el sheet
+    offline_total:   'offline_total',    // suma de todas las cantidades offline
 }
 
 // Complex metrics that should be resolved dynamically (as formulas)
@@ -177,6 +183,18 @@ const MACRO_MAP: Record<string, string> = {
     funnel_pct_visitas_pagos:   '(funnel_pagos_iniciados / ga_sessions) * 100',
     funnel_costo_visita:        'meta_spend / ga_sessions',
     funnel_pct_clics_visitas:   '(ga_sessions / meta_link_clicks) * 100',
+
+    // ── Conversiones Offline: macros derivadas ──────────────────────────
+    // CPA real: gasto de Meta dividido entre ventas cerradas offline
+    offline_cpa:          'meta_spend / offline_ventas',
+    // Close rate: ventas offline / (leads de Meta + leads offline)
+    offline_close_rate:   '(offline_ventas / (meta_leads + offline_leads)) * 100',
+    // ROAS real usando revenue del sheet
+    offline_roas:         'offline_revenue / meta_spend',
+    // Total leads combinando píxel + offline
+    total_leads:          'meta_leads + offline_leads',
+    // CPL real (usando leads totales pixel + offline)
+    total_cpl:            'meta_spend / (meta_leads + offline_leads)',
 
     // ── Panel General: macros derivadas usando totales globales ─────────
     total_facturacion_neta:     'ventas_principal + ventas_bump + ventas_upsell',

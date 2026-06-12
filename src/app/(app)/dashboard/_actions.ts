@@ -61,6 +61,23 @@ export async function getLeadsDiarios(clientId: string) {
   return { data, error: null };
 }
 
+export async function getConversionesOfflineDiarias(clientId: string) {
+  const supabase = await createAdminClient();
+  const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+  const today = new Date().toISOString().split('T')[0];
+
+  const { data, error } = await supabase
+    .from('conversiones_offline_diarias')
+    .select('*')
+    .eq('cliente_id', clientId)
+    .gte('fecha', thirtyDaysAgo)
+    .lte('fecha', today)
+    .order('fecha', { ascending: true });
+
+  if (error) return { data: null, error: error.message };
+  return { data, error: null };
+}
+
 export async function getDashboardData(clientId: string, startStr: string, endStr: string) {
   const supabase = await createAdminClient();
 
@@ -121,22 +138,47 @@ export async function getDashboardData(clientId: string, startStr: string, endSt
   if (startStr !== 'all') leadsQuery = leadsQuery.gte('date', startStr);
   leadsQuery = leadsQuery.lte('date', endStr);
 
-  const [metricsRes, leadsRes] = await Promise.all([metricsQuery, leadsQuery]);
+  let convOfflineQuery = supabase.from('conversiones_offline_diarias').select('*').eq('cliente_id', cliente.id);
+  if (startStr !== 'all') convOfflineQuery = convOfflineQuery.gte('fecha', startStr);
+  convOfflineQuery = convOfflineQuery.lte('fecha', endStr);
+
+  const [metricsRes, leadsRes, convOfflineRes] = await Promise.all([metricsQuery, leadsQuery, convOfflineQuery]);
+
+  // Aggregate conversiones_offline_diarias por fecha
+  // (múltiples filas por fecha — una por tipo+fuente — se colapsan en un objeto por fecha)
+  // Los custom_fields se exponen con prefijo sheet_ para que el formula engine los detecte.
+  const convOfflineByDate = new Map<string, Record<string, number>>();
+  for (const row of convOfflineRes.data || []) {
+    const entry = convOfflineByDate.get(row.fecha) || { offline_leads: 0, offline_ventas: 0, offline_revenue: 0, offline_total: 0 };
+    const cantidad = row.total_cantidad || 0;
+    const valor    = Number(row.total_valor) || 0;
+    if (row.tipo === 'lead')  entry.offline_leads  += cantidad;
+    if (row.tipo === 'venta') entry.offline_ventas += cantidad;
+    entry.offline_revenue += valor;
+    entry.offline_total   += cantidad;
+    // Aplanar custom_fields con prefijo sheet_
+    for (const [k, v] of Object.entries((row.custom_fields as Record<string, number>) || {})) {
+      const key = `sheet_${k}`;
+      entry[key] = (entry[key] ?? 0) + Number(v);
+    }
+    convOfflineByDate.set(row.fecha, entry);
+  }
 
   // Merge leads data into metrics by date
   const leadsMap = new Map((leadsRes.data || []).map((l: any) => [l.date, l]));
   const metrics = (metricsRes.data || []).map((m: any) => {
     const leadDay = leadsMap.get(m.fecha);
-    if (leadDay) {
-      return {
-        ...m,
+    const offlineDay = convOfflineByDate.get(m.fecha);
+    return {
+      ...m,
+      ...(leadDay ? {
         leads_totales: leadDay.leads_totales,
         leads_calificados: leadDay.leads_calificados,
         leads_no_calificados: leadDay.leads_no_calificados,
         tasa_calificacion: leadDay.tasa_calificacion,
-      };
-    }
-    return m;
+      } : {}),
+      ...(offlineDay ?? {}),
+    };
   });
 
   // Fetch all global layouts so the selector modal has them available
@@ -803,7 +845,11 @@ export async function getMirrorDashboardData(token: string, from?: string, to?: 
   if (startStr !== 'all') mirrorLeadsQuery = mirrorLeadsQuery.gte('date', startStr);
   mirrorLeadsQuery = mirrorLeadsQuery.lte('date', endStr);
 
-  const [metricsRes, leadsRes, conversionesRes, campaignGroupsRes, tabsRes, allLayoutsRes] =
+  let mirrorConvOfflineQuery = supabase.from('conversiones_offline_diarias').select('*').eq('cliente_id', cliente.id);
+  if (startStr !== 'all') mirrorConvOfflineQuery = mirrorConvOfflineQuery.gte('fecha', startStr);
+  mirrorConvOfflineQuery = mirrorConvOfflineQuery.lte('fecha', endStr);
+
+  const [metricsRes, leadsRes, conversionesRes, campaignGroupsRes, tabsRes, allLayoutsRes, mirrorConvOfflineRes] =
     await Promise.all([
       mirrorMetricsQuery,
       mirrorLeadsQuery,
@@ -828,12 +874,33 @@ export async function getMirrorDashboardData(token: string, from?: string, to?: 
         .eq('cliente_id', cliente.id)
         .order('position', { ascending: true }),
       supabase.from('layouts_reporte').select('*').order('nombre'),
+      mirrorConvOfflineQuery,
     ]);
+
+  const mirrorConvOfflineByDate = new Map<string, Record<string, number>>();
+  for (const row of mirrorConvOfflineRes.data || []) {
+    const entry = mirrorConvOfflineByDate.get(row.fecha) || { offline_leads: 0, offline_ventas: 0, offline_revenue: 0, offline_total: 0 };
+    const cantidad = row.total_cantidad || 0;
+    const valor    = Number(row.total_valor) || 0;
+    if (row.tipo === 'lead')  entry.offline_leads  += cantidad;
+    if (row.tipo === 'venta') entry.offline_ventas += cantidad;
+    entry.offline_revenue += valor;
+    entry.offline_total   += cantidad;
+    for (const [k, v] of Object.entries((row.custom_fields as Record<string, number>) || {})) {
+      const key = `sheet_${k}`;
+      entry[key] = (entry[key] ?? 0) + Number(v);
+    }
+    mirrorConvOfflineByDate.set(row.fecha, entry);
+  }
 
   const leadsMap = new Map((leadsRes.data || []).map((l: any) => [l.date, l]));
   const metrics = (metricsRes.data || []).map((m: any) => {
     const leadDay = leadsMap.get(m.fecha);
-    return leadDay ? { ...m, ...leadDay } : m;
+    const offlineDay = mirrorConvOfflineByDate.get(m.fecha);
+    return {
+      ...(leadDay ? { ...m, ...leadDay } : m),
+      ...(offlineDay ?? {}),
+    };
   });
 
   const effectiveStart = startStr === 'all' ? '2020-01-01' : startStr;

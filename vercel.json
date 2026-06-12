@@ -9,6 +9,10 @@
       "schedule": "0 13 * * *"
     },
     {
+      "path": "/api/worker/google-sheets-conversiones",
+      "schedule": "30 13 * * *"
+    },
+    {
       "path": "/api/cron/report-utm/aggregate",
       "schedule": "0 6 * * *"
     },

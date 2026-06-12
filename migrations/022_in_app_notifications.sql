@@ -112,7 +112,7 @@ BEGIN
            CASE WHEN v_level = 100 THEN 'error' ELSE 'warning' END,
            'Presupuesto al ' || v_level || '%',
            COALESCE(v_cliente_nombre, 'Cliente') || ' — pestaña "' || COALESCE(NEW.nombre, '—') || '" alcanzó el ' || v_level || '% del presupuesto',
-           '/dashboard/' || NEW.cliente_id,
+           '/dashboard/' || NEW.cliente_id || '?tab=' || NEW.id,
            NEW.cliente_id,
            jsonb_build_object('tab_id', NEW.id, 'level', v_level)
     FROM public.user_profiles p
@@ -151,7 +151,7 @@ SELECT p.id,
        'Presupuesto al ' || CASE WHEN t.alert_sent_at_100 IS NOT NULL THEN 100 ELSE 90 END || '%',
        COALESCE(c.nombre, 'Cliente') || ' — pestaña "' || COALESCE(t.nombre, '—') || '" alcanzó el '
            || CASE WHEN t.alert_sent_at_100 IS NOT NULL THEN 100 ELSE 90 END || '% del presupuesto',
-       '/dashboard/' || t.cliente_id,
+       '/dashboard/' || t.cliente_id || '?tab=' || t.id,
        t.cliente_id,
        jsonb_build_object(
            'tab_id', t.id,

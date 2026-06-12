@@ -6,8 +6,10 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter }
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Button } from '@/components/ui/button'
-import { updateClienteConfig, deleteCliente, assignLayoutToCliente, testMetaConnection, testHotmartConnection, refreshMetaCustomConversions, testTikTokConnection, syncClienteMetrics, testGA4Connection, syncGoogleSheets, fetchMetaAdAccounts } from '../_actions'
-import { Loader2, ArrowLeft, Save, Trash2, CheckCircle2, AlertCircle, RefreshCw, LayoutDashboard, DownloadCloud, DatabaseZap, Plus } from 'lucide-react'
+import { updateClienteConfig, deleteCliente, assignLayoutToCliente, testMetaConnection, testHotmartConnection, refreshMetaCustomConversions, testTikTokConnection, syncClienteMetrics, testGA4Connection, syncGoogleSheets, syncConversionesOffline, detectConversionesColumns, listDriveSheets, fetchMetaAdAccounts } from '../_actions'
+import type { CustomColumnDef, CustomColumnType, DetectedColumn, ConversionesConfig, DriveSheet } from '@/lib/integrations/google-sheets-conversiones'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Loader2, ArrowLeft, Save, Trash2, CheckCircle2, AlertCircle, RefreshCw, LayoutDashboard, DownloadCloud, DatabaseZap, Plus, FolderSearch, FileSpreadsheet, Search } from 'lucide-react'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -188,7 +190,21 @@ export function ClientConfigForm({ cliente, layouts = [], isAdmin = false }: { c
     const searchParams = useSearchParams()
     const [loading, setLoading] = useState(false)
     const [error, setError] = useState<string | null>(null)
-    const [config, setConfig] = useState(cliente.config_api || {})
+    const [config, setConfig] = useState<any>(() => {
+        const initial = { ...(cliente.config_api || {}) }
+        // Normalize google_sheets_conversiones to always be an array
+        const rawConv = initial.google_sheets_conversiones
+        if (rawConv && !Array.isArray(rawConv) && typeof rawConv === 'object') {
+            initial.google_sheets_conversiones = [{
+                id: crypto.randomUUID(),
+                name: 'Sheet Principal',
+                ...rawConv,
+            }]
+        } else if (!Array.isArray(rawConv)) {
+            initial.google_sheets_conversiones = []
+        }
+        return initial
+    })
     const [tiktokOAuthStatus, setTiktokOAuthStatus] = useState<{ success?: boolean; error?: string } | null>(null)
     const [metaOAuthStatus, setMetaOAuthStatus] = useState<{ success?: boolean; error?: string } | null>(null)
     const [hotmartOAuthStatus, setHotmartOAuthStatus] = useState<{ success?: boolean; error?: string } | null>(null)
@@ -216,6 +232,16 @@ export function ClientConfigForm({ cliente, layouts = [], isAdmin = false }: { c
     }, [searchParams])
 const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean, success?: boolean, error?: string, message?: string } }>({})
     const [layoutSaving, setLayoutSaving] = useState(false)
+    // ── Conversiones Offline multi-sheet UI state ────────────────────────────
+    // Per-sheet: { [sheetId]: { detectingCols, detectColsError } }
+    const [sheetUI, setSheetUI] = useState<Record<string, { detectingCols: boolean; detectColsError: string | null }>>({})
+    // Sheet picker modal
+    const [pickerOpen, setPickerOpen] = useState(false)
+    const [pickerForSheetId, setPickerForSheetId] = useState<string | null>(null)
+    const [driveSheets, setDriveSheets] = useState<DriveSheet[]>([])
+    const [driveLoading, setDriveLoading] = useState(false)
+    const [driveError, setDriveError] = useState<string | null>(null)
+    const [driveQuery, setDriveQuery] = useState('')
     const [selectedLayoutId, setSelectedLayoutId] = useState<string>(cliente.layout_id || '')
     const today = new Date().toISOString().split('T')[0]
     const defaultStart = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
@@ -330,6 +356,8 @@ const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean
                 const message = res.message
                     || (res.totalLeads !== undefined
                         ? `${res.totalLeads} leads | ${res.qualifiedLeads ?? 0} calificados | ${res.daysProcessed ?? 0} días guardados`
+                        : res.totalFilas !== undefined
+                        ? `${res.totalFilas} filas importadas | ${res.diasProcesados ?? 0} días guardados`
                         : undefined)
                 setTestStatus(prev => ({
                     ...prev,
@@ -1132,6 +1160,387 @@ const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean
                     )}
                 </CardContent>
             </Card>
+
+            {/* ─── Google Sheets (Conversiones Offline) ────────────────────── */}
+            {(() => {
+                const convSheets: ConversionesConfig[] = config.google_sheets_conversiones || []
+
+                const updateSheet = (idx: number, partial: Partial<ConversionesConfig>) => {
+                    const next = convSheets.map((s, i) => i === idx ? { ...s, ...partial } : s)
+                    setConfig({ ...config, google_sheets_conversiones: next })
+                }
+
+                const removeSheet = (idx: number) => {
+                    setConfig({ ...config, google_sheets_conversiones: convSheets.filter((_, i) => i !== idx) })
+                }
+
+                const addSheet = () => {
+                    const newSheet: ConversionesConfig = {
+                        id: crypto.randomUUID(),
+                        name: `Sheet ${convSheets.length + 1}`,
+                        enabled: true,
+                        sheet_url: '',
+                    }
+                    setConfig({ ...config, google_sheets_conversiones: [...convSheets, newSheet] })
+                }
+
+                const openPicker = async (sheetId: string) => {
+                    setPickerForSheetId(sheetId)
+                    setPickerOpen(true)
+                    setDriveLoading(true)
+                    setDriveError(null)
+                    setDriveQuery('')
+                    const res = await listDriveSheets()
+                    if ('error' in res) {
+                        setDriveError(res.error ?? 'Error al listar Sheets')
+                    } else {
+                        setDriveSheets(res.sheets ?? [])
+                    }
+                    setDriveLoading(false)
+                }
+
+                const selectDriveSheet = (file: DriveSheet) => {
+                    const idx = convSheets.findIndex(s => s.id === pickerForSheetId)
+                    if (idx !== -1) {
+                        updateSheet(idx, { sheet_url: file.url, name: convSheets[idx].name || file.name })
+                    }
+                    setPickerOpen(false)
+                    setPickerForSheetId(null)
+                }
+
+                const detectColumns = async (idx: number) => {
+                    const sheet = convSheets[idx]
+                    const sid = sheet.id ?? String(idx)
+                    setSheetUI(prev => ({ ...prev, [sid]: { detectingCols: true, detectColsError: null } }))
+                    const res = await detectConversionesColumns(sheet)
+                    if ('error' in res && res.error) {
+                        setSheetUI(prev => ({ ...prev, [sid]: { detectingCols: false, detectColsError: res.error! } }))
+                    } else {
+                        const existing = sheet.custom_columns || {}
+                        const merged: Record<string, CustomColumnDef> = { ...existing }
+                        for (const col of ((res as any).columns as DetectedColumn[])) {
+                            if (!merged[col.sanitized_name]) {
+                                merged[col.sanitized_name] = {
+                                    col_name: col.col_name,
+                                    type: col.proposed_type,
+                                    label: col.label,
+                                    include: col.proposed_type !== 'date' && col.proposed_type !== 'text',
+                                }
+                            }
+                        }
+                        updateSheet(idx, { custom_columns: merged })
+                        setSheetUI(prev => ({ ...prev, [sid]: { detectingCols: false, detectColsError: null } }))
+                    }
+                }
+
+                const filteredDriveSheets = driveSheets.filter(s =>
+                    !driveQuery || s.name.toLowerCase().includes(driveQuery.toLowerCase())
+                )
+
+                return (
+                    <>
+                        <Card className="bg-card border-border">
+                            <CardHeader>
+                                <div className="flex items-start justify-between gap-4">
+                                    <div>
+                                        <CardTitle>Google Sheets — Conversiones Offline</CardTitle>
+                                        <CardDescription className="mt-1">
+                                            Importa leads y ventas que no se capturan por píxel. Configura uno o varios Sheets por cliente.
+                                        </CardDescription>
+                                    </div>
+                                    <Button variant="outline" size="sm" onClick={addSheet} className="shrink-0 h-8 text-xs gap-1.5">
+                                        <Plus className="w-3 h-3" /> Agregar Sheet
+                                    </Button>
+                                </div>
+                            </CardHeader>
+                            <CardContent className="space-y-4">
+                                {convSheets.length === 0 && (
+                                    <p className="text-sm text-muted-foreground text-center py-6 border border-dashed border-border rounded-lg">
+                                        No hay sheets configurados. Haz clic en &quot;Agregar Sheet&quot; para empezar.
+                                    </p>
+                                )}
+
+                                {convSheets.map((sheet, idx) => {
+                                    const sid = sheet.id ?? String(idx)
+                                    const ui = sheetUI[sid] || { detectingCols: false, detectColsError: null }
+                                    const customCols = sheet.custom_columns || {}
+
+                                    return (
+                                        <div key={sid} className="border border-border rounded-lg overflow-hidden">
+                                            {/* Sheet header */}
+                                            <div className="flex items-center gap-2 px-4 py-3 bg-muted/30 border-b border-border">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={sheet.enabled || false}
+                                                    onChange={(e) => updateSheet(idx, { enabled: e.target.checked })}
+                                                    className="rounded border-input bg-background text-indigo-500 focus:ring-indigo-500 shrink-0"
+                                                />
+                                                <Input
+                                                    placeholder="Nombre del sheet (ej: Leads WhatsApp)"
+                                                    value={sheet.name || ''}
+                                                    onChange={(e) => updateSheet(idx, { name: e.target.value })}
+                                                    className="bg-background border-input h-8 text-sm font-medium"
+                                                />
+                                                <Button
+                                                    variant="ghost"
+                                                    size="sm"
+                                                    onClick={() => removeSheet(idx)}
+                                                    className="text-muted-foreground/70 hover:text-red-500 shrink-0 h-8 w-8 p-0"
+                                                >
+                                                    <Trash2 className="w-3.5 h-3.5" />
+                                                </Button>
+                                            </div>
+
+                                            {/* Sheet body */}
+                                            <div className="p-4 space-y-4">
+                                                {/* URL + picker */}
+                                                <div className="space-y-1.5">
+                                                    <Label className="text-foreground/90 text-sm">URL del Google Sheet</Label>
+                                                    <div className="flex gap-2">
+                                                        <Input
+                                                            placeholder="https://docs.google.com/spreadsheets/d/..."
+                                                            value={sheet.sheet_url || ''}
+                                                            onChange={(e) => updateSheet(idx, { sheet_url: e.target.value })}
+                                                            className="bg-background border-input"
+                                                        />
+                                                        <Button
+                                                            variant="outline"
+                                                            size="sm"
+                                                            className="shrink-0 h-10 text-xs gap-1.5"
+                                                            onClick={() => openPicker(sid)}
+                                                        >
+                                                            <FolderSearch className="w-3.5 h-3.5" />
+                                                            Seleccionar
+                                                        </Button>
+                                                    </div>
+                                                </div>
+
+                                                {/* Tab name */}
+                                                <div className="space-y-1.5">
+                                                    <Label className="text-foreground/90 text-sm">
+                                                        Pestaña <span className="text-muted-foreground/60">(opcional)</span>
+                                                    </Label>
+                                                    <Input
+                                                        placeholder="Nombre de la pestaña — vacío = primera pestaña"
+                                                        value={sheet.sheet_name || ''}
+                                                        onChange={(e) => updateSheet(idx, { sheet_name: e.target.value })}
+                                                        className="bg-background border-input"
+                                                    />
+                                                </div>
+
+                                                {/* Column mapping */}
+                                                <div className="bg-muted/40 border border-border p-4 rounded-lg space-y-3 relative overflow-hidden">
+                                                    <div className="absolute top-0 left-0 w-1 h-full bg-violet-500/50" />
+                                                    <h4 className="text-sm font-medium text-foreground">Nombres de columnas</h4>
+                                                    <p className="text-xs text-muted-foreground/70 -mt-1">Nombres exactos de las columnas en el Sheet. Vacío = usa el valor por defecto.</p>
+                                                    <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                                                        {[
+                                                            { field: 'col_fecha',    label: 'Fecha',    placeholder: 'fecha',    hint: 'DD/MM/YYYY o YYYY-MM-DD' },
+                                                            { field: 'col_tipo',     label: 'Tipo',     placeholder: 'tipo',     hint: '"lead", "venta", etc.' },
+                                                            { field: 'col_cantidad', label: 'Cantidad', placeholder: 'cantidad', hint: 'Número entero' },
+                                                            { field: 'col_valor',    label: 'Valor $',  placeholder: 'valor',    hint: 'Revenue (opcional)' },
+                                                            { field: 'col_fuente',   label: 'Fuente',   placeholder: 'fuente',   hint: '"meta", "tiktok"…' },
+                                                            { field: 'col_notas',    label: 'Notas',    placeholder: 'notas',    hint: 'Texto libre (opcional)' },
+                                                        ].map(({ field, label, placeholder, hint }) => (
+                                                            <div key={field} className="space-y-1">
+                                                                <Label className="text-muted-foreground text-xs">{label}</Label>
+                                                                <Input
+                                                                    placeholder={placeholder}
+                                                                    value={(sheet as any)[field] || ''}
+                                                                    onChange={(e) => updateSheet(idx, { [field]: e.target.value })}
+                                                                    className="bg-background border-input h-8 text-sm"
+                                                                />
+                                                                <p className="text-xs text-muted-foreground/60">{hint}</p>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                </div>
+
+                                                {/* Custom columns */}
+                                                <div className="bg-muted/40 border border-border p-4 rounded-lg space-y-3 relative overflow-hidden">
+                                                    <div className="absolute top-0 left-0 w-1 h-full bg-indigo-500/50" />
+                                                    <div className="flex items-center justify-between">
+                                                        <div>
+                                                            <h4 className="text-sm font-medium text-foreground">Columnas adicionales</h4>
+                                                            <p className="text-xs text-muted-foreground/70 mt-0.5">Detecta campos extra para usar como variables en fórmulas.</p>
+                                                        </div>
+                                                        <Button
+                                                            variant="outline"
+                                                            size="sm"
+                                                            className="h-7 text-xs shrink-0"
+                                                            disabled={ui.detectingCols || !sheet.sheet_url}
+                                                            onClick={() => detectColumns(idx)}
+                                                        >
+                                                            {ui.detectingCols
+                                                                ? <RefreshCw className="w-3 h-3 animate-spin mr-1" />
+                                                                : <DatabaseZap className="w-3 h-3 mr-1" />}
+                                                            Detectar columnas
+                                                        </Button>
+                                                    </div>
+
+                                                    {ui.detectColsError && (
+                                                        <p className="text-xs text-red-500 flex items-center gap-1">
+                                                            <AlertCircle className="w-3 h-3" /> {ui.detectColsError}
+                                                        </p>
+                                                    )}
+
+                                                    {Object.keys(customCols).length > 0 ? (
+                                                        <div className="space-y-2">
+                                                            <div className="grid grid-cols-[1fr_120px_1fr_32px] gap-2 px-1">
+                                                                <span className="text-xs text-muted-foreground/60">Columna en Sheet</span>
+                                                                <span className="text-xs text-muted-foreground/60">Tipo</span>
+                                                                <span className="text-xs text-muted-foreground/60">Label</span>
+                                                                <span className="text-xs text-muted-foreground/60">Usar</span>
+                                                            </div>
+                                                            {Object.entries(customCols).map(([sanitized, def]) => (
+                                                                <div key={sanitized} className="grid grid-cols-[1fr_120px_1fr_32px] gap-2 items-center">
+                                                                    <span className="text-xs text-muted-foreground font-mono truncate" title={def.col_name}>{def.col_name}</span>
+                                                                    <select
+                                                                        value={def.type}
+                                                                        onChange={(e) => {
+                                                                            const updated = { ...customCols, [sanitized]: { ...def, type: e.target.value as CustomColumnType } }
+                                                                            updateSheet(idx, { custom_columns: updated })
+                                                                        }}
+                                                                        className="h-7 text-xs rounded-md border border-input bg-background px-2 text-foreground focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                                                                    >
+                                                                        <option value="count">Cantidad</option>
+                                                                        <option value="currency">Moneda</option>
+                                                                        <option value="percentage">Porcentaje</option>
+                                                                        <option value="date">Fecha</option>
+                                                                        <option value="text">Texto</option>
+                                                                    </select>
+                                                                    <Input
+                                                                        value={def.label}
+                                                                        onChange={(e) => {
+                                                                            const updated = { ...customCols, [sanitized]: { ...def, label: e.target.value } }
+                                                                            updateSheet(idx, { custom_columns: updated })
+                                                                        }}
+                                                                        className="h-7 text-xs bg-background border-input"
+                                                                        placeholder="Nombre visible"
+                                                                    />
+                                                                    <input
+                                                                        type="checkbox"
+                                                                        checked={def.include}
+                                                                        title={def.include ? 'Incluir en sync' : 'Excluir del sync'}
+                                                                        onChange={(e) => {
+                                                                            const updated = { ...customCols, [sanitized]: { ...def, include: e.target.checked } }
+                                                                            updateSheet(idx, { custom_columns: updated })
+                                                                        }}
+                                                                        className="rounded border-input bg-background text-indigo-500 focus:ring-indigo-500 justify-self-center"
+                                                                    />
+                                                                </div>
+                                                            ))}
+                                                            <p className="text-xs text-muted-foreground/60 pt-1">
+                                                                Variable en fórmulas: <span className="font-mono">sheet_</span> + nombre sanitizado. Ej: <span className="font-mono text-indigo-400">sheet_{Object.keys(customCols)[0] || 'columna'}</span>
+                                                            </p>
+                                                        </div>
+                                                    ) : (
+                                                        !ui.detectingCols && (
+                                                            <p className="text-xs text-muted-foreground/50 text-center py-2">
+                                                                Haz clic en &quot;Detectar columnas&quot; para identificar campos extra.
+                                                            </p>
+                                                        )
+                                                    )}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )
+                                })}
+
+                                {/* Sync all button */}
+                                {convSheets.some(s => s.enabled && s.sheet_url) && (
+                                    <div className="pt-2 border-t border-border flex gap-2 items-center">
+                                        <Button
+                                            variant="outline"
+                                            size="sm"
+                                            onClick={() => runTest('conversionesOffline', () => syncConversionesOffline(cliente.id))}
+                                            disabled={testStatus['conversionesOffline']?.loading}
+                                            className="h-8 text-xs"
+                                        >
+                                            {testStatus['conversionesOffline']?.loading
+                                                ? <RefreshCw className="w-3 h-3 animate-spin mr-2" />
+                                                : <DownloadCloud className="w-3 h-3 mr-2" />
+                                            }
+                                            Sincronizar todos ahora
+                                        </Button>
+                                        {testStatus['conversionesOffline']?.success && (
+                                            <span className="text-green-600 dark:text-green-500 text-xs flex items-center gap-1">
+                                                <CheckCircle2 className="w-3 h-3" /> {testStatus['conversionesOffline']?.message || 'Sincronizado'}
+                                            </span>
+                                        )}
+                                        {testStatus['conversionesOffline']?.error && (
+                                            <span className="text-red-500 text-xs flex items-center gap-1">
+                                                <AlertCircle className="w-3 h-3" /> {testStatus['conversionesOffline']?.error}
+                                            </span>
+                                        )}
+                                    </div>
+                                )}
+                            </CardContent>
+                        </Card>
+
+                        {/* ── Sheet Picker Modal ──────────────────────────────── */}
+                        <Dialog open={pickerOpen} onOpenChange={(open) => { if (!open) { setPickerOpen(false); setPickerForSheetId(null) } }}>
+                            <DialogContent className="sm:max-w-lg">
+                                <DialogHeader>
+                                    <DialogTitle className="flex items-center gap-2">
+                                        <FileSpreadsheet className="w-4 h-4 text-emerald-500" />
+                                        Seleccionar Google Sheet
+                                    </DialogTitle>
+                                </DialogHeader>
+
+                                {/* Search */}
+                                <div className="relative">
+                                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+                                    <Input
+                                        placeholder="Buscar por nombre…"
+                                        value={driveQuery}
+                                        onChange={(e) => setDriveQuery(e.target.value)}
+                                        className="pl-9 bg-background border-input"
+                                    />
+                                </div>
+
+                                {/* List */}
+                                <div className="overflow-y-auto max-h-72 space-y-0.5 -mx-1 px-1">
+                                    {driveLoading && (
+                                        <div className="flex items-center justify-center py-8 gap-2 text-muted-foreground text-sm">
+                                            <RefreshCw className="w-4 h-4 animate-spin" /> Cargando Sheets…
+                                        </div>
+                                    )}
+                                    {driveError && (
+                                        <p className="text-sm text-red-500 flex items-center gap-2 py-4">
+                                            <AlertCircle className="w-4 h-4 shrink-0" /> {driveError}
+                                        </p>
+                                    )}
+                                    {!driveLoading && !driveError && filteredDriveSheets.length === 0 && (
+                                        <p className="text-sm text-muted-foreground text-center py-6">No se encontraron Sheets.</p>
+                                    )}
+                                    {filteredDriveSheets.map((file) => (
+                                        <button
+                                            key={file.id}
+                                            className="w-full text-left flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-muted/60 transition-colors"
+                                            onClick={() => selectDriveSheet(file)}
+                                        >
+                                            <FileSpreadsheet className="w-4 h-4 text-emerald-500 shrink-0" />
+                                            <div className="min-w-0">
+                                                <p className="text-sm font-medium text-foreground truncate">{file.name}</p>
+                                                <p className="text-xs text-muted-foreground">
+                                                    {file.modifiedTime
+                                                        ? `Modificado: ${new Date(file.modifiedTime).toLocaleDateString('es-CO', { day: 'numeric', month: 'short', year: 'numeric' })}`
+                                                        : ''}
+                                                </p>
+                                            </div>
+                                        </button>
+                                    ))}
+                                </div>
+
+                                <p className="text-xs text-muted-foreground/60 text-center border-t border-border pt-3">
+                                    O pega la URL directamente en el campo de URL del Sheet.
+                                </p>
+                            </DialogContent>
+                        </Dialog>
+                    </>
+                )
+            })()}
 
             {/* ─── Filtros de Dashboard ─────────────────────────────────────── */}
             <Card className="bg-card border-border">
