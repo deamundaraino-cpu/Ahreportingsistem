@@ -35,17 +35,25 @@ CREATE INDEX IF NOT EXISTS idx_notif_user_unread ON public.notifications(user_id
 
 ALTER TABLE public.notifications ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "Users read own notifications" ON public.notifications;
 CREATE POLICY "Users read own notifications"
     ON public.notifications
     FOR SELECT
     USING (user_id = auth.uid());
 
+DROP POLICY IF EXISTS "Users mark own notifications read" ON public.notifications;
 CREATE POLICY "Users mark own notifications read"
     ON public.notifications
     FOR UPDATE
     USING (user_id = auth.uid())
     WITH CHECK (user_id = auth.uid());
 -- Sin policy de INSERT: solo el server con service_role (bypassa RLS).
+
+-- RLS no restringe columnas: limitamos el UPDATE de authenticated a read_at
+-- (lo único que tocan markAsRead/markAllAsRead) para que un usuario no pueda
+-- reescribir título/mensaje/metadata de sus propias notificaciones.
+REVOKE UPDATE ON public.notifications FROM authenticated;
+GRANT UPDATE (read_at) ON public.notifications TO authenticated;
 
 -- ────────────────────────────────────────────────────────────────
 -- 2. Preferencias por usuario y tipo. Opt-out: sin fila = habilitado.
@@ -60,6 +68,7 @@ CREATE TABLE IF NOT EXISTS public.notification_preferences (
 
 ALTER TABLE public.notification_preferences ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "Users manage own notification prefs" ON public.notification_preferences;
 CREATE POLICY "Users manage own notification prefs"
     ON public.notification_preferences
     FOR ALL
@@ -67,14 +76,7 @@ CREATE POLICY "Users manage own notification prefs"
     WITH CHECK (user_id = auth.uid());
 
 -- ────────────────────────────────────────────────────────────────
--- 3. Realtime: la campanita escucha INSERTs en notifications.
---    postgres_changes respeta RLS, así que cada usuario solo recibe
---    eventos de sus propias filas (además del filter por user_id).
--- ────────────────────────────────────────────────────────────────
-ALTER PUBLICATION supabase_realtime ADD TABLE public.notifications;
-
--- ────────────────────────────────────────────────────────────────
--- 4. Trigger: alertas de umbral de presupuesto.
+-- 3. Trigger: alertas de umbral de presupuesto.
 --    El worker externo marca cliente_tabs.alert_sent_at_90/100; al
 --    pasar de NULL a valor se notifica a admins/superadmins y a los
 --    traffickers asignados al cliente, respetando preferencias.
@@ -83,11 +85,17 @@ CREATE OR REPLACE FUNCTION public.notify_budget_alert()
 RETURNS TRIGGER
 LANGUAGE plpgsql
 SECURITY DEFINER
+SET search_path = pg_catalog, public
 AS $$
 DECLARE
     v_level INT;
     v_cliente_nombre TEXT;
 BEGIN
+    -- Pestañas archivadas no alertan (mismo criterio que getActiveAlerts y el backfill)
+    IF NEW.archived THEN
+        RETURN NEW;
+    END IF;
+
     IF (NEW.alert_sent_at_100 IS NOT NULL AND OLD.alert_sent_at_100 IS NULL) THEN
         v_level := 100;
     ELSIF (NEW.alert_sent_at_90 IS NOT NULL AND OLD.alert_sent_at_90 IS NULL) THEN
@@ -103,7 +111,7 @@ BEGIN
            'alert_threshold',
            CASE WHEN v_level = 100 THEN 'error' ELSE 'warning' END,
            'Presupuesto al ' || v_level || '%',
-           COALESCE(v_cliente_nombre, 'Cliente') || ' — pestaña "' || NEW.nombre || '" alcanzó el ' || v_level || '% del presupuesto',
+           COALESCE(v_cliente_nombre, 'Cliente') || ' — pestaña "' || COALESCE(NEW.nombre, '—') || '" alcanzó el ' || v_level || '% del presupuesto',
            '/dashboard/' || NEW.cliente_id,
            NEW.cliente_id,
            jsonb_build_object('tab_id', NEW.id, 'level', v_level)
@@ -128,18 +136,20 @@ CREATE TRIGGER trg_notify_budget_alert
     FOR EACH ROW EXECUTE FUNCTION public.notify_budget_alert();
 
 -- ────────────────────────────────────────────────────────────────
--- 5. Backfill: las alertas ya activas (alert_sent_at_* marcado antes
+-- 4. Backfill: las alertas ya activas (alert_sent_at_* marcado antes
 --    de esta migración) no pasan por el trigger; se insertan una vez
 --    aquí para que aparezcan en la campanita. Idempotente vía
 --    NOT EXISTS sobre metadata->tab_id. created_at conserva la fecha
---    real de la alerta.
+--    real de la alerta. Va ANTES de añadir la tabla a la publication
+--    para que estos inserts no se emitan por realtime (evita una
+--    lluvia de toasts a quien tenga la app abierta al migrar).
 -- ────────────────────────────────────────────────────────────────
 INSERT INTO public.notifications (user_id, type, severity, title, message, link, cliente_id, metadata, created_at)
 SELECT p.id,
        'alert_threshold',
        CASE WHEN t.alert_sent_at_100 IS NOT NULL THEN 'error' ELSE 'warning' END,
        'Presupuesto al ' || CASE WHEN t.alert_sent_at_100 IS NOT NULL THEN 100 ELSE 90 END || '%',
-       c.nombre || ' — pestaña "' || t.nombre || '" alcanzó el '
+       COALESCE(c.nombre, 'Cliente') || ' — pestaña "' || COALESCE(t.nombre, '—') || '" alcanzó el '
            || CASE WHEN t.alert_sent_at_100 IS NOT NULL THEN 100 ELSE 90 END || '% del presupuesto',
        '/dashboard/' || t.cliente_id,
        t.cliente_id,
@@ -163,3 +173,21 @@ WHERE t.archived = FALSE
         WHERE n.user_id = p.id
           AND n.type = 'alert_threshold'
           AND n.metadata->>'tab_id' = t.id::text);
+
+-- ────────────────────────────────────────────────────────────────
+-- 5. Realtime: la campanita escucha INSERTs en notifications.
+--    postgres_changes respeta RLS, así que cada usuario solo recibe
+--    eventos de sus propias filas (además del filter por user_id).
+--    Idempotente: ALTER PUBLICATION ADD TABLE falla si ya es miembro.
+-- ────────────────────────────────────────────────────────────────
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_publication_tables
+        WHERE pubname = 'supabase_realtime'
+          AND schemaname = 'public'
+          AND tablename = 'notifications'
+    ) THEN
+        ALTER PUBLICATION supabase_realtime ADD TABLE public.notifications;
+    END IF;
+END $$;

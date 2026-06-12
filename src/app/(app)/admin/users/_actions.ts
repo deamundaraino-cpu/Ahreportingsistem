@@ -3,6 +3,7 @@
 import { createClient, createAdminClient } from '@/utils/supabase/server'
 import { notifyUsers } from '@/lib/notifications/notify'
 import { revalidatePath } from 'next/cache'
+import { after } from 'next/server'
 
 type Role = 'superadmin' | 'admin' | 'trafficker' | 'viewer'
 
@@ -189,7 +190,8 @@ export async function setClientAssignments(targetUserId: string, clientIds: stri
 
     const addedIds = clientIds.filter(id => !previousIds.has(id))
     if (addedIds.length > 0) {
-        void notifyNewAssignments(adminSupabase, targetUserId, addedIds)
+        // after() evita que Vercel congele la función antes de los inserts
+        after(() => notifyNewAssignments(adminSupabase, targetUserId, addedIds))
     }
 
     revalidatePath('/admin/users')
@@ -288,8 +290,10 @@ export async function createUser(input: {
             client_id,
             assigned_by: current.userId,
         }))
-        await adminSupabase.from('user_client_assignments').insert(rows)
-        void notifyNewAssignments(adminSupabase, newUserId, input.clientIds)
+        const { error: assignError } = await adminSupabase.from('user_client_assignments').insert(rows)
+        if (!assignError) {
+            after(() => notifyNewAssignments(adminSupabase, newUserId, input.clientIds))
+        }
     }
 
     revalidatePath('/admin/users')

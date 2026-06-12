@@ -114,8 +114,15 @@ export function NotificationBell({ userId }: { userId: string }) {
         await markAllAsRead()
     }
 
+    // Al abrir, re-sincroniza lista y contador: cubre lecturas hechas desde
+    // /notificaciones, la instancia gemela (mobile/desktop) y deriva del realtime.
+    const handleOpenChange = (next: boolean) => {
+        setOpen(next)
+        if (next) refresh()
+    }
+
     return (
-        <Popover open={open} onOpenChange={setOpen}>
+        <Popover open={open} onOpenChange={handleOpenChange}>
             <PopoverTrigger asChild>
                 <Button variant="ghost" size="icon" className="relative" aria-label="Notificaciones">
                     <Bell className="h-5 w-5" />

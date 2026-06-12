@@ -46,20 +46,41 @@ async function resolveRecipients(
     return [...new Set(audience.userIds)];
   }
 
-  const { data: admins } = await db
+  const { data: admins, error: adminsError } = await db
     .from('user_profiles')
     .select('id')
     .in('role', ['admin', 'superadmin']);
+  if (adminsError) {
+    console.error('[notifications] admins query failed:', adminsError.message);
+  }
 
   const ids = new Set<string>((admins ?? []).map((r: { id: string }) => r.id));
 
   if (audience === 'client_team' && clienteId) {
-    const { data: assignments } = await db
+    const { data: assignments, error: assignmentsError } = await db
       .from('user_client_assignments')
       .select('user_id')
       .eq('client_id', clienteId);
-    for (const row of (assignments ?? []) as { user_id: string }[]) {
-      ids.add(row.user_id);
+    if (assignmentsError) {
+      console.error('[notifications] assignments query failed:', assignmentsError.message);
+    }
+
+    // Solo traffickers (mismo criterio que el trigger SQL): los viewers
+    // asignados a un cliente no deben recibir datos internos (ventas, tickets).
+    const assignedIds = [...new Set(((assignments ?? []) as { user_id: string }[]).map((r) => r.user_id))]
+      .filter((id) => !ids.has(id));
+    if (assignedIds.length > 0) {
+      const { data: traffickers, error: traffickersError } = await db
+        .from('user_profiles')
+        .select('id')
+        .in('id', assignedIds)
+        .eq('role', 'trafficker');
+      if (traffickersError) {
+        console.error('[notifications] traffickers query failed:', traffickersError.message);
+      }
+      for (const row of (traffickers ?? []) as { id: string }[]) {
+        ids.add(row.id);
+      }
     }
   }
 
@@ -70,12 +91,15 @@ async function resolveRecipients(
 async function applyPreferences(db: Db, userIds: string[], type: InAppNotificationType): Promise<string[]> {
   if (userIds.length === 0) return [];
 
-  const { data: optedOut } = await db
+  const { data: optedOut, error: prefsError } = await db
     .from('notification_preferences')
     .select('user_id')
     .eq('type', type)
     .eq('enabled', false)
     .in('user_id', userIds);
+  if (prefsError) {
+    console.error('[notifications] preferences query failed:', prefsError.message);
+  }
 
   const excluded = new Set((optedOut ?? []).map((r: { user_id: string }) => r.user_id));
   return userIds.filter((id) => !excluded.has(id));

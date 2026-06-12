@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse, after } from 'next/server';
 import { createAdminClient } from '@/utils/supabase/server';
 import { parseHotmartPayload } from '@/lib/report-utm/hotmart-parser';
 import { verifyWebhookSignature } from '@/lib/report-utm/webhook-auth';
@@ -189,11 +189,13 @@ export async function POST(
     }).catch((err) => console.error('[report-utm webhook] outbound emit failed', err));
   }
 
-  // 8b) Notificar al grupo de WhatsApp (fire-and-forget). El ruteo usa el
-  // cliente del reporting principal (public_cliente_id); si no está vinculado,
-  // caen las rutas globales por tipo.
+  // 8b) Notificar al grupo de WhatsApp y a la campanita in-app. Corre tras
+  // responder, pero dentro de after() para que Vercel no congele la función
+  // antes de completar los envíos. El ruteo usa el cliente del reporting
+  // principal (public_cliente_id); si no está vinculado, caen las rutas
+  // globales por tipo.
   if (outboundType && NOTIFICATION_TYPES.includes(outboundType as NotificationType)) {
-    void (async () => {
+    after(async () => {
       try {
         const { data: rutmCliente } = await trackingDb
           .from('clientes')
@@ -235,7 +237,7 @@ export async function POST(
       } catch (err) {
         console.error('[report-utm webhook] whatsapp notify failed', err);
       }
-    })();
+    });
   }
 
   return NextResponse.json(

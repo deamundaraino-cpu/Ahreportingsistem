@@ -6,6 +6,7 @@ import { getWeeksInRange } from '@/lib/date-utils'
 import { revalidatePath } from 'next/cache'
 import { format, addDays } from 'date-fns'
 import { headers } from 'next/headers'
+import { after } from 'next/server'
 
 export async function triggerWorkerSync(clientId: string, from: string, to: string) {
     if (!clientId || !from || !to) {
@@ -604,8 +605,9 @@ export async function createSoporteTicket(payload: {
 
     if (error) return { error: error.message }
 
-    // Notificación in-app (fire-and-forget): admins + traffickers del cliente
-    void notifyUsers({
+    // Notificación in-app tras responder; after() evita que Vercel congele
+    // la función antes de completar el insert.
+    after(() => notifyUsers({
         db: supabase,
         type: 'ticket_created',
         severity: 'info',
@@ -614,7 +616,7 @@ export async function createSoporteTicket(payload: {
         message: `${payload.tipo} · solicitado por ${payload.nombre_solicitante}`,
         link: '/soporte',
         metadata: { ticket_id: data.id },
-    })
+    }))
 
     if (payload.cliente_id) revalidatePath(`/dashboard/${payload.cliente_id}`)
     revalidatePath('/soporte')
@@ -638,6 +640,7 @@ export async function updateSoporteTicket(ticketId: string, clienteId: string | 
 
     // Estado previo: solo notificamos si el estado realmente cambió
     let previousEstado: string | null = null
+    let previousRequerimiento: string | null = null
     if (payload.estado) {
         const { data: prev } = await supabase
             .from('soporte_tickets')
@@ -645,6 +648,7 @@ export async function updateSoporteTicket(ticketId: string, clienteId: string | 
             .eq('id', ticketId)
             .maybeSingle()
         previousEstado = prev?.estado ?? null
+        previousRequerimiento = prev?.requerimiento ?? null
     }
 
     const { error } = await supabase
@@ -658,16 +662,18 @@ export async function updateSoporteTicket(ticketId: string, clienteId: string | 
     if (error) return { error: error.message }
 
     if (payload.estado && previousEstado && payload.estado !== previousEstado) {
-        void notifyUsers({
+        const requerimiento = payload.requerimiento ?? previousRequerimiento
+        const nuevoEstado = payload.estado
+        after(() => notifyUsers({
             db: supabase,
             type: 'ticket_updated',
-            severity: payload.estado === 'cerrado' ? 'success' : 'info',
+            severity: nuevoEstado === 'completado' ? 'success' : 'info',
             clienteId: clienteId,
-            title: `Ticket actualizado: ${previousEstado} → ${payload.estado}`,
-            message: payload.requerimiento ? payload.requerimiento.slice(0, 120) : undefined,
+            title: `Ticket actualizado: ${previousEstado} → ${nuevoEstado}`,
+            message: requerimiento ? requerimiento.slice(0, 120) : undefined,
             link: '/soporte',
-            metadata: { ticket_id: ticketId, estado: payload.estado },
-        })
+            metadata: { ticket_id: ticketId, estado: nuevoEstado },
+        }))
     }
 
     if (clienteId) revalidatePath(`/dashboard/${clienteId}`)
