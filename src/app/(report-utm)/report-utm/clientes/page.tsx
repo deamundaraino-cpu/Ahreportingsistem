@@ -3,6 +3,8 @@ import { reportUtmClient } from '@/lib/report-utm/client'
 import type { ReportUtmCliente } from '@/lib/report-utm/types'
 import { createClienteAction } from './_actions'
 import { Plus, ExternalLink } from 'lucide-react'
+import { StatusBadge } from '@/components/report-utm/StatusBadge'
+import { formatDate } from '@/lib/report-utm/formatters'
 
 export const dynamic = 'force-dynamic'
 
@@ -102,10 +104,10 @@ export default async function ClientesPage() {
                                         {c.slug}
                                     </td>
                                     <td className="px-6 py-3">
-                                        <StatusPill status={c.status} />
+                                        <StatusBadge status={c.status} />
                                     </td>
                                     <td className="px-6 py-3 text-xs text-muted-foreground">
-                                        {new Date(c.created_at).toLocaleDateString()}
+                                        {formatDate(c.created_at)}
                                     </td>
                                     <td className="px-6 py-3 text-right">
                                         <Link
@@ -164,16 +166,3 @@ function Field({
     )
 }
 
-function StatusPill({ status }: { status: string }) {
-    const cls =
-        status === 'active'
-            ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400'
-            : status === 'paused'
-            ? 'bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400'
-            : 'bg-muted text-muted-foreground'
-    return (
-        <span className={`text-[10px] font-semibold uppercase tracking-wider px-2 py-1 rounded-md ${cls}`}>
-            {status}
-        </span>
-    )
-}

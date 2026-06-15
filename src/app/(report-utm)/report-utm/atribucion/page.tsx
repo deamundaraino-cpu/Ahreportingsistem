@@ -9,7 +9,9 @@ import {
     Users,
     Filter,
     BarChart2,
+    ChevronRight,
 } from 'lucide-react'
+import { formatCurrency } from '@/lib/report-utm/formatters'
 
 export const dynamic = 'force-dynamic'
 
@@ -210,8 +212,8 @@ export default async function AtribucionPage({
             {/* Stats */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 <Stat label="Eventos" value={totalEvents.toLocaleString()} icon={ShoppingBag} />
-                <Stat label="Revenue aprobado" value={`${currency} ${totalRevenue.toFixed(2)}`} icon={DollarSign} />
-                <Stat label="Ticket promedio" value={`${currency} ${aov.toFixed(2)}`} icon={TrendingUp} />
+                <Stat label="Revenue aprobado" value={formatCurrency(totalRevenue, currency)} icon={DollarSign} />
+                <Stat label="Ticket promedio" value={formatCurrency(aov, currency)} icon={TrendingUp} />
                 <Stat label="Sources distintas" value={String(distinctSources)} icon={Users} />
             </div>
 
@@ -258,14 +260,14 @@ export default async function AtribucionPage({
                                         <td className="px-6 py-3 text-xs font-mono text-emerald-600 dark:text-emerald-400">
                                             {s.source}
                                         </td>
-                                        <td className="px-6 py-3 text-right text-xs text-muted-foreground">
+                                        <td className="px-6 py-3 text-right text-xs font-mono tabular-nums text-muted-foreground">
                                             {s.sales.toLocaleString()}
                                         </td>
-                                        <td className="px-6 py-3 text-right text-xs font-semibold text-foreground">
-                                            {currency} {s.revenue.toFixed(2)}
+                                        <td className="px-6 py-3 text-right text-xs font-mono tabular-nums font-semibold text-foreground">
+                                            {formatCurrency(s.revenue, currency)}
                                         </td>
-                                        <td className="px-6 py-3 text-right text-xs text-muted-foreground">
-                                            {currency} {sourceAov.toFixed(2)}
+                                        <td className="px-6 py-3 text-right text-xs font-mono tabular-nums text-muted-foreground">
+                                            {formatCurrency(sourceAov, currency)}
                                         </td>
                                         <td className="px-6 py-3 text-right text-xs text-muted-foreground">
                                             <div className="flex items-center gap-2 justify-end">
@@ -275,7 +277,7 @@ export default async function AtribucionPage({
                                                         style={{ width: `${Math.min(100, pct)}%` }}
                                                     />
                                                 </div>
-                                                <span className="font-mono text-[11px] w-10 text-right">
+                                                <span className="font-mono tabular-nums text-xs w-10 text-right">
                                                     {pct.toFixed(1)}%
                                                 </span>
                                             </div>
@@ -304,59 +306,65 @@ export default async function AtribucionPage({
                     </p>
                 </div>
                 {matrixRows.length > 0 ? (
-                    <div className="overflow-x-auto max-h-[500px] overflow-y-auto">
-                        <table className="w-full">
-                            <thead className="bg-muted/60 sticky top-0">
-                                <tr className="text-left text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                                    <th className="px-6 py-3">Source</th>
-                                    <th className="px-6 py-3">Campaign</th>
-                                    <th className="px-6 py-3 text-right">Ventas</th>
-                                    <th className="px-6 py-3 text-right">Revenue</th>
-                                    <th className="px-6 py-3 text-right">AOV</th>
-                                    <th className="px-6 py-3 text-right">Reembolsos</th>
-                                </tr>
-                            </thead>
-                            <tbody className="divide-y divide-border">
-                                {matrixRows.map((c) => {
-                                    const cellAov = c.sales > 0 ? c.revenue / c.sales : 0
-                                    return (
-                                        <tr key={`${c.source}-${c.campaign}`} className="hover:bg-accent">
-                                            <td className="px-6 py-3 text-xs font-mono text-emerald-600 dark:text-emerald-400">
-                                                {c.source}
-                                            </td>
-                                            <td className="px-6 py-3 text-xs font-mono text-foreground/90">
-                                                {c.campaign}
-                                            </td>
-                                            <td className="px-6 py-3 text-right text-xs text-muted-foreground">
-                                                {c.sales}
-                                            </td>
-                                            <td className="px-6 py-3 text-right text-xs font-semibold text-foreground">
-                                                {currency} {c.revenue.toFixed(2)}
-                                            </td>
-                                            <td className="px-6 py-3 text-right text-xs text-muted-foreground">
-                                                {currency} {cellAov.toFixed(2)}
-                                            </td>
-                                            <td className="px-6 py-3 text-right text-xs">
-                                                {c.refunds > 0 ? (
-                                                    <span className="text-red-600 dark:text-red-400">
-                                                        -{currency} {c.refundsAmount.toFixed(2)} ({c.refunds})
-                                                    </span>
-                                                ) : (
-                                                    <span className="text-muted-foreground/70">—</span>
-                                                )}
-                                            </td>
-                                        </tr>
-                                    )
-                                })}
-                            </tbody>
-                        </table>
+                    <div className="relative">
+                        {/* scroll hint — only visible when table is wider than its container */}
+                        <div className="absolute top-3 right-4 z-10 flex items-center gap-1 text-[10px] text-muted-foreground/60 pointer-events-none select-none">
+                            scroll <ChevronRight className="h-3 w-3" />
+                        </div>
+                        <div className="overflow-x-auto max-h-[500px] overflow-y-auto">
+                            <table className="w-full min-w-[640px]">
+                                <thead className="bg-muted/60 sticky top-0 z-10">
+                                    <tr className="text-left text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                                        <th className="px-6 py-3">Source</th>
+                                        <th className="px-6 py-3">Campaign</th>
+                                        <th className="px-6 py-3 text-right">Ventas</th>
+                                        <th className="px-6 py-3 text-right">Revenue</th>
+                                        <th className="px-6 py-3 text-right">AOV</th>
+                                        <th className="px-6 py-3 text-right">Reembolsos</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-border">
+                                    {matrixRows.map((c) => {
+                                        const cellAov = c.sales > 0 ? c.revenue / c.sales : 0
+                                        return (
+                                            <tr key={`${c.source}-${c.campaign}`} className="hover:bg-accent">
+                                                <td className="px-6 py-3 text-xs font-mono text-emerald-600 dark:text-emerald-400">
+                                                    {c.source}
+                                                </td>
+                                                <td className="px-6 py-3 text-xs font-mono text-foreground/90">
+                                                    {c.campaign}
+                                                </td>
+                                                <td className="px-6 py-3 text-right text-xs font-mono tabular-nums text-muted-foreground">
+                                                    {c.sales.toLocaleString()}
+                                                </td>
+                                                <td className="px-6 py-3 text-right text-xs font-mono tabular-nums font-semibold text-foreground">
+                                                    {formatCurrency(c.revenue, currency)}
+                                                </td>
+                                                <td className="px-6 py-3 text-right text-xs font-mono tabular-nums text-muted-foreground">
+                                                    {formatCurrency(cellAov, currency)}
+                                                </td>
+                                                <td className="px-6 py-3 text-right text-xs font-mono tabular-nums">
+                                                    {c.refunds > 0 ? (
+                                                        <span className="text-red-600 dark:text-red-400">
+                                                            -{formatCurrency(c.refundsAmount, currency)} ({c.refunds})
+                                                        </span>
+                                                    ) : (
+                                                        <span className="text-muted-foreground/70">—</span>
+                                                    )}
+                                                </td>
+                                            </tr>
+                                        )
+                                    })}
+                                </tbody>
+                            </table>
+                        </div>
                     </div>
                 ) : (
                     <EmptyTableMsg />
                 )}
             </div>
 
-            <p className="text-[11px] text-muted-foreground">
+            <p className="text-xs text-muted-foreground">
                 Datos calculados en vivo desde <code className="font-mono px-1 py-0.5 rounded bg-muted">report_utm.sales_events</code>.
                 El cron <code className="font-mono px-1 py-0.5 rounded bg-muted">/api/cron/report-utm/aggregate</code> actualiza
                 {' '}<code className="font-mono px-1 py-0.5 rounded bg-muted">hourly_metrics</code> cada 15 min para queries más rápidas a futuro.
@@ -382,7 +390,7 @@ function Stat({
                     <Icon className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
                 </div>
             </div>
-            <p className="mt-3 text-xl font-bold text-foreground truncate">{value}</p>
+            <p className="mt-3 text-2xl font-semibold font-mono tabular-nums text-foreground truncate">{value}</p>
         </div>
     )
 }
@@ -400,7 +408,7 @@ function SelectField({
 }) {
     return (
         <label className="block">
-            <span className="block text-[11px] font-medium text-muted-foreground mb-1">{label}</span>
+            <span className="block text-xs font-medium text-muted-foreground mb-1">{label}</span>
             <select
                 name={name}
                 defaultValue={defaultValue}

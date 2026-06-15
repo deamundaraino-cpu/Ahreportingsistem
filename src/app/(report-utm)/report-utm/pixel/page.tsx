@@ -4,6 +4,7 @@ import { reportUtmClient } from '@/lib/report-utm/client'
 import type { ReportUtmCliente } from '@/lib/report-utm/types'
 import { PixelSnippet } from '@/components/report-utm/PixelSnippet'
 import { Activity, Code2, Filter, MousePointerClick, Eye, ExternalLink } from 'lucide-react'
+import { formatTime } from '@/lib/report-utm/formatters'
 
 export const dynamic = 'force-dynamic'
 
@@ -41,6 +42,20 @@ export default async function PixelPage({
     const clientesList = (clientes ?? []) as Array<
         Pick<ReportUtmCliente, 'id' | 'nombre' | 'slug' | 'status'>
     >
+
+    // Obtener S2S token para el cliente seleccionado (para snippet PHP)
+    let s2sToken: string | null = null
+    if (sp.clienteId) {
+        const { data: s2sIntegration } = await supabase
+            .from('integrations')
+            .select('s2s_token, status')
+            .eq('cliente_id', sp.clienteId)
+            .eq('tipo', 's2s')
+            .maybeSingle()
+        if (s2sIntegration?.status === 'active') {
+            s2sToken = (s2sIntegration as { s2s_token: string | null }).s2s_token ?? null
+        }
+    }
 
     let eventsQuery = supabase
         .from('pixel_events')
@@ -130,8 +145,8 @@ export default async function PixelPage({
                             Snippet de instalación · {selectedCliente.nombre}
                         </h2>
                     </div>
-                    <PixelSnippet origin={origin} clienteSlug={selectedCliente.slug} />
-                    <div className="text-[11px] text-muted-foreground space-y-1">
+                    <PixelSnippet origin={origin} clienteSlug={selectedCliente.slug} s2sToken={s2sToken} />
+                    <div className="text-xs text-muted-foreground space-y-1">
                         <p>
                             <strong>Pageview:</strong> automático al cargar.
                         </p>
@@ -197,8 +212,8 @@ export default async function PixelPage({
                             <tbody className="divide-y divide-border">
                                 {eventsList.map((e) => (
                                     <tr key={e.id} className="hover:bg-accent">
-                                        <td className="px-4 py-3 text-[11px] text-muted-foreground whitespace-nowrap">
-                                            {new Date(e.created_at).toLocaleTimeString()}
+                                        <td className="px-4 py-3 text-xs font-mono tabular-nums text-muted-foreground whitespace-nowrap">
+                                            {formatTime(e.created_at)}
                                         </td>
                                         <td className="px-4 py-3 text-xs">
                                             <Link
@@ -212,7 +227,7 @@ export default async function PixelPage({
                                             <EventTypeBadge type={e.event_type} name={e.event_name} />
                                         </td>
                                         <td className="px-4 py-3 max-w-xs">
-                                            <p className="text-[11px] text-foreground/90 truncate" title={e.page_url ?? ''}>
+                                            <p className="text-xs text-foreground/90 truncate" title={e.page_url ?? ''}>
                                                 {e.page_url ?? '—'}
                                             </p>
                                             {e.referrer && (
@@ -221,7 +236,7 @@ export default async function PixelPage({
                                                 </p>
                                             )}
                                         </td>
-                                        <td className="px-4 py-3 text-[11px] font-mono">
+                                        <td className="px-4 py-3 text-xs font-mono">
                                             {e.utm_source && (
                                                 <p className="text-emerald-600 dark:text-emerald-400">
                                                     {e.utm_source}
@@ -237,7 +252,7 @@ export default async function PixelPage({
                                                 <span className="text-muted-foreground/70">—</span>
                                             )}
                                         </td>
-                                        <td className="px-4 py-3 text-[10px] font-mono text-muted-foreground">
+                                        <td className="px-4 py-3 text-[10px] font-mono tabular-nums text-muted-foreground">
                                             {e.visitor_id ? e.visitor_id.slice(0, 8) : '—'}
                                         </td>
                                     </tr>
@@ -280,7 +295,7 @@ function Stat({
                     <Icon className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
                 </div>
             </div>
-            <p className="mt-2 text-2xl font-bold text-foreground">{value}</p>
+            <p className="mt-2 text-2xl font-semibold font-mono tabular-nums text-foreground">{value}</p>
         </div>
     )
 }

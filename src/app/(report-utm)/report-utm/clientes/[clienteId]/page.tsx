@@ -4,6 +4,11 @@ import { headers } from 'next/headers'
 import { reportUtmClient } from '@/lib/report-utm/client'
 import type { ReportUtmCliente, ReportUtmIntegration, ReportUtmSalesEvent } from '@/lib/report-utm/types'
 import { HotmartIntegrationCard } from '@/components/report-utm/HotmartIntegrationCard'
+import { CartPandaIntegrationCard } from '@/components/report-utm/CartPandaIntegrationCard'
+import { ShopifyIntegrationCard } from '@/components/report-utm/ShopifyIntegrationCard'
+import { GoogleAdsCard } from '@/components/report-utm/GoogleAdsCard'
+import { MetaCAPICard } from '@/components/report-utm/MetaCAPICard'
+import { S2SIntegrationCard } from '@/components/report-utm/S2SIntegrationCard'
 import { OutboundWebhooksCard } from '@/components/report-utm/OutboundWebhooksCard'
 import { ArrowLeft, ShoppingBag, DollarSign, TrendingUp, ExternalLink } from 'lucide-react'
 
@@ -17,7 +22,7 @@ export default async function ClienteDetailPage({
     const { clienteId } = await params
     const supabase = await reportUtmClient()
 
-    const [{ data: cliente }, { data: hotmart }, { data: ventas }, { count: totalCount }, { data: aggregate }, { data: outbound }] =
+    const [{ data: cliente }, { data: hotmart }, { data: cartpanda }, { data: shopify }, { data: metaIntegration }, { data: googleIntegration }, { data: s2s }, { data: ventas }, { count: totalCount }, { data: aggregate }, { data: outbound }] =
         await Promise.all([
             supabase.from('clientes').select('*').eq('id', clienteId).single<ReportUtmCliente>(),
             supabase
@@ -26,6 +31,36 @@ export default async function ClienteDetailPage({
                 .eq('cliente_id', clienteId)
                 .eq('tipo', 'hotmart')
                 .maybeSingle<ReportUtmIntegration>(),
+            supabase
+                .from('integrations')
+                .select('id, cliente_id, webhook_secret, status, last_sync_at, last_error')
+                .eq('cliente_id', clienteId)
+                .eq('tipo', 'cartpanda')
+                .maybeSingle<Pick<ReportUtmIntegration, 'id' | 'cliente_id' | 'webhook_secret' | 'status' | 'last_sync_at' | 'last_error'>>(),
+            supabase
+                .from('integrations')
+                .select('id, cliente_id, webhook_secret, config, status, last_sync_at, last_error')
+                .eq('cliente_id', clienteId)
+                .eq('tipo', 'shopify')
+                .maybeSingle<Pick<ReportUtmIntegration, 'id' | 'cliente_id' | 'webhook_secret' | 'config' | 'status' | 'last_sync_at' | 'last_error'>>(),
+            supabase
+                .from('integrations')
+                .select('id, status, config, last_sync_at, last_error')
+                .eq('cliente_id', clienteId)
+                .eq('tipo', 'meta')
+                .maybeSingle<Pick<ReportUtmIntegration, 'id' | 'status' | 'config' | 'last_sync_at' | 'last_error'>>(),
+            supabase
+                .from('integrations')
+                .select('id, status, config, last_sync_at, last_error')
+                .eq('cliente_id', clienteId)
+                .eq('tipo', 'google')
+                .maybeSingle<Pick<ReportUtmIntegration, 'id' | 'status' | 'config' | 'last_sync_at' | 'last_error'>>(),
+            supabase
+                .from('integrations')
+                .select('id, cliente_id, status, last_sync_at, last_error')
+                .eq('cliente_id', clienteId)
+                .eq('tipo', 's2s')
+                .maybeSingle<Pick<ReportUtmIntegration, 'id' | 'cliente_id' | 'status' | 'last_sync_at' | 'last_error'>>(),
             supabase
                 .from('sales_events')
                 .select('id, sale_timestamp, amount, currency, status, customer_name, customer_email, utm_source, utm_campaign, product_name, transaction_type, platform_sale_id, attribution_method')
@@ -105,11 +140,38 @@ export default async function ClienteDetailPage({
                 <Stat label="Ticket promedio" value={`${aov.toFixed(2)}`} icon={TrendingUp} />
             </div>
 
-            {/* Integration */}
+            {/* Integrations */}
             <HotmartIntegrationCard
                 clienteId={cliente.id}
                 integration={hotmart}
                 webhookOrigin={webhookOrigin}
+            />
+
+            <CartPandaIntegrationCard
+                clienteId={cliente.id}
+                integration={cartpanda ?? null}
+                webhookOrigin={webhookOrigin}
+            />
+
+            <ShopifyIntegrationCard
+                clienteId={cliente.id}
+                integration={shopify ?? null}
+                webhookOrigin={webhookOrigin}
+            />
+
+            <MetaCAPICard
+                clienteId={cliente.id}
+                integration={metaIntegration ?? null}
+            />
+
+            <GoogleAdsCard
+                clienteId={cliente.id}
+                integration={googleIntegration ?? null}
+            />
+
+            <S2SIntegrationCard
+                clienteId={cliente.id}
+                integration={s2s ?? null}
             />
 
             {/* Outbound webhooks */}

@@ -3,18 +3,18 @@
 import { useState, useTransition } from 'react'
 import { RefreshCw, Power, KeyRound, Webhook } from 'lucide-react'
 import {
-    activateHotmartIntegrationAction,
-    rotateHotmartSecretAction,
-    setHotmartIntegrationStatusAction,
+    activateCartPandaIntegrationAction,
+    rotateCartPandaSecretAction,
+    setCartPandaIntegrationStatusAction,
 } from '@/app/(report-utm)/report-utm/clientes/[clienteId]/_actions'
 import { CopyField, useCopyHandler } from './CopyField'
 import { FeedbackLine, LastErrorAlert } from './FeedbackLine'
 import { IntegrationStatusBadge } from './StatusBadge'
 import { formatDateTime } from '@/lib/report-utm/formatters'
 
-const ACCENT = 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400'
-const ICON_BG = 'bg-emerald-50 dark:bg-emerald-500/10'
-const ICON_COLOR = 'text-emerald-600 dark:text-emerald-400'
+const ACCENT = 'bg-indigo-50 text-indigo-700 dark:bg-indigo-500/10 dark:text-indigo-400'
+const ICON_BG = 'bg-indigo-50 dark:bg-indigo-500/10'
+const ICON_COLOR = 'text-indigo-600 dark:text-indigo-400'
 
 type Integration = {
     id: string
@@ -25,7 +25,7 @@ type Integration = {
     last_error: string | null
 } | null
 
-export function HotmartIntegrationCard({
+export function CartPandaIntegrationCard({
     clienteId,
     integration,
     webhookOrigin,
@@ -40,14 +40,14 @@ export function HotmartIntegrationCard({
     const [copiedUrl, setCopiedUrl] = useState(false)
     const [copiedSecret, setCopiedSecret] = useState(false)
 
-    const webhookUrl = `${webhookOrigin}/api/report-utm/webhooks/hotmart/${clienteId}`
+    const webhookUrl = `${webhookOrigin}/api/report-utm/webhooks/cartpanda/${clienteId}`
     const copyUrl = useCopyHandler(setCopiedUrl)
     const copySecret = useCopyHandler(setCopiedSecret)
 
     const onActivate = () => {
         setError(null)
         startTransition(async () => {
-            const r = await activateHotmartIntegrationAction(clienteId)
+            const r = await activateCartPandaIntegrationAction(clienteId)
             if (!r.ok) setError(r.error)
             else if (r.secret) setRevealedSecret(r.secret)
         })
@@ -57,7 +57,7 @@ export function HotmartIntegrationCard({
         if (!confirm('¿Rotar el webhook secret? El antiguo dejará de funcionar inmediatamente.')) return
         setError(null)
         startTransition(async () => {
-            const r = await rotateHotmartSecretAction(clienteId)
+            const r = await rotateCartPandaSecretAction(clienteId)
             if (!r.ok) setError(r.error)
             else if (r.secret) setRevealedSecret(r.secret)
         })
@@ -68,7 +68,7 @@ export function HotmartIntegrationCard({
         const next = integration.status === 'active' ? 'inactive' : 'active'
         setError(null)
         startTransition(async () => {
-            const r = await setHotmartIntegrationStatusAction(clienteId, next)
+            const r = await setCartPandaIntegrationStatusAction(clienteId, next)
             if (!r.ok) setError(r.error)
         })
     }
@@ -81,17 +81,17 @@ export function HotmartIntegrationCard({
                         <Webhook className={`h-5 w-5 ${ICON_COLOR}`} />
                     </div>
                     <div className="flex-1">
-                        <h3 className="text-sm font-semibold text-foreground">Hotmart · Webhook</h3>
+                        <h3 className="text-sm font-semibold text-foreground">CartPanda · Webhook</h3>
                         <p className="mt-1 text-xs text-muted-foreground">
-                            Activá para generar un webhook secret y la URL para configurar en Hotmart.
+                            Activá para generar un webhook secret y la URL para configurar en CartPanda.
                         </p>
                         <button
                             onClick={onActivate}
                             disabled={pending}
-                            className="mt-4 inline-flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium text-white shadow-sm nav-active-emerald transition-opacity disabled:opacity-50"
+                            className="mt-4 inline-flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium text-white shadow-sm bg-indigo-600 hover:bg-indigo-700 transition-colors disabled:opacity-50"
                         >
                             <KeyRound className="h-3.5 w-3.5" />
-                            {pending ? 'Activando…' : 'Activar integración Hotmart'}
+                            {pending ? 'Activando…' : 'Activar integración CartPanda'}
                         </button>
                         {error && <FeedbackLine variant="error" message={error} />}
                     </div>
@@ -110,7 +110,7 @@ export function HotmartIntegrationCard({
                         <Webhook className={`h-5 w-5 ${ICON_COLOR}`} />
                     </div>
                     <div>
-                        <h3 className="text-sm font-semibold text-foreground">Hotmart · Webhook</h3>
+                        <h3 className="text-sm font-semibold text-foreground">CartPanda · Webhook</h3>
                         <p className="text-xs text-muted-foreground mt-0.5">
                             {integration.last_sync_at
                                 ? `Última venta: ${formatDateTime(integration.last_sync_at)}`
@@ -131,8 +131,8 @@ export function HotmartIntegrationCard({
             />
 
             {revealedSecret ? (
-                <div className="rounded-lg border border-emerald-200 dark:border-emerald-500/30 bg-emerald-50/40 dark:bg-emerald-500/5 p-4">
-                    <p className="text-[10px] font-semibold uppercase tracking-wider text-emerald-700 dark:text-emerald-400 mb-2">
+                <div className="rounded-lg border border-indigo-200 dark:border-indigo-500/30 bg-indigo-50/40 dark:bg-indigo-500/5 p-4">
+                    <p className="text-[10px] font-semibold uppercase tracking-wider text-indigo-700 dark:text-indigo-400 mb-2">
                         Webhook secret · guardalo ahora
                     </p>
                     <CopyField
@@ -140,15 +140,13 @@ export function HotmartIntegrationCard({
                         onCopy={() => copySecret(revealedSecret)}
                         copied={copiedSecret}
                     />
-                    <p className="mt-2 text-xs text-emerald-700 dark:text-emerald-400">
-                        Solo se muestra una vez. Configuralo en Hotmart como{' '}
-                        <code className="mx-1 px-1 py-0.5 rounded bg-card/50 font-mono">hottok</code>
-                        o usalo como secret HMAC.
+                    <p className="mt-2 text-xs text-indigo-700 dark:text-indigo-400">
+                        Solo se muestra una vez. Configuralo en CartPanda → Configurações → Webhooks.
                     </p>
                 </div>
             ) : (
                 <p className="text-xs text-muted-foreground">
-                    El secret está guardado y nunca se muestra después de activar. Si lo perdiste, rotalo.
+                    El secret está guardado y nunca se muestra. Si lo perdiste, rotalo.
                 </p>
             )}
 
@@ -172,7 +170,7 @@ export function HotmartIntegrationCard({
                                 border transition-colors disabled:opacity-50 ${
                         isActive
                             ? 'border-amber-200 dark:border-amber-500/30 text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-500/10'
-                            : 'border-emerald-200 dark:border-emerald-500/30 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-500/10'
+                            : 'border-indigo-200 dark:border-indigo-500/30 text-indigo-700 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-500/10'
                     }`}
                 >
                     <Power className="h-3.5 w-3.5" />

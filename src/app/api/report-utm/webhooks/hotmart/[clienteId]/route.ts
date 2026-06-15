@@ -4,6 +4,10 @@ import { parseHotmartPayload } from '@/lib/report-utm/hotmart-parser';
 import { verifyWebhookSignature } from '@/lib/report-utm/webhook-auth';
 import { applyAttributionToSale, resolveAttribution } from '@/lib/report-utm/attribution-resolver';
 import { emitOutboundForSale, type OutboundEventType } from '@/lib/report-utm/outbound-emitter';
+import { notifyOnSaleReceived } from '@/lib/report-utm/sale-notifications';
+import { sendMetaConversionEvent } from '@/lib/report-utm/meta-capi';
+import { uploadClickConversion } from '@/lib/report-utm/google-conversions';
+import { decrypt } from '@/lib/report-utm/encryption';
 import { sendWhatsAppNotification } from '@/lib/whatsapp/notify';
 import { NOTIFICATION_TYPES, type NotificationType } from '@/lib/whatsapp/types';
 import { notifyUsers } from '@/lib/notifications/notify';
@@ -189,53 +193,128 @@ export async function POST(
     }).catch((err) => console.error('[report-utm webhook] outbound emit failed', err));
   }
 
-  // 8b) Notificar al grupo de WhatsApp y a la campanita in-app. Corre tras
-  // responder, pero dentro de after() para que Vercel no congele la función
-  // antes de completar los envíos. El ruteo usa el cliente del reporting
-  // principal (public_cliente_id); si no está vinculado, caen las rutas
-  // globales por tipo.
+  // 8b) Notificaciones WhatsApp + in-app + Meta CAPI (post-response via after())
   if (outboundType && NOTIFICATION_TYPES.includes(outboundType as NotificationType)) {
     after(async () => {
+      await notifyOnSaleReceived({
+        supabaseAdmin,
+        trackingDb,
+        clienteId,
+        platform: 'hotmart',
+        parsed,
+        insertedId: inserted.id,
+        outboundType,
+      });
+    });
+  }
+
+  // Meta CAPI: enviar Purchase si la venta es aprobada
+  if (parsed.status === 'approved') {
+    after(async () => {
       try {
-        const { data: rutmCliente } = await trackingDb
-          .from('clientes')
-          .select('public_cliente_id, nombre')
-          .eq('id', clienteId)
+        const { data: metaIntegration } = await trackingDb
+          .from('integrations')
+          .select('config, access_token_encrypted, status')
+          .eq('cliente_id', clienteId)
+          .eq('tipo', 'meta')
           .maybeSingle();
 
-        const amount = `${parsed.currency ?? ''} ${Number(parsed.amount ?? 0).toFixed(2)}`.trim();
-        const label =
-          outboundType === 'sale.approved' ? '✅ Venta aprobada' : '↩️ Venta reembolsada';
-        const message =
-          `${label} — *${rutmCliente?.nombre ?? 'Cliente'}*\n` +
-          `Producto: ${parsed.product_name ?? '—'}\n` +
-          `Monto: ${amount}\n` +
-          `Cliente: ${parsed.customer_name ?? parsed.customer_email ?? '—'}`;
+        if (
+          metaIntegration?.status === 'active' &&
+          metaIntegration.config?.pixel_id &&
+          metaIntegration.access_token_encrypted
+        ) {
+          const accessToken = decrypt(metaIntegration.access_token_encrypted as string);
+          const result = await sendMetaConversionEvent({
+            pixelId: String(metaIntegration.config.pixel_id),
+            accessToken,
+            sale: {
+              platformSaleId: parsed.platform_sale_id,
+              amount: parsed.amount,
+              currency: parsed.currency,
+            },
+            customer: {
+              email: parsed.customer_email,
+              phone: parsed.customer_phone,
+              name: parsed.customer_name,
+              country: parsed.customer_country,
+            },
+            attribution: {
+              visitorId: attribution.visitor_id,
+              fbclid: parsed.click_id,
+              ipAddress: null,
+              userAgent: null,
+            },
+            testEventCode: metaIntegration.config.test_event_code
+              ? String(metaIntegration.config.test_event_code)
+              : null,
+          });
 
-        await sendWhatsAppNotification({
-          db: supabaseAdmin,
-          clienteId: rutmCliente?.public_cliente_id ?? null,
-          notificationType: outboundType as NotificationType,
-          message,
-        });
+          await trackingDb
+            .from('sales_events')
+            .update({
+              capi_sent_at: new Date().toISOString(),
+              capi_response: result as unknown as Record<string, unknown>,
+            })
+            .eq('id', inserted.id);
 
-        // Espejo in-app (campanita): admins + traffickers asignados al cliente
-        const publicClienteId = rutmCliente?.public_cliente_id ?? null;
-        await notifyUsers({
-          db: supabaseAdmin,
-          type: outboundType === 'sale.approved' ? 'sale_approved' : 'sale_refunded',
-          severity: outboundType === 'sale.approved' ? 'success' : 'warning',
-          clienteId: publicClienteId,
-          title:
-            outboundType === 'sale.approved'
-              ? `Venta aprobada — ${rutmCliente?.nombre ?? 'Cliente'}`
-              : `Venta reembolsada — ${rutmCliente?.nombre ?? 'Cliente'}`,
-          message: `${parsed.product_name ?? 'Producto'} · ${amount} · ${parsed.customer_name ?? parsed.customer_email ?? '—'}`,
-          link: publicClienteId ? `/dashboard/${publicClienteId}` : undefined,
-          metadata: { sale_event_id: inserted.id, platform: 'hotmart' },
-        });
+          if (!result.ok) {
+            console.error('[hotmart webhook] Meta CAPI failed', result.error);
+          }
+        }
       } catch (err) {
-        console.error('[report-utm webhook] whatsapp notify failed', err);
+        console.error('[hotmart webhook] Meta CAPI dispatch error', err);
+      }
+    });
+  }
+
+  // Google Ads Offline Conversions: solo si hay gclid en la atribución
+  if (parsed.status === 'approved' && (parsed.click_id ?? attribution.first_touch)) {
+    after(async () => {
+      try {
+        const { data: gadsIntegration } = await trackingDb
+          .from('integrations')
+          .select('config, access_token_encrypted, status')
+          .eq('cliente_id', clienteId)
+          .eq('tipo', 'google')
+          .maybeSingle();
+
+        const gclid = parsed.click_id ?? (attribution.first_touch as Record<string, unknown> | null)?.click_id;
+        if (
+          gadsIntegration?.status === 'active' &&
+          gadsIntegration.config?.customer_id &&
+          gadsIntegration.config?.conversion_action &&
+          gadsIntegration.access_token_encrypted &&
+          typeof gclid === 'string'
+        ) {
+          const accessToken = decrypt(gadsIntegration.access_token_encrypted as string);
+          const result = await uploadClickConversion({
+            accessToken,
+            customerId: String(gadsIntegration.config.customer_id),
+            loginCustomerId: gadsIntegration.config.login_customer_id
+              ? String(gadsIntegration.config.login_customer_id)
+              : null,
+            conversionAction: String(gadsIntegration.config.conversion_action),
+            gclid,
+            conversionDateTime: parsed.sale_timestamp ?? new Date().toISOString(),
+            conversionValue: parsed.amount,
+            currencyCode: parsed.currency,
+          });
+
+          await trackingDb
+            .from('sales_events')
+            .update({
+              gads_sent_at: new Date().toISOString(),
+              gads_response: result as unknown as Record<string, unknown>,
+            })
+            .eq('id', inserted.id);
+
+          if (!result.ok) {
+            console.error('[hotmart webhook] Google Ads conversion failed', result.error);
+          }
+        }
+      } catch (err) {
+        console.error('[hotmart webhook] Google Ads dispatch error', err);
       }
     });
   }

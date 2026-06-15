@@ -42,9 +42,10 @@ interface ReportData {
     notes: string | null
 }
 
-const BRAND_BLUE = '#1E3A5F'
-const BRAND_GOLD = '#F4A800'
-const PIE_COLORS = ['#1E3A5F', '#F4A800', '#3B82F6', '#10B981', '#8B5CF6', '#F59E0B', '#EF4444', '#6B7280']
+// Chart constants use hex values — Recharts doesn't support CSS variables in SVG fills/strokes
+const CHART_BLUE = '#1E6AB5'   // --brand-blue from design system
+const CHART_GOLD = '#F4A800'   // report gold accent
+const PIE_COLORS = [CHART_BLUE, CHART_GOLD, '#3B82F6', '#10B981', '#8B5CF6', '#F59E0B', '#EF4444', '#6B7280']
 
 function fmt(n: number | null | undefined, decimals = 2, prefix = '', suffix = '') {
     if (n === null || n === undefined) return '—'
@@ -61,7 +62,7 @@ function variation(current: number | null, previous: number | null, invertColors
 }
 
 function VarBadge({ v }: { v: ReturnType<typeof variation> }) {
-    if (!v) return <span className="text-gray-400 text-xs">—</span>
+    if (!v) return <span className="text-muted-foreground text-xs">—</span>
     const color = v.isGood ? 'text-emerald-600' : 'text-red-500'
     const Icon = v.isPositive ? TrendingUp : TrendingDown
     return (
@@ -79,21 +80,21 @@ function KpiCard({ label, value, varVal, icon: Icon, accent = false }: {
     accent?: boolean
 }) {
     return (
-        <div className={`rounded-2xl p-5 border ${accent ? 'bg-[#1E3A5F] border-[#1E3A5F] text-white' : 'bg-white border-gray-100 text-gray-900'} shadow-sm`}>
+        <div className={`rounded-2xl p-5 border shadow-sm ${accent ? 'brand-gradient-reporting border-transparent text-white' : 'bg-card border-border text-foreground'}`}>
             <div className="flex items-start justify-between mb-3">
-                <p className={`text-xs font-semibold uppercase tracking-wider ${accent ? 'text-blue-200' : 'text-gray-400'}`}>{label}</p>
-                <div className={`p-1.5 rounded-lg ${accent ? 'bg-white/10' : 'bg-[#1E3A5F]/5'}`}>
-                    <Icon className={`w-4 h-4 ${accent ? 'text-[#F4A800]' : 'text-[#1E3A5F]'}`} />
+                <p className={`text-xs font-semibold uppercase tracking-wider ${accent ? 'text-white/70' : 'text-muted-foreground'}`}>{label}</p>
+                <div className={`p-1.5 rounded-lg ${accent ? 'bg-white/15' : 'bg-brand-blue/5'}`}>
+                    <Icon className={`w-4 h-4 ${accent ? 'text-white/80' : 'text-brand-blue'}`} />
                 </div>
             </div>
-            <p className="text-2xl font-bold tracking-tight mb-1">{value}</p>
+            <p className="text-2xl font-semibold font-mono tabular-nums tracking-tight mb-1">{value}</p>
             {varVal !== undefined && <VarBadge v={varVal} />}
         </div>
     )
 }
 
 function Skeleton({ className = '' }: { className?: string }) {
-    return <div className={`animate-pulse bg-gray-200 rounded-lg ${className}`} />
+    return <div className={`animate-pulse bg-muted rounded-lg ${className}`} />
 }
 
 type SortKey = 'name' | 'spend' | 'impressions' | 'clicks' | 'ctr' | 'cpa' | 'results'
@@ -170,7 +171,7 @@ export function MonthlyReportTab({ clientId: clientIdProp }: { clientId: string 
         return (
             <th
                 className={`px-3 py-3 text-right text-xs font-semibold cursor-pointer select-none whitespace-nowrap
-                    ${active ? 'text-[#1E3A5F]' : 'text-gray-400 hover:text-gray-600'}`}
+                    ${active ? 'text-[var(--brand-blue)]' : 'text-muted-foreground hover:text-foreground'}`}
                 onClick={() => toggleSort(col)}
             >
                 {label} {active ? (sortAsc ? '↑' : '↓') : ''}
@@ -206,7 +207,7 @@ export function MonthlyReportTab({ clientId: clientIdProp }: { clientId: string 
                 <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 justify-between">
                     <div>
                         <h3 className="text-foreground font-semibold text-lg flex items-center gap-2">
-                            <Calendar className="w-5 h-5 text-[#F4A800]" />
+                            <Calendar className="w-5 h-5 text-amber-500" />
                             Reporte Mensual
                         </h3>
                         <p className="text-muted-foreground text-sm mt-0.5">Selecciona el período y genera el reporte completo del cliente</p>
@@ -234,7 +235,7 @@ export function MonthlyReportTab({ clientId: clientIdProp }: { clientId: string 
                         <button
                             onClick={generateReport}
                             disabled={loading}
-                            className="flex items-center gap-2 px-5 py-2.5 bg-[#1E3A5F] hover:bg-[#16304f] text-white font-semibold text-sm rounded-xl transition disabled:opacity-60 disabled:cursor-not-allowed shadow"
+                            className="flex items-center gap-2 px-5 py-2.5 nav-active-blue text-white font-semibold text-sm rounded-xl transition disabled:opacity-60 disabled:cursor-not-allowed"
                         >
                             {loading ? (
                                 <>
@@ -277,48 +278,48 @@ export function MonthlyReportTab({ clientId: clientIdProp }: { clientId: string 
             {error && (
                 <div className="flex flex-col items-center justify-center py-16 text-center">
                     <AlertCircle className="w-12 h-12 text-red-600 dark:text-red-400 mb-4" />
-                    <p className="text-gray-500">{error}</p>
+                    <p className="text-muted-foreground">{error}</p>
                 </div>
             )}
 
             {/* ── Reporte completo ─────────────────────────────────────────── */}
             {data && !loading && (
-                <div className="bg-gray-50 rounded-3xl font-sans print:bg-white">
+                <div className="bg-muted/40 rounded-3xl font-sans print:bg-white">
                     <div className="max-w-5xl mx-auto px-4 py-10 space-y-10 print:py-4 print:space-y-6">
 
                         {/* BLOQUE 1: Header */}
-                        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-8 flex flex-col md:flex-row items-start md:items-center justify-between gap-6 print:shadow-none">
+                        <div className="bg-card rounded-2xl shadow-sm border border-border p-8 flex flex-col md:flex-row items-start md:items-center justify-between gap-6 print:shadow-none print:bg-white">
                             <div className="flex items-center gap-5">
                                 {data.client.logo_url
-                                    ? <img src={data.client.logo_url} alt={data.client.name} className="h-16 w-16 object-contain rounded-xl border border-gray-100" />
+                                    ? <img src={data.client.logo_url} alt={data.client.name} className="h-16 w-16 object-contain rounded-xl border border-border" />
                                     : (
-                                        <div className="h-16 w-16 rounded-xl bg-[#1E3A5F] flex items-center justify-center">
-                                            <Megaphone className="w-8 h-8 text-[#F4A800]" />
+                                        <div className="h-16 w-16 rounded-xl brand-gradient-reporting flex items-center justify-center">
+                                            <Megaphone className="w-8 h-8 text-white/80" />
                                         </div>
                                     )
                                 }
                                 <div>
-                                    <p className="text-sm text-gray-400 font-medium">Reporte Mensual de Rendimiento</p>
-                                    <h1 className="text-2xl md:text-3xl font-bold text-[#1E3A5F] capitalize">{data.client.name}</h1>
-                                    <p className="text-gray-500 capitalize mt-0.5">{periodoLabel}</p>
+                                    <p className="text-sm text-muted-foreground font-medium">Reporte Mensual de Rendimiento</p>
+                                    <h1 className="text-2xl md:text-3xl font-bold text-[var(--brand-blue)] capitalize">{data.client.name}</h1>
+                                    <p className="text-muted-foreground capitalize mt-0.5">{periodoLabel}</p>
                                 </div>
                             </div>
                             <div className="flex flex-col items-start md:items-end gap-2">
-                                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-blue-50 text-[#1E3A5F] text-xs font-semibold border border-blue-100">
-                                    <div className="w-2 h-2 rounded-full bg-[#1E3A5F]" /> Meta Ads
+                                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-brand-blue/10 text-brand-blue text-xs font-semibold border border-brand-blue/20">
+                                    <div className="w-2 h-2 rounded-full bg-brand-blue" /> Meta Ads
                                 </span>
-                                <p className="text-xs text-gray-400">Generado el {format(new Date(), "d 'de' MMMM, yyyy", { locale: es })}</p>
+                                <p className="text-xs text-muted-foreground">Generado el {format(new Date(), "d 'de' MMMM, yyyy", { locale: es })}</p>
                                 <div className="flex gap-2 print:hidden">
                                     <button
                                         onClick={handleShare}
-                                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 transition"
+                                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-border bg-card text-muted-foreground hover:bg-accent transition"
                                     >
                                         <Share2 className="w-3.5 h-3.5" />
                                         {copied ? '¡Copiado!' : 'Compartir'}
                                     </button>
                                     <button
                                         onClick={handlePrint}
-                                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-[#1E3A5F] text-white hover:bg-[#16304f] transition"
+                                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-brand-blue hover:bg-brand-blue/90 text-white transition"
                                     >
                                         <Download className="w-3.5 h-3.5" /> PDF
                                     </button>
@@ -328,7 +329,7 @@ export function MonthlyReportTab({ clientId: clientIdProp }: { clientId: string 
 
                         {/* BLOQUE 2: KPI Cards */}
                         <div>
-                            <h2 className="text-lg font-bold text-[#1E3A5F] mb-4">Resumen Ejecutivo</h2>
+                            <h2 className="text-lg font-bold text-[var(--brand-blue)] mb-4">Resumen Ejecutivo</h2>
                             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                                 <KpiCard label="Inversión Total" accent value={fmt(data.summary.spend, 2, `${data.client.currency} `)} varVal={variation(data.summary.spend, data.previous_month.spend, false)} icon={DollarSign} />
                                 <KpiCard label="Resultados" value={data.summary.results.toLocaleString('es-MX')} varVal={variation(data.summary.results, data.previous_month.results)} icon={Target} />
@@ -346,28 +347,28 @@ export function MonthlyReportTab({ clientId: clientIdProp }: { clientId: string 
 
                         {/* BLOQUE 3: Evolución diaria */}
                         {data.daily.length > 0 && (
-                            <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 print:shadow-none">
-                                <h2 className="text-lg font-bold text-[#1E3A5F] mb-1">Evolución Diaria</h2>
-                                <p className="text-xs text-gray-400 mb-5">Gasto y resultados por día del mes</p>
+                            <div className="bg-card rounded-2xl shadow-sm border border-border p-6 print:shadow-none print:bg-white">
+                                <h2 className="text-lg font-bold text-[var(--brand-blue)] mb-1">Evolución Diaria</h2>
+                                <p className="text-xs text-muted-foreground mb-5">Gasto y resultados por día del mes</p>
                                 <ResponsiveContainer width="100%" height={260}>
                                     <AreaChart data={data.daily} margin={{ top: 5, right: 20, left: 0, bottom: 0 }}>
                                         <defs>
                                             <linearGradient id="tabGradSpend" x1="0" y1="0" x2="0" y2="1">
-                                                <stop offset="5%" stopColor={BRAND_BLUE} stopOpacity={0.15} />
-                                                <stop offset="95%" stopColor={BRAND_BLUE} stopOpacity={0} />
+                                                <stop offset="5%" stopColor={CHART_BLUE} stopOpacity={0.15} />
+                                                <stop offset="95%" stopColor={CHART_BLUE} stopOpacity={0} />
                                             </linearGradient>
                                             <linearGradient id="tabGradResults" x1="0" y1="0" x2="0" y2="1">
-                                                <stop offset="5%" stopColor={BRAND_GOLD} stopOpacity={0.2} />
-                                                <stop offset="95%" stopColor={BRAND_GOLD} stopOpacity={0} />
+                                                <stop offset="5%" stopColor={CHART_GOLD} stopOpacity={0.2} />
+                                                <stop offset="95%" stopColor={CHART_GOLD} stopOpacity={0} />
                                             </linearGradient>
                                         </defs>
-                                        <CartesianGrid strokeDasharray="3 3" stroke="#F0F0F0" />
+                                        <CartesianGrid strokeDasharray="3 3" stroke="oklch(0 0 0 / 0.06)" />
                                         <XAxis dataKey="date" tickFormatter={d => { try { return format(parseISO(d), 'd MMM', { locale: es }) } catch { return d } }} tick={{ fontSize: 11, fill: '#9CA3AF' }} tickLine={false} axisLine={false} />
                                         <YAxis yAxisId="left" tick={{ fontSize: 11, fill: '#9CA3AF' }} tickLine={false} axisLine={false} tickFormatter={v => `$${v}`} />
                                         <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 11, fill: '#9CA3AF' }} tickLine={false} axisLine={false} />
-                                        <Tooltip contentStyle={{ borderRadius: 12, border: '1px solid #E5E7EB', fontSize: 12 }} labelFormatter={d => { try { return format(parseISO(d as string), "d 'de' MMMM", { locale: es }) } catch { return d as string } }} formatter={(value: any, name: string) => [name === 'spend' ? `$${Number(value).toFixed(2)}` : value, name === 'spend' ? 'Gasto' : 'Resultados']} />
-                                        <Area yAxisId="left" type="monotone" dataKey="spend" stroke={BRAND_BLUE} strokeWidth={2} fill="url(#tabGradSpend)" dot={false} />
-                                        <Area yAxisId="right" type="monotone" dataKey="results" stroke={BRAND_GOLD} strokeWidth={2} fill="url(#tabGradResults)" dot={false} />
+                                        <Tooltip contentStyle={{ borderRadius: 12, border: '1px solid oklch(0 0 0 / 0.1)', fontSize: 12 }} labelFormatter={d => { try { return format(parseISO(d as string), "d 'de' MMMM", { locale: es }) } catch { return d as string } }} formatter={(value: any, name: string) => [name === 'spend' ? `$${Number(value).toFixed(2)}` : value, name === 'spend' ? 'Gasto' : 'Resultados']} />
+                                        <Area yAxisId="left" type="monotone" dataKey="spend" stroke={CHART_BLUE} strokeWidth={2} fill="url(#tabGradSpend)" dot={false} />
+                                        <Area yAxisId="right" type="monotone" dataKey="results" stroke={CHART_GOLD} strokeWidth={2} fill="url(#tabGradResults)" dot={false} />
                                         <Legend formatter={n => n === 'spend' ? 'Gasto' : 'Resultados'} iconType="circle" iconSize={8} />
                                     </AreaChart>
                                 </ResponsiveContainer>
@@ -376,16 +377,16 @@ export function MonthlyReportTab({ clientId: clientIdProp }: { clientId: string 
 
                         {/* BLOQUE 4: Tabla de campañas */}
                         {data.campaigns.length > 0 && (
-                            <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden print:shadow-none">
+                            <div className="bg-card rounded-2xl shadow-sm border border-border overflow-hidden print:shadow-none print:bg-white">
                                 <div className="p-6 pb-3">
-                                    <h2 className="text-lg font-bold text-[#1E3A5F]">Rendimiento por Campaña</h2>
-                                    <p className="text-xs text-gray-400 mt-0.5">Haz clic en los encabezados para ordenar</p>
+                                    <h2 className="text-lg font-bold text-[var(--brand-blue)]">Rendimiento por Campaña</h2>
+                                    <p className="text-xs text-muted-foreground mt-0.5">Haz clic en los encabezados para ordenar</p>
                                 </div>
                                 <div className="overflow-x-auto">
                                     <table className="w-full text-sm">
                                         <thead>
-                                            <tr className="border-b border-gray-100 bg-gray-50/80">
-                                                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 cursor-pointer hover:text-gray-600 whitespace-nowrap" onClick={() => toggleSort('name')}>
+                                            <tr className="border-b border-border bg-muted/60">
+                                                <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground cursor-pointer hover:text-foreground whitespace-nowrap" onClick={() => toggleSort('name')}>
                                                     Campaña {sortKey === 'name' ? (sortAsc ? '↑' : '↓') : ''}
                                                 </th>
                                                 <SortTh col="spend" label="Inversión" />
@@ -396,33 +397,33 @@ export function MonthlyReportTab({ clientId: clientIdProp }: { clientId: string 
                                                 <SortTh col="results" label="Resultados" />
                                             </tr>
                                         </thead>
-                                        <tbody className="divide-y divide-gray-50">
+                                        <tbody className="divide-y divide-border">
                                             {sortedCampaigns.map((c, i) => (
-                                                <tr key={i} className={`${rowBg(c.roasStatus)} hover:bg-gray-50/60 transition`}>
-                                                    <td className="px-4 py-3 text-gray-800 font-medium max-w-[240px]"><span className="block truncate">{c.name}</span></td>
-                                                    <td className="px-3 py-3 text-right text-gray-700 font-mono">${c.spend.toFixed(2)}</td>
-                                                    <td className="px-3 py-3 text-right text-gray-500 font-mono">{c.impressions.toLocaleString('es-MX')}</td>
-                                                    <td className="px-3 py-3 text-right text-gray-500 font-mono">{c.clicks.toLocaleString('es-MX')}</td>
-                                                    <td className="px-3 py-3 text-right text-gray-500 font-mono">{c.ctr.toFixed(2)}%</td>
-                                                    <td className="px-3 py-3 text-right font-mono">
+                                                <tr key={i} className={`${rowBg(c.roasStatus)} hover:bg-accent transition`}>
+                                                    <td className="px-4 py-3 text-foreground font-medium max-w-[240px]"><span className="block truncate">{c.name}</span></td>
+                                                    <td className="px-3 py-3 text-right text-foreground/80 font-mono tabular-nums">${c.spend.toFixed(2)}</td>
+                                                    <td className="px-3 py-3 text-right text-muted-foreground font-mono tabular-nums">{c.impressions.toLocaleString('es-MX')}</td>
+                                                    <td className="px-3 py-3 text-right text-muted-foreground font-mono tabular-nums">{c.clicks.toLocaleString('es-MX')}</td>
+                                                    <td className="px-3 py-3 text-right text-muted-foreground font-mono tabular-nums">{c.ctr.toFixed(2)}%</td>
+                                                    <td className="px-3 py-3 text-right font-mono tabular-nums">
                                                         {c.cpa !== null
                                                             ? <span className={c.roasStatus === 'good' ? 'text-emerald-600' : c.roasStatus === 'bad' ? 'text-red-500' : 'text-amber-600'}>${c.cpa.toFixed(2)}</span>
-                                                            : <span className="text-gray-300">—</span>
+                                                            : <span className="text-muted-foreground/40">—</span>
                                                         }
                                                     </td>
-                                                    <td className="px-3 py-3 text-right text-[#1E3A5F] font-bold font-mono">{c.results}</td>
+                                                    <td className="px-3 py-3 text-right text-[var(--brand-blue)] font-bold font-mono tabular-nums">{c.results}</td>
                                                 </tr>
                                             ))}
                                         </tbody>
                                         <tfoot>
-                                            <tr className="bg-[#1E3A5F]/5 border-t-2 border-[#1E3A5F]/10">
-                                                <td className="px-4 py-3 text-[#1E3A5F] font-bold text-sm">Totales</td>
-                                                <td className="px-3 py-3 text-right font-bold font-mono text-[#1E3A5F]">${data.summary.spend.toFixed(2)}</td>
-                                                <td className="px-3 py-3 text-right font-mono text-gray-600">{data.summary.impressions.toLocaleString('es-MX')}</td>
-                                                <td className="px-3 py-3 text-right font-mono text-gray-600">{data.summary.clicks.toLocaleString('es-MX')}</td>
-                                                <td className="px-3 py-3 text-right font-mono text-gray-600">{data.summary.ctr !== null ? `${data.summary.ctr.toFixed(2)}%` : '—'}</td>
-                                                <td className="px-3 py-3 text-right font-mono text-gray-600">{data.summary.cpa !== null ? `$${data.summary.cpa.toFixed(2)}` : '—'}</td>
-                                                <td className="px-3 py-3 text-right font-bold font-mono text-[#1E3A5F]">{data.summary.results}</td>
+                                            <tr className="bg-brand-blue/5 border-t-2 border-brand-blue/10">
+                                                <td className="px-4 py-3 text-[var(--brand-blue)] font-bold text-sm">Totales</td>
+                                                <td className="px-3 py-3 text-right font-bold font-mono tabular-nums text-[var(--brand-blue)]">${data.summary.spend.toFixed(2)}</td>
+                                                <td className="px-3 py-3 text-right font-mono tabular-nums text-muted-foreground">{data.summary.impressions.toLocaleString('es-MX')}</td>
+                                                <td className="px-3 py-3 text-right font-mono tabular-nums text-muted-foreground">{data.summary.clicks.toLocaleString('es-MX')}</td>
+                                                <td className="px-3 py-3 text-right font-mono tabular-nums text-muted-foreground">{data.summary.ctr !== null ? `${data.summary.ctr.toFixed(2)}%` : '—'}</td>
+                                                <td className="px-3 py-3 text-right font-mono tabular-nums text-muted-foreground">{data.summary.cpa !== null ? `$${data.summary.cpa.toFixed(2)}` : '—'}</td>
+                                                <td className="px-3 py-3 text-right font-bold font-mono tabular-nums text-[var(--brand-blue)]">{data.summary.results}</td>
                                             </tr>
                                         </tfoot>
                                     </table>
@@ -432,9 +433,9 @@ export function MonthlyReportTab({ clientId: clientIdProp }: { clientId: string 
 
                         {/* BLOQUE 5: Distribución del presupuesto */}
                         {data.spend_distribution.length > 1 && (
-                            <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 print:shadow-none">
-                                <h2 className="text-lg font-bold text-[#1E3A5F] mb-1">Distribución del Presupuesto</h2>
-                                <p className="text-xs text-gray-400 mb-5">Gasto por campaña</p>
+                            <div className="bg-card rounded-2xl shadow-sm border border-border p-6 print:shadow-none print:bg-white">
+                                <h2 className="text-lg font-bold text-[var(--brand-blue)] mb-1">Distribución del Presupuesto</h2>
+                                <p className="text-xs text-muted-foreground mb-5">Gasto por campaña</p>
                                 <div className="flex flex-col md:flex-row items-center gap-8">
                                     <div className="flex-shrink-0">
                                         <ResponsiveContainer width={220} height={220}>
@@ -452,9 +453,9 @@ export function MonthlyReportTab({ clientId: clientIdProp }: { clientId: string 
                                         {data.spend_distribution.map((item, i) => (
                                             <div key={i} className="flex items-center gap-3">
                                                 <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: PIE_COLORS[i % PIE_COLORS.length] }} />
-                                                <span className="flex-1 text-sm text-gray-700 truncate">{item.name}</span>
-                                                <span className="text-sm font-semibold text-gray-900 font-mono">{item.pct}%</span>
-                                                <span className="text-xs text-gray-400 font-mono w-24 text-right">${item.value.toFixed(2)}</span>
+                                                <span className="flex-1 text-sm text-foreground/80 truncate">{item.name}</span>
+                                                <span className="text-sm font-semibold text-foreground font-mono tabular-nums">{item.pct}%</span>
+                                                <span className="text-xs text-muted-foreground font-mono tabular-nums w-24 text-right">${item.value.toFixed(2)}</span>
                                             </div>
                                         ))}
                                     </div>
@@ -464,33 +465,33 @@ export function MonthlyReportTab({ clientId: clientIdProp }: { clientId: string 
 
                         {/* BLOQUE 6: Audiencia */}
                         {(data.audience.by_age.length > 0 || data.audience.by_gender.length > 0) && (
-                            <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 print:shadow-none">
-                                <h2 className="text-lg font-bold text-[#1E3A5F] mb-5">Análisis de Audiencia</h2>
+                            <div className="bg-card rounded-2xl shadow-sm border border-border p-6 print:shadow-none print:bg-white">
+                                <h2 className="text-lg font-bold text-[var(--brand-blue)] mb-5">Análisis de Audiencia</h2>
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                                     {data.audience.by_age.length > 0 && (
                                         <div>
-                                            <p className="text-sm font-semibold text-gray-500 mb-3">Por Edad</p>
+                                            <p className="text-sm font-semibold text-muted-foreground mb-3">Por Edad</p>
                                             <ResponsiveContainer width="100%" height={180}>
                                                 <BarChart data={data.audience.by_age} layout="vertical" margin={{ left: 8, right: 8 }}>
                                                     <XAxis type="number" tick={{ fontSize: 10, fill: '#9CA3AF' }} tickLine={false} axisLine={false} unit="%" />
                                                     <YAxis type="category" dataKey="group" tick={{ fontSize: 11, fill: '#6B7280' }} tickLine={false} axisLine={false} width={50} />
                                                     <Tooltip formatter={(v: any, n: string) => [`${v}%`, n === 'spend_pct' ? 'Gasto' : 'Resultados']} contentStyle={{ fontSize: 12, borderRadius: 10 }} />
-                                                    <Bar dataKey="spend_pct" fill={BRAND_BLUE} radius={[0, 3, 3, 0]} name="Gasto" />
-                                                    <Bar dataKey="results_pct" fill={BRAND_GOLD} radius={[0, 3, 3, 0]} name="Resultados" />
+                                                    <Bar dataKey="spend_pct" fill={CHART_BLUE} radius={[0, 3, 3, 0]} name="Gasto" />
+                                                    <Bar dataKey="results_pct" fill={CHART_GOLD} radius={[0, 3, 3, 0]} name="Resultados" />
                                                 </BarChart>
                                             </ResponsiveContainer>
                                         </div>
                                     )}
                                     {data.audience.by_gender.length > 0 && (
                                         <div>
-                                            <p className="text-sm font-semibold text-gray-500 mb-3">Por Género</p>
+                                            <p className="text-sm font-semibold text-muted-foreground mb-3">Por Género</p>
                                             <ResponsiveContainer width="100%" height={180}>
                                                 <BarChart data={data.audience.by_gender} layout="vertical" margin={{ left: 8, right: 8 }}>
                                                     <XAxis type="number" tick={{ fontSize: 10, fill: '#9CA3AF' }} tickLine={false} axisLine={false} unit="%" />
                                                     <YAxis type="category" dataKey="gender" tick={{ fontSize: 11, fill: '#6B7280' }} tickLine={false} axisLine={false} width={80} />
                                                     <Tooltip formatter={(v: any, n: string) => [`${v}%`, n === 'spend_pct' ? 'Gasto' : 'Resultados']} contentStyle={{ fontSize: 12, borderRadius: 10 }} />
-                                                    <Bar dataKey="spend_pct" fill={BRAND_BLUE} radius={[0, 3, 3, 0]} name="Gasto" />
-                                                    <Bar dataKey="results_pct" fill={BRAND_GOLD} radius={[0, 3, 3, 0]} name="Resultados" />
+                                                    <Bar dataKey="spend_pct" fill={CHART_BLUE} radius={[0, 3, 3, 0]} name="Gasto" />
+                                                    <Bar dataKey="results_pct" fill={CHART_GOLD} radius={[0, 3, 3, 0]} name="Resultados" />
                                                 </BarChart>
                                             </ResponsiveContainer>
                                         </div>
@@ -503,10 +504,10 @@ export function MonthlyReportTab({ clientId: clientIdProp }: { clientId: string 
                         {(data.creatives.top.length > 0 || data.creatives.bottom.length > 0) && (
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                                 {data.creatives.top.length > 0 && (
-                                    <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 print:shadow-none">
+                                    <div className="bg-card rounded-2xl shadow-sm border border-border p-6 print:shadow-none print:bg-white">
                                         <div className="flex items-center gap-2 mb-4">
                                             <Award className="w-5 h-5 text-emerald-500" />
-                                            <h2 className="text-base font-bold text-gray-800">Top Performers</h2>
+                                            <h2 className="text-base font-bold text-foreground/90">Top Performers</h2>
                                         </div>
                                         <div className="space-y-3">
                                             {data.creatives.top.map((c, i) => (
@@ -516,11 +517,11 @@ export function MonthlyReportTab({ clientId: clientIdProp }: { clientId: string 
                                                         : <div className="w-12 h-12 rounded-lg bg-emerald-100 flex-shrink-0 flex items-center justify-center"><Award className="w-5 h-5 text-emerald-500" /></div>
                                                     }
                                                     <div className="flex-1 min-w-0">
-                                                        <p className="text-xs font-semibold text-gray-800 truncate">{c.name}</p>
+                                                        <p className="text-xs font-semibold text-foreground/90 truncate">{c.name}</p>
                                                         <div className="flex gap-3 mt-1">
-                                                            <span className="text-[10px] text-gray-500">CPA: <b className="text-emerald-600">{c.cpa !== null ? `$${c.cpa.toFixed(2)}` : '—'}</b></span>
-                                                            <span className="text-[10px] text-gray-500">CTR: <b>{c.ctr.toFixed(2)}%</b></span>
-                                                            <span className="text-[10px] text-gray-500">Res: <b>{c.results}</b></span>
+                                                            <span className="text-xs text-muted-foreground">CPA: <b className="text-emerald-600">{c.cpa !== null ? `$${c.cpa.toFixed(2)}` : '—'}</b></span>
+                                                            <span className="text-xs text-muted-foreground">CTR: <b>{c.ctr.toFixed(2)}%</b></span>
+                                                            <span className="text-xs text-muted-foreground">Res: <b>{c.results}</b></span>
                                                         </div>
                                                     </div>
                                                     <span className="flex-shrink-0 self-start text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500 text-white">TOP</span>
@@ -530,10 +531,10 @@ export function MonthlyReportTab({ clientId: clientIdProp }: { clientId: string 
                                     </div>
                                 )}
                                 {data.creatives.bottom.length > 0 && (
-                                    <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 print:shadow-none">
+                                    <div className="bg-card rounded-2xl shadow-sm border border-border p-6 print:shadow-none print:bg-white">
                                         <div className="flex items-center gap-2 mb-4">
                                             <AlertCircle className="w-5 h-5 text-red-600 dark:text-red-400" />
-                                            <h2 className="text-base font-bold text-gray-800">Bajo Rendimiento</h2>
+                                            <h2 className="text-base font-bold text-foreground/90">Bajo Rendimiento</h2>
                                         </div>
                                         <div className="space-y-3">
                                             {data.creatives.bottom.map((c, i) => (
@@ -543,11 +544,11 @@ export function MonthlyReportTab({ clientId: clientIdProp }: { clientId: string 
                                                         : <div className="w-12 h-12 rounded-lg bg-red-100 flex-shrink-0 flex items-center justify-center"><AlertCircle className="w-5 h-5 text-red-600 dark:text-red-400" /></div>
                                                     }
                                                     <div className="flex-1 min-w-0">
-                                                        <p className="text-xs font-semibold text-gray-800 truncate">{c.name}</p>
+                                                        <p className="text-xs font-semibold text-foreground/90 truncate">{c.name}</p>
                                                         <div className="flex gap-3 mt-1">
-                                                            <span className="text-[10px] text-gray-500">CPA: <b className="text-red-500">{c.cpa !== null ? `$${c.cpa.toFixed(2)}` : '—'}</b></span>
-                                                            <span className="text-[10px] text-gray-500">CTR: <b>{c.ctr.toFixed(2)}%</b></span>
-                                                            <span className="text-[10px] text-gray-500">Res: <b>{c.results}</b></span>
+                                                            <span className="text-xs text-muted-foreground">CPA: <b className="text-red-500">{c.cpa !== null ? `$${c.cpa.toFixed(2)}` : '—'}</b></span>
+                                                            <span className="text-xs text-muted-foreground">CTR: <b>{c.ctr.toFixed(2)}%</b></span>
+                                                            <span className="text-xs text-muted-foreground">Res: <b>{c.results}</b></span>
                                                         </div>
                                                     </div>
                                                     <span className="flex-shrink-0 self-start text-[10px] font-bold px-2 py-0.5 rounded-full bg-red-500 text-white">BAJO</span>
@@ -560,21 +561,21 @@ export function MonthlyReportTab({ clientId: clientIdProp }: { clientId: string 
                         )}
 
                         {/* BLOQUE 8: Comparativo mes anterior */}
-                        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden print:shadow-none">
+                        <div className="bg-card rounded-2xl shadow-sm border border-border overflow-hidden print:shadow-none print:bg-white">
                             <div className="p-6 pb-3">
-                                <h2 className="text-lg font-bold text-[#1E3A5F]">Comparativo Mes Anterior</h2>
+                                <h2 className="text-lg font-bold text-[var(--brand-blue)]">Comparativo Mes Anterior</h2>
                             </div>
                             <div className="overflow-x-auto">
                                 <table className="w-full text-sm">
                                     <thead>
-                                        <tr className="bg-gray-50/80 border-b border-gray-100">
-                                            <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400">Métrica</th>
-                                            <th className="px-4 py-3 text-right text-xs font-semibold text-gray-400">Mes Anterior</th>
-                                            <th className="px-4 py-3 text-right text-xs font-semibold text-[#1E3A5F]">Mes Actual</th>
-                                            <th className="px-4 py-3 text-right text-xs font-semibold text-gray-400">Variación</th>
+                                        <tr className="bg-muted/60 border-b border-border">
+                                            <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground">Métrica</th>
+                                            <th className="px-4 py-3 text-right text-xs font-semibold text-muted-foreground">Mes Anterior</th>
+                                            <th className="px-4 py-3 text-right text-xs font-semibold text-[var(--brand-blue)]">Mes Actual</th>
+                                            <th className="px-4 py-3 text-right text-xs font-semibold text-muted-foreground">Variación</th>
                                         </tr>
                                     </thead>
-                                    <tbody className="divide-y divide-gray-50">
+                                    <tbody className="divide-y divide-border">
                                         {[
                                             { label: 'Inversión', prev: data.previous_month.spend, curr: data.summary.spend, fmt: (v: number) => `$${v.toFixed(2)}`, invert: false },
                                             { label: 'Resultados', prev: data.previous_month.results, curr: data.summary.results, fmt: (v: number) => v.toLocaleString('es-MX'), invert: false },
@@ -584,17 +585,17 @@ export function MonthlyReportTab({ clientId: clientIdProp }: { clientId: string 
                                         ].map(row => {
                                             const v = variation(row.curr, row.prev, row.invert)
                                             return (
-                                                <tr key={row.label} className="hover:bg-gray-50/50 transition">
-                                                    <td className="px-4 py-3 font-medium text-gray-700">{row.label}</td>
-                                                    <td className="px-4 py-3 text-right text-gray-400 font-mono">{row.prev !== null ? row.fmt(row.prev) : '—'}</td>
-                                                    <td className="px-4 py-3 text-right font-semibold text-[#1E3A5F] font-mono">{row.curr !== null ? row.fmt(row.curr) : '—'}</td>
+                                                <tr key={row.label} className="hover:bg-accent transition">
+                                                    <td className="px-4 py-3 font-medium text-foreground/80">{row.label}</td>
+                                                    <td className="px-4 py-3 text-right text-muted-foreground font-mono tabular-nums">{row.prev !== null ? row.fmt(row.prev) : '—'}</td>
+                                                    <td className="px-4 py-3 text-right font-semibold text-[var(--brand-blue)] font-mono tabular-nums">{row.curr !== null ? row.fmt(row.curr) : '—'}</td>
                                                     <td className="px-4 py-3 text-right">
                                                         {v ? (
                                                             <span className={`inline-flex items-center gap-1 font-medium ${v.isGood ? 'text-emerald-600' : 'text-red-500'}`}>
                                                                 {v.isPositive ? <TrendingUp className="w-3.5 h-3.5" /> : <TrendingDown className="w-3.5 h-3.5" />}
                                                                 {Math.abs(v.diff)}%
                                                             </span>
-                                                        ) : <Minus className="w-3.5 h-3.5 text-gray-300 ml-auto" />}
+                                                        ) : <Minus className="w-3.5 h-3.5 text-muted-foreground/40 ml-auto" />}
                                                     </td>
                                                 </tr>
                                             )
@@ -606,34 +607,34 @@ export function MonthlyReportTab({ clientId: clientIdProp }: { clientId: string 
 
                         {/* BLOQUE 9: Conclusiones */}
                         {data.notes && (
-                            <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 print:shadow-none">
-                                <h2 className="text-lg font-bold text-[#1E3A5F] mb-4">Conclusiones y Recomendaciones</h2>
-                                <div className="prose prose-sm max-w-none text-gray-700 leading-relaxed whitespace-pre-wrap">
+                            <div className="bg-card rounded-2xl shadow-sm border border-border p-6 print:shadow-none print:bg-white">
+                                <h2 className="text-lg font-bold text-[var(--brand-blue)] mb-4">Conclusiones y Recomendaciones</h2>
+                                <div className="prose prose-sm max-w-none text-foreground/80 leading-relaxed whitespace-pre-wrap">
                                     {data.notes}
                                 </div>
                             </div>
                         )}
 
                         {/* BLOQUE 10: Footer */}
-                        <div className="border-t border-gray-200 pt-8 flex flex-col md:flex-row items-center justify-between gap-4 print:pt-4">
+                        <div className="border-t border-border pt-8 flex flex-col md:flex-row items-center justify-between gap-4 print:pt-4">
                             <div className="flex items-center gap-3">
-                                <div className="w-8 h-8 rounded-lg bg-[#1E3A5F] flex items-center justify-center">
-                                    <BarChart3 className="w-4 h-4 text-[#F4A800]" />
+                                <div className="w-8 h-8 rounded-lg brand-gradient-reporting flex items-center justify-center">
+                                    <BarChart3 className="w-4 h-4 text-white/80" />
                                 </div>
                                 <div>
-                                    <p className="text-xs font-bold text-[#1E3A5F]">AdsHouse</p>
-                                    <p className="text-[10px] text-gray-400">adshouse.com</p>
+                                    <p className="text-xs font-bold text-[var(--brand-blue)]">AdsHouse</p>
+                                    <p className="text-xs text-muted-foreground">adshouse.com</p>
                                 </div>
                             </div>
-                            <p className="text-xs text-gray-400 text-center">
+                            <p className="text-xs text-muted-foreground text-center">
                                 Reporte generado por AdsHouse · {periodoLabel} · {format(new Date(), "d MMM yyyy", { locale: es })}
                             </p>
                             <div className="flex gap-2 print:hidden">
-                                <button onClick={handleShare} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 transition">
+                                <button onClick={handleShare} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-border bg-card text-muted-foreground hover:bg-accent transition">
                                     <Share2 className="w-3.5 h-3.5" />
                                     {copied ? '¡Copiado!' : 'Compartir enlace'}
                                 </button>
-                                <button onClick={handlePrint} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-[#1E3A5F] text-white hover:bg-[#16304f] transition">
+                                <button onClick={handlePrint} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-brand-blue hover:bg-brand-blue/90 text-white transition">
                                     <Download className="w-3.5 h-3.5" /> Descargar PDF
                                 </button>
                             </div>

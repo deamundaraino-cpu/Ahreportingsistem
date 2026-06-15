@@ -127,19 +127,19 @@ export function NotificationBell({ userId }: { userId: string }) {
                 <Button variant="ghost" size="icon" className="relative" aria-label="Notificaciones">
                     <Bell className="h-5 w-5" />
                     {unread > 0 && (
-                        <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 rounded-full bg-[#E53529] text-white text-[10px] font-bold flex items-center justify-center">
+                        <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 rounded-full bg-brand-red text-white text-[10px] font-bold flex items-center justify-center">
                             {unread > 99 ? '99+' : unread}
                         </span>
                     )}
                 </Button>
             </PopoverTrigger>
             <PopoverContent align="end" className="w-80 sm:w-96 p-0">
-                <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-200 dark:border-white/[0.06]">
+                <div className="flex items-center justify-between px-4 py-3 border-b border-border">
                     <span className="text-sm font-semibold">Notificaciones</span>
                     {unread > 0 && (
                         <button
                             onClick={handleMarkAll}
-                            className="text-xs text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100 flex items-center gap-1"
+                            className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"
                         >
                             <CheckCheck className="h-3.5 w-3.5" />
                             Marcar todas
@@ -149,7 +149,7 @@ export function NotificationBell({ userId }: { userId: string }) {
 
                 <div className="max-h-[360px] overflow-y-auto">
                     {items.length === 0 ? (
-                        <div className="px-4 py-8 text-center text-sm text-zinc-500">
+                        <div className="px-4 py-8 text-center text-sm text-muted-foreground">
                             No tienes notificaciones
                         </div>
                     ) : (
@@ -157,37 +157,37 @@ export function NotificationBell({ userId }: { userId: string }) {
                             <button
                                 key={notif.id}
                                 onClick={() => handleClick(notif)}
-                                className={`w-full text-left px-4 py-3 flex gap-3 border-b border-zinc-100 dark:border-white/[0.04] last:border-0 hover:bg-zinc-50 dark:hover:bg-white/[0.03] transition-colors ${
-                                    !notif.read_at ? 'bg-indigo-50/50 dark:bg-indigo-500/[0.06]' : ''
+                                className={`w-full text-left px-4 py-3 flex gap-3 border-b border-border last:border-0 hover:bg-accent transition-colors ${
+                                    !notif.read_at ? 'bg-brand-blue/5' : ''
                                 }`}
                             >
                                 <span className="mt-0.5">{SEVERITY_ICON[notif.severity] ?? SEVERITY_ICON.info}</span>
                                 <span className="flex-1 min-w-0">
-                                    <span className="block text-sm font-medium text-zinc-900 dark:text-zinc-100 truncate">
+                                    <span className="block text-sm font-medium text-foreground truncate">
                                         {notif.title}
                                     </span>
                                     {notif.message && (
-                                        <span className="block text-xs text-zinc-500 line-clamp-2">{notif.message}</span>
+                                        <span className="block text-xs text-muted-foreground line-clamp-2">{notif.message}</span>
                                     )}
-                                    <span className="block text-[11px] text-zinc-400 mt-0.5">
+                                    <span className="block text-xs text-muted-foreground/70 mt-0.5">
                                         {formatDistanceToNow(new Date(notif.created_at), { addSuffix: true, locale: es })}
                                     </span>
                                 </span>
                                 {!notif.read_at && (
-                                    <span className="mt-1.5 h-2 w-2 rounded-full bg-[#1E6AB5] shrink-0" />
+                                    <span className="mt-1.5 h-2 w-2 rounded-full bg-brand-blue shrink-0" />
                                 )}
                             </button>
                         ))
                     )}
                 </div>
 
-                <div className="px-4 py-2.5 border-t border-zinc-200 dark:border-white/[0.06]">
+                <div className="px-4 py-2.5 border-t border-border">
                     <button
                         onClick={() => {
                             setOpen(false)
                             router.push('/notificaciones')
                         }}
-                        className="text-xs font-medium text-[#1E6AB5] hover:underline"
+                        className="text-xs font-medium text-brand-blue dark:text-brand-blue-light hover:underline"
                     >
                         Ver todas las notificaciones
                     </button>

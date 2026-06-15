@@ -18,7 +18,8 @@ import {
     Key,
     ArrowLeftRight,
     MessageCircle,
-    Bell
+    Bell,
+    Map
 } from 'lucide-react'
 
 const REPORT_UTM_ENABLED = process.env.NEXT_PUBLIC_REPORT_UTM_ENABLED === 'true'
@@ -254,11 +255,11 @@ export function AppSidebar({ initialRole = 'viewer', userId = '' }: { initialRol
                         onClick={() => setIsOpen(false)}
                         className={`flex items-center gap-3 rounded-xl border px-3 py-2.5 text-sm font-semibold transition-all duration-200
                             ${isActive('/soporte')
-                                ? 'border-blue-500/50 bg-blue-600 text-white shadow-lg shadow-blue-500/20'
-                                : 'border-blue-500/30 bg-blue-500/10 text-blue-700 dark:text-blue-300 hover:bg-blue-500/15 hover:border-blue-400/50'
+                                ? 'border-transparent nav-active-blue text-white'
+                                : 'border-brand-blue/30 bg-brand-blue/10 text-brand-blue dark:text-brand-blue-light hover:bg-brand-blue/15 hover:border-brand-blue/40'
                             }`}
                     >
-                        <span className="text-base">🗺️</span>
+                        <Map className="h-4 w-4 flex-shrink-0" />
                         <span className="flex-1 leading-tight">Roadmap</span>
                     </Link>
                 </div>

@@ -124,6 +124,103 @@
     var visitorId = getOrCreateVisitorId();
     var sessionId = getOrCreateSessionId();
 
+    // ── UTM propagation a links de checkout ─────────────────────
+    // Propaga UTMs y visitor_id a links que apunten a plataformas de checkout
+    // para que no se pierdan cuando el usuario hace clic en "Comprar".
+    // Se puede desactivar con: window.RUTM_CONFIG = { propagate_utms: false }
+    var CHECKOUT_DOMAINS = config.checkout_domains || [
+        'pay.hotmart.com',
+        'go.hotmart.com',
+        'hotmart.product.',
+        'checkout.cartpanda.com',
+        'pay.cartpanda.com',
+        'pay.kiwify.com.br',
+        'checkout.kiwify.com.br',
+        'pay.monetizze.com.br',
+    ];
+
+    function isCheckoutLink(href) {
+        if (!href) return false;
+        try {
+            for (var i = 0; i < CHECKOUT_DOMAINS.length; i++) {
+                if (href.indexOf(CHECKOUT_DOMAINS[i]) !== -1) return true;
+            }
+        } catch (e) {}
+        return false;
+    }
+
+    function buildUTMsForPropagation() {
+        var utms = {};
+        var params = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term'];
+        var hasPageUtms = false;
+        for (var i = 0; i < params.length; i++) {
+            var v = getQueryParam(params[i]);
+            if (v) { utms[params[i]] = v; hasPageUtms = true; }
+        }
+        // Fallback: leer del cookie last-touch si la página no tiene UTMs propios
+        if (!hasPageUtms) {
+            try {
+                var lt = readCookie('rutm_lt');
+                if (lt) {
+                    var touch = JSON.parse(lt);
+                    if (touch.source)   utms['utm_source']   = touch.source;
+                    if (touch.medium)   utms['utm_medium']   = touch.medium;
+                    if (touch.campaign) utms['utm_campaign']  = touch.campaign;
+                    if (touch.content)  utms['utm_content']  = touch.content;
+                    if (touch.term)     utms['utm_term']     = touch.term;
+                }
+            } catch (e) {}
+        }
+        return utms;
+    }
+
+    function decorateCheckoutLinks(root) {
+        var utms = buildUTMsForPropagation();
+        var links = (root || document).getElementsByTagName('a');
+        for (var i = 0; i < links.length; i++) {
+            var a = links[i];
+            var href = a.getAttribute('href') || '';
+            if (!isCheckoutLink(href)) continue;
+            try {
+                var url = new URL(href, location.origin);
+                var keys = Object.keys(utms);
+                for (var k = 0; k < keys.length; k++) {
+                    if (!url.searchParams.has(keys[k])) {
+                        url.searchParams.set(keys[k], utms[keys[k]]);
+                    }
+                }
+                // src = visitor_id para Hotmart y param adicional para CartPanda
+                if (!url.searchParams.has('src')) {
+                    url.searchParams.set('src', visitorId);
+                }
+                a.setAttribute('href', url.toString());
+            } catch (e) {}
+        }
+    }
+
+    if (config.propagate_utms !== false) {
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', function () { decorateCheckoutLinks(); });
+        } else {
+            decorateCheckoutLinks();
+        }
+        // Observar inserciones dinámicas (popups, Elementor, etc.)
+        try {
+            var observer = new MutationObserver(function (mutations) {
+                for (var i = 0; i < mutations.length; i++) {
+                    var added = mutations[i].addedNodes;
+                    for (var j = 0; j < added.length; j++) {
+                        if (added[j].nodeType === 1) decorateCheckoutLinks(added[j]);
+                    }
+                }
+            });
+            observer.observe(document.body || document.documentElement, {
+                childList: true,
+                subtree: true,
+            });
+        } catch (e) {}
+    }
+
     // ── Send ────────────────────────────────────────────────────
     function send(eventType, eventName, customData) {
         var payload = {

@@ -1,65 +1,58 @@
 'use client'
 
 import { useState, useTransition } from 'react'
-import { RefreshCw, Power, KeyRound, Webhook } from 'lucide-react'
+import { RefreshCw, Power, KeyRound, Server } from 'lucide-react'
 import {
-    activateHotmartIntegrationAction,
-    rotateHotmartSecretAction,
-    setHotmartIntegrationStatusAction,
+    activateS2SIntegrationAction,
+    rotateS2STokenAction,
+    setS2SIntegrationStatusAction,
 } from '@/app/(report-utm)/report-utm/clientes/[clienteId]/_actions'
 import { CopyField, useCopyHandler } from './CopyField'
 import { FeedbackLine, LastErrorAlert } from './FeedbackLine'
 import { IntegrationStatusBadge } from './StatusBadge'
-import { formatDateTime } from '@/lib/report-utm/formatters'
 
-const ACCENT = 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400'
-const ICON_BG = 'bg-emerald-50 dark:bg-emerald-500/10'
-const ICON_COLOR = 'text-emerald-600 dark:text-emerald-400'
+const ACCENT = 'bg-violet-50 text-violet-700 dark:bg-violet-500/10 dark:text-violet-400'
+const ICON_BG = 'bg-violet-50 dark:bg-violet-500/10'
+const ICON_COLOR = 'text-violet-600 dark:text-violet-400'
 
 type Integration = {
     id: string
     cliente_id: string
-    webhook_secret: string | null
     status: 'active' | 'inactive' | 'error'
     last_sync_at: string | null
     last_error: string | null
 } | null
 
-export function HotmartIntegrationCard({
+export function S2SIntegrationCard({
     clienteId,
     integration,
-    webhookOrigin,
 }: {
     clienteId: string
     integration: Integration
-    webhookOrigin: string
 }) {
     const [pending, startTransition] = useTransition()
-    const [revealedSecret, setRevealedSecret] = useState<string | null>(null)
+    const [revealedToken, setRevealedToken] = useState<string | null>(null)
     const [error, setError] = useState<string | null>(null)
-    const [copiedUrl, setCopiedUrl] = useState(false)
-    const [copiedSecret, setCopiedSecret] = useState(false)
+    const [copied, setCopied] = useState(false)
 
-    const webhookUrl = `${webhookOrigin}/api/report-utm/webhooks/hotmart/${clienteId}`
-    const copyUrl = useCopyHandler(setCopiedUrl)
-    const copySecret = useCopyHandler(setCopiedSecret)
+    const copyToken = useCopyHandler(setCopied)
 
     const onActivate = () => {
         setError(null)
         startTransition(async () => {
-            const r = await activateHotmartIntegrationAction(clienteId)
+            const r = await activateS2SIntegrationAction(clienteId)
             if (!r.ok) setError(r.error)
-            else if (r.secret) setRevealedSecret(r.secret)
+            else if (r.secret) setRevealedToken(r.secret)
         })
     }
 
     const onRotate = () => {
-        if (!confirm('¿Rotar el webhook secret? El antiguo dejará de funcionar inmediatamente.')) return
+        if (!confirm('¿Rotar el S2S token? El anterior dejará de funcionar de inmediato.')) return
         setError(null)
         startTransition(async () => {
-            const r = await rotateHotmartSecretAction(clienteId)
+            const r = await rotateS2STokenAction(clienteId)
             if (!r.ok) setError(r.error)
-            else if (r.secret) setRevealedSecret(r.secret)
+            else if (r.secret) setRevealedToken(r.secret)
         })
     }
 
@@ -68,7 +61,7 @@ export function HotmartIntegrationCard({
         const next = integration.status === 'active' ? 'inactive' : 'active'
         setError(null)
         startTransition(async () => {
-            const r = await setHotmartIntegrationStatusAction(clienteId, next)
+            const r = await setS2SIntegrationStatusAction(clienteId, next)
             if (!r.ok) setError(r.error)
         })
     }
@@ -78,20 +71,21 @@ export function HotmartIntegrationCard({
             <div className="rounded-2xl border border-border bg-card p-6">
                 <div className="flex items-start gap-3">
                     <div className={`h-10 w-10 rounded-lg flex items-center justify-center ${ICON_BG}`}>
-                        <Webhook className={`h-5 w-5 ${ICON_COLOR}`} />
+                        <Server className={`h-5 w-5 ${ICON_COLOR}`} />
                     </div>
                     <div className="flex-1">
-                        <h3 className="text-sm font-semibold text-foreground">Hotmart · Webhook</h3>
+                        <h3 className="text-sm font-semibold text-foreground">Pixel S2S · WordPress / PHP</h3>
                         <p className="mt-1 text-xs text-muted-foreground">
-                            Activá para generar un webhook secret y la URL para configurar en Hotmart.
+                            Tracking server-to-server: captura leads desde formularios WordPress
+                            sin depender del navegador. Funciona incluso con ad blockers activos.
                         </p>
                         <button
                             onClick={onActivate}
                             disabled={pending}
-                            className="mt-4 inline-flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium text-white shadow-sm nav-active-emerald transition-opacity disabled:opacity-50"
+                            className="mt-4 inline-flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium text-white shadow-sm bg-violet-600 hover:bg-violet-700 transition-colors disabled:opacity-50"
                         >
                             <KeyRound className="h-3.5 w-3.5" />
-                            {pending ? 'Activando…' : 'Activar integración Hotmart'}
+                            {pending ? 'Activando…' : 'Activar integración S2S'}
                         </button>
                         {error && <FeedbackLine variant="error" message={error} />}
                     </div>
@@ -107,14 +101,12 @@ export function HotmartIntegrationCard({
             <div className="flex items-start justify-between gap-4">
                 <div className="flex items-start gap-3">
                     <div className={`h-10 w-10 rounded-lg flex items-center justify-center ${ICON_BG}`}>
-                        <Webhook className={`h-5 w-5 ${ICON_COLOR}`} />
+                        <Server className={`h-5 w-5 ${ICON_COLOR}`} />
                     </div>
                     <div>
-                        <h3 className="text-sm font-semibold text-foreground">Hotmart · Webhook</h3>
+                        <h3 className="text-sm font-semibold text-foreground">Pixel S2S · WordPress / PHP</h3>
                         <p className="text-xs text-muted-foreground mt-0.5">
-                            {integration.last_sync_at
-                                ? `Última venta: ${formatDateTime(integration.last_sync_at)}`
-                                : 'Sin eventos recibidos todavía'}
+                            Tracking server-to-server — inmune a ad blockers
                         </p>
                     </div>
                 </div>
@@ -123,32 +115,25 @@ export function HotmartIntegrationCard({
 
             {integration.last_error && <LastErrorAlert message={integration.last_error} />}
 
-            <CopyField
-                label="Webhook URL"
-                value={webhookUrl}
-                onCopy={() => copyUrl(webhookUrl)}
-                copied={copiedUrl}
-            />
-
-            {revealedSecret ? (
-                <div className="rounded-lg border border-emerald-200 dark:border-emerald-500/30 bg-emerald-50/40 dark:bg-emerald-500/5 p-4">
-                    <p className="text-[10px] font-semibold uppercase tracking-wider text-emerald-700 dark:text-emerald-400 mb-2">
-                        Webhook secret · guardalo ahora
+            {revealedToken ? (
+                <div className="rounded-lg border border-violet-200 dark:border-violet-500/30 bg-violet-50/40 dark:bg-violet-500/5 p-4">
+                    <p className="text-[10px] font-semibold uppercase tracking-wider text-violet-700 dark:text-violet-400 mb-2">
+                        S2S Token · guardalo ahora
                     </p>
                     <CopyField
-                        value={revealedSecret}
-                        onCopy={() => copySecret(revealedSecret)}
-                        copied={copiedSecret}
+                        value={revealedToken}
+                        onCopy={() => copyToken(revealedToken)}
+                        copied={copied}
                     />
-                    <p className="mt-2 text-xs text-emerald-700 dark:text-emerald-400">
-                        Solo se muestra una vez. Configuralo en Hotmart como{' '}
-                        <code className="mx-1 px-1 py-0.5 rounded bg-card/50 font-mono">hottok</code>
-                        o usalo como secret HMAC.
+                    <p className="mt-2 text-xs text-violet-700 dark:text-violet-400">
+                        Solo se muestra una vez. Pegalo en el snippet PHP de WordPress.
+                        Encontrás el snippet en la página{' '}
+                        <strong>Pixel & Eventos</strong> al seleccionar este cliente.
                     </p>
                 </div>
             ) : (
                 <p className="text-xs text-muted-foreground">
-                    El secret está guardado y nunca se muestra después de activar. Si lo perdiste, rotalo.
+                    El token está guardado y no se muestra. Si lo perdiste, rotalo y actualizá el snippet en WordPress.
                 </p>
             )}
 
@@ -156,13 +141,13 @@ export function HotmartIntegrationCard({
                 <button
                     onClick={onRotate}
                     disabled={pending}
-                    aria-label="Rotar webhook secret"
+                    aria-label="Rotar S2S token"
                     className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium
                                text-foreground/90 border border-border hover:bg-accent
                                disabled:opacity-50 transition-colors"
                 >
                     <RefreshCw className="h-3.5 w-3.5" />
-                    Rotar secret
+                    Rotar token
                 </button>
                 <button
                     onClick={onToggle}
@@ -172,7 +157,7 @@ export function HotmartIntegrationCard({
                                 border transition-colors disabled:opacity-50 ${
                         isActive
                             ? 'border-amber-200 dark:border-amber-500/30 text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-500/10'
-                            : 'border-emerald-200 dark:border-emerald-500/30 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-500/10'
+                            : 'border-violet-200 dark:border-violet-500/30 text-violet-700 dark:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-500/10'
                     }`}
                 >
                     <Power className="h-3.5 w-3.5" />

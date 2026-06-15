@@ -3,6 +3,8 @@ import { reportUtmClient } from '@/lib/report-utm/client'
 import type { ReportUtmCliente, ReportUtmSalesEvent } from '@/lib/report-utm/types'
 import { ShoppingBag, ExternalLink, Filter } from 'lucide-react'
 import { AttributionBadge } from '@/components/report-utm/AttributionBadge'
+import { StatusBadge } from '@/components/report-utm/StatusBadge'
+import { formatCurrency, formatDateTime } from '@/lib/report-utm/formatters'
 
 export const dynamic = 'force-dynamic'
 
@@ -170,9 +172,7 @@ export default async function VentasPage({
                                 {ventasList.map((s) => (
                                     <tr key={s.id} className="hover:bg-accent">
                                         <td className="px-6 py-3 text-xs text-muted-foreground whitespace-nowrap">
-                                            {s.sale_timestamp
-                                                ? new Date(s.sale_timestamp).toLocaleString()
-                                                : '—'}
+                                            {formatDateTime(s.sale_timestamp)}
                                         </td>
                                         <td className="px-6 py-3">
                                             <Link
@@ -205,13 +205,13 @@ export default async function VentasPage({
                                             {s.transaction_type ?? 'principal'}
                                         </td>
                                         <td className="px-6 py-3">
-                                            <StatusPill status={s.status} />
+                                            <StatusBadge status={s.status} />
                                         </td>
                                         <td className="px-6 py-3">
                                             <AttributionBadge method={s.attribution_method} />
                                         </td>
-                                        <td className="px-6 py-3 text-right text-xs font-semibold text-foreground whitespace-nowrap">
-                                            {s.currency} {Number(s.amount).toFixed(2)}
+                                        <td className="px-6 py-3 text-right text-xs font-mono font-semibold text-foreground whitespace-nowrap tabular-nums">
+                                            {formatCurrency(s.amount, s.currency)}
                                         </td>
                                         <td className="px-6 py-3 text-right">
                                             <Link
@@ -327,16 +327,3 @@ function InputField({
     )
 }
 
-function StatusPill({ status }: { status: string }) {
-    const cls =
-        status === 'approved'
-            ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400'
-            : status === 'pending'
-            ? 'bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400'
-            : 'bg-red-50 text-red-700 dark:bg-red-500/10 dark:text-red-400'
-    return (
-        <span className={`text-[10px] font-semibold uppercase tracking-wider px-2 py-1 rounded-md ${cls}`}>
-            {status}
-        </span>
-    )
-}
