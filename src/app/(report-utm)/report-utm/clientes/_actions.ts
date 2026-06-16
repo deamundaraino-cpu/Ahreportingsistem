@@ -2,6 +2,7 @@
 
 import { revalidatePath } from 'next/cache'
 import { reportUtmClient } from '@/lib/report-utm/client'
+import { createAdminClient } from '@/utils/supabase/server'
 
 function slugify(input: string): string {
     return input
@@ -63,4 +64,42 @@ export async function deleteClienteAction(id: string) {
     revalidatePath('/report-utm/clientes')
     revalidatePath('/report-utm')
     return { ok: true }
+}
+
+export async function syncPlatformClientesAction() {
+    const admin = await createAdminClient()
+    const supabase = await reportUtmClient()
+
+    const [{ data: publicClientes }, { data: linkedClientes }] = await Promise.all([
+        admin.from('clientes').select('id, nombre').order('created_at', { ascending: false }),
+        supabase.from('clientes').select('public_cliente_id').not('public_cliente_id', 'is', null),
+    ])
+
+    if (!publicClientes?.length) return { ok: true, created: 0 }
+
+    const linkedIds = new Set((linkedClientes ?? []).map((r: { public_cliente_id: string }) => r.public_cliente_id))
+    const toCreate = publicClientes.filter((c: { id: string }) => !linkedIds.has(c.id))
+
+    if (!toCreate.length) return { ok: true, created: 0 }
+
+    let created = 0
+    for (const pc of toCreate as { id: string; nombre: string }[]) {
+        const baseSlug = slugify(pc.nombre)
+        const slug = baseSlug || `cliente-${pc.id.slice(0, 8)}`
+        const { error } = await supabase.from('clientes').insert({
+            nombre: pc.nombre,
+            slug,
+            public_cliente_id: pc.id,
+            color: 'emerald',
+            status: 'active',
+        })
+        if (!error) created++
+    }
+
+    if (created > 0) {
+        revalidatePath('/report-utm/clientes')
+        revalidatePath('/report-utm')
+    }
+
+    return { ok: true, created }
 }

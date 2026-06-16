@@ -1,8 +1,9 @@
 import { getMirrorDashboardData } from "@/app/(app)/dashboard/_actions"
+import { getPublicBitacoras } from "@/app/(app)/admin/settings/[id]/_actions"
 import { DashboardClient } from "@/app/(app)/dashboard/components/DashboardClient"
 import { DateRangeSelector } from "@/app/(app)/dashboard/components/DateRangeSelector"
+import { BitacorasPublicas } from "./components/BitacorasPublicas"
 import { notFound } from "next/navigation"
-import { Search, X } from "lucide-react"
 import { ThemeToggle } from "@/components/theme/ThemeToggle"
 
 export const dynamic = 'force-dynamic'
@@ -11,7 +12,10 @@ export default async function PublicMirrorPage({ params, searchParams }: any) {
     const { token } = await params
     const { from, to, search } = await searchParams
 
-    const { data, error } = await getMirrorDashboardData(token, from, to)
+    const [{ data, error }, bitacoras] = await Promise.all([
+        getMirrorDashboardData(token, from, to),
+        getPublicBitacoras(token),
+    ])
 
     if (error || !data) {
         return notFound()
@@ -41,12 +45,15 @@ export default async function PublicMirrorPage({ params, searchParams }: any) {
             </header>
 
             <main className="max-w-7xl mx-auto p-4 sm:p-6 lg:p-8">
-                <DashboardClient 
+                <DashboardClient
                     data={data}
                     isPublic={true}
                     initialTabId={data.activeTabId}
                     initialKeyword={keyword}
                 />
+                {bitacoras.length > 0 && (
+                    <BitacorasPublicas entries={bitacoras} />
+                )}
             </main>
         </div>
     )

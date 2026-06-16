@@ -2,27 +2,145 @@
 /**
  * Plugin Name:       Report UTM — Ad House
  * Plugin URI:        https://reportes.adshouse.cloud/
- * Description:       Tracking UTM server-side para WordPress. Capta leads de formularios y propaga UTMs a links de checkout (Hotmart, CartPanda, Shopify) con atribución multi-touch.
- * Version:           1.0.0
+ * Description:       Tracking UTM server-side para WordPress. Capta leads de formularios con datos de contacto completos, propaga UTMs a links de checkout y registra la atribución multi-touch de cada visitante.
+ * Version:           0.3.0
  * Requires at least: 5.8
  * Requires PHP:      7.4
- * Author:            Ad House
- * License:           Proprietary
+ * Author:            Robinson Zapata / Ad House
+ * Author URI:        https://adshouse.cloud/
+ * License:           Proprietary — Ad House Internal Use
  * Text Domain:       report-utm
+ *
+ * ════════════════════════════════════════════════════════════════════
+ *  CÓMO FUNCIONA ESTE PLUGIN
+ * ════════════════════════════════════════════════════════════════════
+ *
+ *  1. PIXEL JS (frontend)
+ *     Al activarse, el plugin inyecta automáticamente el script
+ *     report-utm-pixel.js en el <head> de cada página. Ese script:
+ *       a) Crea o renueva dos cookies first-party de 90 días:
+ *            rutm_vid  — visitor ID único y persistente (UUID v4)
+ *            rutm_sid  — session ID (se renueva cada 30 min de inactividad)
+ *       b) Captura los UTMs de la URL de entrada (utm_source, utm_campaign,
+ *          utm_medium, utm_content, utm_term, utm_id) y los guarda en
+ *          cookies rutm_ft (first touch) y rutm_lt (last touch).
+ *       c) Detecta click IDs publicitarios: fbclid (Meta), gclid (Google),
+ *          ttclid (TikTok) y los asocia al visitante.
+ *       d) Propaga esos UTMs automáticamente a todos los links de checkout
+ *          presentes en el HTML (Hotmart, CartPanda, Shopify, Kiwify, etc.)
+ *          usando un MutationObserver para links que aparecen dinámicamente.
+ *
+ *  2. CAPTURA DE LEADS S2S (server-to-server)
+ *     Cuando un visitante envía un formulario, el plugin lo detecta del
+ *     lado del servidor PHP (sin depender del navegador ni de ad blockers)
+ *     y envía todos los datos a la plataforma firmados con HMAC-SHA256.
+ *
+ *     Formularios soportados automáticamente:
+ *       — Elementor Pro Forms
+ *       — Contact Form 7 (CF7)
+ *       — Gravity Forms
+ *       — WPForms
+ *
+ *     Datos que se registran por cada lead:
+ *       — Nombre, email, teléfono (mapeados automáticamente por campo)
+ *       — TODOS los campos del formulario en raw_fields (sin filtrar)
+ *       — UTMs del visitante al momento del envío
+ *       — Visitor ID (cookie rutm_vid) para atribución multi-touch
+ *       — IP, país, user agent, URL de la página
+ *       — Atribución: primer toque y último toque antes del lead
+ *
+ *  3. ATRIBUCIÓN MULTI-TOUCH
+ *     La plataforma cruza el visitor_id del lead con los eventos previos
+ *     del pixel para determinar:
+ *       — Cuál fue el PRIMER anuncio que trajo al visitante al sitio
+ *       — Cuál fue el ÚLTIMO anuncio antes de que llenara el formulario
+ *       — Si vino de un click en un ad (fbclid/gclid) o de UTMs directos
+ *
+ *  4. CONFIGURACIÓN MÍNIMA (para empezar)
+ *     Paso 1: Activar el plugin en WP Admin → Plugins
+ *     Paso 2: Ir a Ajustes → Report UTM
+ *     Paso 3: Ingresar el SLUG de tu cliente (te lo da Ad House)
+ *     Paso 4: Activar el plugin con el toggle
+ *     Paso 5: Guardar → el pixel ya está funcionando
+ *
+ *  5. CONFIGURACIÓN AVANZADA (para captura de leads)
+ *     Además de los pasos anteriores:
+ *     Paso 6: Activar "Modo avanzado" en la configuración
+ *     Paso 7: Ingresar el S2S Token (desde reportes.adshouse.cloud →
+ *             tu cliente → tarjeta "Integración S2S" → Activar)
+ *     Paso 8: Guardar → los formularios se trackean desde el servidor
+ *
+ * ════════════════════════════════════════════════════════════════════
+ *  ARQUITECTURA TÉCNICA
+ * ════════════════════════════════════════════════════════════════════
+ *
+ *  Clases incluidas:
+ *    ReportUTM_Plugin      — Bootstrap principal (este archivo)
+ *    ReportUTM_S2S_Sender  — Cliente HTTP para enviar eventos firmados
+ *    ReportUTM_Forms       — Hooks de detección de formularios
+ *
+ *  Funciones admin:
+ *    rutm_render_settings_page() — Renderiza el panel en WP Admin
+ *    rutm_sanitize_options()     — Sanitiza y valida la configuración
+ *    rutm_check_connection()     — Ping al endpoint S2S para verificar
+ *
+ *  Opciones almacenadas en wp_options (clave: rutm_options):
+ *    enabled          (bool)   — Plugin activo/inactivo
+ *    cliente_slug     (string) — Identificador único del cliente en la plataforma
+ *    base_url         (string) — URL base de la plataforma (default: reportes.adshouse.cloud)
+ *    s2s_token        (string) — Token secreto HMAC para autenticar envíos
+ *    propagate_utms   (bool)   — Propagar UTMs a links de checkout
+ *    checkout_domains (string) — Lista de dominios de pago (uno por línea)
+ *    advanced_mode    (bool)   — Mostrar/ocultar opciones avanzadas
+ *
+ *  Endpoint S2S de la plataforma:
+ *    POST https://reportes.adshouse.cloud/api/report-utm/pixel/s2s
+ *    Auth: HMAC-SHA256(rawBody, s2s_token) en header X-Rutm-S2S-Signature
+ *
+ * ════════════════════════════════════════════════════════════════════
+ *  CHANGELOG
+ * ════════════════════════════════════════════════════════════════════
+ *
+ *  v0.3.0 — Captura completa de campos de formulario
+ *    + Extracción de lead_name, lead_email, lead_phone por cada plugin
+ *    + raw_fields: todos los campos sin filtrar (JSONB en la plataforma)
+ *    + Soporte mejorado para Elementor Pro (mapeo por tipo de widget)
+ *    + Soporte mejorado para CF7, Gravity Forms, WPForms
+ *    + Panel de admin rediseñado con guía de configuración integrada
+ *    + Detección automática de plugins de formulario instalados
+ *    + Botón "Enviar lead de prueba" para verificar la integración
+ *    + Documentación inline completa
+ *
+ *  v0.2.0 — S2S + propagación UTM
+ *    + Endpoint S2S autenticado con HMAC-SHA256
+ *    + Propagación automática de UTMs a links de checkout
+ *    + MutationObserver para links dinámicos (Elementor, popups)
+ *    + Panel de admin con modo simple / avanzado
+ *
+ *  v0.1.0 — Versión inicial
+ *    + Inyección del pixel JS report-utm-pixel.js
+ *    + Hooks básicos para CF7, GF, WPForms, Elementor Pro
+ *    + Panel de configuración básico
  */
 
 if ( ! defined( 'ABSPATH' ) ) exit;
 
-define( 'RUTM_VERSION',    '1.0.0' );
+define( 'RUTM_VERSION',    '0.3.0' );
 define( 'RUTM_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'RUTM_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
+define( 'RUTM_PLATFORM',   'https://reportes.adshouse.cloud/' );
 
 require_once RUTM_PLUGIN_DIR . 'includes/class-s2s-sender.php';
 require_once RUTM_PLUGIN_DIR . 'includes/class-forms.php';
 require_once RUTM_PLUGIN_DIR . 'admin/settings-page.php';
 
 /**
- * Punto de entrada principal.
+ * Clase principal del plugin.
+ *
+ * Responsabilidades:
+ *   - Inyectar el pixel JS en el frontend via wp_enqueue_scripts
+ *   - Registrar el menú de ajustes en WP Admin
+ *   - Inicializar ReportUTM_Forms si el plugin está activo y configurado
  */
 class ReportUTM_Plugin {
 
@@ -30,6 +148,7 @@ class ReportUTM_Plugin {
         add_action( 'wp_enqueue_scripts', [ $this, 'enqueue_pixel' ] );
         add_action( 'admin_menu',          [ $this, 'register_admin_menu' ] );
         add_action( 'admin_init',          [ $this, 'register_settings' ] );
+        add_action( 'wp_ajax_rutm_test_lead', [ $this, 'ajax_test_lead' ] );
 
         $options = get_option( 'rutm_options', [] );
         if ( ! empty( $options['enabled'] ) && ! empty( $options['cliente_slug'] ) ) {
@@ -37,31 +156,40 @@ class ReportUTM_Plugin {
         }
     }
 
-    /** Inyecta el pixel JS en el frontend */
-    public function enqueue_pixel() {
+    /**
+     * Inyecta window.RUTM_CONFIG y el pixel JS en el <head> del sitio.
+     *
+     * El objeto RUTM_CONFIG le indica al pixel JS:
+     *   cliente_slug    — a qué cuenta de la plataforma enviar los eventos
+     *   propagate_utms  — si debe decorar links de checkout con UTMs
+     *   checkout_domains — lista de dominios a los que propagar UTMs
+     *                      (null = usar la lista por defecto de la plataforma)
+     */
+    public function enqueue_pixel(): void {
         $options = get_option( 'rutm_options', [] );
         if ( empty( $options['enabled'] ) || empty( $options['cliente_slug'] ) ) return;
 
-        $base_url = ! empty( $options['base_url'] )
+        $base_url  = ! empty( $options['base_url'] )
             ? trailingslashit( esc_url_raw( $options['base_url'] ) )
-            : 'https://reportes.adshouse.cloud/';
-
+            : RUTM_PLATFORM;
         $pixel_url = $base_url . 'report-utm-pixel.js';
         $slug      = sanitize_text_field( $options['cliente_slug'] );
 
-        // Inyecta config antes del pixel
+        $checkout_domains = null;
+        if ( ! empty( $options['checkout_domains'] ) ) {
+            $lines = explode( "\n", $options['checkout_domains'] );
+            $checkout_domains = array_values(
+                array_filter( array_map( 'trim', $lines ) )
+            );
+        }
+
         wp_add_inline_script(
             'report-utm-pixel',
-            sprintf(
-                'window.RUTM_CONFIG = %s;',
-                wp_json_encode( [
-                    'cliente_slug'    => $slug,
-                    'propagate_utms'  => ! empty( $options['propagate_utms'] ),
-                    'checkout_domains'=> ! empty( $options['checkout_domains'] )
-                        ? array_filter( array_map( 'trim', explode( "\n", $options['checkout_domains'] ) ) )
-                        : null,
-                ] )
-            ),
+            sprintf( 'window.RUTM_CONFIG = %s;', wp_json_encode( [
+                'cliente_slug'     => $slug,
+                'propagate_utms'   => ! empty( $options['propagate_utms'] ),
+                'checkout_domains' => $checkout_domains,
+            ] ) ),
             'before'
         );
 
@@ -74,9 +202,10 @@ class ReportUTM_Plugin {
         );
     }
 
-    public function register_admin_menu() {
+    /** Registra el submenú en Ajustes → Report UTM */
+    public function register_admin_menu(): void {
         add_options_page(
-            'Report UTM',
+            'Report UTM — Ad House',
             'Report UTM',
             'manage_options',
             'report-utm',
@@ -84,10 +213,48 @@ class ReportUTM_Plugin {
         );
     }
 
-    public function register_settings() {
+    /** Registra la opción con sanitización en la API de Settings de WP */
+    public function register_settings(): void {
         register_setting( 'rutm_options_group', 'rutm_options', [
             'sanitize_callback' => 'rutm_sanitize_options',
         ] );
+    }
+
+    /**
+     * Handler AJAX para el botón "Enviar lead de prueba" en el panel.
+     * Envía un lead ficticio al endpoint S2S para verificar que la firma
+     * y la configuración son correctas.
+     */
+    public function ajax_test_lead(): void {
+        check_ajax_referer( 'rutm_test_lead', 'nonce' );
+        if ( ! current_user_can( 'manage_options' ) ) wp_die( 'Forbidden', 403 );
+
+        $options = get_option( 'rutm_options', [] );
+        if ( empty( $options['cliente_slug'] ) || empty( $options['s2s_token'] ) ) {
+            wp_send_json_error( 'Configurá el Slug y el S2S Token primero.' );
+        }
+
+        $base_url = ! empty( $options['base_url'] ) ? $options['base_url'] : RUTM_PLATFORM;
+        $sender   = new ReportUTM_S2S_Sender(
+            $base_url,
+            $options['cliente_slug'],
+            $options['s2s_token']
+        );
+
+        $ok = $sender->send( 'lead', [
+            'form_name'   => 'Test desde WP Admin',
+            'form_plugin' => 's2s',
+            'lead_name'   => 'Test Lead',
+            'lead_email'  => 'test@adshouse.cloud',
+            'lead_phone'  => '+54 11 0000-0000',
+            'raw_fields'  => [ 'origen' => 'wp_admin_test', 'version' => RUTM_VERSION ],
+        ] );
+
+        if ( $ok ) {
+            wp_send_json_success( 'Lead de prueba enviado. Verificá en reportes.adshouse.cloud → Leads.' );
+        } else {
+            wp_send_json_error( 'No se pudo enviar. Revisá el S2S Token y la URL base.' );
+        }
     }
 }
 

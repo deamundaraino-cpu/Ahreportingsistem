@@ -5,6 +5,7 @@ import { GoogleSheetsLeadsCard } from "../components/GoogleSheetsLeadsCard"
 import { ConversionesOfflineCard } from "../components/ConversionesOfflineCard"
 import { CopyLinkButton } from "../components/CopyLinkButton"
 import { PublicLinkButton } from "../components/PublicLinkButton"
+import { BitacorasButton } from "../components/BitacorasButton"
 import { format, subDays } from "date-fns"
 import { createClient, createAdminClient } from "@/utils/supabase/server"
 import { redirect } from "next/navigation"
@@ -53,6 +54,7 @@ export default async function DashboardPage(props: {
 
     return (
         <div className="space-y-6">
+            <BitacorasButton clientId={clientId} userRole={userRole} />
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <div>
                     <div className="flex items-center gap-3 mb-1">

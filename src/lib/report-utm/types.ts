@@ -62,6 +62,39 @@ export type ReportUtmSalesEvent = {
     created_at: string
 }
 
+export type ReportUtmLeadEvent = {
+    id: string
+    cliente_id: string
+    form_name: string | null
+    form_id: string | null
+    form_plugin: string | null
+    lead_name: string | null
+    lead_email: string | null
+    lead_phone: string | null
+    utm_source: string | null
+    utm_medium: string | null
+    utm_campaign: string | null
+    utm_content: string | null
+    utm_term: string | null
+    utm_id: string | null
+    click_id: string | null
+    visitor_id: string | null
+    session_id: string | null
+    page_url: string | null
+    referrer: string | null
+    ip_address: string | null
+    ip_country: string | null
+    user_agent: string | null
+    first_touch: Record<string, unknown> | null
+    last_touch: Record<string, unknown> | null
+    attribution_method: string | null
+    attribution_resolved_at: string | null
+    custom_data: Record<string, unknown> | null
+    raw_fields: Record<string, unknown> | null
+    source: string
+    created_at: string
+}
+
 export type ReportUtmTrackingLink = {
     id: string
     cliente_id: string

@@ -1,7 +1,7 @@
 import Link from 'next/link'
 import { reportUtmClient } from '@/lib/report-utm/client'
 import type { ReportUtmCliente } from '@/lib/report-utm/types'
-import { createClienteAction } from './_actions'
+import { createClienteAction, syncPlatformClientesAction } from './_actions'
 import { Plus, ExternalLink } from 'lucide-react'
 import { StatusBadge } from '@/components/report-utm/StatusBadge'
 import { formatDate } from '@/lib/report-utm/formatters'
@@ -9,6 +9,8 @@ import { formatDate } from '@/lib/report-utm/formatters'
 export const dynamic = 'force-dynamic'
 
 export default async function ClientesPage() {
+    await syncPlatformClientesAction()
+
     const supabase = await reportUtmClient()
     const { data: clientes, error } = await supabase
         .from('clientes')
@@ -26,12 +28,12 @@ export default async function ClientesPage() {
                         Clientes
                     </h1>
                     <p className="mt-1 text-sm text-muted-foreground">
-                        Clientes propios de este módulo. No se mezclan con los clientes del reporting principal.
+                        Clientes de la plataforma y clientes manuales para seguimiento UTM.
                     </p>
                 </div>
             </div>
 
-            {/* Form alta */}
+            {/* Form alta cliente manual */}
             <form
                 action={async (formData) => {
                     'use server'
@@ -42,8 +44,11 @@ export default async function ClientesPage() {
                 <div className="flex items-center gap-2">
                     <Plus className="h-4 w-4 text-emerald-500" />
                     <h2 className="text-sm font-semibold text-foreground">
-                        Nuevo cliente
+                        Nuevo cliente manual
                     </h2>
+                    <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-muted text-muted-foreground">
+                        Solo seguimiento UTM · sin perfil en la plataforma principal
+                    </span>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
@@ -59,17 +64,24 @@ export default async function ClientesPage() {
                         className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-white shadow-sm nav-active-emerald transition-colors"
                     >
                         <Plus className="h-4 w-4" />
-                        Crear cliente
+                        Crear cliente manual
                     </button>
                 </div>
             </form>
 
             {/* Listado */}
             <div className="rounded-2xl border border-border bg-card overflow-hidden">
-                <div className="px-6 py-4 border-b border-border">
+                <div className="px-6 py-4 border-b border-border flex items-center gap-3">
                     <h2 className="text-sm font-semibold text-foreground">
                         Listado ({clientes?.length ?? 0})
                     </h2>
+                    {clientes && clientes.length > 0 && (
+                        <span className="text-[11px] text-muted-foreground">
+                            {(clientes as ReportUtmCliente[]).filter(c => c.public_cliente_id).length} de plataforma
+                            {' · '}
+                            {(clientes as ReportUtmCliente[]).filter(c => !c.public_cliente_id).length} manuales
+                        </span>
+                    )}
                 </div>
 
                 {error && (
@@ -83,6 +95,7 @@ export default async function ClientesPage() {
                         <thead className="bg-muted/60">
                             <tr className="text-left text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                                 <th className="px-6 py-3">Cliente</th>
+                                <th className="px-6 py-3">Origen</th>
                                 <th className="px-6 py-3">Slug</th>
                                 <th className="px-6 py-3">Status</th>
                                 <th className="px-6 py-3">Creado</th>
@@ -99,6 +112,9 @@ export default async function ClientesPage() {
                                                 {c.descripcion}
                                             </p>
                                         )}
+                                    </td>
+                                    <td className="px-6 py-3">
+                                        <OrigenBadge isPlataforma={!!c.public_cliente_id} />
                                     </td>
                                     <td className="px-6 py-3 text-xs font-mono text-muted-foreground">
                                         {c.slug}
@@ -128,6 +144,21 @@ export default async function ClientesPage() {
                 )}
             </div>
         </div>
+    )
+}
+
+function OrigenBadge({ isPlataforma }: { isPlataforma: boolean }) {
+    if (isPlataforma) {
+        return (
+            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-400">
+                Plataforma
+            </span>
+        )
+    }
+    return (
+        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-muted text-muted-foreground">
+            Manual
+        </span>
     )
 }
 
@@ -165,4 +196,3 @@ function Field({
         </label>
     )
 }
-
