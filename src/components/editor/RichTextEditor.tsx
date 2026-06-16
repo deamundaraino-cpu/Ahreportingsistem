@@ -72,7 +72,7 @@ export function RichTextEditor({ content, onChange, placeholder, clientId }: Ric
     // Sync content when switching between entries
     useEffect(() => {
         if (editor && content !== editor.getHTML()) {
-            editor.commands.setContent(content, false)
+            editor.commands.setContent(content, { emitUpdate: false })
         }
     }, [content, editor])
 
