@@ -555,6 +555,14 @@ function rutm_render_settings_page(): void {
         var testBtn    = document.getElementById('rutm-test-btn');
         var testResult = document.getElementById('rutm-test-result');
         if (testBtn && testResult) {
+            // Muestra el resultado garantizando visibilidad (el estilo inline
+            // gana sobre la clase CSS, así que seteamos display explícitamente).
+            var showResult = function (text, ok) {
+                testResult.textContent   = text;
+                testResult.className      = ok ? 'ok' : 'fail';
+                testResult.style.display  = 'inline-block';
+            };
+
             testBtn.addEventListener('click', function () {
                 testBtn.disabled    = true;
                 testBtn.textContent = 'Enviando…';
@@ -569,14 +577,21 @@ function rutm_render_settings_page(): void {
                         nonce:  '<?php echo esc_js( wp_create_nonce( 'rutm_test_lead' ) ); ?>'
                     })
                 })
-                .then(function (r) { return r.json(); })
-                .then(function (data) {
-                    testResult.textContent = data.data || (data.success ? '¡Enviado!' : 'Error desconocido');
-                    testResult.className   = data.success ? 'ok' : 'fail';
+                .then(function (r) { return r.text(); })
+                .then(function (raw) {
+                    var data;
+                    try { data = JSON.parse(raw); }
+                    catch (e) {
+                        showResult('Respuesta inesperada del servidor: ' + raw.slice(0, 120), false);
+                        return;
+                    }
+                    showResult(
+                        data.data || (data.success ? '¡Enviado!' : 'Error desconocido'),
+                        !!data.success
+                    );
                 })
                 .catch(function () {
-                    testResult.textContent = 'Error de red. Intentá de nuevo.';
-                    testResult.className   = 'fail';
+                    showResult('Error de red. Intentá de nuevo.', false);
                 })
                 .finally(function () {
                     testBtn.disabled    = false;

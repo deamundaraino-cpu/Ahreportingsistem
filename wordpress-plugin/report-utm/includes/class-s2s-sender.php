@@ -89,15 +89,60 @@ class ReportUTM_S2S_Sender {
     }
 
     /**
-     * Envía un evento al endpoint S2S.
+     * Envía un evento al endpoint S2S (fire-and-forget, no bloqueante).
+     *
+     * Este es el método que usan los hooks de formulario: no espera la
+     * respuesta del servidor para no retrasar la carga de la página.
      *
      * @param string $event_type  'lead' | 'pageview' | 'custom'
      * @param array  $extra       Campos específicos del evento:
      *                            Para lead: form_name, form_plugin, form_id,
      *                                       lead_name, lead_email, lead_phone, raw_fields
-     * @return bool true si wp_remote_post no devolvió WP_Error
+     * @return bool true si wp_remote_post no devolvió WP_Error al despachar
      */
     public function send( string $event_type, array $extra = [] ): bool {
+        $response = $this->dispatch( $event_type, $extra, false );
+        return ! is_wp_error( $response );
+    }
+
+    /**
+     * Envía un evento de forma BLOQUEANTE y devuelve el resultado real.
+     *
+     * Usado por el botón "Enviar lead de prueba" del panel: a diferencia de
+     * send(), espera la respuesta HTTP y reporta el código y el cuerpo, para
+     * poder diagnosticar errores (404 slug inválido, 401 firma, 403 inactivo).
+     *
+     * @return array { ok: bool, code: int, message: string }
+     */
+    public function send_blocking( string $event_type, array $extra = [] ): array {
+        $response = $this->dispatch( $event_type, $extra, true );
+
+        if ( is_wp_error( $response ) ) {
+            return [
+                'ok'      => false,
+                'code'    => 0,
+                'message' => $response->get_error_message(),
+            ];
+        }
+
+        $code = (int) wp_remote_retrieve_response_code( $response );
+        $body = wp_remote_retrieve_body( $response );
+
+        return [
+            'ok'      => $code >= 200 && $code < 300,
+            'code'    => $code,
+            'message' => $body,
+        ];
+    }
+
+    /**
+     * Construye el body firmado y ejecuta el POST.
+     *
+     * @param bool $blocking true para esperar la respuesta (test); false
+     *                       para fire-and-forget (envío normal de leads).
+     * @return array|WP_Error Resultado crudo de wp_remote_post
+     */
+    private function dispatch( string $event_type, array $extra, bool $blocking ) {
         $body = array_merge( [
             'cliente_slug' => $this->cliente_slug,
             'event_type'   => $event_type,
@@ -115,11 +160,11 @@ class ReportUTM_S2S_Sender {
         $json = wp_json_encode( $body );
         $sig  = hash_hmac( 'sha256', $json, $this->s2s_token );
 
-        $response = wp_remote_post(
+        return wp_remote_post(
             $this->base_url . 'api/report-utm/pixel/s2s',
             [
-                'timeout'     => 5,
-                'blocking'    => false,  // fire-and-forget: no bloquea la carga de la página
+                'timeout'     => $blocking ? 15 : 5,
+                'blocking'    => $blocking,
                 'headers'     => [
                     'Content-Type'         => 'application/json',
                     'X-Rutm-S2S-Signature' => $sig,
@@ -128,8 +173,6 @@ class ReportUTM_S2S_Sender {
                 'data_format' => 'body',
             ]
         );
-
-        return ! is_wp_error( $response );
     }
 
     /**

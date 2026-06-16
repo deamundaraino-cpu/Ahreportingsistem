@@ -3,7 +3,7 @@ Contributors: adshouse, robinsonzapata
 Requires at least: 5.8
 Tested up to: 6.7
 Requires PHP: 7.4
-Stable tag: 0.3.0
+Stable tag: 0.3.1
 License: Proprietary — Ad House Internal Use
 
 Tracking UTM server-side para WordPress. Capta leads de formularios con atribución multi-touch, propaga UTMs a checkout y registra cada conversión con primer y último toque.
@@ -117,6 +117,13 @@ En reportes.adshouse.cloud → sección "Leads". Podés filtrar por cliente, plu
 
 == Changelog ==
 
+= 0.3.1 =
+* Fix: el ZIP ahora se empaqueta con separadores '/' (antes usaba '\', lo que rompía la instalación en servidores Linux con un error fatal en los require_once)
+* Fix: polyfills para str_contains/str_starts_with para compatibilidad real con PHP 7.4
+* Fix: carga defensiva de archivos — si falta un archivo, muestra un aviso en el admin en vez de un error fatal
+* Fix: "Enviar lead de prueba" ahora es bloqueante y reporta el código HTTP real (200/401/403/404) en vez de un éxito falso
+* Fix: el mensaje del botón de prueba ahora siempre se muestra (corregido un conflicto de CSS)
+
 = 0.3.0 =
 * Extracción completa de campos: lead_name, lead_email, lead_phone por tipo de campo
 * raw_fields: todos los campos del formulario sin filtrar (JSONB en la plataforma)
@@ -143,6 +150,9 @@ En reportes.adshouse.cloud → sección "Leads". Podés filtrar por cliente, plu
 * Panel de configuración básico
 
 == Upgrade Notice ==
+
+= 0.3.1 =
+Corrige el error fatal de instalación causado por el empaquetado del ZIP. Si la versión anterior no se pudo activar, borrala y subí este ZIP nuevo.
 
 = 0.3.0 =
 Esta versión requiere que ejecutes la migración SQL 030_report_utm_lead_events.sql en Supabase Studio para crear la tabla lead_events. Sin esta migración, los leads se seguirán registrando en pixel_events pero no tendrán datos de contacto estructurados.

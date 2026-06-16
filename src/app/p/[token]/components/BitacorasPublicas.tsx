@@ -12,7 +12,10 @@ export function BitacorasPublicas({ entries }: { entries: Bitacora[] }) {
                 {entries.map((entry) => (
                     <div key={entry.id} className="border border-border rounded-lg p-4 bg-card">
                         <p className="font-medium text-sm">{entry.titulo}</p>
-                        <p className="text-sm text-muted-foreground mt-1 whitespace-pre-wrap">{entry.contenido}</p>
+                        <div
+                            className="bitacora-content text-sm text-muted-foreground mt-1"
+                            dangerouslySetInnerHTML={{ __html: entry.contenido }}
+                        />
                         <div className="flex items-center gap-2 mt-3 text-xs text-muted-foreground/60">
                             {entry.author_name && <span>{entry.author_name}</span>}
                             {entry.author_name && <span>·</span>}

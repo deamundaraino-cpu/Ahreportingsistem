@@ -3,7 +3,7 @@
  * Plugin Name:       Report UTM — Ad House
  * Plugin URI:        https://reportes.adshouse.cloud/
  * Description:       Tracking UTM server-side para WordPress. Capta leads de formularios con datos de contacto completos, propaga UTMs a links de checkout y registra la atribución multi-touch de cada visitante.
- * Version:           0.3.0
+ * Version:           0.3.1
  * Requires at least: 5.8
  * Requires PHP:      7.4
  * Author:            Robinson Zapata / Ad House
@@ -101,6 +101,15 @@
  *  CHANGELOG
  * ════════════════════════════════════════════════════════════════════
  *
+ *  v0.3.1 — Correcciones de empaquetado y test
+ *    + Fix: ZIP empaquetado con separadores '/' (antes '\' rompía la
+ *           instalación en Linux con error fatal en los require_once)
+ *    + Fix: polyfills para str_contains/str_starts_with (PHP 7.4)
+ *    + Fix: carga defensiva de archivos (aviso en admin en vez de fatal)
+ *    + Fix: "Enviar lead de prueba" ahora es bloqueante y reporta el
+ *           código HTTP real (404/401/403) en vez de un éxito falso
+ *    + Fix: el mensaje del test ahora siempre se muestra (bug de CSS)
+ *
  *  v0.3.0 — Captura completa de campos de formulario
  *    + Extracción de lead_name, lead_email, lead_phone por cada plugin
  *    + raw_fields: todos los campos sin filtrar (JSONB en la plataforma)
@@ -125,14 +134,59 @@
 
 if ( ! defined( 'ABSPATH' ) ) exit;
 
-define( 'RUTM_VERSION',    '0.3.0' );
+define( 'RUTM_VERSION',    '0.3.1' );
 define( 'RUTM_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'RUTM_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 define( 'RUTM_PLATFORM',   'https://reportes.adshouse.cloud/' );
 
-require_once RUTM_PLUGIN_DIR . 'includes/class-s2s-sender.php';
-require_once RUTM_PLUGIN_DIR . 'includes/class-forms.php';
-require_once RUTM_PLUGIN_DIR . 'admin/settings-page.php';
+/**
+ * Polyfills para funciones de PHP 8.0.
+ *
+ * El plugin soporta PHP 7.4+. WordPress core polyfilla estas funciones
+ * desde la versión 5.9, pero las definimos aquí también (guardadas con
+ * function_exists) para garantizar compatibilidad en PHP 7.4 con
+ * WordPress 5.8, donde aún no existen.
+ */
+if ( ! function_exists( 'str_contains' ) ) {
+    function str_contains( $haystack, $needle ): bool {
+        return $needle === '' || strpos( $haystack, $needle ) !== false;
+    }
+}
+if ( ! function_exists( 'str_starts_with' ) ) {
+    function str_starts_with( $haystack, $needle ): bool {
+        return $needle === '' || strpos( $haystack, $needle ) === 0;
+    }
+}
+if ( ! function_exists( 'str_ends_with' ) ) {
+    function str_ends_with( $haystack, $needle ): bool {
+        return $needle === '' || substr( $haystack, -strlen( $needle ) ) === $needle;
+    }
+}
+
+/**
+ * Carga los archivos del plugin de forma defensiva.
+ *
+ * Si algún archivo no existe (por ejemplo, un ZIP mal empaquetado donde las
+ * carpetas no se crearon correctamente), abortamos con un aviso en el admin
+ * en lugar de provocar un error fatal con un require_once roto.
+ */
+$rutm_required_files = [
+    'includes/class-s2s-sender.php',
+    'includes/class-forms.php',
+    'admin/settings-page.php',
+];
+foreach ( $rutm_required_files as $rutm_file ) {
+    $rutm_path = RUTM_PLUGIN_DIR . $rutm_file;
+    if ( ! file_exists( $rutm_path ) ) {
+        add_action( 'admin_notices', function () use ( $rutm_file ) {
+            echo '<div class="notice notice-error"><p><strong>Report UTM:</strong> falta el archivo <code>'
+                . esc_html( $rutm_file )
+                . '</code>. El paquete del plugin está incompleto o se descomprimió mal. Volvé a subir el ZIP.</p></div>';
+        } );
+        return; // Aborta la carga del plugin sin matar el sitio
+    }
+    require_once $rutm_path;
+}
 
 /**
  * Clase principal del plugin.
@@ -241,7 +295,7 @@ class ReportUTM_Plugin {
             $options['s2s_token']
         );
 
-        $ok = $sender->send( 'lead', [
+        $result = $sender->send_blocking( 'lead', [
             'form_name'   => 'Test desde WP Admin',
             'form_plugin' => 's2s',
             'lead_name'   => 'Test Lead',
@@ -250,11 +304,33 @@ class ReportUTM_Plugin {
             'raw_fields'  => [ 'origen' => 'wp_admin_test', 'version' => RUTM_VERSION ],
         ] );
 
-        if ( $ok ) {
-            wp_send_json_success( 'Lead de prueba enviado. Verificá en reportes.adshouse.cloud → Leads.' );
-        } else {
-            wp_send_json_error( 'No se pudo enviar. Revisá el S2S Token y la URL base.' );
+        if ( $result['ok'] ) {
+            wp_send_json_success(
+                'Lead de prueba enviado (HTTP ' . $result['code'] . '). '
+                . 'Verificá en reportes.adshouse.cloud → Leads.'
+            );
         }
+
+        // Construir un mensaje de error diagnóstico a partir de la respuesta
+        $detail = '';
+        $decoded = json_decode( $result['message'], true );
+        if ( is_array( $decoded ) && ! empty( $decoded['error'] ) ) {
+            $detail = $decoded['error'];
+        }
+
+        if ( $result['code'] === 0 ) {
+            $msg = 'No se pudo contactar el servidor. Revisá la URL base y que el sitio tenga salida a internet.';
+        } elseif ( $result['code'] === 404 ) {
+            $msg = 'HTTP 404 — El slug "' . esc_html( $options['cliente_slug'] ) . '" no existe en la plataforma. Revisá el Slug de cliente.';
+        } elseif ( $result['code'] === 401 ) {
+            $msg = 'HTTP 401 — Firma inválida. El S2S Token no coincide con el de la plataforma. Rotalo y volvé a copiarlo.';
+        } elseif ( $result['code'] === 403 ) {
+            $msg = 'HTTP 403 — La integración S2S está inactiva o sin token en la plataforma. Activala en reportes.adshouse.cloud.';
+        } else {
+            $msg = 'HTTP ' . $result['code'] . ( $detail ? ' — ' . $detail : ' — Error al enviar.' );
+        }
+
+        wp_send_json_error( $msg );
     }
 }
 
