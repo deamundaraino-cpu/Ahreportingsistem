@@ -61,7 +61,7 @@ export async function GET(req: NextRequest) {
     let query = supabase
         .from('lead_events')
         .select(
-            'created_at, lead_name, lead_email, lead_phone, form_name, form_plugin, utm_source, utm_medium, utm_campaign, utm_content, utm_term, utm_id, click_id, attribution_method, ip_country, page_url',
+            'created_at, lead_name, lead_email, lead_phone, form_name, form_plugin, utm_source, utm_medium, utm_campaign, utm_content, utm_term, utm_id, click_id, attribution_method, ip_country, page_url, raw_fields',
         )
 
     const clienteId = sp.get('clienteId')
@@ -90,15 +90,43 @@ export async function GET(req: NextRequest) {
 
     const rows = (data ?? []) as Record<string, unknown>[]
 
-    const lines = [COLUMNS.map((c) => csvField(c.header)).join(',')]
+    // Descubre todas las claves de campos personalizados (raw_fields) presentes,
+    // en orden de aparición, para darle a cada una su propia columna en el CSV.
+    const customKeys: string[] = []
+    const seen = new Set<string>()
     for (const row of rows) {
-        lines.push(
-            COLUMNS.map((c) => {
-                const raw = row[c.key]
-                const val = UTM_KEYS.has(c.key) ? dec(raw) : raw == null ? '' : String(raw)
-                return csvField(val)
-            }).join(','),
-        )
+        const rf = row.raw_fields
+        if (rf && typeof rf === 'object' && !Array.isArray(rf)) {
+            for (const k of Object.keys(rf as Record<string, unknown>)) {
+                if (!seen.has(k)) {
+                    seen.add(k)
+                    customKeys.push(k)
+                }
+            }
+        }
+    }
+
+    const toCell = (v: unknown): string => {
+        if (v == null) return ''
+        if (typeof v === 'object') return JSON.stringify(v)
+        return String(v)
+    }
+
+    // Cabecera: columnas fijas + una columna por cada campo personalizado.
+    const header = [
+        ...COLUMNS.map((c) => c.header),
+        ...customKeys.map((k) => `campo: ${k}`),
+    ]
+    const lines = [header.map(csvField).join(',')]
+
+    for (const row of rows) {
+        const rf = (row.raw_fields ?? {}) as Record<string, unknown>
+        const fixed = COLUMNS.map((c) => {
+            const raw = row[c.key]
+            return csvField(UTM_KEYS.has(c.key) ? dec(raw) : raw == null ? '' : String(raw))
+        })
+        const custom = customKeys.map((k) => csvField(toCell(rf[k])))
+        lines.push([...fixed, ...custom].join(','))
     }
 
     // BOM para que Excel reconozca UTF-8 (acentos, emojis en utm_content)

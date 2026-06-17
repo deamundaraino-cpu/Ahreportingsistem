@@ -43,6 +43,31 @@ function ToolbarButton({
     )
 }
 
+async function convertToWebP(file: File, maxPx = 1920, quality = 0.85): Promise<File> {
+    const bitmap = await createImageBitmap(file)
+    let { width, height } = bitmap
+    if (width > maxPx || height > maxPx) {
+        const ratio = Math.min(maxPx / width, maxPx / height)
+        width = Math.round(width * ratio)
+        height = Math.round(height * ratio)
+    }
+    const canvas = document.createElement('canvas')
+    canvas.width = width
+    canvas.height = height
+    canvas.getContext('2d')!.drawImage(bitmap, 0, 0, width, height)
+    bitmap.close()
+    return new Promise((resolve, reject) => {
+        canvas.toBlob(
+            (blob) => {
+                if (!blob) { reject(new Error('Conversión WebP fallida')); return }
+                resolve(new File([blob], file.name.replace(/\.[^.]+$/, '.webp'), { type: 'image/webp' }))
+            },
+            'image/webp',
+            quality
+        )
+    })
+}
+
 export function RichTextEditor({ content, onChange, placeholder, clientId }: RichTextEditorProps) {
     const [linkInput, setLinkInput] = useState<string | null>(null)
     const [imageUploading, setImageUploading] = useState(false)
@@ -92,11 +117,11 @@ export function RichTextEditor({ content, onChange, placeholder, clientId }: Ric
         setImageUploading(true)
         try {
             const supabase = createClient()
-            const ext = file.name.split('.').pop()
-            const path = `${clientId ?? 'general'}/${Date.now()}.${ext}`
+            const webpFile = await convertToWebP(file)
+            const path = `${clientId ?? 'general'}/${Date.now()}.webp`
             const { error } = await supabase.storage
                 .from('bitacoras-images')
-                .upload(path, file, { upsert: true })
+                .upload(path, webpFile, { contentType: 'image/webp', upsert: true })
             if (error) throw error
             const { data: { publicUrl } } = supabase.storage
                 .from('bitacoras-images')
