@@ -9,6 +9,26 @@ import {
     endOfMonth
 } from 'date-fns';
 
+// ────────────────────────────────────────────────────────────────
+// Zona horaria de la operación: Colombia = America/Bogota = UTC-5
+// fijo (Colombia NO usa horario de verano, así que el offset nunca
+// cambia). Estos helpers convierten "ahora" a la fecha de calendario
+// colombiana, para que los crons calculen el día correcto sin importar
+// a qué hora (o desde qué TZ de servidor) se disparen.
+// ────────────────────────────────────────────────────────────────
+export const COLOMBIA_UTC_OFFSET_MS = 5 * 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** Fecha de "hoy" en hora Colombia (yyyy-MM-dd). */
+export function colombiaToday(now: Date = new Date()): string {
+    return new Date(now.getTime() - COLOMBIA_UTC_OFFSET_MS).toISOString().slice(0, 10);
+}
+
+/** Fecha de "ayer" en hora Colombia (yyyy-MM-dd). */
+export function colombiaYesterday(now: Date = new Date()): string {
+    return new Date(now.getTime() - COLOMBIA_UTC_OFFSET_MS - DAY_MS).toISOString().slice(0, 10);
+}
+
 export function getMonthWeeks(year: number, month: number) {
     const date = new Date(year, month - 1, 1)
     const monthStart = startOfMonth(date)

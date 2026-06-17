@@ -1,9 +1,10 @@
 import { createClient } from '@supabase/supabase-js'
 import { NextResponse } from 'next/server'
-import { format, subDays, parseISO, isBefore, addDays, differenceInDays } from 'date-fns'
+import { format, parseISO, isBefore, addDays, differenceInDays } from 'date-fns'
 import { createClient as createSSRClient } from '@/utils/supabase/server'
 import { getAgencyAccessToken, hasAgencyGoogleConnection } from '@/lib/integrations/google-auth'
 import { notifyUsers } from '@/lib/notifications/notify'
+import { colombiaToday, colombiaYesterday } from '@/lib/date-utils'
 
 export const maxDuration = 300 // 5 minutos — necesario para sincronizar rangos amplios
 
@@ -33,7 +34,8 @@ export async function GET(request: Request) {
 
     const { searchParams } = new URL(request.url)
     const singleDate = searchParams.get('date')
-    const startDateStr = singleDate || searchParams.get('start') || format(subDays(new Date(), 1), 'yyyy-MM-dd')
+    // Por defecto sincroniza "ayer" en hora Colombia (UTC-5), no en UTC del servidor.
+    const startDateStr = singleDate || searchParams.get('start') || colombiaYesterday()
     const endDateStr = singleDate || searchParams.get('end') || startDateStr
     const specificClientId = searchParams.get('client_id')
 
@@ -262,7 +264,7 @@ export async function GET(request: Request) {
                     log(`[Hotmart Subs] ${cliente.nombre}: alcanzado el tope de ${MAX_PAGES} páginas — snapshot puede estar incompleto.`)
                 }
 
-                const capturedDate = format(new Date(), 'yyyy-MM-dd')
+                const capturedDate = colombiaToday()
                 await adminSupabase.from('hotmart_subscriptions_snapshot').upsert({
                     cliente_id: cliente.id,
                     captured_date: capturedDate,

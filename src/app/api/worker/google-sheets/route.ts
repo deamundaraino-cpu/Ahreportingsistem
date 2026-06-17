@@ -10,7 +10,7 @@ import type { GoogleSheetsConfig } from '@/lib/integrations/google-sheets'
 
 /**
  * Google Sheets worker - fetches leads, qualifies them, saves aggregates.
- * Triggered daily at 8 AM Colombia (UTC-5) via Vercel Cron or external cron.
+ * Triggered daily at 06:30 AM Colombia (UTC-5 → 11:30 UTC) via Vercel Cron or external cron.
  *
  * GET /api/worker/google-sheets
  * Authorization: Bearer {CRON_SECRET}

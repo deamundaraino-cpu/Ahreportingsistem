@@ -69,6 +69,40 @@ CREATE INDEX IF NOT EXISTS idx_rutm_lead_events_email
 -- RLS
 ALTER TABLE report_utm.lead_events ENABLE ROW LEVEL SECURITY;
 
+-- Helper de lectura: roles que pueden VER el módulo, incluye trafficker.
+-- (report_utm.is_admin() solo cubre admin/superadmin y se usa para escritura.)
+CREATE OR REPLACE FUNCTION report_utm.can_view()
+RETURNS boolean
+LANGUAGE sql
+STABLE SECURITY DEFINER
+AS $$
+    SELECT EXISTS (
+        SELECT 1 FROM public.user_profiles
+        WHERE id = auth.uid()
+          AND role IN ('superadmin', 'admin', 'trafficker')
+    );
+$$;
+
+-- Política de escritura/gestión: admin y superadmin (mismo patrón que el resto del esquema)
+DROP POLICY IF EXISTS "Admin manage rutm_leads" ON report_utm.lead_events;
+CREATE POLICY "Admin manage rutm_leads"
+    ON report_utm.lead_events FOR ALL
+    USING (report_utm.is_admin())
+    WITH CHECK (report_utm.is_admin());
+
+-- Política de lectura: superadmin, admin y trafficker
+DROP POLICY IF EXISTS "Viewers read rutm_leads" ON report_utm.lead_events;
+CREATE POLICY "Viewers read rutm_leads"
+    ON report_utm.lead_events FOR SELECT
+    USING (report_utm.can_view());
+
+-- La vista de Leads necesita leer nombres de clientes para el filtro y el mapeo.
+-- Se concede lectura de clientes al trafficker (admin/superadmin ya tienen ALL).
+DROP POLICY IF EXISTS "Viewers read rutm_clientes" ON report_utm.clientes;
+CREATE POLICY "Viewers read rutm_clientes"
+    ON report_utm.clientes FOR SELECT
+    USING (report_utm.can_view());
+
 COMMENT ON TABLE report_utm.lead_events IS 'Leads capturados desde formularios WordPress (Elementor Pro, CF7, GF, WPForms) vía endpoint S2S';
 COMMENT ON COLUMN report_utm.lead_events.raw_fields IS 'Todos los campos del formulario tal como los envió WordPress, sin filtrar';
 COMMENT ON COLUMN report_utm.lead_events.source IS '''s2s'' = desde PHP server; ''js'' = desde pixel browser';

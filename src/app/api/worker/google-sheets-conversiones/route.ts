@@ -10,7 +10,7 @@ import type { CustomColumnDef, ConversionRow } from '@/lib/integrations/google-s
 
 /**
  * Worker de conversiones offline — sincroniza Google Sheets → DB.
- * Corre diariamente a las 8:30 AM Colombia (UTC-5) vía Vercel Cron.
+ * Corre diariamente a las 07:00 AM Colombia (UTC-5 → 12:00 UTC) vía Vercel Cron.
  * Soporta múltiples sheets por cliente (config como array).
  *
  * GET /api/worker/google-sheets-conversiones

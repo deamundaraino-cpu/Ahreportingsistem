@@ -46,6 +46,31 @@ type S2SPayload = {
     raw_fields?: Record<string, unknown>
 }
 
+/**
+ * Extrae UTMs y click IDs de la query string de una URL.
+ *
+ * El plugin WordPress envía siempre `page_url` (el referer, que es la landing
+ * con sus UTMs), pero no manda los UTMs como campos separados. Esta función los
+ * recupera de la URL como fallback. URLSearchParams ya decodifica el percent-encoding.
+ */
+function parseUtmsFromUrl(url: string | null | undefined) {
+    if (!url) return {}
+    try {
+        const qs = new URL(url).searchParams
+        return {
+            utm_source: qs.get('utm_source'),
+            utm_medium: qs.get('utm_medium'),
+            utm_campaign: qs.get('utm_campaign'),
+            utm_content: qs.get('utm_content'),
+            utm_term: qs.get('utm_term'),
+            utm_id: qs.get('utm_id'),
+            click_id: qs.get('fbclid') ?? qs.get('gclid') ?? qs.get('ttclid') ?? null,
+        }
+    } catch {
+        return {}
+    }
+}
+
 export async function POST(req: NextRequest) {
     const rawBody = await req.text()
 
@@ -111,6 +136,19 @@ export async function POST(req: NextRequest) {
     const ipCountry = req.headers.get('x-vercel-ip-country') ?? null
     const userAgent = req.headers.get('user-agent') ?? null
 
+    // UTMs efectivos: lo que mande el body explícitamente tiene prioridad;
+    // si no, se recuperan de la query string de page_url (caso WordPress).
+    const urlUtms = parseUtmsFromUrl(body.page_url)
+    const utm = {
+        utm_source: body.utm_source ?? urlUtms.utm_source ?? null,
+        utm_medium: body.utm_medium ?? urlUtms.utm_medium ?? null,
+        utm_campaign: body.utm_campaign ?? urlUtms.utm_campaign ?? null,
+        utm_content: body.utm_content ?? urlUtms.utm_content ?? null,
+        utm_term: body.utm_term ?? urlUtms.utm_term ?? null,
+        utm_id: body.utm_id ?? urlUtms.utm_id ?? null,
+        click_id: body.click_id ?? urlUtms.click_id ?? null,
+    }
+
     // Normalizar event_type: 'lead' se almacena como 'custom' con event_name
     const storedEventType = eventType === 'lead' ? 'custom' : eventType
     const storedEventName = eventType === 'lead'
@@ -127,12 +165,12 @@ export async function POST(req: NextRequest) {
         page_url: body.page_url ?? null,
         page_title: body.page_title ?? null,
         referrer: body.referrer ?? null,
-        utm_source: body.utm_source ?? null,
-        utm_medium: body.utm_medium ?? null,
-        utm_campaign: body.utm_campaign ?? null,
-        utm_content: body.utm_content ?? null,
-        utm_term: body.utm_term ?? null,
-        click_id: body.click_id ?? null,
+        utm_source: utm.utm_source,
+        utm_medium: utm.utm_medium,
+        utm_campaign: utm.utm_campaign,
+        utm_content: utm.utm_content,
+        utm_term: utm.utm_term,
+        click_id: utm.click_id,
         user_agent: userAgent,
         ip_address: ip,
         ip_country: ipCountry,
@@ -157,13 +195,13 @@ export async function POST(req: NextRequest) {
                 lead_name: body.lead_name ?? null,
                 lead_email: body.lead_email ?? null,
                 lead_phone: body.lead_phone ?? null,
-                utm_source: body.utm_source ?? null,
-                utm_medium: body.utm_medium ?? null,
-                utm_campaign: body.utm_campaign ?? null,
-                utm_content: body.utm_content ?? null,
-                utm_term: body.utm_term ?? null,
-                utm_id: body.utm_id ?? null,
-                click_id: body.click_id ?? null,
+                utm_source: utm.utm_source,
+                utm_medium: utm.utm_medium,
+                utm_campaign: utm.utm_campaign,
+                utm_content: utm.utm_content,
+                utm_term: utm.utm_term,
+                utm_id: utm.utm_id,
+                click_id: utm.click_id,
                 visitor_id: body.visitor_id ?? null,
                 session_id: body.session_id ?? null,
                 page_url: body.page_url ?? null,
@@ -188,22 +226,31 @@ export async function POST(req: NextRequest) {
                 const attribution = await resolveAttribution(db, {
                     id: insertedLead.id,
                     cliente_id: cliente.id,
-                    click_id: body.click_id ?? null,
-                    utm_source: body.utm_source ?? null,
-                    utm_medium: body.utm_medium ?? null,
-                    utm_campaign: body.utm_campaign ?? null,
-                    utm_content: body.utm_content ?? null,
-                    utm_term: body.utm_term ?? null,
+                    click_id: utm.click_id,
+                    utm_source: utm.utm_source,
+                    utm_medium: utm.utm_medium,
+                    utm_campaign: utm.utm_campaign,
+                    utm_content: utm.utm_content,
+                    utm_term: utm.utm_term,
                     sale_timestamp: now,
                     received_at: now,
                 })
+
+                // El resolver solo marca 'click_id'/'visitor_cookie' si encontró
+                // historia de pixel. Si no hubo match pero el lead trae click_id o
+                // UTMs propios, reflejamos esa señal (igual criterio que el backfill).
+                let method = attribution.attribution_method
+                if (method === 'none' || method === 'utm_only') {
+                    if (utm.click_id) method = 'click_id'
+                    else if (utm.utm_source || utm.utm_campaign) method = 'utm_only'
+                }
 
                 await db
                     .from('lead_events')
                     .update({
                         first_touch: attribution.first_touch as unknown as Record<string, unknown>,
                         last_touch: attribution.last_touch as unknown as Record<string, unknown>,
-                        attribution_method: attribution.attribution_method,
+                        attribution_method: method,
                         attribution_resolved_at: now,
                         visitor_id: attribution.visitor_id ?? body.visitor_id ?? null,
                     })

@@ -8,6 +8,7 @@
 import { NextResponse } from 'next/server';
 import { createAdminClient } from '@/utils/supabase/server';
 import { sendWhatsAppNotification } from '@/lib/whatsapp/notify';
+import { colombiaYesterday } from '@/lib/date-utils';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -22,12 +23,6 @@ type DailyRow = {
   ventas_bump: number | null;
   ventas_upsell: number | null;
 };
-
-function yesterdayISO(): string {
-  // UTC-1 día. (Si se requiere TZ local, ajustar aquí.)
-  const d = new Date(Date.now() - 24 * 60 * 60 * 1000);
-  return d.toISOString().slice(0, 10);
-}
 
 function buildMessage(nombre: string, fecha: string, r: DailyRow): string {
   const spend = Number(r.meta_spend ?? 0);
@@ -54,7 +49,7 @@ export async function GET(request: Request) {
   }
 
   const supabase = await createAdminClient();
-  const fecha = yesterdayISO();
+  const fecha = colombiaYesterday(); // "ayer" en hora Colombia (UTC-5)
 
   const { data: rows, error } = await supabase
     .from('metricas_diarias')
