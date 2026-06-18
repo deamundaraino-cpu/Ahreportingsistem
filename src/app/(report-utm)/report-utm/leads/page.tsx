@@ -2,8 +2,8 @@ import Link from 'next/link'
 import { reportUtmClient } from '@/lib/report-utm/client'
 import type { ReportUtmLeadEvent } from '@/lib/report-utm/types'
 import { UserCheck, Filter, ChevronLeft, ChevronRight, Download, Megaphone, Film, Radio } from 'lucide-react'
-import { AttributionBadge } from '@/components/report-utm/AttributionBadge'
-import { formatDateTime } from '@/lib/report-utm/formatters'
+import { LeadsView } from '@/components/report-utm/LeadsView'
+import { PLUGIN_LABELS, dec } from '@/lib/report-utm/leads-display'
 
 export const dynamic = 'force-dynamic'
 
@@ -19,26 +19,6 @@ type SearchParams = {
     from?: string
     to?: string
     page?: string
-}
-
-const PLUGIN_LABELS: Record<string, string> = {
-    elementor: 'Elementor Pro',
-    cf7: 'Contact Form 7',
-    gravity_forms: 'Gravity Forms',
-    wpforms: 'WPForms',
-    s2s: 'S2S / Manual',
-    meta_lead_ads: 'Meta Lead Ads',
-}
-
-/** Decodifica percent-encoding solo si el valor todavía viene codificado. */
-function dec(v: string | null | undefined): string {
-    if (!v) return ''
-    if (!/%[0-9A-Fa-f]{2}/.test(v)) return v
-    try {
-        return decodeURIComponent(v.replace(/\+/g, ' '))
-    } catch {
-        return v
-    }
 }
 
 export default async function LeadsPage({
@@ -95,8 +75,8 @@ export default async function LeadsPage({
     const total = count ?? 0
     const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
 
-    const clienteMap = Object.fromEntries(
-        (clientes ?? []).map((c) => [c.id, c]),
+    const clienteMap: Record<string, string> = Object.fromEntries(
+        (clientes ?? []).map((c) => [c.id, c.nombre]),
     )
 
     const buildUrl = (params: Record<string, string | undefined>) => {
@@ -219,38 +199,11 @@ export default async function LeadsPage({
                 )}
             </form>
 
-            {/* Tabla */}
-            <div className="rounded-2xl border border-border bg-card overflow-hidden">
-                {(leads ?? []).length > 0 ? (
-                    <div className="overflow-x-auto">
-                        <table className="w-full">
-                            <thead className="bg-muted/60">
-                                <tr className="text-left text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                                    <th className="px-4 py-3">Fecha</th>
-                                    <th className="px-4 py-3">Lead</th>
-                                    <th className="px-4 py-3">Formulario</th>
-                                    <th className="px-4 py-3">Cliente</th>
-                                    <th className="px-4 py-3">UTM Source</th>
-                                    <th className="px-4 py-3">UTM Medium</th>
-                                    <th className="px-4 py-3">UTM Campaign</th>
-                                    <th className="px-4 py-3">UTM Content</th>
-                                    <th className="px-4 py-3">UTM Term</th>
-                                    <th className="px-4 py-3">UTM ID</th>
-                                    <th className="px-4 py-3">Atribución</th>
-                                </tr>
-                            </thead>
-                            <tbody className="divide-y divide-border">
-                                {(leads as ReportUtmLeadEvent[]).map((lead) => (
-                                    <LeadRow
-                                        key={lead.id}
-                                        lead={lead}
-                                        clienteNombre={clienteMap[lead.cliente_id]?.nombre ?? lead.cliente_id}
-                                    />
-                                ))}
-                            </tbody>
-                        </table>
-                    </div>
-                ) : (
+            {/* Lista de leads: tabla o tarjetas (selector del usuario) */}
+            {(leads ?? []).length > 0 ? (
+                <LeadsView leads={leads as ReportUtmLeadEvent[]} clienteMap={clienteMap} />
+            ) : (
+                <div className="rounded-2xl border border-border bg-card overflow-hidden">
                     <div className="px-6 py-16 text-center">
                         <UserCheck className="h-8 w-8 text-muted-foreground/40 mx-auto mb-3" />
                         <p className="text-sm font-medium text-foreground">Sin leads todavía</p>
@@ -260,8 +213,8 @@ export default async function LeadsPage({
                                 : 'Configurá el plugin WordPress con el S2S Token para capturar envíos de formularios.'}
                         </p>
                     </div>
-                )}
-            </div>
+                </div>
+            )}
 
             {/* Paginación */}
             {totalPages > 1 && (
@@ -381,102 +334,3 @@ function FilterInput({ name, label, defaultValue, placeholder, type = 'text', wi
     )
 }
 
-function LeadRow({ lead, clienteNombre }: { lead: ReportUtmLeadEvent; clienteNombre: string }) {
-    const hasRawFields = lead.raw_fields && Object.keys(lead.raw_fields).length > 0
-
-    return (
-        <>
-            <tr className="hover:bg-accent/50 group">
-                <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap align-top">
-                    {formatDateTime(lead.created_at)}
-                </td>
-                <td className="px-4 py-3 align-top">
-                    <div className="space-y-0.5">
-                        {lead.lead_name && <p className="text-xs font-medium text-foreground">{lead.lead_name}</p>}
-                        {lead.lead_email && <p className="text-[11px] text-muted-foreground font-mono">{lead.lead_email}</p>}
-                        {lead.lead_phone && <p className="text-[11px] text-muted-foreground">{lead.lead_phone}</p>}
-                        {!lead.lead_name && !lead.lead_email && !lead.lead_phone && (
-                            <p className="text-[11px] text-muted-foreground italic">Sin datos de contacto</p>
-                        )}
-                    </div>
-                </td>
-                <td className="px-4 py-3 align-top">
-                    {lead.form_name && <p className="text-xs font-medium text-foreground">{lead.form_name}</p>}
-                    {lead.form_plugin && (
-                        <p className="text-[10px] text-muted-foreground">
-                            {PLUGIN_LABELS[lead.form_plugin] ?? lead.form_plugin}
-                        </p>
-                    )}
-                </td>
-                <td className="px-4 py-3 text-xs text-muted-foreground align-top">{clienteNombre}</td>
-                <UtmCell value={lead.utm_source} accent />
-                <UtmCell value={lead.utm_medium} />
-                <UtmCell value={lead.utm_campaign} />
-                <UtmCell value={lead.utm_content} />
-                <UtmCell value={lead.utm_term} />
-                <UtmCell value={lead.utm_id} mono />
-                <td className="px-4 py-3 align-top">
-                    <AttributionBadge method={lead.attribution_method ?? 'none'} />
-                </td>
-            </tr>
-            {/* Detalle expandible: click_id, landing, país + campos del formulario */}
-            <tr className="bg-muted/30">
-                <td colSpan={11} className="px-4 py-2">
-                    <details className="text-[11px]">
-                        <summary className="cursor-pointer text-muted-foreground hover:text-foreground select-none">
-                            Ver detalle{hasRawFields ? ` · ${Object.keys(lead.raw_fields!).length} campos del formulario` : ''}
-                        </summary>
-                        <div className="mt-3 space-y-3">
-                            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
-                                <DetailItem label="Click ID" value={lead.click_id} mono />
-                                <DetailItem label="País" value={lead.ip_country} />
-                                <DetailItem label="Página de destino" value={lead.page_url} mono span />
-                            </div>
-                            {hasRawFields && (
-                                <div>
-                                    <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">
-                                        Campos del formulario
-                                    </p>
-                                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
-                                        {Object.entries(lead.raw_fields!).map(([key, val]) => (
-                                            <DetailItem key={key} label={key} value={String(val ?? '')} />
-                                        ))}
-                                    </div>
-                                </div>
-                            )}
-                        </div>
-                    </details>
-                </td>
-            </tr>
-        </>
-    )
-}
-
-/** Celda compacta para un UTM: decodifica, trunca y muestra el valor completo en tooltip. */
-function UtmCell({ value, accent, mono }: { value: string | null; accent?: boolean; mono?: boolean }) {
-    const v = dec(value)
-    if (!v) return <td className="px-4 py-3 text-xs text-muted-foreground align-top">—</td>
-    return (
-        <td className="px-4 py-3 align-top max-w-[180px]">
-            <span
-                className={`block text-xs truncate ${mono ? 'font-mono' : ''} ${
-                    accent ? 'text-emerald-600 dark:text-emerald-400 font-medium' : 'text-foreground'
-                }`}
-                title={v}
-            >
-                {v}
-            </span>
-        </td>
-    )
-}
-
-function DetailItem({ label, value, mono, span }: { label: string; value: string | null; mono?: boolean; span?: boolean }) {
-    return (
-        <div className={`bg-card rounded-lg border border-border px-2 py-1.5 ${span ? 'col-span-2 md:col-span-3 lg:col-span-4' : ''}`}>
-            <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide truncate">{label}</p>
-            <p className={`text-xs text-foreground ${span ? 'break-all' : 'truncate'} ${mono ? 'font-mono' : ''}`} title={value ?? ''}>
-                {value || '—'}
-            </p>
-        </div>
-    )
-}
