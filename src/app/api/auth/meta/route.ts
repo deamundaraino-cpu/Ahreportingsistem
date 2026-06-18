@@ -28,8 +28,13 @@ export async function GET(request: NextRequest) {
   authUrl.searchParams.set('redirect_uri', redirectUri)
   authUrl.searchParams.set('state', state)
   authUrl.searchParams.set('response_type', 'code')
-  // Permisos: insights (ads_read), listar ad accounts (business_management), lead forms (leads_retrieval)
-  authUrl.searchParams.set('scope', 'ads_read,business_management,leads_retrieval')
+  // Permisos: insights (ads_read), listar ad accounts (business_management),
+  // leer leads de formularios (leads_retrieval), listar Páginas + sus tokens
+  // (pages_show_list) y suscribir Páginas al webhook leadgen (pages_read_engagement).
+  authUrl.searchParams.set(
+    'scope',
+    'ads_read,business_management,leads_retrieval,pages_show_list,pages_read_engagement',
+  )
 
   return NextResponse.redirect(authUrl.toString())
 }

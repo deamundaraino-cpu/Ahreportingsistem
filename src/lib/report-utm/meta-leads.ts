@@ -46,10 +46,6 @@ type ReportUtmDb = ReturnType<SupabaseClient['schema']>
 type GraphRow = Record<string, unknown>
 type GraphResponse = { data?: GraphRow[]; paging?: { next?: string }; error?: { message?: string } }
 
-function normalizeActId(rawAccountId: string): string {
-    return rawAccountId.startsWith('act_') ? rawAccountId : `act_${rawAccountId}`
-}
-
 /**
  * Resuelve las cuentas + tokens de Meta de un cliente del módulo report_utm.
  * Misma lógica multi-cuenta / legacy que el worker (`fetchMeta`).
@@ -112,11 +108,14 @@ async function fetchAllPages(firstUrl: string): Promise<GraphRow[]> {
     return out
 }
 
-/** Lista TODOS los formularios de leads de una cuenta publicitaria. */
-export async function listLeadForms(account: MetaAccount): Promise<MetaLeadForm[]> {
-    const actId = normalizeActId(account.account_id)
-    const url = new URL(`${GRAPH}/${actId}/leadgen_forms`)
-    url.searchParams.append('access_token', account.token)
+/**
+ * Lista los formularios de leads de una Página.
+ * `leadgen_forms` es un edge de la **Página** (no del ad account), por eso se
+ * consulta con el page_id + page token.
+ */
+export async function listLeadForms(page: MetaPage): Promise<MetaLeadForm[]> {
+    const url = new URL(`${GRAPH}/${page.page_id}/leadgen_forms`)
+    url.searchParams.append('access_token', page.page_token)
     url.searchParams.append('fields', 'id,name')
     url.searchParams.append('limit', '200')
     const rows = await fetchAllPages(url.toString())
@@ -151,14 +150,15 @@ export async function fetchFormLeads(
 export type MetaPage = { page_id: string; page_token: string; name?: string }
 
 /**
- * Descubre las Páginas de Facebook del cliente (vía el token de usuario de cada
- * cuenta) y las suscribe al campo `leadgen` de la app, para recibir el webhook
- * en tiempo real. Devuelve las páginas con su page token (para leer el lead).
+ * Descubre las Páginas de Facebook accesibles con los tokens del cliente
+ * (vía `/me/accounts`), con su page token. El token de la Página es el que
+ * permite listar formularios y leer leads.
  *
- * Best-effort: si el token no tiene permiso de Páginas, devuelve lista vacía y
- * el error; el polling sigue cubriendo el caso.
+ * Si el token no tiene permiso de Páginas, devuelve lista vacía + un error
+ * explicativo; en ese caso el cliente debe reconectar Meta concediendo acceso
+ * a Páginas (pages_show_list / leads_retrieval a nivel Página).
  */
-export async function discoverAndSubscribePages(
+export async function getClientePages(
     supabase: SupabaseClient,
     clienteId: string,
 ): Promise<{ pages: MetaPage[]; error?: string }> {
@@ -189,6 +189,26 @@ export async function discoverAndSubscribePages(
     }
 
     const pages = Array.from(pagesMap.values())
+    if (pages.length === 0) {
+        return {
+            pages,
+            error: lastError ?? 'No se encontraron Páginas accesibles con el token de Meta. Reconectá Meta concediendo permiso de Páginas (pages_show_list / leads_retrieval).',
+        }
+    }
+    return { pages }
+}
+
+/**
+ * Descubre las Páginas del cliente y las suscribe al campo `leadgen` de la app
+ * (para el webhook en tiempo real). Best-effort.
+ */
+export async function discoverAndSubscribePages(
+    supabase: SupabaseClient,
+    clienteId: string,
+): Promise<{ pages: MetaPage[]; error?: string }> {
+    const { pages, error } = await getClientePages(supabase, clienteId)
+    if (pages.length === 0) return { pages, error }
+
     for (const page of pages) {
         try {
             await fetch(`${GRAPH}/${page.page_id}/subscribed_apps`, {
@@ -198,7 +218,6 @@ export async function discoverAndSubscribePages(
         } catch { /* no fatal — el polling cubre */ }
     }
 
-    if (pages.length === 0 && lastError) return { pages, error: lastError }
     return { pages }
 }
 
@@ -415,19 +434,20 @@ export async function syncMetaLeadsForCliente(
     let formCount = 0
 
     try {
-        const { accounts, error: accError } = await getMetaAccountsForCliente(supabase, clienteId)
-        if (accError) {
+        const { pages, error: pagesError } = await getClientePages(supabase, clienteId)
+        if (pages.length === 0) {
+            const msg = pagesError ?? 'Sin Páginas accesibles'
             await db.from('integrations')
-                .update({ status: 'error', last_error: accError, last_sync_at: new Date().toISOString() })
+                .update({ status: 'error', last_error: msg, last_sync_at: new Date().toISOString() })
                 .eq('id', integration.id)
-            return { imported, scanned, forms: 0, backfill: isBackfill, error: accError }
+            return { imported, scanned, forms: 0, backfill: isBackfill, error: msg }
         }
 
-        for (const account of accounts) {
-            const forms = await listLeadForms(account)
+        for (const page of pages) {
+            const forms = await listLeadForms(page)
             formCount += forms.length
             for (const form of forms) {
-                const leads = await fetchFormLeads(form.id, account.token, sinceUnix)
+                const leads = await fetchFormLeads(form.id, page.page_token, sinceUnix)
                 for (const lead of leads) {
                     scanned++
                     const { inserted } = await ingestMetaLead(db, clienteId, lead, form.name)
@@ -449,6 +469,7 @@ export async function syncMetaLeadsForCliente(
                     sync_cursor: maxSeen > 0 ? maxSeen : (cursor ?? nowUnix),
                     last_imported: imported,
                     last_forms_detected: formCount,
+                    pages,
                 },
             })
             .eq('id', integration.id)
