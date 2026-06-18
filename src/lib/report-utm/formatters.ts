@@ -8,10 +8,18 @@ export function formatCurrency(amount: number | string, currency: string): strin
     })}`
 }
 
+/**
+ * Zona horaria del negocio (Colombia, UTC-5). Se fija explícitamente para que
+ * el formateo no dependa de la zona del servidor (Vercel corre en UTC, lo que
+ * hacía que las fechas se mostraran 5 horas adelantadas).
+ */
+const APP_TIME_ZONE = 'America/Bogota'
+
 /** Short date: DD/MM/YYYY */
 export function formatDate(iso: string | null | undefined): string {
     if (!iso) return '—'
     return new Date(iso).toLocaleDateString('es-AR', {
+        timeZone: APP_TIME_ZONE,
         day: '2-digit',
         month: '2-digit',
         year: 'numeric',
@@ -22,6 +30,7 @@ export function formatDate(iso: string | null | undefined): string {
 export function formatDateTime(iso: string | null | undefined): string {
     if (!iso) return '—'
     return new Date(iso).toLocaleString('es-AR', {
+        timeZone: APP_TIME_ZONE,
         day: '2-digit',
         month: '2-digit',
         year: 'numeric',
@@ -34,6 +43,7 @@ export function formatDateTime(iso: string | null | undefined): string {
 export function formatTime(iso: string | null | undefined): string {
     if (!iso) return '—'
     return new Date(iso).toLocaleTimeString('es-AR', {
+        timeZone: APP_TIME_ZONE,
         hour: '2-digit',
         minute: '2-digit',
         second: '2-digit',
