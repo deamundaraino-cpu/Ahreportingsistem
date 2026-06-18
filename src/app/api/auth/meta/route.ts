@@ -28,12 +28,16 @@ export async function GET(request: NextRequest) {
   authUrl.searchParams.set('redirect_uri', redirectUri)
   authUrl.searchParams.set('state', state)
   authUrl.searchParams.set('response_type', 'code')
-  // Permisos: insights (ads_read), listar ad accounts (business_management),
-  // leer leads de formularios (leads_retrieval), listar Páginas + sus tokens
-  // (pages_show_list) y suscribir Páginas al webhook leadgen (pages_read_engagement).
+  // Permisos:
+  //  · ads_read              → insights de campañas
+  //  · business_management   → listar ad accounts
+  //  · leads_retrieval       → leer los leads de los formularios
+  //  · pages_show_list       → listar Páginas + sus tokens (/me/accounts)
+  //  · pages_read_engagement → suscribir Páginas al webhook leadgen
+  //  · pages_manage_ads      → acceder a los leadgen_forms de la Página
   authUrl.searchParams.set(
     'scope',
-    'ads_read,business_management,leads_retrieval,pages_show_list,pages_read_engagement',
+    'ads_read,business_management,leads_retrieval,pages_show_list,pages_read_engagement,pages_manage_ads',
   )
 
   return NextResponse.redirect(authUrl.toString())
