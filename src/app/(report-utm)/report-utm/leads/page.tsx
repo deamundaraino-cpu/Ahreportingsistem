@@ -229,8 +229,12 @@ export default async function LeadsPage({
                                     <th className="px-4 py-3">Lead</th>
                                     <th className="px-4 py-3">Formulario</th>
                                     <th className="px-4 py-3">Cliente</th>
-                                    <th className="px-4 py-3">Origen</th>
-                                    <th className="px-4 py-3">Campaña / Creativo</th>
+                                    <th className="px-4 py-3">UTM Source</th>
+                                    <th className="px-4 py-3">UTM Medium</th>
+                                    <th className="px-4 py-3">UTM Campaign</th>
+                                    <th className="px-4 py-3">UTM Content</th>
+                                    <th className="px-4 py-3">UTM Term</th>
+                                    <th className="px-4 py-3">UTM ID</th>
                                     <th className="px-4 py-3">Atribución</th>
                                 </tr>
                             </thead>
@@ -378,17 +382,14 @@ function FilterInput({ name, label, defaultValue, placeholder, type = 'text', wi
 
 function LeadRow({ lead, clienteNombre }: { lead: ReportUtmLeadEvent; clienteNombre: string }) {
     const hasRawFields = lead.raw_fields && Object.keys(lead.raw_fields).length > 0
-    const campaign = dec(lead.utm_campaign)
-    const content = dec(lead.utm_content)
-    const term = dec(lead.utm_term)
 
     return (
         <>
             <tr className="hover:bg-accent/50 group">
-                <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">
+                <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap align-top">
                     {formatDateTime(lead.created_at)}
                 </td>
-                <td className="px-4 py-3">
+                <td className="px-4 py-3 align-top">
                     <div className="space-y-0.5">
                         {lead.lead_name && <p className="text-xs font-medium text-foreground">{lead.lead_name}</p>}
                         {lead.lead_email && <p className="text-[11px] text-muted-foreground font-mono">{lead.lead_email}</p>}
@@ -398,7 +399,7 @@ function LeadRow({ lead, clienteNombre }: { lead: ReportUtmLeadEvent; clienteNom
                         )}
                     </div>
                 </td>
-                <td className="px-4 py-3">
+                <td className="px-4 py-3 align-top">
                     {lead.form_name && <p className="text-xs font-medium text-foreground">{lead.form_name}</p>}
                     {lead.form_plugin && (
                         <p className="text-[10px] text-muted-foreground">
@@ -406,50 +407,30 @@ function LeadRow({ lead, clienteNombre }: { lead: ReportUtmLeadEvent; clienteNom
                         </p>
                     )}
                 </td>
-                <td className="px-4 py-3 text-xs text-muted-foreground">{clienteNombre}</td>
-                <td className="px-4 py-3">
-                    {lead.utm_source ? (
-                        <>
-                            <span className="text-xs font-mono text-emerald-600 dark:text-emerald-400">{dec(lead.utm_source)}</span>
-                            {lead.utm_medium && (
-                                <span className="text-[10px] text-muted-foreground block">{dec(lead.utm_medium)}</span>
-                            )}
-                        </>
-                    ) : (
-                        <span className="text-xs text-muted-foreground">—</span>
-                    )}
-                </td>
-                <td className="px-4 py-3 max-w-[260px]">
-                    {campaign ? (
-                        <p className="text-xs text-foreground truncate" title={campaign}>{campaign}</p>
-                    ) : (
-                        <p className="text-xs text-muted-foreground">—</p>
-                    )}
-                    {content && (
-                        <p className="text-[10px] text-muted-foreground truncate" title={content}>🎬 {content}</p>
-                    )}
-                </td>
-                <td className="px-4 py-3">
+                <td className="px-4 py-3 text-xs text-muted-foreground align-top">{clienteNombre}</td>
+                <UtmCell value={lead.utm_source} accent />
+                <UtmCell value={lead.utm_medium} />
+                <UtmCell value={lead.utm_campaign} />
+                <UtmCell value={lead.utm_content} />
+                <UtmCell value={lead.utm_term} />
+                <UtmCell value={lead.utm_id} mono />
+                <td className="px-4 py-3 align-top">
                     <AttributionBadge method={lead.attribution_method ?? 'none'} />
                 </td>
             </tr>
-            {/* Detalle expandible: campos del formulario + UTMs completos + landing */}
+            {/* Detalle expandible: click_id, landing, país + campos del formulario */}
             <tr className="bg-muted/30">
-                <td colSpan={7} className="px-4 py-2">
+                <td colSpan={11} className="px-4 py-2">
                     <details className="text-[11px]">
                         <summary className="cursor-pointer text-muted-foreground hover:text-foreground select-none">
                             Ver detalle{hasRawFields ? ` · ${Object.keys(lead.raw_fields!).length} campos del formulario` : ''}
                         </summary>
                         <div className="mt-3 space-y-3">
-                            {/* UTMs completos + landing */}
                             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
-                                <DetailItem label="UTM Term" value={term} />
-                                <DetailItem label="UTM ID" value={lead.utm_id} mono />
                                 <DetailItem label="Click ID" value={lead.click_id} mono />
                                 <DetailItem label="País" value={lead.ip_country} />
                                 <DetailItem label="Página de destino" value={lead.page_url} mono span />
                             </div>
-                            {/* Campos del formulario */}
                             {hasRawFields && (
                                 <div>
                                     <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">
@@ -467,6 +448,24 @@ function LeadRow({ lead, clienteNombre }: { lead: ReportUtmLeadEvent; clienteNom
                 </td>
             </tr>
         </>
+    )
+}
+
+/** Celda compacta para un UTM: decodifica, trunca y muestra el valor completo en tooltip. */
+function UtmCell({ value, accent, mono }: { value: string | null; accent?: boolean; mono?: boolean }) {
+    const v = dec(value)
+    if (!v) return <td className="px-4 py-3 text-xs text-muted-foreground align-top">—</td>
+    return (
+        <td className="px-4 py-3 align-top max-w-[180px]">
+            <span
+                className={`block text-xs truncate ${mono ? 'font-mono' : ''} ${
+                    accent ? 'text-emerald-600 dark:text-emerald-400 font-medium' : 'text-foreground'
+                }`}
+                title={v}
+            >
+                {v}
+            </span>
+        </td>
     )
 }
 

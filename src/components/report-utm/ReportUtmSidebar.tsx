@@ -16,6 +16,8 @@ import {
     ArrowLeftRight,
     Activity,
     UserCheck,
+    PieChart,
+    Link2 as Link2Icon,
 } from 'lucide-react'
 import { ThemeToggle } from '@/components/theme/ThemeToggle'
 
@@ -30,6 +32,11 @@ const NAV_TRACKING = [
     { name: 'Atribución UTM', href: '/report-utm/atribucion', icon: BarChart2 },
     { name: 'Tracking Links', href: '/report-utm/links', icon: Link2 },
     { name: 'Pixel & Eventos', href: '/report-utm/pixel', icon: Activity },
+]
+
+const NAV_ANALISIS = [
+    { name: 'Informes', href: '/report-utm/informes', icon: PieChart },
+    { name: 'Cruce Campañas', href: '/report-utm/cruce-campanas', icon: Link2Icon },
 ]
 
 const NAV_CONFIG = [
@@ -155,6 +162,7 @@ export function ReportUtmSidebar({ role }: { role: string }) {
                 <nav className="flex-1 space-y-6 px-3 py-6 overflow-y-auto custom-scrollbar">
                     <Section title="Panel" items={NAV_PRIMARY} />
                     <Section title="Tracking" items={NAV_TRACKING} />
+                    <Section title="Análisis" items={NAV_ANALISIS} />
                     <Section title="Configuración" items={NAV_CONFIG} />
                 </nav>
 
