@@ -8,8 +8,10 @@ import { CartPandaIntegrationCard } from '@/components/report-utm/CartPandaInteg
 import { ShopifyIntegrationCard } from '@/components/report-utm/ShopifyIntegrationCard'
 import { GoogleAdsCard } from '@/components/report-utm/GoogleAdsCard'
 import { MetaCAPICard } from '@/components/report-utm/MetaCAPICard'
+import { MetaLeadsCard } from '@/components/report-utm/MetaLeadsCard'
 import { S2SIntegrationCard } from '@/components/report-utm/S2SIntegrationCard'
 import { OutboundWebhooksCard } from '@/components/report-utm/OutboundWebhooksCard'
+import { createClient } from '@/utils/supabase/server'
 import { ArrowLeft, ShoppingBag, DollarSign, TrendingUp, ExternalLink } from 'lucide-react'
 
 export const dynamic = 'force-dynamic'
@@ -22,7 +24,7 @@ export default async function ClienteDetailPage({
     const { clienteId } = await params
     const supabase = await reportUtmClient()
 
-    const [{ data: cliente }, { data: hotmart }, { data: cartpanda }, { data: shopify }, { data: metaIntegration }, { data: googleIntegration }, { data: s2s }, { data: ventas }, { count: totalCount }, { data: aggregate }, { data: outbound }] =
+    const [{ data: cliente }, { data: hotmart }, { data: cartpanda }, { data: shopify }, { data: metaIntegration }, { data: googleIntegration }, { data: s2s }, { data: metaLeads }, { data: ventas }, { count: totalCount }, { data: aggregate }, { data: outbound }] =
         await Promise.all([
             supabase.from('clientes').select('*').eq('id', clienteId).single<ReportUtmCliente>(),
             supabase
@@ -62,6 +64,12 @@ export default async function ClienteDetailPage({
                 .eq('tipo', 's2s')
                 .maybeSingle<Pick<ReportUtmIntegration, 'id' | 'cliente_id' | 'status' | 'last_sync_at' | 'last_error'>>(),
             supabase
+                .from('integrations')
+                .select('id, status, config, last_sync_at, last_error')
+                .eq('cliente_id', clienteId)
+                .eq('tipo', 'meta_lead_ads')
+                .maybeSingle<Pick<ReportUtmIntegration, 'id' | 'status' | 'config' | 'last_sync_at' | 'last_error'>>(),
+            supabase
                 .from('sales_events')
                 .select('id, sale_timestamp, amount, currency, status, customer_name, customer_email, utm_source, utm_campaign, product_name, transaction_type, platform_sale_id, attribution_method')
                 .eq('cliente_id', clienteId)
@@ -84,6 +92,23 @@ export default async function ClienteDetailPage({
         ])
 
     if (!cliente) notFound()
+
+    // ¿El cliente tiene Meta conectado? (token + cuenta en public.clientes.config_api)
+    let metaConnected = false
+    if (cliente.public_cliente_id) {
+        const base = await createClient()
+        const { data: pub } = await base
+            .from('clientes')
+            .select('config_api')
+            .eq('id', cliente.public_cliente_id)
+            .maybeSingle()
+        const cfg = (pub?.config_api ?? {}) as Record<string, unknown>
+        const metaAccounts = cfg.meta_accounts
+        const hasAccounts = Array.isArray(metaAccounts) &&
+            (metaAccounts as Array<Record<string, unknown>>).some((a) => a?.account_id && (a.token || cfg.meta_token))
+        const hasLegacy = Boolean(cfg.meta_token && cfg.meta_account_id)
+        metaConnected = hasAccounts || hasLegacy
+    }
 
     const totalRevenue =
         (aggregate ?? []).reduce((sum, r) => sum + Number((r as { amount: number }).amount ?? 0), 0)
@@ -162,6 +187,12 @@ export default async function ClienteDetailPage({
             <MetaCAPICard
                 clienteId={cliente.id}
                 integration={metaIntegration ?? null}
+            />
+
+            <MetaLeadsCard
+                clienteId={cliente.id}
+                integration={metaLeads ?? null}
+                metaConnected={metaConnected}
             />
 
             <GoogleAdsCard

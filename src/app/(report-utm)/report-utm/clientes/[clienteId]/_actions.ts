@@ -2,13 +2,16 @@
 
 import { revalidatePath } from 'next/cache'
 import { reportUtmClient } from '@/lib/report-utm/client'
+import { createClient } from '@/utils/supabase/server'
 import { generateWebhookSecret } from '@/lib/report-utm/webhook-auth'
 import { encrypt } from '@/lib/report-utm/encryption'
 import { sendMetaLeadEvent } from '@/lib/report-utm/meta-capi'
 import { decrypt } from '@/lib/report-utm/encryption'
+import { getMetaAccountsForCliente, syncMetaLeadsForCliente, discoverAndSubscribePages } from '@/lib/report-utm/meta-leads'
 
 type ActionResult = { ok: true; secret?: string; events_received?: number } | { ok: false; error: string }
 type SimpleResult = { ok: true } | { ok: false; error: string }
+type SyncResult = { ok: true; imported: number; forms: number } | { ok: false; error: string }
 
 export async function activateHotmartIntegrationAction(clienteId: string): Promise<ActionResult> {
     const supabase = await reportUtmClient()
@@ -489,4 +492,71 @@ export async function rotateOutboundSecretAction(
     if (error) return { ok: false, error: error.message }
     revalidatePath(`/report-utm/clientes/${clienteId}`)
     return { ok: true, secret }
+}
+
+// ── Meta Lead Ads (formularios instantáneos) ──────────────────────
+
+export async function activateMetaLeadsAction(clienteId: string): Promise<SimpleResult> {
+    const base = await createClient()
+    // Precondición: el cliente debe tener Meta conectado (token + cuenta).
+    const { error: metaError } = await getMetaAccountsForCliente(base, clienteId)
+    if (metaError) return { ok: false, error: metaError }
+
+    // Suscribir las Páginas al webhook leadgen (best-effort; el polling cubre si falla).
+    const { pages } = await discoverAndSubscribePages(base, clienteId)
+
+    const supabase = base.schema('report_utm')
+    const { error } = await supabase
+        .from('integrations')
+        .upsert(
+            {
+                cliente_id: clienteId,
+                tipo: 'meta_lead_ads',
+                status: 'active',
+                last_error: null,
+                config: { backfill_done: false, pages },
+            },
+            { onConflict: 'cliente_id,tipo' },
+        )
+
+    if (error) return { ok: false, error: error.message }
+
+    revalidatePath(`/report-utm/clientes/${clienteId}`)
+    return { ok: true }
+}
+
+export async function setMetaLeadsStatusAction(
+    clienteId: string,
+    status: 'active' | 'inactive',
+): Promise<SimpleResult> {
+    const supabase = await reportUtmClient()
+    const { error } = await supabase
+        .from('integrations')
+        .update({ status })
+        .eq('cliente_id', clienteId)
+        .eq('tipo', 'meta_lead_ads')
+
+    if (error) return { ok: false, error: error.message }
+
+    revalidatePath(`/report-utm/clientes/${clienteId}`)
+    return { ok: true }
+}
+
+export async function syncMetaLeadsNowAction(clienteId: string): Promise<SyncResult> {
+    const base = await createClient()
+    const supabase = base.schema('report_utm')
+
+    const { data: integration } = await supabase
+        .from('integrations')
+        .select('id, cliente_id, config, status')
+        .eq('cliente_id', clienteId)
+        .eq('tipo', 'meta_lead_ads')
+        .maybeSingle()
+
+    if (!integration) return { ok: false, error: 'Activá Meta Lead Ads primero' }
+
+    const summary = await syncMetaLeadsForCliente(base, integration)
+    revalidatePath(`/report-utm/clientes/${clienteId}`)
+    if (summary.error) return { ok: false, error: summary.error }
+    return { ok: true, imported: summary.imported, forms: summary.forms }
 }
