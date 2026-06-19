@@ -236,32 +236,51 @@ export async function getClientePages(
 }
 
 /**
- * Form ids que UNA cuenta publicitaria realmente anunció en la ventana.
- * Reusa el desglose `leadgen_form_id` del worker — es el criterio de pertenencia
- * por cliente (cada cliente tiene su propia cuenta publicitaria).
+ * Page ids asociados a UNA cuenta publicitaria (`promote_pages`).
+ * Es el vínculo cuenta→Página por cliente: cada cliente tiene su propia cuenta
+ * y su propia Página, así que las Páginas que esa cuenta puede promocionar son
+ * las del cliente. No depende del spend.
  */
-export async function fetchAccountLeadFormIds(
-    account: MetaAccount,
-    sinceUnix?: number | null,
-): Promise<Set<string>> {
+export async function fetchAdAccountPageIds(account: MetaAccount): Promise<Set<string>> {
     const actId = account.account_id.startsWith('act_') ? account.account_id : `act_${account.account_id}`
-    const sinceDate = sinceUnix && sinceUnix > 0 ? new Date(sinceUnix * 1000) : new Date(Date.now() - 90 * 24 * 60 * 60 * 1000)
-    const since = sinceDate.toISOString().slice(0, 10)
-    const until = new Date().toISOString().slice(0, 10)
-
-    const url = new URL(`${GRAPH}/${actId}/insights`)
-    url.searchParams.append('access_token', account.token)
-    url.searchParams.append('time_range', JSON.stringify({ since, until }))
-    url.searchParams.append('fields', 'leadgen_form_id')
-    url.searchParams.append('breakdowns', 'leadgen_form_id')
-    url.searchParams.append('level', 'ad')
-    url.searchParams.append('limit', '500')
-
-    const rows = await fetchAllPages(url.toString())
     const ids = new Set<string>()
-    for (const r of rows) {
-        if (r.leadgen_form_id) ids.add(String(r.leadgen_form_id))
-    }
+
+    // 1) Vía promote_pages (directo).
+    try {
+        const url = new URL(`${GRAPH}/${actId}/promote_pages`)
+        url.searchParams.append('access_token', account.token)
+        url.searchParams.append('fields', 'id,name')
+        url.searchParams.append('limit', '200')
+        const rows = await fetchAllPages(url.toString())
+        for (const r of rows) {
+            if (r.id) ids.add(String(r.id))
+        }
+    } catch { /* fallback abajo */ }
+
+    if (ids.size > 0) return ids
+
+    // 2) Fallback: deducir la(s) Página(s) desde los anuncios de la cuenta.
+    try {
+        const url = new URL(`${GRAPH}/${actId}/ads`)
+        url.searchParams.append('access_token', account.token)
+        url.searchParams.append('fields', 'creative{object_story_spec{page_id},effective_object_story_id}')
+        url.searchParams.append('limit', '200')
+        const rows = await fetchAllPages(url.toString())
+        for (const r of rows) {
+            const creative = r.creative as
+                | { object_story_spec?: { page_id?: string }; effective_object_story_id?: string }
+                | undefined
+            const pageId = creative?.object_story_spec?.page_id
+            if (pageId) {
+                ids.add(String(pageId))
+                continue
+            }
+            // effective_object_story_id viene como "{page_id}_{post_id}"
+            const eosi = creative?.effective_object_story_id
+            if (typeof eosi === 'string' && eosi.includes('_')) ids.add(eosi.split('_')[0])
+        }
+    } catch { /* sin Páginas deducibles */ }
+
     return ids
 }
 
@@ -276,35 +295,34 @@ export type ScopedTargets = {
  * cuentas publicitarias del cliente (no por todas las Páginas que administra la
  * agencia). Evita que los leads de un cliente aparezcan en otro.
  *
- *  1. Junta los `leadgen_form_id` que las cuentas del cliente anunciaron.
- *  2. Descubre las Páginas accesibles + tokens.
- *  3. Se queda solo con los formularios cuyo id está en ese conjunto, y con las
- *     Páginas que los contienen.
+ *  1. Por cada cuenta del cliente → sus Páginas (`promote_pages`).
+ *  2. Descubre las Páginas accesibles + tokens (`/me/accounts`).
+ *  3. Se queda solo con las Páginas del cliente (intersección) y lista TODOS sus
+ *     formularios (cada cliente tiene su propia Página, así que todos son suyos).
  */
 export async function getClienteScopedTargets(
     supabase: SupabaseClient,
     clienteId: string,
-    sinceUnix?: number | null,
 ): Promise<ScopedTargets> {
     const { accounts, error: accError } = await getMetaAccountsForCliente(supabase, clienteId)
     if (accError) return { scopedPages: [], matchedForms: [], error: accError }
 
-    // 1) Formularios que las cuentas publicitarias del cliente realmente usaron.
-    const clientFormIds = new Set<string>()
-    let insightsError: string | undefined
+    // 1) Páginas asociadas a las cuentas publicitarias del cliente.
+    const clientPageIds = new Set<string>()
+    let ppError: string | undefined
     for (const account of accounts) {
         try {
-            const ids = await fetchAccountLeadFormIds(account, sinceUnix)
-            ids.forEach((id) => clientFormIds.add(id))
+            const ids = await fetchAdAccountPageIds(account)
+            ids.forEach((id) => clientPageIds.add(id))
         } catch (e) {
-            insightsError = e instanceof Error ? e.message : String(e)
+            ppError = e instanceof Error ? e.message : String(e)
         }
     }
-    if (clientFormIds.size === 0) {
+    if (clientPageIds.size === 0) {
         return {
             scopedPages: [],
             matchedForms: [],
-            error: insightsError ?? 'Las cuentas publicitarias del cliente no tienen formularios de leads con actividad (~90 días).',
+            error: ppError ?? 'Las cuentas publicitarias del cliente no tienen Páginas asociadas (promote_pages).',
         }
     }
 
@@ -312,10 +330,18 @@ export async function getClienteScopedTargets(
     const { pages, error: pagesError } = await getClientePages(supabase, clienteId)
     if (pages.length === 0) return { scopedPages: [], matchedForms: [], error: pagesError }
 
-    // 3) Filtrar a los formularios del cliente; las Páginas con match son las suyas.
-    const scopedPagesMap = new Map<string, MetaPage>()
+    // 3) Intersección: solo las Páginas del cliente. Todos sus formularios son suyos.
+    const scopedPages = pages.filter((p) => clientPageIds.has(p.page_id))
+    if (scopedPages.length === 0) {
+        return {
+            scopedPages: [],
+            matchedForms: [],
+            error: 'Las Páginas de las cuentas del cliente no están entre las accesibles con el token. Reconectá Meta administrando esa Página.',
+        }
+    }
+
     const matchedForms: Array<{ form: MetaLeadForm; page: MetaPage }> = []
-    for (const page of pages) {
+    for (const page of scopedPages) {
         let forms: MetaLeadForm[] = []
         try {
             forms = await listLeadForms(page)
@@ -323,21 +349,10 @@ export async function getClienteScopedTargets(
             continue
         }
         for (const form of forms) {
-            if (clientFormIds.has(form.id)) {
-                matchedForms.push({ form, page })
-                scopedPagesMap.set(page.page_id, page)
-            }
+            matchedForms.push({ form, page })
         }
     }
 
-    const scopedPages = Array.from(scopedPagesMap.values())
-    if (scopedPages.length === 0) {
-        return {
-            scopedPages,
-            matchedForms,
-            error: 'No se encontró ninguna Página accesible que contenga los formularios de las cuentas del cliente.',
-        }
-    }
     return { scopedPages, matchedForms }
 }
 
