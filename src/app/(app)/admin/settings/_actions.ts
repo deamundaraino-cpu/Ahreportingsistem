@@ -280,6 +280,33 @@ export async function fetchMetaAdAccounts(token: string) {
     }
 }
 
+// Lista las cuentas publicitarias disponibles con el token de TikTok guardado (sin re-hacer OAuth).
+// Devuelve [{ advertiser_id, name }] para que la UI las agregue a tiktok_accounts[].
+// El token solo trae IDs, así que usamos oauth2/advertiser/get/ para obtener también el nombre.
+export async function fetchTikTokAdAccounts(token: string) {
+    if (!token) return { error: 'Falta el token de TikTok' }
+
+    try {
+        const appId = process.env.TIKTOK_APP_ID!
+        const secret = process.env.TIKTOK_APP_SECRET!
+        const url = `https://business-api.tiktok.com/open_api/v1.3/oauth2/advertiser/get/?app_id=${appId}&secret=${secret}&access_token=${token}`
+        const res = await fetch(url)
+        const data = await res.json()
+
+        if (data.code !== 0) {
+            return { error: data.message || 'Error obteniendo cuentas de TikTok' }
+        }
+
+        const accounts = (data.data?.list ?? []).map((a: any) => ({
+            advertiser_id: a.advertiser_id,
+            name: a.advertiser_name || `Cuenta ${a.advertiser_id}`,
+        }))
+        return { success: true, accounts }
+    } catch (err: any) {
+        return { error: err.message }
+    }
+}
+
 export async function testHotmartConnection(config: any, clienteId?: string) {
     // Persiste hotmart_connection_status/last_checked_at en config_api del cliente
     // (read-modify-write para no clobberear otras claves). Best-effort: no rompe el test.

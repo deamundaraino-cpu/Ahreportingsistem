@@ -52,23 +52,17 @@ export async function GET(request: NextRequest) {
   }
 
   const accessToken: string = tokenData.data.access_token
-  const advertiserIds: string[] = tokenData.data.advertiser_ids ?? []
 
-  // Guardar token en config_api del cliente (ya validado arriba)
+  // Guardar SOLO el token en config_api del cliente (ya validado arriba).
+  // Las cuentas publicitarias NO se auto-importan: el admin elige cuáles sincronizar
+  // desde la UI (botón "Elegir cuentas"), porque el token concede acceso a todas
+  // las cuentas que el usuario autorizó en TikTok.
   const existingAccounts: any[] = Array.isArray(cliente.config_api?.tiktok_accounts) ? cliente.config_api.tiktok_accounts : []
-  const newEntries = advertiserIds
-    .filter((aid: string) => aid && !existingAccounts.some((a: any) => a.advertiser_id === aid))
-    .map((aid: string) => ({
-      id: crypto.randomUUID(),
-      label: `Cuenta ${aid}`,
-      advertiser_id: aid,
-      access_token: '',
-    }))
 
   const newConfig = {
     ...cliente.config_api,
     tiktok_access_token: accessToken,
-    tiktok_accounts: [...existingAccounts, ...newEntries],
+    tiktok_accounts: existingAccounts,
   }
 
   const { error: updateError } = await supabase

@@ -9,6 +9,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Bold, Heading1, Heading2, List, ListOrdered, Link2, ImageIcon, Loader2, X } from 'lucide-react'
 import { createClient } from '@/utils/supabase/client'
 
+
 interface RichTextEditorProps {
     content: string
     onChange: (html: string) => void

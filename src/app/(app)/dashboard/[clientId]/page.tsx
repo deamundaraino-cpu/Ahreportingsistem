@@ -6,6 +6,7 @@ import { ConversionesOfflineCard } from "../components/ConversionesOfflineCard"
 import { CopyLinkButton } from "../components/CopyLinkButton"
 import { PublicLinkButton } from "../components/PublicLinkButton"
 import { BitacorasSidebar } from "../components/BitacorasSidebar"
+import { getBitacoras } from "../../admin/settings/[id]/_actions"
 import { format, subDays } from "date-fns"
 import { createClient, createAdminClient } from "@/utils/supabase/server"
 import { redirect } from "next/navigation"
@@ -27,34 +28,35 @@ export default async function DashboardPage(props: {
     const adminSupabase = await createAdminClient()
 
     // Auth check and data fetch run in parallel to cut latency
-    const authCheck = async (): Promise<{ userRole: string; allowed: boolean }> => {
+    const authCheck = async (): Promise<{ userRole: string; allowed: boolean; userId: string | null }> => {
         const { data: { user } } = await supabase.auth.getUser()
-        if (!user) return { userRole: 'viewer', allowed: false }
+        if (!user) return { userRole: 'viewer', allowed: false, userId: null }
 
         const { data: profile } = await adminSupabase
             .from('user_profiles').select('role').eq('id', user.id).single()
         const role = profile?.role ?? 'viewer'
 
         // Admins/superadmins can access any client
-        if (['superadmin', 'admin'].includes(role)) return { userRole: role, allowed: true }
+        if (['superadmin', 'admin'].includes(role)) return { userRole: role, allowed: true, userId: user.id }
 
         // All other roles (trafficker, viewer, …) must have an explicit assignment
         const { data: assignment } = await adminSupabase
             .from('user_client_assignments').select('id')
             .eq('user_id', user.id).eq('client_id', clientId).maybeSingle()
-        return { userRole: role, allowed: !!assignment }
+        return { userRole: role, allowed: !!assignment, userId: user.id }
     }
 
-    const [{ userRole, allowed }, dashboardData] = await Promise.all([
+    const [{ userRole, allowed, userId }, dashboardData, initialBitacoras] = await Promise.all([
         authCheck(),
         getDashboardData(clientId, fromStr, toStr),
+        getBitacoras(clientId),
     ])
 
     if (!allowed) redirect('/dashboard')
 
     return (
         <div className="space-y-6">
-            <BitacorasSidebar clientId={clientId} userRole={userRole} />
+            <BitacorasSidebar key={clientId} clientId={clientId} userRole={userRole} userId={userId} initialEntries={initialBitacoras} />
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <div>
                     <div className="flex items-center gap-3 mb-1">

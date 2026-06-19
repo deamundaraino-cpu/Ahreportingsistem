@@ -6,7 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter }
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Button } from '@/components/ui/button'
-import { updateClienteConfig, deleteCliente, assignLayoutToCliente, testMetaConnection, testHotmartConnection, refreshMetaCustomConversions, testTikTokConnection, syncClienteMetrics, testGA4Connection, syncGoogleSheets, syncConversionesOffline, detectConversionesColumns, listDriveSheets, fetchMetaAdAccounts } from '../_actions'
+import { updateClienteConfig, deleteCliente, assignLayoutToCliente, testMetaConnection, testHotmartConnection, refreshMetaCustomConversions, testTikTokConnection, syncClienteMetrics, testGA4Connection, syncGoogleSheets, syncConversionesOffline, detectConversionesColumns, listDriveSheets, fetchMetaAdAccounts, fetchTikTokAdAccounts } from '../_actions'
 import type { CustomColumnDef, CustomColumnType, DetectedColumn, ConversionesConfig, DriveSheet } from '@/lib/integrations/google-sheets-conversiones'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Loader2, ArrowLeft, Save, Trash2, CheckCircle2, AlertCircle, RefreshCw, LayoutDashboard, DownloadCloud, DatabaseZap, Plus, FolderSearch, FileSpreadsheet, Search } from 'lucide-react'
@@ -345,6 +345,57 @@ const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean
         setTiktokAccounts(prev => prev.map((a, i) => i === idx ? updated : a))
     }
 
+    // ── Selector de cuentas TikTok (elegir cuáles agregar) ───────────────────
+    const [loadingTiktokAccounts, setLoadingTiktokAccounts] = useState(false)
+    const [availableTiktokAccounts, setAvailableTiktokAccounts] = useState<{ advertiser_id: string; name: string }[] | null>(null)
+    const [selectedTiktokIds, setSelectedTiktokIds] = useState<Set<string>>(new Set())
+    const [tiktokPickerError, setTiktokPickerError] = useState<string | null>(null)
+
+    async function openTikTokAccountPicker() {
+        const token = config.tiktok_access_token
+        if (!token) {
+            alert('Primero conecta por OAuth o pega un Access Token compartido.')
+            return
+        }
+        setLoadingTiktokAccounts(true)
+        setTiktokPickerError(null)
+        try {
+            const res = await fetchTikTokAdAccounts(token)
+            if (res.error) {
+                setTiktokPickerError(res.error)
+                setAvailableTiktokAccounts([])
+                return
+            }
+            setAvailableTiktokAccounts(res.accounts || [])
+            setSelectedTiktokIds(new Set())
+        } finally {
+            setLoadingTiktokAccounts(false)
+        }
+    }
+
+    function toggleTiktokSelection(advertiserId: string) {
+        setSelectedTiktokIds(prev => {
+            const next = new Set(prev)
+            if (next.has(advertiserId)) next.delete(advertiserId)
+            else next.add(advertiserId)
+            return next
+        })
+    }
+
+    function addSelectedTikTokAccounts() {
+        if (!availableTiktokAccounts) return
+        const chosen = availableTiktokAccounts.filter(a => selectedTiktokIds.has(a.advertiser_id))
+        setTiktokAccounts(prev => {
+            const existingIds = new Set(prev.map(a => a.advertiser_id))
+            const newOnes = chosen
+                .filter(a => !existingIds.has(a.advertiser_id))
+                .map(a => ({ id: crypto.randomUUID(), label: a.name, advertiser_id: a.advertiser_id, access_token: '' }))
+            return [...prev, ...newOnes]
+        })
+        setAvailableTiktokAccounts(null)
+        setSelectedTiktokIds(new Set())
+    }
+
     async function runTest(key: string, fn: () => Promise<any>) {
         setTestStatus(prev => ({ ...prev, [key]: { loading: true } }))
         try {
@@ -406,6 +457,7 @@ const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean
             router.refresh()
         }
         setLoading(false)
+        return { success, error: updateError }
     }
 
     const handleGoogleSheetsJSONUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -957,10 +1009,57 @@ const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean
                     <div className="space-y-3 pt-2 border-t border-border">
                         <div className="flex items-center justify-between">
                             <Label className="text-foreground/90">Cuentas Publicitarias TikTok</Label>
-                            <Button size="sm" variant="outline" onClick={addTikTokAccount} className="h-7 text-xs">
-                                <Plus className="w-3 h-3 mr-1" /> Agregar Cuenta
-                            </Button>
+                            <div className="flex items-center gap-2">
+                                <Button size="sm" variant="outline" onClick={openTikTokAccountPicker} disabled={loadingTiktokAccounts || !config.tiktok_access_token} className="h-7 text-xs">
+                                    {loadingTiktokAccounts ? <RefreshCw className="w-3 h-3 mr-1 animate-spin" /> : <DownloadCloud className="w-3 h-3 mr-1" />} Elegir cuentas
+                                </Button>
+                                <Button size="sm" variant="outline" onClick={addTikTokAccount} className="h-7 text-xs">
+                                    <Plus className="w-3 h-3 mr-1" /> Agregar Cuenta
+                                </Button>
+                            </div>
                         </div>
+
+                        {/* Selector de cuentas disponibles desde el token */}
+                        {availableTiktokAccounts && (
+                            <div className="bg-muted/40 border border-indigo-500/30 rounded-lg p-4 space-y-3">
+                                <div className="flex items-center justify-between">
+                                    <p className="text-sm text-foreground font-medium">Cuentas disponibles en tu TikTok</p>
+                                    <Button variant="ghost" size="sm" onClick={() => setAvailableTiktokAccounts(null)} className="h-6 text-xs text-muted-foreground/70 hover:text-foreground/90">Cancelar</Button>
+                                </div>
+                                {tiktokPickerError && (
+                                    <p className="text-red-500 text-xs flex items-center gap-1"><AlertCircle className="w-3 h-3" /> {tiktokPickerError}</p>
+                                )}
+                                {availableTiktokAccounts.length === 0 && !tiktokPickerError && (
+                                    <p className="text-xs text-muted-foreground/70">No se encontraron cuentas publicitarias para este token.</p>
+                                )}
+                                <div className="space-y-1 max-h-64 overflow-y-auto">
+                                    {availableTiktokAccounts.map(a => {
+                                        const alreadyAdded = tiktokAccounts.some(t => t.advertiser_id === a.advertiser_id)
+                                        return (
+                                            <label key={a.advertiser_id} className={`flex items-center gap-3 p-2 rounded-md ${alreadyAdded ? 'opacity-50' : 'hover:bg-accent cursor-pointer'}`}>
+                                                <input
+                                                    type="checkbox"
+                                                    disabled={alreadyAdded}
+                                                    checked={alreadyAdded || selectedTiktokIds.has(a.advertiser_id)}
+                                                    onChange={() => toggleTiktokSelection(a.advertiser_id)}
+                                                    className="rounded border-input bg-background text-indigo-500 focus:ring-indigo-500"
+                                                />
+                                                <span className="text-sm text-foreground flex-1">{a.name}</span>
+                                                <span className="text-xs text-muted-foreground/70 font-mono">{a.advertiser_id}</span>
+                                                {alreadyAdded && <span className="text-xs text-green-500">ya agregada</span>}
+                                            </label>
+                                        )
+                                    })}
+                                </div>
+                                {availableTiktokAccounts.length > 0 && (
+                                    <div className="flex justify-end">
+                                        <Button size="sm" onClick={addSelectedTikTokAccounts} disabled={selectedTiktokIds.size === 0} className="h-8 text-xs bg-indigo-600 hover:bg-indigo-700">
+                                            <Plus className="w-3 h-3 mr-1" /> Agregar {selectedTiktokIds.size > 0 ? `(${selectedTiktokIds.size})` : ''}
+                                        </Button>
+                                    </div>
+                                )}
+                            </div>
+                        )}
 
                         {tiktokAccounts.length === 0 && (
                             <p className="text-xs text-muted-foreground/70 py-3 text-center border border-dashed border-border rounded-lg">
@@ -1453,7 +1552,15 @@ const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean
                                         <Button
                                             variant="outline"
                                             size="sm"
-                                            onClick={() => runTest('conversionesOffline', () => syncConversionesOffline(cliente.id))}
+                                            onClick={() => runTest('conversionesOffline', async () => {
+                                                // Persistir la config actual antes de sincronizar: el endpoint
+                                                // lee los sheets desde la BD, no desde el estado del formulario.
+                                                const saved = await handleSave()
+                                                if (saved && !saved.success) {
+                                                    return { error: saved.error || 'Error al guardar la configuración antes de sincronizar' }
+                                                }
+                                                return syncConversionesOffline(cliente.id)
+                                            })}
                                             disabled={testStatus['conversionesOffline']?.loading}
                                             className="h-8 text-xs"
                                         >

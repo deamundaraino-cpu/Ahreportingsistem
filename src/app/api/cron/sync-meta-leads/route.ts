@@ -46,14 +46,22 @@ async function run(request: Request) {
         return NextResponse.json({ error: 'Failed to list integrations' }, { status: 500 })
     }
 
+    // Presupuesto global: cada cliente ya se autolimita; esto evita que muchos
+    // clientes en backfill excedan el maxDuration del cron. Los que queden se
+    // procesan en la próxima corrida (cursor intacto; el webhook cubre el realtime).
+    const startedAt = Date.now()
+    const CRON_BUDGET_MS = 250_000
+
     const results: Array<{ clienteId: string } & MetaLeadsSyncSummary> = []
+    let skipped = 0
     for (const integration of integrations ?? []) {
+        if (Date.now() - startedAt > CRON_BUDGET_MS) { skipped++; continue }
         const summary = await syncMetaLeadsForCliente(supabase, integration)
         results.push({ clienteId: integration.cliente_id, ...summary })
     }
 
     const totalImported = results.reduce((s, r) => s + (r.imported ?? 0), 0)
-    return NextResponse.json({ ok: true, clientes: results.length, imported: totalImported, results })
+    return NextResponse.json({ ok: true, clientes: results.length, skipped, imported: totalImported, results })
 }
 
 export async function GET(request: Request) {

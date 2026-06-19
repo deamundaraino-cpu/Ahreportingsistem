@@ -5,8 +5,24 @@ import { createClient as createSSRClient } from '@/utils/supabase/server'
 import { getAgencyAccessToken, hasAgencyGoogleConnection } from '@/lib/integrations/google-auth'
 import { notifyUsers } from '@/lib/notifications/notify'
 import { colombiaToday, colombiaYesterday } from '@/lib/date-utils'
+import { metaFetch, tiktokFetch, hotmartFetch, ga4Run, setRetryDeadline } from '@/lib/rate-limit'
 
 export const maxDuration = 300 // 5 minutos — necesario para sincronizar rangos amplios
+
+/**
+ * Memoiza por clave con valor Promise; si la promesa falla, limpia la entrada
+ * para no cachear un fallo transitorio (permite reintento en una fecha posterior).
+ * Se usa para cargar catálogos/nombres (que NO cambian por día) UNA sola vez por
+ * rango en lugar de una vez por cada fecha.
+ */
+function memo<K, V>(cache: Map<K, Promise<V>>, key: K, factory: () => Promise<V>): Promise<V> {
+    let p = cache.get(key)
+    if (!p) {
+        p = factory().catch((e) => { cache.delete(key); throw e })
+        cache.set(key, p)
+    }
+    return p
+}
 
 /** Lightweight sync hash — detects payload changes without storing full JSON */
 function computeSyncHash(obj: any): string {
@@ -31,6 +47,10 @@ export async function GET(request: Request) {
     } else {
         adminSupabase = await createSSRClient()
     }
+
+    // Presupuesto de tiempo para reintentos: no reintentar pasado este momento
+    // (maxDuration=300s; dejamos margen para upserts y respuesta final).
+    setRetryDeadline(Date.now() + 270_000)
 
     const { searchParams } = new URL(request.url)
     const singleDate = searchParams.get('date')
@@ -76,6 +96,13 @@ export async function GET(request: Request) {
         if (!config) return
 
         const platformLogs = { meta: 'Saltado', tiktok: 'Saltado', hotmart: 'Saltado', ga4: 'Saltado' }
+
+        // ─── Cachés por-cliente para lookups independientes de la fecha ───
+        // Se cargan UNA vez por rango (no por día). Valor Promise → fechas
+        // concurrentes deduplican la misma carga.
+        const tiktokNameCache = new Map<string, Promise<{ campaigns: Map<string, string>; ads: Map<string, string>; adgroups: Map<string, string> }>>() // key: advertiserId
+        const metaFormCatalogCache = new Map<string, Promise<Map<string, string>>>() // key: actId → (formId → name)
+        const metaTargetingCache = new Map<string, Promise<Map<string, any[]>>>() // key: actId → (campaignId → regions)
 
         let hotmartAccessToken: string | null = null
         if (config.hotmart_auth_mode === 'hotconnect') {
@@ -227,7 +254,7 @@ export async function GET(request: Request) {
                     url.searchParams.append('max_results', '100')
                     if (pageToken) url.searchParams.append('page_token', pageToken)
 
-                    const res = await fetch(url.toString(), {
+                    const res = await hotmartFetch(url.toString(), {
                         headers: { 'Authorization': `Bearer ${hotmartAccessToken}` }
                     })
                     const data = await res.json()
@@ -306,48 +333,56 @@ export async function GET(request: Request) {
         }
 
         // ─── Helper: Fetch campaign targeting location from Meta ────────────────
-        async function enrichCampaignsWithTargeting(campaigns: any[], token: string) {
+        // El targeting es independiente de la fecha → se cachea por cuenta (actId)
+        // y solo se piden las campañas aún no cacheadas. Los batches corren en
+        // paralelo (acotados por el pool de Meta).
+        async function enrichCampaignsWithTargeting(campaigns: any[], token: string, actId: string) {
             if (campaigns.length === 0) return campaigns
             try {
-                // Batch fetch targeting for campaigns (limit 50 per batch to avoid rate limits)
+                const cache = await memo(metaTargetingCache, actId, async () => new Map<string, any[]>())
+
+                // Campañas con id que aún no tenemos en caché (deduplicadas por id)
+                const missing = Array.from(
+                    new Map(
+                        campaigns
+                            .filter((c: any) => c.campaign_id && !cache.has(c.campaign_id))
+                            .map((c: any) => [c.campaign_id, c])
+                    ).values()
+                )
+
                 const batchSize = 50
-                for (let i = 0; i < campaigns.length; i += batchSize) {
-                    const batch = campaigns.slice(i, i + batchSize)
-                    const requests = batch
-                        .filter((c: any) => c.campaign_id)
-                        .map((c: any, idx: number) => ({
-                            method: 'GET',
-                            relative_url: `${c.campaign_id}?fields=targeting`,
-                            name: `req${idx}`
-                        }))
+                const batches: any[][] = []
+                for (let i = 0; i < missing.length; i += batchSize) {
+                    batches.push(missing.slice(i, i + batchSize))
+                }
 
-                    if (requests.length === 0) continue
-
+                await Promise.all(batches.map(async (batch) => {
+                    const requests = batch.map((c: any, idx: number) => ({
+                        method: 'GET',
+                        relative_url: `${c.campaign_id}?fields=targeting`,
+                        name: `req${idx}`,
+                    }))
+                    if (requests.length === 0) return
                     try {
-                        const batchUrl = new URL(`https://graph.facebook.com/v19.0`)
                         const batchBody = new URLSearchParams()
                         batchBody.append('batch', JSON.stringify(requests))
                         batchBody.append('access_token', token)
 
-                        const res = await fetch(batchUrl.toString(), {
+                        const res = await metaFetch('https://graph.facebook.com/v19.0', {
                             method: 'POST',
-                            body: batchBody
+                            body: batchBody,
                         })
                         const batchResults = await res.json()
 
                         if (Array.isArray(batchResults)) {
                             batchResults.forEach((result: any, idx: number) => {
-                                if (result.body) {
+                                const camp = batch[idx]
+                                if (result?.body && camp?.campaign_id) {
                                     try {
                                         const parsed = typeof result.body === 'string' ? JSON.parse(result.body) : result.body
-                                        const campIdx = i + idx
-                                        if (campaigns[campIdx] && parsed.targeting) {
-                                            const geoLocations = parsed.targeting.geo_locations
-                                            if (geoLocations && geoLocations.regions) {
-                                                campaigns[campIdx].targeting_regions = geoLocations.regions
-                                            }
-                                        }
-                                    } catch (e: any) {
+                                        const regions = parsed?.targeting?.geo_locations?.regions
+                                        if (regions) cache.set(camp.campaign_id, regions)
+                                    } catch {
                                         // Silent fail on parsing individual results
                                     }
                                 }
@@ -356,11 +391,101 @@ export async function GET(request: Request) {
                     } catch (err: any) {
                         log(`[Meta] Targeting enrichment batch error (non-critical): ${err.message}`)
                     }
+                }))
+
+                // Aplicar la caché a todas las campañas del rango
+                for (const c of campaigns) {
+                    if (c.campaign_id && cache.has(c.campaign_id)) {
+                        c.targeting_regions = cache.get(c.campaign_id)
+                    }
                 }
             } catch (err: any) {
                 log(`[Meta] Targeting enrichment failed (non-critical): ${err.message}`)
             }
             return campaigns
+        }
+
+        // ─── Helper: catálogo de nombres de leadgen forms (memoizado por cuenta) ──
+        async function loadMetaFormCatalog(actId: string, token: string): Promise<Map<string, string>> {
+            const nameMap = new Map<string, string>()
+            try {
+                const catalogUrl = new URL(`https://graph.facebook.com/v19.0/${actId}/leadgen_forms`)
+                catalogUrl.searchParams.append('access_token', token)
+                catalogUrl.searchParams.append('fields', 'id,name')
+                catalogUrl.searchParams.append('limit', '200')
+                const catalogRes = await metaFetch(catalogUrl.toString())
+                const catalogData = await catalogRes.json()
+                if (catalogData.data && Array.isArray(catalogData.data)) {
+                    for (const f of catalogData.data) {
+                        if (f.id && f.name) nameMap.set(String(f.id), f.name)
+                    }
+                }
+            } catch {
+                /* non-critical */
+            }
+            return nameMap
+        }
+
+        // ─── TikTok: paginación genérica (token por parámetro) ───────────────────
+        async function fetchTikTokPaged(
+            baseUrl: URL,
+            token: string,
+            pageSize = 1000,
+        ): Promise<{ ok: boolean; list: any[]; message?: string }> {
+            const all: any[] = []
+            let page = 1
+            let totalPage = 1
+            const MAX_PAGES = 200 // safety backstop
+            do {
+                const u = new URL(baseUrl.toString())
+                u.searchParams.set('page', String(page))
+                u.searchParams.set('page_size', String(pageSize))
+                const res = await tiktokFetch(u.toString(), { headers: { 'Access-Token': token } })
+                const json = await res.json()
+                if (json?.code !== 0 || !json?.data) {
+                    return { ok: false, list: all, message: json?.message || JSON.stringify(json) }
+                }
+                const list = Array.isArray(json.data.list) ? json.data.list : []
+                all.push(...list)
+                const pi = json.data.page_info || {}
+                totalPage = pi.total_page || 1
+                page++
+            } while (page <= totalPage && page <= MAX_PAGES)
+            return { ok: true, list: all }
+        }
+
+        // ─── TikTok: catálogo de nombres (campaign/ad/adgroup), memoizado por cuenta ──
+        // Los nombres NO cambian por día → se cargan UNA vez por rango y por cuenta,
+        // y los 3 rastreos corren en paralelo (acotados por el pool de TikTok).
+        async function loadTikTokNames(advertiserId: string, token: string) {
+            return memo(tiktokNameCache, advertiserId, async () => {
+                const crawl = async (path: string, idKey: string, nameKey: string) => {
+                    const map = new Map<string, string>()
+                    try {
+                        const url = new URL(path)
+                        url.searchParams.append('advertiser_id', advertiserId)
+                        const paged = await fetchTikTokPaged(url, token)
+                        if (paged.ok) {
+                            paged.list.forEach((item: any) => {
+                                const id = String(item[idKey] || '')
+                                const name = item[nameKey]
+                                if (id && name) map.set(id, name)
+                            })
+                        } else {
+                            log(`[TikTok] Warning: nombres no obtenidos (${path}): ${paged.message}`)
+                        }
+                    } catch (e: any) {
+                        log(`[TikTok] Warning: nombres no obtenidos (${path}): ${e.message}`)
+                    }
+                    return map
+                }
+                const [campaigns, ads, adgroups] = await Promise.all([
+                    crawl('https://business-api.tiktok.com/open_api/v1.3/campaign/get/', 'campaign_id', 'campaign_name'),
+                    crawl('https://business-api.tiktok.com/open_api/v1.3/ad/get/', 'ad_id', 'ad_name'),
+                    crawl('https://business-api.tiktok.com/open_api/v1.3/adgroup/get/', 'adgroup_id', 'adgroup_name'),
+                ])
+                return { campaigns, ads, adgroups }
+            })
         }
 
         // ─── Helper: Fetch Meta Ads for a single account+date ───────────────
@@ -375,7 +500,7 @@ export async function GET(request: Request) {
                 url.searchParams.append('level', 'campaign')
                 url.searchParams.append('limit', '500')
 
-                const res = await fetch(url.toString())
+                const res = await metaFetch(url.toString())
                 const data = await res.json()
                 if (data.data) {
                     let totalSpend = 0, totalImpr = 0, totalClicks = 0
@@ -544,12 +669,15 @@ export async function GET(request: Request) {
                         reachUrl.searchParams.append('time_range', JSON.stringify({ since: targetDate, until: targetDate }))
                         reachUrl.searchParams.append('fields', 'reach')
                         reachUrl.searchParams.append('level', 'account')
-                        const reachRes = await fetch(reachUrl.toString())
+                        const reachRes = await metaFetch(reachUrl.toString())
                         const reachData = await reachRes.json()
                         if (reachData.data?.[0]?.reach) {
                             record.account_reach = parseInt(reachData.data[0].reach || '0')
                         }
                     } catch (_e) { /* non-critical */ }
+
+                    // Enriquecer con targeting/geo por cuenta (cacheado por actId, no por día)
+                    record.campaigns = await enrichCampaignsWithTargeting(record.campaigns, token, actId)
 
                 } else if (data.error) {
                     log(`[Meta] ${targetDate} [${rawAccountId}] Error de API: ${JSON.stringify(data.error)}`)
@@ -576,7 +704,7 @@ export async function GET(request: Request) {
                 levelUrl.searchParams.append('level', level)
                 levelUrl.searchParams.append('limit', '500')
 
-                const res = await fetch(levelUrl.toString())
+                const res = await metaFetch(levelUrl.toString())
                 const data = await res.json()
                 if (!data.data) return []
 
@@ -725,21 +853,8 @@ export async function GET(request: Request) {
 
             // ─── Lead form breakdown (Meta Lead Ads) ──────────────────────────
             try {
-                // 1) Fetch form names from account's leadgen_forms catalog
-                const nameMap = new Map<string, string>()
-                try {
-                    const catalogUrl = new URL(`https://graph.facebook.com/v19.0/${actId}/leadgen_forms`)
-                    catalogUrl.searchParams.append('access_token', token)
-                    catalogUrl.searchParams.append('fields', 'id,name')
-                    catalogUrl.searchParams.append('limit', '200')
-                    const catalogRes = await fetch(catalogUrl.toString())
-                    const catalogData = await catalogRes.json()
-                    if (catalogData.data && Array.isArray(catalogData.data)) {
-                        for (const f of catalogData.data) {
-                            if (f.id && f.name) nameMap.set(String(f.id), f.name)
-                        }
-                    }
-                } catch (_) { /* non-critical */ }
+                // 1) Catálogo de nombres de forms — cacheado por cuenta (no por día)
+                const nameMap = await memo(metaFormCatalogCache, actId, () => loadMetaFormCatalog(actId, token))
 
                 // 2) Fetch insights breakdown by leadgen_form_id (level=ad required by Meta)
                 const formUrl = new URL(`https://graph.facebook.com/v19.0/${actId}/insights`)
@@ -750,7 +865,7 @@ export async function GET(request: Request) {
                 formUrl.searchParams.append('level', 'ad')
                 formUrl.searchParams.append('limit', '500')
 
-                const formRes = await fetch(formUrl.toString())
+                const formRes = await metaFetch(formUrl.toString())
                 const formData = await formRes.json()
 
                 if (formData.data && Array.isArray(formData.data)) {
@@ -857,13 +972,9 @@ export async function GET(request: Request) {
                 record.campaigns = Array.from(crossDedup.values())
             }
 
-            // Enrich campaigns with targeting location data (non-blocking)
-            if (record.campaigns.length > 0 && accountsToFetch.length > 0) {
-                const primaryToken = accountsToFetch[0]?.token || config.meta_token || ''
-                if (primaryToken) {
-                    record.campaigns = await enrichCampaignsWithTargeting(record.campaigns, primaryToken)
-                }
-            }
+            // El enriquecimiento de targeting/geo ya se hizo por cuenta dentro de
+            // fetchMetaSingleAccount (cacheado por actId), y el spread del merge
+            // preserva `targeting_regions` en cada campaña.
 
             platformLogs.meta = anySuccess ? 'Conectado OK' : 'Sin Datos'
             log(`[Meta] ${targetDate} Total consolidado — Spend: ${record.spend.toFixed(2)}, Campañas: ${record.campaigns.length}`)
@@ -908,53 +1019,10 @@ export async function GET(request: Request) {
             log(`[TikTok] ${targetDate} Consultando advertiser_id: ${advertiserId}`)
 
             try {
-                // ─── Helper: paginated fetch over TikTok endpoints that return
-                // { data: { list: [...], page_info: { page, total_page } } }.
-                // Iterates every page so totales no se truncan a 100 filas.
-                async function fetchTikTokPaged(
-                    baseUrl: URL,
-                    pageSize = 1000
-                ): Promise<{ ok: boolean; list: any[]; message?: string }> {
-                    const all: any[] = []
-                    let page = 1
-                    let totalPage = 1
-                    const MAX_PAGES = 200 // safety backstop
-                    do {
-                        const u = new URL(baseUrl.toString())
-                        u.searchParams.set('page', String(page))
-                        u.searchParams.set('page_size', String(pageSize))
-                        const res = await fetch(u.toString(), { headers: { 'Access-Token': token } })
-                        const json = await res.json()
-                        if (json.code !== 0 || !json.data) {
-                            return { ok: false, list: all, message: json.message || JSON.stringify(json) }
-                        }
-                        const list = Array.isArray(json.data.list) ? json.data.list : []
-                        all.push(...list)
-                        const pi = json.data.page_info || {}
-                        totalPage = pi.total_page || 1
-                        page++
-                    } while (page <= totalPage && page <= MAX_PAGES)
-                    return { ok: true, list: all }
-                }
-
-                // First, fetch campaigns to map campaign_id to campaign_name
-                const campaignMap = new Map<string, string>()
-                try {
-                    const campUrl = new URL('https://business-api.tiktok.com/open_api/v1.3/campaign/get/')
-                    campUrl.searchParams.append('advertiser_id', advertiserId)
-                    const campPaged = await fetchTikTokPaged(campUrl)
-                    if (campPaged.ok) {
-                        campPaged.list.forEach((c: any) => {
-                            if (c.campaign_id && c.campaign_name) {
-                                campaignMap.set(c.campaign_id.toString(), c.campaign_name)
-                            }
-                        })
-                    } else {
-                        log(`[TikTok] Warning: Error al obtener nombres de campañas: ${campPaged.message}`)
-                    }
-                } catch (campErr: any) {
-                    log(`[TikTok] Warning: Error al obtener nombres de campañas: ${campErr.message}`)
-                }
+                // Catálogo de nombres (campaign/ad/adgroup) — cacheado por cuenta,
+                // se carga UNA vez por rango (no por día). Ver loadTikTokNames.
+                const tkNames = await loadTikTokNames(advertiserId, token)
+                const campaignMap = tkNames.campaigns
 
                 // ─── Helper: fetch ad or adgroup level report for this date ─────
                 async function fetchTikTokAtLevel(level: 'ad' | 'adgroup'): Promise<any[]> {
@@ -964,27 +1032,8 @@ export async function GET(request: Request) {
                         const idKey     = level === 'ad' ? 'ad_id'      : 'adgroup_id'
                         const nameKey   = level === 'ad' ? 'ad_name'    : 'adgroup_name'
 
-                        // Fetch name map for this level
-                        const nameMap = new Map<string, string>()
-                        try {
-                            const listPath = level === 'ad'
-                                ? 'https://business-api.tiktok.com/open_api/v1.3/ad/get/'
-                                : 'https://business-api.tiktok.com/open_api/v1.3/adgroup/get/'
-                            const listUrl = new URL(listPath)
-                            listUrl.searchParams.append('advertiser_id', advertiserId)
-                            const listPaged = await fetchTikTokPaged(listUrl)
-                            if (listPaged.ok) {
-                                listPaged.list.forEach((item: any) => {
-                                    const id   = String(item[idKey]   || '').toString()
-                                    const name = item[nameKey]
-                                    if (id && name) nameMap.set(id, name)
-                                })
-                            } else {
-                                log(`[TikTok] Warning: No se pudieron obtener nombres de ${level}: ${listPaged.message}`)
-                            }
-                        } catch (e: any) {
-                            log(`[TikTok] Warning: No se pudieron obtener nombres de ${level}: ${e.message}`)
-                        }
+                        // Nombres ya cargados desde la caché por cuenta (no se vuelve a pedir)
+                        const nameMap = level === 'ad' ? tkNames.ads : tkNames.adgroups
 
                         const dims = level === 'ad' ? ['ad_id'] : ['adgroup_id']
 
@@ -997,7 +1046,7 @@ export async function GET(request: Request) {
                         rptUrl.searchParams.append('start_date', targetDate)
                         rptUrl.searchParams.append('end_date', targetDate)
 
-                        const rptPaged = await fetchTikTokPaged(rptUrl)
+                        const rptPaged = await fetchTikTokPaged(rptUrl, token)
                         if (!rptPaged.ok) {
                             log(`[TikTok] fetchTikTokAtLevel(${level}) error: ${rptPaged.message}`)
                             return []
@@ -1040,7 +1089,7 @@ export async function GET(request: Request) {
                 url.searchParams.append('start_date', targetDate)
                 url.searchParams.append('end_date', targetDate)
 
-                const campReport = await fetchTikTokPaged(url)
+                const campReport = await fetchTikTokPaged(url, token)
 
                 if (campReport.ok) {
                     if (campReport.list.length > 0) {
@@ -1225,7 +1274,7 @@ export async function GET(request: Request) {
                     url.searchParams.append('transaction_status', 'COMPLETE')
                     if (pageToken) url.searchParams.append('page_token', pageToken)
 
-                    const res = await fetch(url.toString(), {
+                    const res = await hotmartFetch(url.toString(), {
                         headers: { 'Authorization': `Bearer ${hotmartAccessToken}` }
                     })
                     const data = await res.json()
@@ -1266,7 +1315,7 @@ export async function GET(request: Request) {
                     url2.searchParams.append('max_results', '100')
                     if (pageToken) url2.searchParams.append('page_token', pageToken)
 
-                    const res2 = await fetch(url2.toString(), {
+                    const res2 = await hotmartFetch(url2.toString(), {
                         headers: { 'Authorization': `Bearer ${hotmartAccessToken}` }
                     })
                     const data2 = await res2.json()
@@ -1402,7 +1451,7 @@ export async function GET(request: Request) {
                     ? config.ga_property_id
                     : `properties/${config.ga_property_id}`
 
-                const [response] = await client.runReport({
+                const [response] = await ga4Run(() => client.runReport({
                     property: propertyName,
                     dateRanges: [{ startDate: targetDate, endDate: targetDate }],
                     metrics: [
@@ -1410,7 +1459,7 @@ export async function GET(request: Request) {
                         { name: 'bounceRate' },
                         { name: 'averageSessionDuration' },
                     ],
-                })
+                }))
 
                 if (response.rows?.[0]) {
                     const vals = response.rows[0].metricValues || []
@@ -1437,7 +1486,7 @@ export async function GET(request: Request) {
 
                     // Helper: GA4 query genérica
                     const ga4Query = async (dimension: string, metric: string, values: string[]) => {
-                        const [resp] = await client.runReport({
+                        const [resp] = await ga4Run(() => client.runReport({
                             property: propertyName,
                             dateRanges: [{ startDate: targetDate, endDate: targetDate }],
                             dimensions: [{ name: dimension }],
@@ -1448,7 +1497,7 @@ export async function GET(request: Request) {
                                     inListFilter: { values, caseSensitive: false }
                                 }
                             }
-                        })
+                        }))
                         const map = new Map<string, number>()
                         for (const row of (resp.rows || [])) {
                             const key = row.dimensionValues?.[0]?.value || ''
@@ -1461,32 +1510,21 @@ export async function GET(request: Request) {
                     // ── Landing page views (screenPageViews, igual que el informe de Páginas de GA4) ──
                     // path → pagePath + screenPageViews
                     // título → pageTitle + screenPageViews
-                    const landingByPath  = new Map<string, number>()
-                    const landingByTitle = new Map<string, number>()
                     const landingPathVals  = Array.from(new Set(landingQueries.filter(q => q.url.startsWith('/')).map(q => q.url)))
                     const landingTitleVals = Array.from(new Set(landingQueries.filter(q => !q.url.startsWith('/')).map(q => q.url)))
-                    if (landingPathVals.length > 0) {
-                        const m = await ga4Query('pagePath', 'screenPageViews', landingPathVals)
-                        m.forEach((v, k) => landingByPath.set(k, v))
-                    }
-                    if (landingTitleVals.length > 0) {
-                        const m = await ga4Query('pageTitle', 'screenPageViews', landingTitleVals)
-                        m.forEach((v, k) => landingByTitle.set(k, v))
-                    }
 
                     // ── Pageviews para payment / upsell ──
-                    const viewsByPath  = new Map<string, number>()
-                    const viewsByTitle = new Map<string, number>()
                     const pvPathVals   = Array.from(new Set(pageviewQueries.filter(q => q.url.startsWith('/')).map(q => q.url)))
                     const pvTitleVals  = Array.from(new Set(pageviewQueries.filter(q => !q.url.startsWith('/')).map(q => q.url)))
-                    if (pvPathVals.length > 0) {
-                        const m = await ga4Query('pagePath', 'screenPageViews', pvPathVals)
-                        m.forEach((v, k) => viewsByPath.set(k, v))
-                    }
-                    if (pvTitleVals.length > 0) {
-                        const m = await ga4Query('pageTitle', 'screenPageViews', pvTitleVals)
-                        m.forEach((v, k) => viewsByTitle.set(k, v))
-                    }
+
+                    // Las 4 consultas son independientes → en paralelo (acotadas por el pool GA4)
+                    const emptyMap = (): Map<string, number> => new Map()
+                    const [landingByPath, landingByTitle, viewsByPath, viewsByTitle] = await Promise.all([
+                        landingPathVals.length  ? ga4Query('pagePath',  'screenPageViews', landingPathVals)  : Promise.resolve(emptyMap()),
+                        landingTitleVals.length ? ga4Query('pageTitle', 'screenPageViews', landingTitleVals) : Promise.resolve(emptyMap()),
+                        pvPathVals.length       ? ga4Query('pagePath',  'screenPageViews', pvPathVals)       : Promise.resolve(emptyMap()),
+                        pvTitleVals.length      ? ga4Query('pageTitle', 'screenPageViews', pvTitleVals)      : Promise.resolve(emptyMap()),
+                    ])
 
                     // Asignar a cada funnel/rol
                     for (const q of queries) {
@@ -1523,7 +1561,14 @@ export async function GET(request: Request) {
         )
 
         // ─── Process all dates: chunked in parallel (Batching) ───
-        const CHUNK_SIZE = 5; // Procesamos 5 días totalmente en paralelo a la vez para no saturar APIs
+        // El pool de rate-limit (src/lib/rate-limit.ts) ya gobierna la TASA real de
+        // peticiones, así que el chunk es solo una palanca de memoria/scheduling.
+        // Lo adaptamos al número de cuentas: con más cuentas, cada fecha ya abre
+        // más peticiones en paralelo, así que reducimos el chunk.
+        const metaAccts = (Array.isArray(config.meta_accounts) ? config.meta_accounts.length : 0) || (config.meta_account_id ? 1 : 0)
+        const tiktokAccts = (Array.isArray(config.tiktok_accounts) ? config.tiktok_accounts.length : 0) || (config.tiktok_advertiser_id ? 1 : 0)
+        const totalAccounts = Math.max(1, metaAccts + tiktokAccts)
+        const CHUNK_SIZE = Math.max(3, Math.min(10, Math.floor(40 / totalAccounts)));
         const upsertPayloads: any[] = [];
         
         for (let i = 0; i < datesToSync.length; i += CHUNK_SIZE) {

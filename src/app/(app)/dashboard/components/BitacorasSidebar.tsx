@@ -1,7 +1,6 @@
 'use client'
 
 import { useState, useEffect, useRef, useTransition, useCallback } from 'react'
-import { createClient } from '@/utils/supabase/client'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Button } from '@/components/ui/button'
@@ -42,13 +41,17 @@ type AutoSaveState = 'idle' | 'saving' | 'saved' | 'error'
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
-export function BitacorasSidebar({ clientId, userRole }: { clientId: string; userRole: string }) {
+export function BitacorasSidebar({ clientId, userRole, userId: serverUserId, initialEntries = [] }: {
+    clientId: string
+    userRole: string
+    userId: string | null
+    initialEntries?: Bitacora[]
+}) {
     const [open, setOpen] = useState(false)
     const [view, setView] = useState<'list' | 'editor'>('list')
 
     // List state
-    const [entries, setEntries] = useState<Bitacora[]>([])
-    const [userId, setUserId] = useState<string | null>(null)
+    const [entries, setEntries] = useState<Bitacora[]>(initialEntries)
     const [loading, setLoading] = useState(false)
     const [deletingId, setDeletingId] = useState<string | null>(null)
     const [, startTransition] = useTransition()
@@ -65,11 +68,12 @@ export function BitacorasSidebar({ clientId, userRole }: { clientId: string; use
 
     const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
     const autoSaveSavedTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+    const initialLoadDone = useRef(initialEntries.length > 0)
 
     const isAdminOrSuper = userRole === 'admin' || userRole === 'superadmin'
     const canSelectPrivado = isAdminOrSuper
-    const canEdit = (e: Bitacora) => isAdminOrSuper || e.author_id === userId
-    const canDelete = (e: Bitacora) => isAdminOrSuper || e.author_id === userId
+    const canEdit = (e: Bitacora) => isAdminOrSuper || e.author_id === serverUserId
+    const canDelete = (e: Bitacora) => isAdminOrSuper || e.author_id === serverUserId
     const isNewEntry = editEntry === null
 
     const DRAFT_KEY = `bitacora_draft_${clientId}`
@@ -78,17 +82,21 @@ export function BitacorasSidebar({ clientId, userRole }: { clientId: string; use
 
     const loadEntries = useCallback(async () => {
         setLoading(true)
-        const [data, { data: { user } }] = await Promise.all([
-            getBitacoras(clientId),
-            createClient().auth.getUser(),
-        ])
-        setEntries(data)
-        setUserId(user?.id ?? null)
-        setLoading(false)
+        try {
+            const data = await getBitacoras(clientId)
+            setEntries(data)
+        } catch (err) {
+            console.error('Error cargando bitácoras:', err)
+        } finally {
+            setLoading(false)
+        }
     }, [clientId])
 
     useEffect(() => {
-        if (open) loadEntries()
+        if (open && !initialLoadDone.current) {
+            initialLoadDone.current = true
+            loadEntries()
+        }
     }, [open, loadEntries])
 
     // ── Draft persistence ────────────────────────────────────────────────────

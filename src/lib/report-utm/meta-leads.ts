@@ -1,5 +1,4 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { resolveAttribution } from './attribution-resolver'
 
 /**
  * Núcleo compartido para ingerir leads de **Meta Lead Ads** (formularios
@@ -147,6 +146,44 @@ export async function fetchFormLeads(
     return (await fetchAllPages(url.toString())) as MetaLeadRecord[]
 }
 
+/**
+ * Igual que `fetchFormLeads` pero en **streaming**: invoca `onBatch` por cada
+ * página de resultados (≤200 leads), sin acumular todo en memoria. Lo usa el
+ * polling para ingerir por lotes y no cargar miles de leads de golpe.
+ */
+export async function fetchFormLeadsPaged(
+    formId: string,
+    token: string,
+    sinceUnix: number | null | undefined,
+    onBatch: (leads: MetaLeadRecord[]) => Promise<void>,
+): Promise<void> {
+    const url = new URL(`${GRAPH}/${formId}/leads`)
+    url.searchParams.append('access_token', token)
+    url.searchParams.append('fields', LEAD_FIELDS)
+    url.searchParams.append('limit', '200')
+    if (sinceUnix && sinceUnix > 0) {
+        url.searchParams.append(
+            'filtering',
+            JSON.stringify([{ field: 'time_created', operator: 'GREATER_THAN', value: sinceUnix }]),
+        )
+    }
+
+    let next: string | null = url.toString()
+    let guard = 0
+    while (next && guard < 200) {
+        guard++
+        const res: Response = await fetch(next)
+        const data = (await res.json()) as GraphResponse
+        if (data.error) {
+            throw new Error(`Graph API: ${data.error.message ?? JSON.stringify(data.error)}`)
+        }
+        if (Array.isArray(data.data) && data.data.length > 0) {
+            await onBatch(data.data as MetaLeadRecord[])
+        }
+        next = data.paging?.next ?? null
+    }
+}
+
 export type MetaPage = { page_id: string; page_token: string; name?: string }
 
 /**
@@ -199,17 +236,125 @@ export async function getClientePages(
 }
 
 /**
- * Descubre las Páginas del cliente y las suscribe al campo `leadgen` de la app
- * (para el webhook en tiempo real). Best-effort.
+ * Form ids que UNA cuenta publicitaria realmente anunció en la ventana.
+ * Reusa el desglose `leadgen_form_id` del worker — es el criterio de pertenencia
+ * por cliente (cada cliente tiene su propia cuenta publicitaria).
+ */
+export async function fetchAccountLeadFormIds(
+    account: MetaAccount,
+    sinceUnix?: number | null,
+): Promise<Set<string>> {
+    const actId = account.account_id.startsWith('act_') ? account.account_id : `act_${account.account_id}`
+    const sinceDate = sinceUnix && sinceUnix > 0 ? new Date(sinceUnix * 1000) : new Date(Date.now() - 90 * 24 * 60 * 60 * 1000)
+    const since = sinceDate.toISOString().slice(0, 10)
+    const until = new Date().toISOString().slice(0, 10)
+
+    const url = new URL(`${GRAPH}/${actId}/insights`)
+    url.searchParams.append('access_token', account.token)
+    url.searchParams.append('time_range', JSON.stringify({ since, until }))
+    url.searchParams.append('fields', 'leadgen_form_id')
+    url.searchParams.append('breakdowns', 'leadgen_form_id')
+    url.searchParams.append('level', 'ad')
+    url.searchParams.append('limit', '500')
+
+    const rows = await fetchAllPages(url.toString())
+    const ids = new Set<string>()
+    for (const r of rows) {
+        if (r.leadgen_form_id) ids.add(String(r.leadgen_form_id))
+    }
+    return ids
+}
+
+export type ScopedTargets = {
+    scopedPages: MetaPage[]
+    matchedForms: Array<{ form: MetaLeadForm; page: MetaPage }>
+    error?: string
+}
+
+/**
+ * Resuelve QUÉ formularios y Páginas pertenecen a un cliente, acotando por las
+ * cuentas publicitarias del cliente (no por todas las Páginas que administra la
+ * agencia). Evita que los leads de un cliente aparezcan en otro.
+ *
+ *  1. Junta los `leadgen_form_id` que las cuentas del cliente anunciaron.
+ *  2. Descubre las Páginas accesibles + tokens.
+ *  3. Se queda solo con los formularios cuyo id está en ese conjunto, y con las
+ *     Páginas que los contienen.
+ */
+export async function getClienteScopedTargets(
+    supabase: SupabaseClient,
+    clienteId: string,
+    sinceUnix?: number | null,
+): Promise<ScopedTargets> {
+    const { accounts, error: accError } = await getMetaAccountsForCliente(supabase, clienteId)
+    if (accError) return { scopedPages: [], matchedForms: [], error: accError }
+
+    // 1) Formularios que las cuentas publicitarias del cliente realmente usaron.
+    const clientFormIds = new Set<string>()
+    let insightsError: string | undefined
+    for (const account of accounts) {
+        try {
+            const ids = await fetchAccountLeadFormIds(account, sinceUnix)
+            ids.forEach((id) => clientFormIds.add(id))
+        } catch (e) {
+            insightsError = e instanceof Error ? e.message : String(e)
+        }
+    }
+    if (clientFormIds.size === 0) {
+        return {
+            scopedPages: [],
+            matchedForms: [],
+            error: insightsError ?? 'Las cuentas publicitarias del cliente no tienen formularios de leads con actividad (~90 días).',
+        }
+    }
+
+    // 2) Páginas accesibles + tokens.
+    const { pages, error: pagesError } = await getClientePages(supabase, clienteId)
+    if (pages.length === 0) return { scopedPages: [], matchedForms: [], error: pagesError }
+
+    // 3) Filtrar a los formularios del cliente; las Páginas con match son las suyas.
+    const scopedPagesMap = new Map<string, MetaPage>()
+    const matchedForms: Array<{ form: MetaLeadForm; page: MetaPage }> = []
+    for (const page of pages) {
+        let forms: MetaLeadForm[] = []
+        try {
+            forms = await listLeadForms(page)
+        } catch {
+            continue
+        }
+        for (const form of forms) {
+            if (clientFormIds.has(form.id)) {
+                matchedForms.push({ form, page })
+                scopedPagesMap.set(page.page_id, page)
+            }
+        }
+    }
+
+    const scopedPages = Array.from(scopedPagesMap.values())
+    if (scopedPages.length === 0) {
+        return {
+            scopedPages,
+            matchedForms,
+            error: 'No se encontró ninguna Página accesible que contenga los formularios de las cuentas del cliente.',
+        }
+    }
+    return { scopedPages, matchedForms }
+}
+
+/**
+ * Descubre las Páginas **del cliente** (acotadas por sus cuentas publicitarias)
+ * y las suscribe al campo `leadgen` de la app (webhook en tiempo real).
+ * Best-effort. Devuelve solo las Páginas del cliente para guardarlas en
+ * `config.pages` (mapeo page_id→cliente del webhook).
  */
 export async function discoverAndSubscribePages(
     supabase: SupabaseClient,
     clienteId: string,
 ): Promise<{ pages: MetaPage[]; error?: string }> {
-    const { pages, error } = await getClientePages(supabase, clienteId)
-    if (pages.length === 0) return { pages, error }
+    const { scopedPages, error } = await getClienteScopedTargets(supabase, clienteId)
+    if (scopedPages.length === 0) return { pages: [], error }
 
-    for (const page of pages) {
+    for (const page of scopedPages) {
         try {
             await fetch(`${GRAPH}/${page.page_id}/subscribed_apps`, {
                 method: 'POST',
@@ -218,7 +363,7 @@ export async function discoverAndSubscribePages(
         } catch { /* no fatal — el polling cubre */ }
     }
 
-    return { pages }
+    return { pages: scopedPages }
 }
 
 /** Trae un lead puntual por su leadgen_id (usado por el webhook en tiempo real). */
@@ -309,21 +454,28 @@ export function leadCreatedUnix(lead: MetaLeadRecord): number | null {
 }
 
 /**
- * Inserta un lead de Meta en `lead_events` (dedup por external_id) y resuelve
- * atribución multi-touch, igual que el endpoint S2S.
+ * Construye la fila de `lead_events` para un lead de Meta, con la atribución
+ * resuelta **inline**: los leads de formularios instantáneos no tienen click_id
+ * ni historia de pixel, así que la atribución es siempre `utm_only` con las UTMs
+ * sintetizadas (no hace falta `resolveAttribution` ni un UPDATE extra).
  */
-export async function ingestMetaLead(
-    db: ReportUtmDb,
-    clienteId: string,
-    lead: MetaLeadRecord,
-    formName?: string | null,
-): Promise<{ inserted: boolean; error?: string }> {
+function buildLeadRow(clienteId: string, lead: MetaLeadRecord, formName?: string | null): Record<string, unknown> {
     const utm = synthesizeUtms(lead)
     const { lead_name, lead_email, lead_phone, raw_fields } = normalizeLeadFields(lead.field_data)
 
     const createdAt = lead.created_time && !Number.isNaN(new Date(lead.created_time).getTime())
         ? new Date(lead.created_time).toISOString()
         : undefined
+    const ts = createdAt ?? new Date().toISOString()
+
+    const hasSignal = Boolean(utm.utm_source || utm.utm_campaign)
+    const touch = hasSignal
+        ? {
+            source: utm.utm_source, medium: utm.utm_medium, campaign: utm.utm_campaign,
+            content: utm.utm_content, term: utm.utm_term, click_id: null,
+            referrer: null, page_url: null, ts,
+        }
+        : null
 
     const row: Record<string, unknown> = {
         cliente_id: clienteId,
@@ -343,58 +495,83 @@ export async function ingestMetaLead(
         click_id: utm.click_id,
         raw_fields,
         source: 'meta_lead_ads',
+        first_touch: touch,
+        last_touch: touch,
+        attribution_method: hasSignal ? 'utm_only' : 'none',
+        attribution_resolved_at: new Date().toISOString(),
     }
     if (createdAt) row.created_at = createdAt
+    return row
+}
 
-    const { data: insertedLead, error } = await db
-        .from('lead_events')
-        .insert(row)
-        .select('id')
-        .single()
-
+/**
+ * Inserta UN lead de Meta (dedup por external_id). Usado por el webhook.
+ */
+export async function ingestMetaLead(
+    db: ReportUtmDb,
+    clienteId: string,
+    lead: MetaLeadRecord,
+    formName?: string | null,
+): Promise<{ inserted: boolean; error?: string }> {
+    const row = buildLeadRow(clienteId, lead, formName)
+    const { error } = await db.from('lead_events').insert(row)
     if (error) {
         // 23505 = unique_violation → ya existía (webhook/poll lo metió antes). No es error.
         if ((error as { code?: string }).code === '23505') return { inserted: false }
         return { inserted: false, error: error.message }
     }
-
-    // Resolver atribución multi-touch (mismo patrón que el S2S).
-    try {
-        const now = new Date().toISOString()
-        const attribution = await resolveAttribution(db, {
-            id: insertedLead.id,
-            cliente_id: clienteId,
-            click_id: utm.click_id,
-            utm_source: utm.utm_source,
-            utm_medium: utm.utm_medium,
-            utm_campaign: utm.utm_campaign,
-            utm_content: utm.utm_content,
-            utm_term: utm.utm_term,
-            sale_timestamp: createdAt ?? now,
-            received_at: now,
-        })
-
-        // Si no hubo historia de pixel, reflejar la señal propia (UTMs sintetizadas).
-        let method = attribution.attribution_method
-        if (method === 'none' || method === 'utm_only') {
-            if (utm.utm_source || utm.utm_campaign) method = 'utm_only'
-        }
-
-        await db
-            .from('lead_events')
-            .update({
-                first_touch: attribution.first_touch as unknown as Record<string, unknown>,
-                last_touch: attribution.last_touch as unknown as Record<string, unknown>,
-                attribution_method: method,
-                attribution_resolved_at: now,
-                visitor_id: attribution.visitor_id ?? null,
-            })
-            .eq('id', insertedLead.id)
-    } catch (err) {
-        console.error('[meta-leads] attribution resolve error', err)
-    }
-
     return { inserted: true }
+}
+
+/**
+ * Inserta un LOTE de leads de Meta de forma eficiente (usado por el polling):
+ *  1. Construye las filas (atribución inline, sin queries por lead).
+ *  2. Una sola consulta para saber cuáles external_id ya existen (dedup).
+ *  3. Un solo INSERT con los nuevos. Si falla (carrera rara con el webhook),
+ *     cae a inserción fila por fila tolerando duplicados.
+ * Devuelve cuántos se insertaron.
+ */
+export async function ingestMetaLeadsBatch(
+    db: ReportUtmDb,
+    clienteId: string,
+    leads: MetaLeadRecord[],
+    formName?: string | null,
+): Promise<number> {
+    if (leads.length === 0) return 0
+
+    // Dedup dentro del propio lote por external_id.
+    const byId = new Map<string, Record<string, unknown>>()
+    for (const lead of leads) {
+        if (!lead.id) continue
+        byId.set(lead.id, buildLeadRow(clienteId, lead, formName))
+    }
+    const rows = Array.from(byId.values())
+    if (rows.length === 0) return 0
+
+    // Filtrar los que ya existen en BD (una sola query).
+    const ids = Array.from(byId.keys())
+    const { data: existing } = await db
+        .from('lead_events')
+        .select('external_id')
+        .eq('cliente_id', clienteId)
+        .in('external_id', ids)
+    const existingSet = new Set((existing ?? []).map((e: { external_id: string }) => e.external_id))
+    const toInsert = rows.filter((r) => !existingSet.has(r.external_id as string))
+    if (toInsert.length === 0) return 0
+
+    const { error } = await db.from('lead_events').insert(toInsert)
+    if (!error) return toInsert.length
+
+    // Fallback fila por fila (tolera 23505 por carrera con el webhook).
+    let n = 0
+    for (const r of toInsert) {
+        const { error: e } = await db.from('lead_events').insert(r)
+        if (!e) n++
+        else if ((e as { code?: string }).code !== '23505') {
+            console.error('[meta-leads] batch fallback insert error', e.message)
+        }
+    }
+    return n
 }
 
 const NINETY_DAYS_SECONDS = 90 * 24 * 60 * 60
@@ -432,44 +609,70 @@ export async function syncMetaLeadsForCliente(
     let scanned = 0
     let maxSeen = cursor ?? 0
     let formCount = 0
+    const startedAt = Date.now()
+    const BUDGET_MS = 240_000 // margen frente al maxDuration de 300s del cron
 
     try {
-        const { pages, error: pagesError } = await getClientePages(supabase, clienteId)
-        if (pages.length === 0) {
-            const msg = pagesError ?? 'Sin Páginas accesibles'
-            await db.from('integrations')
-                .update({ status: 'error', last_error: msg, last_sync_at: new Date().toISOString() })
-                .eq('id', integration.id)
-            return { imported, scanned, forms: 0, backfill: isBackfill, error: msg }
-        }
+        // Resolver los formularios/Páginas del cliente. En corridas incrementales
+        // reutilizamos el descubrimiento cacheado (evita llamadas a Graph); en el
+        // backfill (o sin caché) se vuelve a descubrir acotando por cuenta.
+        type ScopedForm = { form_id: string; form_name: string; page_id: string; page_token: string }
+        let scopedForms: ScopedForm[]
+        let scopedPages: MetaPage[]
 
-        for (const page of pages) {
-            const forms = await listLeadForms(page)
-            formCount += forms.length
-            for (const form of forms) {
-                const leads = await fetchFormLeads(form.id, page.page_token, sinceUnix)
-                for (const lead of leads) {
-                    scanned++
-                    const { inserted } = await ingestMetaLead(db, clienteId, lead, form.name)
-                    if (inserted) imported++
+        const cached = Array.isArray(config.scoped_forms) ? (config.scoped_forms as ScopedForm[]) : null
+        if (!isBackfill && cached && cached.length > 0) {
+            scopedForms = cached
+            scopedPages = Array.isArray(config.pages) ? (config.pages as MetaPage[]) : []
+        } else {
+            const targets = await getClienteScopedTargets(supabase, clienteId)
+            if (targets.matchedForms.length === 0) {
+                const msg = targets.error ?? 'Sin formularios para este cliente'
+                await db.from('integrations')
+                    .update({ status: 'error', last_error: msg, last_sync_at: new Date().toISOString() })
+                    .eq('id', integration.id)
+                return { imported, scanned, forms: 0, backfill: isBackfill, error: msg }
+            }
+            scopedForms = targets.matchedForms.map(({ form, page }) => ({
+                form_id: form.id, form_name: form.name, page_id: page.page_id, page_token: page.page_token,
+            }))
+            scopedPages = targets.scopedPages
+        }
+        formCount = scopedForms.length
+
+        // Recorrer formularios en streaming + insertar por lotes. Checkpoint de
+        // tiempo entre formularios para no exceder el límite del runtime.
+        let partial = false
+        for (const sf of scopedForms) {
+            await fetchFormLeadsPaged(sf.form_id, sf.page_token, sinceUnix, async (batch) => {
+                scanned += batch.length
+                imported += await ingestMetaLeadsBatch(db, clienteId, batch, sf.form_name)
+                for (const lead of batch) {
                     const u = leadCreatedUnix(lead)
                     if (u && u > maxSeen) maxSeen = u
                 }
-            }
+            })
+            if (Date.now() - startedAt > BUDGET_MS) { partial = true; break }
         }
+
+        // Cursor: solo avanza cuando la pasada terminó completa. Si quedó parcial,
+        // se mantiene el cursor previo para re-escanear (la dedup evita duplicar)
+        // y NO se marca backfill como completo.
+        const nextCursor = partial ? cursor : (maxSeen > 0 ? maxSeen : (cursor ?? nowUnix))
 
         await db.from('integrations')
             .update({
                 status: 'active',
-                last_error: null,
+                last_error: partial ? 'Sincronización parcial por límite de tiempo; continúa en la próxima corrida.' : null,
                 last_sync_at: new Date().toISOString(),
                 config: {
                     ...config,
-                    backfill_done: true,
-                    sync_cursor: maxSeen > 0 ? maxSeen : (cursor ?? nowUnix),
+                    backfill_done: partial ? config.backfill_done === true : true,
+                    sync_cursor: nextCursor,
                     last_imported: imported,
                     last_forms_detected: formCount,
-                    pages,
+                    pages: scopedPages,
+                    scoped_forms: scopedForms,
                 },
             })
             .eq('id', integration.id)
@@ -477,8 +680,15 @@ export async function syncMetaLeadsForCliente(
         return { imported, scanned, forms: formCount, backfill: isBackfill }
     } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
+        // Limpiar la caché de formularios para forzar re-descubrimiento (auto-sana
+        // tokens de Página vencidos / cambios de formularios) en la próxima corrida.
         await db.from('integrations')
-            .update({ status: 'error', last_error: msg.slice(0, 500), last_sync_at: new Date().toISOString() })
+            .update({
+                status: 'error',
+                last_error: msg.slice(0, 500),
+                last_sync_at: new Date().toISOString(),
+                config: { ...config, scoped_forms: null },
+            })
             .eq('id', integration.id)
         return { imported, scanned, forms: formCount, backfill: isBackfill, error: msg }
     }
