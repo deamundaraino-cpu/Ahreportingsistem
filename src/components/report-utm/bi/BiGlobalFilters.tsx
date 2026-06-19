@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Filter, RefreshCw, Tag, ChevronDown, X } from 'lucide-react'
+import { Filter, RefreshCw, Tag, ChevronDown, X, Lock } from 'lucide-react'
 import type { BiFilters } from './BiTypes'
 import { UTM_FILTER_KEYS, UTM_FILTER_LABELS } from '@/lib/report-utm/bi-metadata'
 import { HelpTip } from './HelpTip'
@@ -14,6 +14,10 @@ interface Cliente {
 interface Props {
     initialFilters: BiFilters
     onChange: (filters: BiFilters) => void
+    /** Si true, el selector de cliente queda bloqueado (no editable por el lector). */
+    clienteLocked?: boolean
+    /** Notifica cuando se cambia el cliente (solo en modo edición) para reasignar el informe. */
+    onClienteChange?: (id: string) => void
 }
 
 function toISODate(d: Date): string {
@@ -31,7 +35,7 @@ const PRESETS = [
     { label: '90d', days: 90 },
 ]
 
-export function BiGlobalFilters({ initialFilters, onChange }: Props) {
+export function BiGlobalFilters({ initialFilters, onChange, clienteLocked, onClienteChange }: Props) {
     const [clientes, setClientes] = useState<Cliente[]>([])
     const [clienteId, setClienteId] = useState(initialFilters.cliente_id ?? '')
     const [dateFrom, setDateFrom]   = useState(initialFilters.date_from ?? daysAgo(30))
@@ -118,17 +122,36 @@ export function BiGlobalFilters({ initialFilters, onChange }: Props) {
 
             <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
                 <div>
-                    <label className="block text-[10px] font-medium text-muted-foreground mb-1">Cliente</label>
-                    <select
-                        value={clienteId}
-                        onChange={e => setClienteId(e.target.value)}
-                        className="w-full px-3 py-2 text-xs rounded-lg bg-muted border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
-                    >
-                        <option value="">Todos</option>
-                        {clientes.map(c => (
-                            <option key={c.id} value={c.id}>{c.nombre}</option>
-                        ))}
-                    </select>
+                    <label className="flex items-center gap-1 text-[10px] font-medium text-muted-foreground mb-1">
+                        Cliente
+                        {clienteLocked && <Lock className="h-2.5 w-2.5 text-emerald-500" />}
+                    </label>
+                    {clienteLocked ? (
+                        <div className="w-full px-3 py-2 text-xs rounded-lg bg-muted/60 border border-border text-foreground flex items-center gap-1.5 cursor-not-allowed">
+                            <Lock className="h-3 w-3 text-muted-foreground flex-shrink-0" />
+                            <span className="truncate">{clientes.find(c => c.id === clienteId)?.nombre ?? (clienteId ? 'Cliente fijo' : 'Todos')}</span>
+                        </div>
+                    ) : (
+                        <select
+                            value={clienteId}
+                            onChange={e => {
+                                const val = e.target.value
+                                setClienteId(val)
+                                onClienteChange?.(val)
+                                // aplicar de inmediato (incluye el resto de filtros vigentes)
+                                onChange({ ...buildFilters(), cliente_id: val || undefined })
+                            }}
+                            className="w-full px-3 py-2 text-xs rounded-lg bg-muted border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
+                        >
+                            <option value="">Todos</option>
+                            {clientes.map(c => (
+                                <option key={c.id} value={c.id}>{c.nombre}</option>
+                            ))}
+                        </select>
+                    )}
+                    {!clienteLocked && onClienteChange && (
+                        <p className="text-[9px] text-emerald-600 dark:text-emerald-400 mt-1">Queda fijo al informe</p>
+                    )}
                 </div>
 
                 <div>

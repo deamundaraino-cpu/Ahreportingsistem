@@ -133,6 +133,7 @@ export function MetaLeadsCard({
                 <Metric
                     label="Última sincronización"
                     value={integration.last_sync_at ? new Date(integration.last_sync_at).toLocaleString() : '—'}
+                    suppressHydration
                 />
             </div>
 
@@ -174,11 +175,11 @@ export function MetaLeadsCard({
     )
 }
 
-function Metric({ label, value }: { label: string; value: string }) {
+function Metric({ label, value, suppressHydration }: { label: string; value: string; suppressHydration?: boolean }) {
     return (
         <div className="rounded-lg border border-border bg-muted/40 p-3">
             <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">{label}</p>
-            <p className="mt-1 text-sm font-semibold text-foreground truncate">{value}</p>
+            <p className="mt-1 text-sm font-semibold text-foreground truncate" suppressHydrationWarning={suppressHydration}>{value}</p>
         </div>
     )
 }

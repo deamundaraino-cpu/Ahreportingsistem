@@ -1,16 +1,27 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { ArrowLeft, Plus, Loader2 } from 'lucide-react'
 import Link from 'next/link'
+
+interface Cliente { id: string; nombre: string }
 
 export default function NuevoInformePage() {
     const router = useRouter()
     const [nombre, setNombre]   = useState('')
     const [desc, setDesc]       = useState('')
+    const [clienteId, setClienteId] = useState('')
+    const [clientes, setClientes]   = useState<Cliente[]>([])
     const [saving, setSaving]   = useState(false)
     const [error, setError]     = useState<string | null>(null)
+
+    useEffect(() => {
+        fetch('/api/report-utm/clientes')
+            .then(r => r.json())
+            .then(j => setClientes(j.data ?? []))
+            .catch(() => {})
+    }, [])
 
     async function handleCreate() {
         if (!nombre.trim()) return
@@ -20,7 +31,7 @@ export default function NuevoInformePage() {
             const res = await fetch('/api/report-utm/bi/reports', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ nombre: nombre.trim(), descripcion: desc.trim() || null }),
+                body: JSON.stringify({ nombre: nombre.trim(), descripcion: desc.trim() || null, cliente_id: clienteId || null }),
             })
             const json = await res.json()
             if (!res.ok) throw new Error(json.error ?? 'Error al crear')
@@ -62,6 +73,22 @@ export default function NuevoInformePage() {
                         className="w-full px-3 py-2.5 text-sm rounded-xl bg-muted border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
                         onKeyDown={e => e.key === 'Enter' && handleCreate()}
                     />
+                </div>
+                <div>
+                    <label className="block text-xs font-medium text-muted-foreground mb-1">
+                        Cliente <span className="text-muted-foreground/50">(opcional)</span>
+                    </label>
+                    <select
+                        value={clienteId}
+                        onChange={e => setClienteId(e.target.value)}
+                        className="w-full px-3 py-2.5 text-sm rounded-xl bg-muted border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
+                    >
+                        <option value="">Sin cliente fijo (todos)</option>
+                        {clientes.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+                    </select>
+                    <p className="text-[10px] text-muted-foreground mt-1">
+                        Si eliges un cliente, el informe quedará fijo a ese cliente (no se podrá cambiar al verlo).
+                    </p>
                 </div>
                 <div>
                     <label className="block text-xs font-medium text-muted-foreground mb-1">

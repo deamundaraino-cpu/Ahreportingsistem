@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { createAdminClient } from '@/utils/supabase/server'
-import { BarChart2, PlusCircle, LayoutTemplate, Clock, ArrowRight } from 'lucide-react'
+import { reportUtmAdminClient } from '@/lib/report-utm/client'
+import { BarChart2, PlusCircle, LayoutTemplate, Clock, ArrowRight, Lock } from 'lucide-react'
 import { formatDate } from '@/lib/report-utm/formatters'
 import { HelpTip } from '@/components/report-utm/bi/HelpTip'
 
@@ -8,12 +9,17 @@ export const dynamic = 'force-dynamic'
 
 export default async function InformesPage() {
     const db = await createAdminClient()
+    const rtm = await reportUtmAdminClient()
 
-    const { data: reports } = await db
-        .from('bi_reports')
-        .select('id,nombre,descripcion,filters,created_at,updated_at,cliente_id')
-        .order('updated_at', { ascending: false })
-        .limit(100)
+    const [{ data: reports }, { data: clientes }] = await Promise.all([
+        db.from('bi_reports')
+            .select('id,nombre,descripcion,filters,created_at,updated_at,cliente_id')
+            .order('updated_at', { ascending: false })
+            .limit(100),
+        rtm.from('clientes').select('id,nombre'),
+    ])
+
+    const clienteMap = new Map((clientes ?? []).map((c: { id: string; nombre: string }) => [c.id, c.nombre]))
 
     const templates = (reports ?? []).filter((r) => !r.cliente_id)
     const custom    = (reports ?? []).filter((r) => !!r.cliente_id)
@@ -72,7 +78,7 @@ export default async function InformesPage() {
                 {custom.length > 0 ? (
                     <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
                         {custom.map((r) => (
-                            <ReportCard key={r.id} report={r} />
+                            <ReportCard key={r.id} report={r} clienteName={r.cliente_id ? clienteMap.get(r.cliente_id) : undefined} />
                         ))}
                     </div>
                 ) : (
@@ -104,7 +110,7 @@ type Report = {
     cliente_id?: string | null
 }
 
-function ReportCard({ report, isTemplate }: { report: Report; isTemplate?: boolean }) {
+function ReportCard({ report, isTemplate, clienteName }: { report: Report; isTemplate?: boolean; clienteName?: string }) {
     return (
         <Link
             href={`/report-utm/informes/${report.id}`}
@@ -114,11 +120,16 @@ function ReportCard({ report, isTemplate }: { report: Report; isTemplate?: boole
                 <div className="h-9 w-9 rounded-lg flex items-center justify-center bg-emerald-50 dark:bg-emerald-500/10 flex-shrink-0">
                     <BarChart2 className="h-4.5 w-4.5 text-emerald-600 dark:text-emerald-400" />
                 </div>
-                {isTemplate && (
+                {isTemplate ? (
                     <span className="px-1.5 py-0.5 rounded-md bg-muted text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">
                         plantilla
                     </span>
-                )}
+                ) : clienteName ? (
+                    <span className="flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-emerald-50 dark:bg-emerald-500/10 text-[9px] font-semibold uppercase tracking-wider text-emerald-600 dark:text-emerald-400">
+                        <Lock className="h-2.5 w-2.5" />
+                        {clienteName}
+                    </span>
+                ) : null}
             </div>
 
             <div className="flex-1">

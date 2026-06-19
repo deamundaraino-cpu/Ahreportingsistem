@@ -48,6 +48,8 @@ export function BiReportCanvas({ report: initialReport, readonly }: Props) {
         date_from: daysAgo(30),
         date_to:   toISODate(new Date()),
         ...(initialReport.filters ?? {}),
+        // El cliente asignado al informe manda como filtro por defecto
+        ...(initialReport.cliente_id ? { cliente_id: initialReport.cliente_id } : {}),
     })
     const [editMode,   setEditMode]   = useState(false)
     const [editorOpen, setEditorOpen] = useState(false)
@@ -129,13 +131,19 @@ export function BiReportCanvas({ report: initialReport, readonly }: Props) {
         setFilters(prev => ({ ...prev, date_from: from, date_to: to }))
     }, [])
 
+    // Reasignar el cliente fijo del informe (solo en modo edición)
+    const handleAssignCliente = useCallback((id: string) => {
+        setReport(prev => ({ ...prev, cliente_id: id || null }))
+        setDirty(true)
+    }, [])
+
     async function handleSaveReport() {
         setSaving(true)
         try {
             await fetch(`/api/report-utm/bi/reports/${report.id}`, {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ layout: report.layout }),
+                body: JSON.stringify({ layout: report.layout, cliente_id: report.cliente_id ?? null }),
             })
             setSaved(true)
             setDirty(false)
@@ -266,7 +274,12 @@ export function BiReportCanvas({ report: initialReport, readonly }: Props) {
             )}
 
             {/* Global filters */}
-            <BiGlobalFilters initialFilters={filters} onChange={(f) => setFilters(f)} />
+            <BiGlobalFilters
+                initialFilters={filters}
+                onChange={(f) => setFilters(f)}
+                clienteLocked={readonly || (!editMode && !!report.cliente_id)}
+                onClienteChange={editMode ? handleAssignCliente : undefined}
+            />
 
             {/* Drill-down chips */}
             {activeDrills.length > 0 && (

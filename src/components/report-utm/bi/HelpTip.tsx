@@ -19,7 +19,7 @@ interface Props {
 export function HelpTip({ text, size = 13, className }: Props) {
     const [show, setShow] = useState(false)
     const [coords, setCoords] = useState<{ top: number; left: number }>({ top: 0, left: 0 })
-    const ref = useRef<HTMLButtonElement>(null)
+    const ref = useRef<HTMLSpanElement>(null)
 
     const open = useCallback(() => {
         const r = ref.current?.getBoundingClientRect()
@@ -39,19 +39,20 @@ export function HelpTip({ text, size = 13, className }: Props) {
 
     return (
         <>
-            <button
+            <span
                 ref={ref}
-                type="button"
+                role="button"
+                tabIndex={0}
                 onMouseEnter={open}
                 onMouseLeave={close}
                 onFocus={open}
                 onBlur={close}
-                onClick={(e) => { e.preventDefault(); show ? close() : open() }}
+                onClick={(e) => { e.preventDefault(); e.stopPropagation(); show ? close() : open() }}
                 aria-label="Ayuda"
                 className={`inline-flex items-center justify-center text-muted-foreground/60 hover:text-emerald-500 transition-colors cursor-help align-middle ${className ?? ''}`}
             >
                 <HelpCircle style={{ width: size, height: size }} />
-            </button>
+            </span>
             {show && typeof document !== 'undefined' && createPortal(
                 <div
                     style={{ position: 'fixed', top: coords.top, left: coords.left, width: 260, zIndex: 100 }}
