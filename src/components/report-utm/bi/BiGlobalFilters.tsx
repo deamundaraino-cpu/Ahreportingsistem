@@ -3,7 +3,8 @@
 import { useState, useEffect } from 'react'
 import { Filter, RefreshCw, Tag, ChevronDown, X, Lock } from 'lucide-react'
 import type { BiFilters } from './BiTypes'
-import { UTM_FILTER_KEYS, UTM_FILTER_LABELS } from '@/lib/report-utm/bi-metadata'
+import { UTM_FILTER_KEYS, UTM_FILTER_LABELS, FILTER_OPS, parseFilterValue, encodeFilterValue } from '@/lib/report-utm/bi-metadata'
+import type { FilterOp } from '@/lib/report-utm/bi-metadata'
 import { HelpTip } from './HelpTip'
 
 interface Cliente {
@@ -42,10 +43,15 @@ export function BiGlobalFilters({ initialFilters, onChange, clienteLocked, onCli
     const [dateTo, setDateTo]       = useState(initialFilters.date_to ?? toISODate(new Date()))
     const [activePreset, setActivePreset] = useState<number | null>(30)
 
-    // Filtros UTM como variables globales del reporte
+    // Filtros UTM como variables globales del reporte (valor + operador)
     const [utm, setUtm] = useState<Record<string, string>>(() => {
         const init: Record<string, string> = {}
-        for (const k of UTM_FILTER_KEYS) if (initialFilters[k]) init[k] = initialFilters[k] as string
+        for (const k of UTM_FILTER_KEYS) if (initialFilters[k]) init[k] = parseFilterValue(initialFilters[k] as string).value
+        return init
+    })
+    const [utmOps, setUtmOps] = useState<Record<string, FilterOp>>(() => {
+        const init: Record<string, FilterOp> = {}
+        for (const k of UTM_FILTER_KEYS) if (initialFilters[k]) init[k] = parseFilterValue(initialFilters[k] as string).op
         return init
     })
     const [showUtm, setShowUtm] = useState(() => Object.keys(
@@ -69,7 +75,7 @@ export function BiGlobalFilters({ initialFilters, onChange, clienteLocked, onCli
         }
         for (const k of UTM_FILTER_KEYS) {
             const v = utm[k]
-            if (v && v.trim()) f[k] = v.trim()
+            if (v && v.trim()) f[k] = encodeFilterValue(utmOps[k] ?? 'eq', v.trim())
         }
         return f
     }
@@ -92,8 +98,13 @@ export function BiGlobalFilters({ initialFilters, onChange, clienteLocked, onCli
         setUtm(prev => ({ ...prev, [key]: value }))
     }
 
+    function setUtmOp(key: string, op: FilterOp) {
+        setUtmOps(prev => ({ ...prev, [key]: op }))
+    }
+
     function clearUtm() {
         setUtm({})
+        setUtmOps({})
     }
 
     return (
@@ -193,7 +204,7 @@ export function BiGlobalFilters({ initialFilters, onChange, clienteLocked, onCli
                 >
                     <Tag className="h-3.5 w-3.5" />
                     Variables UTM
-                    <HelpTip text="Recorta todo el informe por valores UTM exactos. Ej: Source = Instagram_Reels deja solo el tráfico de esa fuente en cada widget. Combina varios campos para acotar más. Deja vacío para no filtrar." />
+                    <HelpTip text="Recorta todo el informe por valores UTM. Elige el operador: = igual, ≠ distinto, ∋ contiene, ∌ no contiene, ⊢ empieza, ⊣ termina. Ej: Campaña ∋ 'verano' deja solo campañas que contienen esa palabra. En = puedes poner varios valores separados por coma." />
                     {activeUtmCount > 0 && (
                         <span className="px-1.5 py-0.5 rounded-full bg-emerald-500 text-white text-[9px] font-semibold">
                             {activeUtmCount}
@@ -210,14 +221,26 @@ export function BiGlobalFilters({ initialFilters, onChange, clienteLocked, onCli
                                     <label className="block text-[10px] font-medium text-muted-foreground mb-1">
                                         {UTM_FILTER_LABELS[key]}
                                     </label>
-                                    <input
-                                        type="text"
-                                        value={utm[key] ?? ''}
-                                        onChange={e => setUtmValue(key, e.target.value)}
-                                        onKeyDown={e => e.key === 'Enter' && handleApply()}
-                                        placeholder="cualquiera"
-                                        className="w-full px-2.5 py-1.5 text-xs rounded-lg bg-muted border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
-                                    />
+                                    <div className="flex gap-1">
+                                        <select
+                                            value={utmOps[key] ?? 'eq'}
+                                            onChange={e => setUtmOp(key, e.target.value as FilterOp)}
+                                            title="Operador"
+                                            className="px-1 py-1.5 text-xs rounded-lg bg-muted border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
+                                        >
+                                            {FILTER_OPS.map(o => (
+                                                <option key={o.value} value={o.value} title={o.label}>{o.short}</option>
+                                            ))}
+                                        </select>
+                                        <input
+                                            type="text"
+                                            value={utm[key] ?? ''}
+                                            onChange={e => setUtmValue(key, e.target.value)}
+                                            onKeyDown={e => e.key === 'Enter' && handleApply()}
+                                            placeholder="cualquiera"
+                                            className="flex-1 min-w-0 px-2.5 py-1.5 text-xs rounded-lg bg-muted border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
+                                        />
+                                    </div>
                                 </div>
                             ))}
                         </div>
@@ -239,7 +262,7 @@ export function BiGlobalFilters({ initialFilters, onChange, clienteLocked, onCli
                                 </button>
                             )}
                             <p className="text-[10px] text-muted-foreground ml-auto">
-                                Recorta todos los widgets por estos valores UTM (coincidencia exacta).
+                                Recorta todos los widgets. Elige el operador a la izquierda de cada campo.
                             </p>
                         </div>
                     </div>

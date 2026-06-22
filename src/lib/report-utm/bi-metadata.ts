@@ -154,6 +154,39 @@ export function utmFilterSignature(filters: Record<string, string | undefined>):
     return UTM_FILTER_KEYS.map((k) => filters[k] ?? '').join('|')
 }
 
+// ── Operadores de filtro ──────────────────────────────────────────────
+// El valor de un filtro puede llevar un operador codificado como
+// "<op>:<valor>" (ej. "contains:instagram"). Sin prefijo válido = igualdad
+// exacta (compatibilidad con drill-down, slicers y reportes existentes).
+
+export type FilterOp = 'eq' | 'neq' | 'contains' | 'ncontains' | 'starts' | 'ends'
+
+export const FILTER_OPS: { value: FilterOp; label: string; short: string }[] = [
+    { value: 'eq',        label: 'es igual a',   short: '=' },
+    { value: 'neq',       label: 'no es igual a', short: '≠' },
+    { value: 'contains',  label: 'contiene',     short: '∋' },
+    { value: 'ncontains', label: 'no contiene',  short: '∌' },
+    { value: 'starts',    label: 'empieza con',  short: '⊢' },
+    { value: 'ends',      label: 'termina con',  short: '⊣' },
+]
+
+const OP_SET = new Set<string>(FILTER_OPS.map(o => o.value))
+
+/** Separa "<op>:<valor>" en operador + valor. Sin prefijo válido → eq. */
+export function parseFilterValue(raw: string): { op: FilterOp; value: string } {
+    const idx = raw.indexOf(':')
+    if (idx > 0) {
+        const maybe = raw.slice(0, idx)
+        if (OP_SET.has(maybe)) return { op: maybe as FilterOp, value: raw.slice(idx + 1) }
+    }
+    return { op: 'eq', value: raw }
+}
+
+/** Codifica operador + valor en el formato de filtro. eq se guarda plano. */
+export function encodeFilterValue(op: FilterOp, value: string): string {
+    return op === 'eq' ? value : `${op}:${value}`
+}
+
 // ── Campos calculados ─────────────────────────────────────────────────
 // Evaluador seguro de expresiones aritméticas sobre métricas base.
 // Solo permite identificadores de métrica, números, + - * / ( ) y punto.

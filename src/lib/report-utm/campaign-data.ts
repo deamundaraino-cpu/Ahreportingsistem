@@ -1,5 +1,6 @@
 import { createAdminClient } from '@/utils/supabase/server'
 import type { BiQueryRow } from './bi-metadata'
+import { fetchAllRows, applyOneFilter } from './bi-query'
 
 // ============================================================
 // Cruce leads/ventas ↔ campañas (gasto).
@@ -233,18 +234,16 @@ export async function runCampaignQuery(params: CampaignCrossParams): Promise<BiQ
     }
     const UNMATCHED = '__none__'
 
-    // Leads
-    let leadsQ = supabase
-        .schema('report_utm')
-        .from('lead_events')
-        .select('utm_id,utm_campaign,utm_content,utm_source')
-        .gte('created_at', dateFrom + 'T00:00:00')
-        .lte('created_at', dateTo + 'T23:59:59')
-        .eq('cliente_id', params.cliente_id)
-        .limit(50000)
-    leadsQ = applyFilters(leadsQ, params.filters)
-    const { data: leads } = await leadsQ
-    for (const l of (leads as Record<string, unknown>[] | null) ?? []) {
+    // Leads (paginado completo para no toparse con el límite de PostgREST)
+    const leads = await fetchAllRows(() => applyFilters(
+        supabase.schema('report_utm').from('lead_events')
+            .select('utm_id,utm_campaign,utm_content,utm_source')
+            .gte('created_at', dateFrom + 'T00:00:00')
+            .lte('created_at', dateTo + 'T23:59:59')
+            .eq('cliente_id', params.cliente_id),
+        params.filters,
+    ))
+    for (const l of leads) {
         const m = matchToCampaign(l, idx, overrides)
         const key = m.key ?? UNMATCHED
         const a = ensure(key, m.key ? (idx.campaigns.get(m.key)?.name ?? key) : '(sin campaña)')
@@ -252,19 +251,17 @@ export async function runCampaignQuery(params: CampaignCrossParams): Promise<BiQ
         a.methods[m.method] = (a.methods[m.method] ?? 0) + 1
     }
 
-    // Ventas (aprobadas)
-    let salesQ = supabase
-        .schema('report_utm')
-        .from('sales_events')
-        .select('utm_id,utm_campaign,utm_content,utm_source,amount,status')
-        .gte('created_at', dateFrom + 'T00:00:00')
-        .lte('created_at', dateTo + 'T23:59:59')
-        .eq('cliente_id', params.cliente_id)
-        .eq('status', 'approved')
-        .limit(50000)
-    salesQ = applyFilters(salesQ, params.filters)
-    const { data: sales } = await salesQ
-    for (const s of (sales as Record<string, unknown>[] | null) ?? []) {
+    // Ventas (aprobadas, paginado completo)
+    const sales = await fetchAllRows(() => applyFilters(
+        supabase.schema('report_utm').from('sales_events')
+            .select('utm_id,utm_campaign,utm_content,utm_source,amount,status')
+            .gte('created_at', dateFrom + 'T00:00:00')
+            .lte('created_at', dateTo + 'T23:59:59')
+            .eq('cliente_id', params.cliente_id)
+            .eq('status', 'approved'),
+        params.filters,
+    ))
+    for (const s of sales) {
         const m = matchToCampaign(s, idx, overrides)
         const key = m.key ?? UNMATCHED
         const a = ensure(key, m.key ? (idx.campaigns.get(m.key)?.name ?? key) : '(sin campaña)')
@@ -301,10 +298,9 @@ const VALID = new Set(['utm_source', 'utm_medium', 'utm_campaign', 'utm_content'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function applyFilters(q: any, filters?: Record<string, string>): any {
     if (!filters) return q
-    for (const [k, v] of Object.entries(filters)) {
-        if (!v || !VALID.has(k)) continue
-        if (v.includes(',')) q = q.in(k, v.split(',').map(s => s.trim()).filter(Boolean))
-        else q = q.eq(k, v)
+    for (const [k, raw] of Object.entries(filters)) {
+        if (!raw || !VALID.has(k)) continue
+        q = applyOneFilter(q, k, raw)
     }
     return q
 }
@@ -333,17 +329,16 @@ export async function runUnmatchedUtms(params: CampaignCrossParams): Promise<{ v
         loadOverrides(params.cliente_id),
     ])
 
-    const { data: leads } = await supabase
-        .schema('report_utm')
-        .from('lead_events')
-        .select('utm_id,utm_campaign,utm_content,utm_source')
-        .gte('created_at', dateFrom + 'T00:00:00')
-        .lte('created_at', dateTo + 'T23:59:59')
-        .eq('cliente_id', params.cliente_id)
-        .limit(50000)
+    const leads = await fetchAllRows(() =>
+        supabase.schema('report_utm').from('lead_events')
+            .select('utm_id,utm_campaign,utm_content,utm_source')
+            .gte('created_at', dateFrom + 'T00:00:00')
+            .lte('created_at', dateTo + 'T23:59:59')
+            .eq('cliente_id', params.cliente_id)
+    )
 
     const counts = new Map<string, number>()
-    for (const l of (leads as Record<string, unknown>[] | null) ?? []) {
+    for (const l of leads) {
         const m = matchToCampaign(l, idx, overrides)
         if (m.key) continue
         const v = (l.utm_campaign as string) || (l.utm_id as string) || (l.utm_source as string) || '(vacío)'

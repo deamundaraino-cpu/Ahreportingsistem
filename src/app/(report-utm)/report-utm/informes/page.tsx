@@ -4,6 +4,7 @@ import { reportUtmAdminClient } from '@/lib/report-utm/client'
 import { BarChart2, PlusCircle, LayoutTemplate, Clock, ArrowRight, Lock } from 'lucide-react'
 import { formatDate } from '@/lib/report-utm/formatters'
 import { HelpTip } from '@/components/report-utm/bi/HelpTip'
+import { ReportActions } from './ReportActions'
 
 export const dynamic = 'force-dynamic'
 
@@ -13,7 +14,7 @@ export default async function InformesPage() {
 
     const [{ data: reports }, { data: clientes }] = await Promise.all([
         db.from('bi_reports')
-            .select('id,nombre,descripcion,filters,created_at,updated_at,cliente_id')
+            .select('*')
             .order('updated_at', { ascending: false })
             .limit(100),
         rtm.from('clientes').select('id,nombre'),
@@ -21,8 +22,10 @@ export default async function InformesPage() {
 
     const clienteMap = new Map((clientes ?? []).map((c: { id: string; nombre: string }) => [c.id, c.nombre]))
 
-    const templates = (reports ?? []).filter((r) => !r.cliente_id)
-    const custom    = (reports ?? []).filter((r) => !!r.cliente_id)
+    // is_template explícito (migración 035); fallback al heurístico anterior si no existe
+    const isTpl = (r: { is_template?: boolean; cliente_id?: string | null }) => r.is_template ?? !r.cliente_id
+    const templates = (reports ?? []).filter(isTpl)
+    const custom    = (reports ?? []).filter((r) => !isTpl(r))
 
     return (
         <div className="space-y-8">
@@ -78,7 +81,7 @@ export default async function InformesPage() {
                 {custom.length > 0 ? (
                     <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
                         {custom.map((r) => (
-                            <ReportCard key={r.id} report={r} clienteName={r.cliente_id ? clienteMap.get(r.cliente_id) : undefined} />
+                            <ReportCard key={r.id} report={r} clienteName={r.cliente_id ? clienteMap.get(r.cliente_id) : undefined} showActions />
                         ))}
                     </div>
                 ) : (
@@ -110,12 +113,16 @@ type Report = {
     cliente_id?: string | null
 }
 
-function ReportCard({ report, isTemplate, clienteName }: { report: Report; isTemplate?: boolean; clienteName?: string }) {
+function ReportCard({ report, isTemplate, clienteName, showActions }: { report: Report; isTemplate?: boolean; clienteName?: string; showActions?: boolean }) {
     return (
-        <Link
-            href={`/report-utm/informes/${report.id}`}
-            className="group rounded-2xl border border-border bg-card p-5 hover:border-emerald-500/40 hover:shadow-sm transition-all duration-200 flex flex-col gap-3"
-        >
+        <div className="relative group">
+            {showActions && (
+                <ReportActions report={report} className="absolute top-3 right-3 z-10" />
+            )}
+            <Link
+                href={`/report-utm/informes/${report.id}`}
+                className="rounded-2xl border border-border bg-card p-5 hover:border-emerald-500/40 hover:shadow-sm transition-all duration-200 flex flex-col gap-3"
+            >
             <div className="flex items-start justify-between gap-2">
                 <div className="h-9 w-9 rounded-lg flex items-center justify-center bg-emerald-50 dark:bg-emerald-500/10 flex-shrink-0">
                     <BarChart2 className="h-4.5 w-4.5 text-emerald-600 dark:text-emerald-400" />
@@ -150,6 +157,7 @@ function ReportCard({ report, isTemplate, clienteName }: { report: Report; isTem
                 </div>
                 <ArrowRight className="h-4 w-4 text-muted-foreground/40 group-hover:text-emerald-500 transition-colors" />
             </div>
-        </Link>
+            </Link>
+        </div>
     )
 }

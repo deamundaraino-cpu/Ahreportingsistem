@@ -51,7 +51,7 @@ export default async function LeadsPage({
     if (sp.utm_campaign) leadsQuery = leadsQuery.ilike('utm_campaign', `%${sp.utm_campaign}%`)
     if (sp.utm_content) leadsQuery = leadsQuery.ilike('utm_content', `%${sp.utm_content}%`)
     if (sp.from) leadsQuery = leadsQuery.gte('created_at', sp.from)
-    if (sp.to) leadsQuery = leadsQuery.lte('created_at', sp.to)
+    if (sp.to) leadsQuery = leadsQuery.lte('created_at', sp.to + 'T23:59:59')
 
     const { data: leads, count } = await leadsQuery
         .order('created_at', { ascending: false })
@@ -67,7 +67,7 @@ export default async function LeadsPage({
     if (sp.utm_campaign) statsQuery = statsQuery.ilike('utm_campaign', `%${sp.utm_campaign}%`)
     if (sp.utm_content) statsQuery = statsQuery.ilike('utm_content', `%${sp.utm_content}%`)
     if (sp.from) statsQuery = statsQuery.gte('created_at', sp.from)
-    if (sp.to) statsQuery = statsQuery.lte('created_at', sp.to)
+    if (sp.to) statsQuery = statsQuery.lte('created_at', sp.to + 'T23:59:59')
 
     const { data: statsRows } = await statsQuery.limit(STATS_CAP)
     const stats = computeStats((statsRows as StatsRow[]) ?? [])

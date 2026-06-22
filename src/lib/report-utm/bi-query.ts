@@ -1,6 +1,6 @@
 import { createAdminClient } from '@/utils/supabase/server'
 import type { BiMetric, BiDimension, DateGrouping, BiQueryParams, BiQueryRow, BiPivotRow } from './bi-metadata'
-import { evaluateExpression } from './bi-metadata'
+import { evaluateExpression, parseFilterValue } from './bi-metadata'
 
 // Re-export para compatibilidad con imports existentes que apuntaban acá.
 export type { BiMetric, BiDimension, DateGrouping, BiQueryParams, BiQueryRow, BiPivotRow } from './bi-metadata'
@@ -23,52 +23,20 @@ export async function runBiQuery(params: BiQueryParams): Promise<BiQueryRow[]> {
 
     const dateFrom = params.date_from ?? new Date(Date.now() - 30 * 86400_000).toISOString().slice(0, 10)
     const dateTo   = params.date_to   ?? new Date().toISOString().slice(0, 10)
-    const grouping = params.date_grouping ?? 'day'
     const lim      = Math.min(params.limit ?? 500, 5000)
 
-    // Build dimension selector for leads/sales tables
-    function dimColumn(table: 'l' | 's', dim: BiDimension): string {
-        if (dim === 'none') return `'total'`
-        if (dim === 'date') {
-            const trunc = grouping === 'month' ? 'month' : grouping === 'week' ? 'week' : 'day'
-            return `DATE_TRUNC('${trunc}', ${table}.created_at)::date::text`
-        }
-        if (dim === 'platform') return table === 's' ? `s.platform` : `'leads'`
-        // All other dims exist on both tables
-        return `${table}.${dim}`
-    }
-
     // ── LEADS query ───────────────────────────────────────────────────
+    // Conteo EXACTO (count para el total, paginación completa para agrupados).
+    // El Top-N (params.limit) se aplica luego en mergeResults, no al traer filas.
     let leadsData: Array<{ dim: string | null; count: number }> = []
     if (needsLeads) {
-        const dimExpr = dimColumn('l', params.dimension)
-        let sql = `
-            SELECT ${dimExpr} AS dim, COUNT(*)::int AS count
-            FROM report_utm.lead_events l
-            WHERE l.created_at::date BETWEEN '${dateFrom}' AND '${dateTo}'
-        `
-        if (params.cliente_id) sql += ` AND l.cliente_id = '${params.cliente_id}'`
-        if (params.filters) {
-            for (const [k, v] of Object.entries(params.filters)) {
-                if (v && isValidDimKey(k)) sql += ` AND l.${k} = '${v.replace(/'/g, "''")}'`
-            }
-        }
-        if (params.dimension !== 'none') sql += ` GROUP BY 1 ORDER BY count DESC`
-        sql += ` LIMIT ${lim}`
-
-        const { data, error } = await supabase.rpc('execute_bi_query' as never, { query_sql: sql })
-        if (!error && Array.isArray(data)) {
-            leadsData = data as { dim: string | null; count: number }[]
-        } else {
-            // Fallback: use PostgREST-style query
-            leadsData = await queryLeadsDirect(supabase, params, dateFrom, dateTo, lim)
-        }
+        leadsData = await queryLeadsDirect(supabase, params, dateFrom, dateTo)
     }
 
     // ── SALES query ───────────────────────────────────────────────────
     let salesData: Array<{ dim: string | null; sales: number; revenue: number }> = []
     if (needsSales) {
-        salesData = await querySalesDirect(supabase, params, dateFrom, dateTo, lim)
+        salesData = await querySalesDirect(supabase, params, dateFrom, dateTo)
     }
 
     // ── ADS query (metricas_diarias) ──────────────────────────────────
@@ -88,23 +56,29 @@ async function queryLeadsDirect(
     supabase: any,
     params: BiQueryParams,
     dateFrom: string,
-    dateTo: string,
-    lim: number
+    dateTo: string
 ): Promise<Array<{ dim: string | null; count: number }>> {
-    let q = supabase
-        .schema('report_utm')
-        .from('lead_events')
-        .select(buildLeadSelect(params.dimension))
-        .gte('created_at', dateFrom + 'T00:00:00')
-        .lte('created_at', dateTo + 'T23:59:59')
-        .limit(lim)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const applyBase = (q: any) => {
+        q = q.gte('created_at', dateFrom + 'T00:00:00').lte('created_at', dateTo + 'T23:59:59')
+        if (params.cliente_id) q = q.eq('cliente_id', params.cliente_id)
+        return applyDimFilters(q, params.filters)
+    }
 
-    if (params.cliente_id) q = q.eq('cliente_id', params.cliente_id)
-    q = applyDimFilters(q, params.filters)
+    // Total: conteo EXACTO en la base, sin traer filas (head + count).
+    if (params.dimension === 'none') {
+        const { count, error } = await applyBase(
+            supabase.schema('report_utm').from('lead_events').select('id', { count: 'exact', head: true })
+        )
+        if (error) return []
+        return [{ dim: 'total', count: count ?? 0 }]
+    }
 
-    const { data, error } = await q
-    if (error || !data) return []
-    return aggregateLeads(data as Record<string, unknown>[], params.dimension, params.date_grouping)
+    // Agrupado: traer TODAS las filas (paginado) y agrupar en memoria.
+    const rows = await fetchAllRows(() =>
+        applyBase(supabase.schema('report_utm').from('lead_events').select(buildLeadSelect(params.dimension)))
+    )
+    return aggregateLeads(rows, params.dimension, params.date_grouping)
 }
 
 function buildLeadSelect(dimension: BiDimension): string {
@@ -133,24 +107,22 @@ async function querySalesDirect(
     supabase: any,
     params: BiQueryParams,
     dateFrom: string,
-    dateTo: string,
-    lim: number
+    dateTo: string
 ): Promise<Array<{ dim: string | null; sales: number; revenue: number }>> {
     const dimCols = params.dimension !== 'none' && params.dimension !== 'date' ? `,${params.dimension}` : ''
-    let q = supabase
-        .schema('report_utm')
-        .from('sales_events')
-        .select(`id,created_at,amount,status,platform${dimCols}`)
-        .gte('created_at', dateFrom + 'T00:00:00')
-        .lte('created_at', dateTo + 'T23:59:59')
-        .eq('status', 'approved')
-        .limit(lim)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const applyBase = (q: any) => {
+        q = q.gte('created_at', dateFrom + 'T00:00:00')
+            .lte('created_at', dateTo + 'T23:59:59')
+            .eq('status', 'approved')
+        if (params.cliente_id) q = q.eq('cliente_id', params.cliente_id)
+        return applyDimFilters(q, params.filters)
+    }
 
-    if (params.cliente_id) q = q.eq('cliente_id', params.cliente_id)
-    q = applyDimFilters(q, params.filters)
-
-    const { data, error } = await q
-    if (error || !data) return []
+    // Traer TODAS las ventas aprobadas (paginado) para sumar revenue exacto.
+    const data = await fetchAllRows(() =>
+        applyBase(supabase.schema('report_utm').from('sales_events').select(`id,created_at,amount,status,platform${dimCols}`))
+    )
 
     const map = new Map<string, { sales: number; revenue: number }>()
     for (const r of data as Record<string, unknown>[]) {
@@ -353,7 +325,6 @@ export async function runPivotQuery(
     const dateTo   = params.date_to   ?? new Date().toISOString().slice(0, 10)
     const dim1 = params.dimension
     const dim2 = params.dimension2!
-    const lim  = Math.min(params.limit ?? 1000, 5000)
 
     const isSales = metric === 'sales_count' || metric === 'revenue'
     const table = isSales ? 'sales_events' : 'lead_events'
@@ -363,20 +334,18 @@ export async function runPivotQuery(
     if (dim1 !== 'none' && dim1 !== 'date' && dim1 !== 'platform') cols.add(dim1)
     if (dim2 !== 'none' && dim2 !== 'date' && dim2 !== 'platform') cols.add(dim2)
 
-    let q = supabase
-        .schema('report_utm')
-        .from(table)
-        .select(Array.from(cols).join(','))
-        .gte('created_at', dateFrom + 'T00:00:00')
-        .lte('created_at', dateTo + 'T23:59:59')
-        .limit(lim)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const applyBase = (q: any) => {
+        q = q.gte('created_at', dateFrom + 'T00:00:00').lte('created_at', dateTo + 'T23:59:59')
+        if (isSales) q = q.eq('status', 'approved')
+        if (params.cliente_id) q = q.eq('cliente_id', params.cliente_id)
+        return applyDimFilters(q, params.filters)
+    }
 
-    if (isSales) q = q.eq('status', 'approved')
-    if (params.cliente_id) q = q.eq('cliente_id', params.cliente_id)
-    q = applyDimFilters(q, params.filters)
-
-    const { data, error } = await q
-    if (error || !data) return { rows: [], seriesKeys: [] }
+    // Traer TODAS las filas (paginado); el Top-N se aplica después sobre los grupos.
+    const data = await fetchAllRows(() =>
+        applyBase(supabase.schema('report_utm').from(table).select(Array.from(cols).join(',')))
+    )
 
     const grouping = params.date_grouping ?? 'day'
     const pivot = new Map<string, Map<string, number>>()
@@ -455,22 +424,63 @@ function isValidDimKey(key: string): boolean {
 }
 
 /**
+ * Trae TODAS las filas de una query paginando (PostgREST limita ~1000 por
+ * request). Evita el undercount de contar solo la primera página.
+ * `buildQuery` debe devolver una query NUEVA en cada llamada.
+ */
+export async function fetchAllRows(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    buildQuery: () => any,
+    pageSize = 1000,
+    hardCap = 200000
+): Promise<Record<string, unknown>[]> {
+    const all: Record<string, unknown>[] = []
+    for (let offset = 0; offset < hardCap; offset += pageSize) {
+        const { data, error } = await buildQuery().range(offset, offset + pageSize - 1)
+        if (error || !data || data.length === 0) break
+        all.push(...(data as Record<string, unknown>[]))
+        if (data.length < pageSize) break
+    }
+    return all
+}
+
+/**
  * Aplica filtros de dimensión a una query PostgREST. Soporta multi-valor:
  * si el valor trae comas (ej. "facebook,instagram") usa IN (...); si no, igualdad.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function applyDimFilters(q: any, filters?: Record<string, string>): any {
     if (!filters) return q
-    for (const [k, v] of Object.entries(filters)) {
-        if (!v || !isValidDimKey(k)) continue
-        if (v.includes(',')) {
-            const vals = v.split(',').map(s => s.trim()).filter(Boolean)
-            if (vals.length) q = q.in(k, vals)
-        } else {
-            q = q.eq(k, v)
-        }
+    for (const [k, raw] of Object.entries(filters)) {
+        if (!raw || !isValidDimKey(k)) continue
+        q = applyOneFilter(q, k, raw)
     }
     return q
+}
+
+/** Aplica un filtro con su operador (eq/neq/contains/…). Exportable y reutilizable. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function applyOneFilter(q: any, key: string, raw: string): any {
+    const { op, value } = parseFilterValue(raw)
+    const v = value.trim()
+    if (!v) return q
+    // Escapar comodines de LIKE en el valor del usuario
+    const esc = (s: string) => s.replace(/[%_]/g, m => `\\${m}`)
+    switch (op) {
+        case 'neq':       return q.neq(key, v)
+        case 'contains':  return q.ilike(key, `%${esc(v)}%`)
+        case 'ncontains': return q.not(key, 'ilike', `%${esc(v)}%`)
+        case 'starts':    return q.ilike(key, `${esc(v)}%`)
+        case 'ends':      return q.ilike(key, `%${esc(v)}`)
+        case 'eq':
+        default:
+            // Multi-valor por comas → IN
+            if (v.includes(',')) {
+                const vals = v.split(',').map(s => s.trim()).filter(Boolean)
+                return vals.length ? q.in(key, vals) : q
+            }
+            return q.eq(key, v)
+    }
 }
 
 // ── Valores distintos de una dimensión (para slicers) ─────────────────

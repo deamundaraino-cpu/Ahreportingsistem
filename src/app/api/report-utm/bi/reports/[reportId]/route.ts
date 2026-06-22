@@ -53,10 +53,14 @@ export async function DELETE(_req: NextRequest, { params }: Params) {
 
     const { reportId } = await params
 
-    // Prevent deleting template reports (no cliente_id)
+    // Proteger las plantillas del sistema. Usa is_template; si la columna
+    // aún no existe (migración 035 sin aplicar), cae al heurístico anterior.
     const db = await createAdminClient()
-    const { data: report } = await db.from('bi_reports').select('cliente_id').eq('id', reportId).maybeSingle()
-    if (report && !report.cliente_id) {
+    const { data: report } = await db.from('bi_reports').select('*').eq('id', reportId).maybeSingle()
+    const isTemplate = report
+        ? (report.is_template ?? !report.cliente_id)
+        : false
+    if (isTemplate) {
         return NextResponse.json({ error: 'No se pueden eliminar plantillas del sistema' }, { status: 403 })
     }
 
