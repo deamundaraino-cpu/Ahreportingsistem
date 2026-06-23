@@ -5,7 +5,14 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { RichTextEditor } from '@/components/editor/RichTextEditor'
+import dynamic from 'next/dynamic'
+import { Skeleton } from '@/components/ui/skeleton'
+
+const RichTextEditor = dynamic(
+    () => import('@/components/editor/RichTextEditor').then(m => ({ default: m.RichTextEditor })),
+    { loading: () => <Skeleton className="h-32 rounded-md" />, ssr: false }
+)
+
 import {
     BookOpen, X, Plus, Pencil, Trash2, Loader2,
     Lock, Users, Globe, ArrowLeft, CheckCircle2, AlertCircle,

@@ -29,7 +29,13 @@ const baseSecurityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
-    serverExternalPackages: ['@google-analytics/data'],
+    compress: true,
+    poweredByHeader: false,
+    serverExternalPackages: [
+        '@google-analytics/data',
+        'google-auth-library',
+        'google-spreadsheet',
+    ],
     async headers() {
         return [
             // Public, shareable/embeddable report routes: no frame restrictions so

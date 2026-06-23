@@ -1,7 +1,8 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Loader2, ArrowUpDown } from 'lucide-react'
+import { ArrowUpDown } from 'lucide-react'
+import { Skeleton } from '@/components/ui/skeleton'
 import type { BiFilters, WidgetConfig, ConditionalRule, CalculatedField } from '../BiTypes'
 import type { BiMetric, BiQueryRow } from '@/lib/report-utm/bi-metadata'
 import { METRIC_META, DIMENSION_META, appendUtmFilters, utmFilterSignature } from '@/lib/report-utm/bi-metadata'
@@ -131,8 +132,10 @@ export function TableWidget({ title, config, filters, calculatedFields = [] }: P
             </div>
 
             {loading ? (
-                <div className="flex-1 flex items-center justify-center py-8">
-                    <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                <div className="flex-1 p-4 space-y-2">
+                    {Array.from({ length: 5 }).map((_, i) => (
+                        <Skeleton key={i} className="h-8 rounded" />
+                    ))}
                 </div>
             ) : error ? (
                 <p className="text-xs text-red-500 p-5">{error}</p>

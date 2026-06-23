@@ -9,21 +9,40 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import dynamic from 'next/dynamic'
+import { Skeleton } from '@/components/ui/skeleton'
 import { evaluateFormula, aggregateFormula, formatValue, filterRowByTikTokAccount } from '@/lib/formula-engine'
-import { LayoutConfigModal } from './LayoutConfigModal'
-import { QuickEditModal } from './QuickEditModal'
 import type { QuickEditTarget } from './QuickEditModal'
-import { TabConfigModal } from './TabConfigModal'
 import { MetricCharts } from './MetricCharts'
+
+const LayoutConfigModal = dynamic(
+    () => import('./LayoutConfigModal').then(m => ({ default: m.LayoutConfigModal })),
+    { loading: () => null }
+)
+const QuickEditModal = dynamic(
+    () => import('./QuickEditModal').then(m => ({ default: m.QuickEditModal })),
+    { loading: () => null }
+)
+const TabConfigModal = dynamic(
+    () => import('./TabConfigModal').then(m => ({ default: m.TabConfigModal })),
+    { loading: () => null }
+)
 import { LayoutDashboard, Settings2, Plus, Edit2, CalendarDays, Timer, BadgeDollarSign, Wallet, GripVertical, Search, X, Puzzle, Type, AlignLeft, AlignCenter, AlignRight, Trash2, Save, Loader2, Minus, Archive, Copy, BarChart3, Table2, CreditCard } from 'lucide-react'
 import type { ColDef, CardDef, ReportLayout, ChartDef, MetricDef, TextBlockDef, RankingTableDef } from '@/lib/layout-types'
 import { updateManualMetric, getTabTotalSpend, saveClienteLayout, saveTabOverrides, updateLayoutPuzzleState, toggleTabArchived } from '../_actions'
 import { SortableCard, SortableChart, SortableTable, SortableText } from './PuzzleComponents'
 import { CountryBreakdown } from './CountryBreakdown'
 import { RankingTableBlock } from './RankingTableBlock'
-import { MonthlyReportTab } from './MonthlyReportTab'
-import { SupportModule } from './SupportModule'
 import { TabArchiveView } from './TabArchiveView'
+
+const MonthlyReportTab = dynamic(
+    () => import('./MonthlyReportTab').then(m => ({ default: m.MonthlyReportTab })),
+    { loading: () => <Skeleton className="h-64 rounded-xl" /> }
+)
+const SupportModule = dynamic(
+    () => import('./SupportModule').then(m => ({ default: m.SupportModule })),
+    { loading: () => <Skeleton className="h-64 rounded-xl" /> }
+)
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, DragEndEvent, DragStartEvent, DragOverlay, defaultDropAnimationSideEffects } from '@dnd-kit/core'
 import { SortableContext, horizontalListSortingStrategy, verticalListSortingStrategy, useSortable, arrayMove } from '@dnd-kit/sortable'
 

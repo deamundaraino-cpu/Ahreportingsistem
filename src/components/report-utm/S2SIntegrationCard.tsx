@@ -40,9 +40,13 @@ export function S2SIntegrationCard({
     const onActivate = () => {
         setError(null)
         startTransition(async () => {
-            const r = await activateS2SIntegrationAction(clienteId)
-            if (!r.ok) setError(r.error)
-            else if (r.secret) setRevealedToken(r.secret)
+            try {
+                const r = await activateS2SIntegrationAction(clienteId)
+                if (!r.ok) setError(r.error)
+                else if (r.secret) setRevealedToken(r.secret)
+            } catch {
+                setError('Error inesperado al activar S2S. Revisá los logs del servidor.')
+            }
         })
     }
 
@@ -50,9 +54,13 @@ export function S2SIntegrationCard({
         if (!confirm('¿Rotar el S2S token? El anterior dejará de funcionar de inmediato.')) return
         setError(null)
         startTransition(async () => {
-            const r = await rotateS2STokenAction(clienteId)
-            if (!r.ok) setError(r.error)
-            else if (r.secret) setRevealedToken(r.secret)
+            try {
+                const r = await rotateS2STokenAction(clienteId)
+                if (!r.ok) setError(r.error)
+                else if (r.secret) setRevealedToken(r.secret)
+            } catch {
+                setError('Error inesperado al rotar el token. Revisá los logs del servidor.')
+            }
         })
     }
 
@@ -61,8 +69,12 @@ export function S2SIntegrationCard({
         const next = integration.status === 'active' ? 'inactive' : 'active'
         setError(null)
         startTransition(async () => {
-            const r = await setS2SIntegrationStatusAction(clienteId, next)
-            if (!r.ok) setError(r.error)
+            try {
+                const r = await setS2SIntegrationStatusAction(clienteId, next)
+                if (!r.ok) setError(r.error)
+            } catch {
+                setError('Error inesperado al cambiar el estado. Revisá los logs del servidor.')
+            }
         })
     }
 

@@ -1,6 +1,7 @@
 import { headers } from 'next/headers'
 import Link from 'next/link'
-import { reportUtmClient } from '@/lib/report-utm/client'
+import { reportUtmClient, reportUtmAdminClient } from '@/lib/report-utm/client'
+import { createClient } from '@/utils/supabase/server'
 import type { ReportUtmCliente } from '@/lib/report-utm/types'
 import { PixelSnippet } from '@/components/report-utm/PixelSnippet'
 import { Activity, Code2, Filter, MousePointerClick, Eye, ExternalLink } from 'lucide-react'
@@ -43,17 +44,35 @@ export default async function PixelPage({
         Pick<ReportUtmCliente, 'id' | 'nombre' | 'slug' | 'status'>
     >
 
-    // Obtener S2S token para el cliente seleccionado (para snippet PHP)
+    // Obtener S2S token para el cliente seleccionado (para snippet PHP).
+    // Requiere admin client: la columna s2s_token puede estar restringida por RLS.
+    // Solo lo leen usuarios con rol admin o trafficker.
     let s2sToken: string | null = null
     if (sp.clienteId) {
-        const { data: s2sIntegration } = await supabase
-            .from('integrations')
-            .select('s2s_token, status')
-            .eq('cliente_id', sp.clienteId)
-            .eq('tipo', 's2s')
-            .maybeSingle()
-        if (s2sIntegration?.status === 'active') {
-            s2sToken = (s2sIntegration as { s2s_token: string | null }).s2s_token ?? null
+        const base = await createClient()
+        const { data: { user } } = await base.auth.getUser()
+        let canReadToken = false
+        if (user) {
+            const { data: profile } = await base
+                .from('user_profiles')
+                .select('role')
+                .eq('id', user.id)
+                .single()
+            const role = profile?.role ?? null
+            canReadToken = role === 'admin' || role === 'trafficker'
+        }
+
+        if (canReadToken) {
+            const adminDb = await reportUtmAdminClient()
+            const { data: s2sIntegration } = await adminDb
+                .from('integrations')
+                .select('s2s_token, status')
+                .eq('cliente_id', sp.clienteId)
+                .eq('tipo', 's2s')
+                .maybeSingle()
+            if (s2sIntegration?.status === 'active') {
+                s2sToken = (s2sIntegration as { s2s_token: string | null }).s2s_token ?? null
+            }
         }
     }
 

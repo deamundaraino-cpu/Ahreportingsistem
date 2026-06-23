@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Loader2 } from 'lucide-react'
+import { Skeleton } from '@/components/ui/skeleton'
 import {
     ResponsiveContainer,
     LineChart, Line,
@@ -113,9 +113,7 @@ export function ChartWidget({ title, type, config, filters, onDrill }: Props) {
             </div>
 
             {loading ? (
-                <div className="flex-1 flex items-center justify-center min-h-[180px]">
-                    <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-                </div>
+                <Skeleton className="flex-1 min-h-[180px] rounded-xl" />
             ) : error ? (
                 <p className="text-xs text-red-500">{error}</p>
             ) : usePivot && pivot ? (

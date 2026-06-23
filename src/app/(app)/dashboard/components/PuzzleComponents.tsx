@@ -1,3 +1,5 @@
+'use client'
+
 import React from 'react'
 import { Card, CardHeader, CardDescription, CardContent } from "@/components/ui/card"
 import { useSortable } from '@dnd-kit/sortable'
@@ -30,7 +32,7 @@ function getThresholdColor(value: number | null, threshold?: CardThreshold): str
     return 'text-red-600 dark:text-red-400'
 }
 
-export function SortableCard({ id, card, isPuzzleMode, onRemove, onQuickEdit, onDuplicate, isCollapsed, onToggleCollapse }: {
+export const SortableCard = React.memo(function SortableCard({ id, card, isPuzzleMode, onRemove, onQuickEdit, onDuplicate, isCollapsed, onToggleCollapse }: {
     id: string
     card: CardDef & { value: number | null; prevValue?: number | null; delta?: number | null; dailyValues?: Array<{ v: number | null }>; targetValue?: number | null }
     isPuzzleMode: boolean
@@ -155,9 +157,9 @@ export function SortableCard({ id, card, isPuzzleMode, onRemove, onQuickEdit, on
             </CardContent>
         </Card>
     )
-}
+})
 
-export function SortableChart({ id, chart, isPuzzleMode, metrics, weeks, varContext, sourceMapping, platformSet, layoutCustomMetrics, rawMetrics, campaignGroups, effectiveKeyword, onRemove, onUpdateChart, onQuickEdit, onDuplicate, isCollapsed, onToggleCollapse }: any) {
+export const SortableChart = React.memo(function SortableChart({ id, chart, isPuzzleMode, metrics, weeks, varContext, sourceMapping, platformSet, layoutCustomMetrics, rawMetrics, campaignGroups, effectiveKeyword, onRemove, onUpdateChart, onQuickEdit, onDuplicate, isCollapsed, onToggleCollapse }: any) {
     const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id })
     const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.5 : 1, zIndex: isDragging ? 50 : 'auto' as any }
 
@@ -217,11 +219,11 @@ export function SortableChart({ id, chart, isPuzzleMode, metrics, weeks, varCont
             />
         </div>
     )
-}
+})
 
 // ─── SortableText ─────────────────────────────────────────────────────────────
 
-export function SortableText({ id, block, isPuzzleMode, onRemove, onUpdate, onQuickEdit, onDuplicate, isCollapsed, onToggleCollapse }: {
+export const SortableText = React.memo(function SortableText({ id, block, isPuzzleMode, onRemove, onUpdate, onQuickEdit, onDuplicate, isCollapsed, onToggleCollapse }: {
     id: string
     block: TextBlockDef
     isPuzzleMode: boolean
@@ -488,9 +490,9 @@ export function SortableText({ id, block, isPuzzleMode, onRemove, onUpdate, onQu
             }
         </div>
     )
-}
+})
 
-export function SortableTable({ id, isPuzzleMode, children, title, onQuickEdit, onDuplicate, onRemove, isCollapsed, onToggleCollapse }: any) {
+export const SortableTable = React.memo(function SortableTable({ id, isPuzzleMode, children, title, onQuickEdit, onDuplicate, onRemove, isCollapsed, onToggleCollapse }: any) {
     const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id })
     const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.5 : 1, zIndex: isDragging ? 50 : 'auto' as any }
 
@@ -538,4 +540,4 @@ export function SortableTable({ id, isPuzzleMode, children, title, onQuickEdit, 
             {children}
         </div>
     )
-}
+})
