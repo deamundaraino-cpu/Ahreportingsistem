@@ -6,7 +6,6 @@ import { usePathname } from 'next/navigation'
 import {
     LayoutDashboard,
     Users,
-    Link2,
     ShoppingBag,
     BarChart2,
     Settings,
@@ -14,7 +13,6 @@ import {
     Menu,
     X,
     ArrowLeftRight,
-    Activity,
     UserCheck,
     PieChart,
     Link2 as Link2Icon,
@@ -29,9 +27,6 @@ const NAV_PRIMARY = [
 const NAV_TRACKING = [
     { name: 'Ventas', href: '/report-utm/ventas', icon: ShoppingBag },
     { name: 'Leads', href: '/report-utm/leads', icon: UserCheck },
-    { name: 'Atribución UTM', href: '/report-utm/atribucion', icon: BarChart2 },
-    { name: 'Tracking Links', href: '/report-utm/links', icon: Link2 },
-    { name: 'Pixel & Eventos', href: '/report-utm/pixel', icon: Activity },
 ]
 
 const NAV_ANALISIS = [
