@@ -21,11 +21,11 @@ async function getUserRole(): Promise<string | null> {
         .from('user_profiles')
         .select('role')
         .eq('id', user.id)
-        .single()
+        .maybeSingle()
     return profile?.role ?? null
 }
 
-const S2S_ALLOWED_ROLES = new Set(['admin', 'trafficker'])
+const S2S_ALLOWED_ROLES = new Set(['superadmin', 'admin', 'trafficker'])
 
 export async function activateHotmartIntegrationAction(clienteId: string): Promise<ActionResult> {
     const supabase = await reportUtmClient()
@@ -204,7 +204,7 @@ export async function setShopifyIntegrationStatusAction(
 
 export async function activateS2SIntegrationAction(clienteId: string): Promise<ActionResult> {
     const role = await getUserRole()
-    if (!role || !S2S_ALLOWED_ROLES.has(role)) return { ok: false, error: 'Sin permisos para activar S2S' }
+    if (!role || !S2S_ALLOWED_ROLES.has(role)) return { ok: false, error: `Sin permisos para activar S2S (rol detectado: ${role ?? 'ninguno'})` }
 
     const supabase = await reportUtmAdminClient()
     const token = generateWebhookSecret()
@@ -230,7 +230,7 @@ export async function activateS2SIntegrationAction(clienteId: string): Promise<A
 
 export async function rotateS2STokenAction(clienteId: string): Promise<ActionResult> {
     const role = await getUserRole()
-    if (!role || !S2S_ALLOWED_ROLES.has(role)) return { ok: false, error: 'Sin permisos para rotar el token S2S' }
+    if (!role || !S2S_ALLOWED_ROLES.has(role)) return { ok: false, error: `Sin permisos para rotar el token S2S (rol detectado: ${role ?? 'ninguno'})` }
 
     const supabase = await reportUtmAdminClient()
     const token = generateWebhookSecret()
@@ -252,7 +252,7 @@ export async function setS2SIntegrationStatusAction(
     status: 'active' | 'inactive',
 ): Promise<SimpleResult> {
     const role = await getUserRole()
-    if (!role || !S2S_ALLOWED_ROLES.has(role)) return { ok: false, error: 'Sin permisos para cambiar el estado S2S' }
+    if (!role || !S2S_ALLOWED_ROLES.has(role)) return { ok: false, error: `Sin permisos para cambiar el estado S2S (rol detectado: ${role ?? 'ninguno'})` }
 
     const supabase = await reportUtmAdminClient()
     const { error } = await supabase
