@@ -1,8 +1,9 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
-import { reportUtmClient, reportUtmAdminClient } from '@/lib/report-utm/client'
+import { reportUtmClient } from '@/lib/report-utm/client'
 import { createClient } from '@/utils/supabase/server'
+import { getUserRole, REPORT_UTM_WRITE_ROLES } from '@/lib/report-utm/auth'
 import { generateWebhookSecret } from '@/lib/report-utm/webhook-auth'
 import { encrypt } from '@/lib/report-utm/encryption'
 import { sendMetaLeadEvent } from '@/lib/report-utm/meta-capi'
@@ -13,19 +14,8 @@ type ActionResult = { ok: true; secret?: string; events_received?: number } | { 
 type SimpleResult = { ok: true } | { ok: false; error: string }
 type SyncResult = { ok: true; imported: number; forms: number } | { ok: false; error: string }
 
-async function getUserRole(): Promise<string | null> {
-    const supabase = await createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return null
-    const { data: profile } = await supabase
-        .from('user_profiles')
-        .select('role')
-        .eq('id', user.id)
-        .maybeSingle()
-    return profile?.role ?? null
-}
-
-const S2S_ALLOWED_ROLES = new Set(['superadmin', 'admin', 'trafficker'])
+// getUserRole + roles de escritura compartidos en '@/lib/report-utm/auth'.
+const S2S_ALLOWED_ROLES = REPORT_UTM_WRITE_ROLES
 
 export async function activateHotmartIntegrationAction(clienteId: string): Promise<ActionResult> {
     const supabase = await reportUtmClient()

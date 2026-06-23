@@ -1,11 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { reportUtmAdminClient } from '@/lib/report-utm/client'
-import { runUnmatchedUtms, listCampaigns } from '@/lib/report-utm/campaign-data'
+import { checkWriteRole } from '@/lib/report-utm/auth'
+import { getCrossDiagnostics } from '@/lib/report-utm/campaign-data'
 
 export const dynamic = 'force-dynamic'
 
-// GET ?cliente_id=&date_from=&date_to=  → overrides + campañas + UTMs sin cruzar
+// GET ?cliente_id=&date_from=&date_to=
+//   → overrides + campañas + sugerencias (no cruzados) + cobertura por método
 export async function GET(req: NextRequest) {
     const supabase = await createClient()
     const { data: { user } } = await supabase.auth.getUser()
@@ -18,20 +20,23 @@ export async function GET(req: NextRequest) {
     const date_to   = sp.get('date_to') ?? undefined
 
     const db = await reportUtmAdminClient()
-    const [{ data: overrides }, campaigns, unmatched] = await Promise.all([
+    const [{ data: overrides }, diag] = await Promise.all([
         db.from('utm_campaign_map').select('*').eq('cliente_id', cliente_id).order('created_at', { ascending: false }),
-        listCampaigns(cliente_id, date_from, date_to),
-        runUnmatchedUtms({ cliente_id, date_from, date_to }),
+        getCrossDiagnostics({ cliente_id, date_from, date_to }),
     ])
 
-    return NextResponse.json({ overrides: overrides ?? [], campaigns, unmatched })
+    return NextResponse.json({
+        overrides: overrides ?? [],
+        campaigns: diag.campaigns,
+        suggestions: diag.suggestions,
+        coverage: diag.coverage,
+    })
 }
 
-// POST → crea un override de mapeo
+// POST → crea un override de mapeo (escritura: requiere rol)
 export async function POST(req: NextRequest) {
-    const supabase = await createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    const { ok, role } = await checkWriteRole()
+    if (!ok) return NextResponse.json({ error: `Sin permisos para mapear campañas (rol: ${role ?? 'ninguno'})` }, { status: 403 })
 
     const body = await req.json()
     const { cliente_id, match_field, match_value, platform, campaign_id, campaign_name } = body
@@ -57,11 +62,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ data }, { status: 201 })
 }
 
-// DELETE ?id= → elimina un override
+// DELETE ?id= → elimina un override (escritura: requiere rol)
 export async function DELETE(req: NextRequest) {
-    const supabase = await createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    const { ok, role } = await checkWriteRole()
+    if (!ok) return NextResponse.json({ error: `Sin permisos para eliminar mapeos (rol: ${role ?? 'ninguno'})` }, { status: 403 })
 
     const id = req.nextUrl.searchParams.get('id')
     if (!id) return NextResponse.json({ error: 'id requerido' }, { status: 400 })

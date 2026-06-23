@@ -69,6 +69,10 @@ export async function GET(request: Request) {
 
     const results: any[] = []
 
+    // Alertas de desconexión/inconsistencia acumuladas en toda la corrida (a nivel de
+    // corrida, no por cliente). Se emite UNA notificación agregada al final.
+    const inconsistencyAlerts: { cliente: string; platform: string; fecha: string; reason: string }[] = []
+
     const debugLogs: string[] = []
     const log = (msg: string) => {
         console.log(msg)
@@ -488,25 +492,77 @@ export async function GET(request: Request) {
             })
         }
 
-        // ─── Helper: Fetch Meta Ads for a single account+date ───────────────
-        async function fetchMetaSingleAccount(targetDate: string, rawAccountId: string, token: string) {
-            const record = { spend: 0, impressions: 0, clicks: 0, account_reach: 0, campaigns: [] as any[], meta_ads: [] as any[], meta_adsets: [] as any[], forms: [] as any[] }
+        const emptyMetaRecord = (apiSuccess: boolean) => ({
+            spend: 0, impressions: 0, clicks: 0, account_reach: 0,
+            campaigns: [] as any[], meta_ads: [] as any[], meta_adsets: [] as any[], forms: [] as any[], apiSuccess,
+        })
+
+        // ─── Meta: paginación de /insights siguiendo data.paging.next ───
+        // Con time_increment=1 sobre un rango, una sola página (limit) puede no alcanzar
+        // (días × campañas). Sin paginar se perderían filas EN SILENCIO → seguimos
+        // paging.next hasta agotar. Devuelve ok=false ante error/respuesta malformada.
+        async function metaInsightsPaged(firstUrl: string): Promise<{ ok: boolean; list: any[]; error?: any }> {
+            const all: any[] = []
+            let next: string | null = firstUrl
+            let pages = 0
+            const MAX_PAGES = 200 // backstop de seguridad
+            while (next && pages < MAX_PAGES) {
+                const res = await metaFetch(next)
+                const data = await res.json()
+                if (!data || data.error || !Array.isArray(data.data)) {
+                    return { ok: false, list: all, error: data?.error ?? data }
+                }
+                all.push(...data.data)
+                next = data.paging?.next || null
+                pages++
+            }
+            return { ok: true, list: all }
+        }
+
+        // ─── Helper: Fetch Meta Ads for a single account, RANGO COMPLETO ───
+        // Pide TODO el rango en UNA llamada paginada por nivel (time_increment=1 → una
+        // fila por día con date_start) en vez de una llamada por día.
+        // Devuelve Map<fecha, record> + apiSuccess del rango completo.
+        async function fetchMetaSingleAccountRange(startDate: string, endDate: string, rawAccountId: string, token: string) {
+            const byDate = new Map<string, any>()
+            let apiSuccess = false
             const actId = rawAccountId.startsWith('act_') ? rawAccountId : `act_${rawAccountId}`
+
+            const ensureDay = (day: string) => {
+                let rec = byDate.get(day)
+                if (!rec) { rec = emptyMetaRecord(true); byDate.set(day, rec) }
+                return rec
+            }
+
             try {
                 const url = new URL(`https://graph.facebook.com/v19.0/${actId}/insights`)
                 url.searchParams.append('access_token', token)
-                url.searchParams.append('time_range', JSON.stringify({ since: targetDate, until: targetDate }))
+                url.searchParams.append('time_range', JSON.stringify({ since: startDate, until: endDate }))
+                url.searchParams.append('time_increment', '1')
                 url.searchParams.append('fields', 'campaign_id,campaign_name,spend,impressions,clicks,inline_link_clicks,reach,frequency,cpc,cpm,ctr,actions,conversions,video_thruplay_watched_actions')
                 url.searchParams.append('level', 'campaign')
                 url.searchParams.append('limit', '500')
 
-                const res = await metaFetch(url.toString())
-                const data = await res.json()
-                if (data.data) {
+                const paged = await metaInsightsPaged(url.toString())
+                if (paged.ok) {
+                    // La API respondió correctamente (puede no traer filas = sin gasto en el rango).
+                    apiSuccess = true
+
+                    // Agrupar filas por día (date_start), luego procesar cada día con la MISMA lógica.
+                    const rowsByDay = new Map<string, any[]>()
+                    for (const camp of paged.list) {
+                        const day = camp.date_start
+                        if (!day) continue
+                        const arr = rowsByDay.get(day) || []
+                        arr.push(camp)
+                        rowsByDay.set(day, arr)
+                    }
+
+                    for (const [day, dayRows] of rowsByDay) {
                     let totalSpend = 0, totalImpr = 0, totalClicks = 0
                     const campaignsArr: any[] = []
 
-                    data.data.forEach((camp: any) => {
+                    dayRows.forEach((camp: any) => {
                         const cSpend = parseFloat(camp.spend || '0')
                         const cImpr = parseInt(camp.impressions || '0')
                         const cClicks = parseInt(camp.clicks || '0')
@@ -656,40 +712,47 @@ export async function GET(request: Request) {
                         dedupedWithin.set(key, c)
                     }
                     const dedupedCampaigns = Array.from(dedupedWithin.values())
-                    log(`[Meta] ${targetDate} [${rawAccountId}] Spend: ${totalSpend}, Campañas: ${dedupedCampaigns.length}`)
-                    record.spend = totalSpend
-                    record.impressions = totalImpr
-                    record.clicks = totalClicks
-                    record.campaigns = dedupedCampaigns
+                    const rec = ensureDay(day)
+                    rec.spend = totalSpend
+                    rec.impressions = totalImpr
+                    rec.clicks = totalClicks
+                    rec.campaigns = dedupedCampaigns
+                    log(`[Meta] ${day} [${rawAccountId}] Spend: ${totalSpend}, Campañas: ${dedupedCampaigns.length}`)
+                    } // ← cierre del loop por día (rowsByDay)
 
-                    // Reach deduplicado a nivel de cuenta (una query separada con level=account)
+                    // Reach deduplicado a nivel de cuenta para TODO el rango
+                    // (level=account + time_increment=1 → una fila de reach por día)
                     try {
                         const reachUrl = new URL(`https://graph.facebook.com/v19.0/${actId}/insights`)
                         reachUrl.searchParams.append('access_token', token)
-                        reachUrl.searchParams.append('time_range', JSON.stringify({ since: targetDate, until: targetDate }))
+                        reachUrl.searchParams.append('time_range', JSON.stringify({ since: startDate, until: endDate }))
+                        reachUrl.searchParams.append('time_increment', '1')
                         reachUrl.searchParams.append('fields', 'reach')
                         reachUrl.searchParams.append('level', 'account')
-                        const reachRes = await metaFetch(reachUrl.toString())
-                        const reachData = await reachRes.json()
-                        if (reachData.data?.[0]?.reach) {
-                            record.account_reach = parseInt(reachData.data[0].reach || '0')
+                        const reachPaged = await metaInsightsPaged(reachUrl.toString())
+                        if (reachPaged.ok) {
+                            for (const row of reachPaged.list) {
+                                const day = row.date_start
+                                if (day && row.reach) ensureDay(day).account_reach = parseInt(row.reach || '0')
+                            }
                         }
                     } catch (_e) { /* non-critical */ }
 
-                    // Enriquecer con targeting/geo por cuenta (cacheado por actId, no por día)
-                    record.campaigns = await enrichCampaignsWithTargeting(record.campaigns, token, actId)
+                    // Enriquecer con targeting/geo (cacheado por actId, no por día) — por cada día
+                    for (const [, dRec] of byDate) {
+                        dRec.campaigns = await enrichCampaignsWithTargeting(dRec.campaigns, token, actId)
+                    }
 
-                } else if (data.error) {
-                    log(`[Meta] ${targetDate} [${rawAccountId}] Error de API: ${JSON.stringify(data.error)}`)
                 } else {
-                    log(`[Meta] ${targetDate} [${rawAccountId}] Sin datos.`)
+                    log(`[Meta] ${startDate}..${endDate} [${rawAccountId}] Error de API: ${JSON.stringify(paged.error)}`)
                 }
             } catch (e: any) {
                 log(`[Meta] [${rawAccountId}] Catch Error: ${e.message}`)
             }
 
-        // ─── Helper: Fetch Meta at ad or adset level ───────────────────────────
-        async function fetchMetaAtLevel(level: 'ad' | 'adset'): Promise<any[]> {
+        // ─── Helper: Fetch Meta at ad/adset level, RANGO COMPLETO → Map<fecha, item[]> ──
+        async function fetchMetaAtLevelRange(level: 'ad' | 'adset'): Promise<Map<string, any[]>> {
+            const flat = new Map<string, any[]>()
             try {
                 const idField   = level === 'ad' ? 'ad_id'      : 'adset_id'
                 const nameField = level === 'ad' ? 'ad_name'    : 'adset_name'
@@ -699,17 +762,23 @@ export async function GET(request: Request) {
 
                 const levelUrl = new URL(`https://graph.facebook.com/v19.0/${actId}/insights`)
                 levelUrl.searchParams.append('access_token', token)
-                levelUrl.searchParams.append('time_range', JSON.stringify({ since: targetDate, until: targetDate }))
+                levelUrl.searchParams.append('time_range', JSON.stringify({ since: startDate, until: endDate }))
+                levelUrl.searchParams.append('time_increment', '1')
                 levelUrl.searchParams.append('fields', `${extraIds}campaign_id,campaign_name,spend,impressions,clicks,inline_link_clicks,reach,frequency,cpc,cpm,ctr,actions,conversions,video_thruplay_watched_actions`)
                 levelUrl.searchParams.append('level', level)
                 levelUrl.searchParams.append('limit', '500')
 
-                const res = await metaFetch(levelUrl.toString())
-                const data = await res.json()
-                if (!data.data) return []
+                const paged = await metaInsightsPaged(levelUrl.toString())
+                if (!paged.ok) {
+                    log(`[Meta] fetchMetaAtLevelRange(${level}) error: ${JSON.stringify(paged.error)}`)
+                    return flat
+                }
 
-                const items: any[] = []
-                data.data.forEach((item: any) => {
+                // Dedup por primary key DENTRO de cada día (time_increment=1 separa los días)
+                const perDay = new Map<string, Map<string, any>>()
+                paged.list.forEach((item: any) => {
+                    const day = item.date_start
+                    if (!day) return
                     let iLeads = 0, iLeadsForm = 0, iPurchases = 0, iAddsToCart = 0, iInitiatesCheckout = 0
                     let iLandingPageViews = 0, iVideoViews = 0, iVideoThruplay = 0, iVideo3s = 0
                     let iCompleteRegistration = 0, iViewContent = 0, iSearch = 0, iAddToWishlist = 0
@@ -783,7 +852,7 @@ export async function GET(request: Request) {
 
                     iResults = iLeads + iPurchases + iInitiatesCheckout
 
-                    items.push({
+                    const out: any = {
                         [idField]:     item[idField]     || null,
                         [nameField]:   item[nameField]   || 'Desconocido',
                         adset_id:      item.adset_id     || null,
@@ -830,51 +899,53 @@ export async function GET(request: Request) {
                         post_comments:      iPostComments,
                         results:            iResults,
                         custom_conversions: iCustomConversions,
-                    })
+                    }
+                    const dayMap = perDay.get(day) || new Map<string, any>()
+                    dayMap.set(out[idField] || out[nameField], out)
+                    perDay.set(day, dayMap)
                 })
 
-                // Dedup by primary key
-                const deduped = new Map<string, any>()
-                for (const it of items) deduped.set(it[idField] || it[nameField], it)
-                return Array.from(deduped.values())
+                for (const [day, m] of perDay) flat.set(day, Array.from(m.values()))
+                return flat
             } catch (e: any) {
-                log(`[Meta] fetchMetaAtLevel(${level}) error: ${e.message}`)
-                return []
+                log(`[Meta] fetchMetaAtLevelRange(${level}) error: ${e.message}`)
+                return flat
             }
         }
 
-        // ─── Fetch ads + adsets in parallel ───────────────────────────────────
-        const [adsResult, adsetsResult] = await Promise.all([
-            fetchMetaAtLevel('ad'),
-            fetchMetaAtLevel('adset'),
+        // ─── Fetch ads + adsets para TODO el rango, en paralelo → asignar por día ──
+        const [adsByDate, adsetsByDate] = await Promise.all([
+            fetchMetaAtLevelRange('ad'),
+            fetchMetaAtLevelRange('adset'),
         ])
-        record.meta_ads    = adsResult
-        record.meta_adsets = adsetsResult
+        for (const [day, ads] of adsByDate) ensureDay(day).meta_ads = ads
+        for (const [day, adsets] of adsetsByDate) ensureDay(day).meta_adsets = adsets
 
-            // ─── Lead form breakdown (Meta Lead Ads) ──────────────────────────
+            // ─── Lead form breakdown (Meta Lead Ads) para TODO el rango ──────────
             try {
                 // 1) Catálogo de nombres de forms — cacheado por cuenta (no por día)
                 const nameMap = await memo(metaFormCatalogCache, actId, () => loadMetaFormCatalog(actId, token))
 
-                // 2) Fetch insights breakdown by leadgen_form_id (level=ad required by Meta)
+                // 2) Insights breakdown by leadgen_form_id (level=ad), una fila por día (time_increment=1)
                 const formUrl = new URL(`https://graph.facebook.com/v19.0/${actId}/insights`)
                 formUrl.searchParams.append('access_token', token)
-                formUrl.searchParams.append('time_range', JSON.stringify({ since: targetDate, until: targetDate }))
+                formUrl.searchParams.append('time_range', JSON.stringify({ since: startDate, until: endDate }))
+                formUrl.searchParams.append('time_increment', '1')
                 formUrl.searchParams.append('fields', 'leadgen_form_id,spend,impressions,clicks,actions')
                 formUrl.searchParams.append('breakdowns', 'leadgen_form_id')
                 formUrl.searchParams.append('level', 'ad')
                 formUrl.searchParams.append('limit', '500')
 
-                const formRes = await metaFetch(formUrl.toString())
-                const formData = await formRes.json()
-
-                if (formData.data && Array.isArray(formData.data)) {
-                    const formsMap = new Map<string, any>()
-
-                    for (const item of formData.data) {
+                const formPaged = await metaInsightsPaged(formUrl.toString())
+                if (formPaged.ok) {
+                    // Acumular forms por día (clave: día → form_id → métricas)
+                    const perDay = new Map<string, Map<string, any>>()
+                    for (const item of formPaged.list) {
+                        const day = item.date_start
                         const formId: string = item.leadgen_form_id || ''
-                        if (!formId) continue
+                        if (!day || !formId) continue
 
+                        const formsMap = perDay.get(day) || new Map<string, any>()
                         const existing = formsMap.get(formId) || {
                             form_id:     formId,
                             form_name:   nameMap.get(formId) || formId,
@@ -897,20 +968,20 @@ export async function GET(request: Request) {
                         }
 
                         formsMap.set(formId, existing)
+                        perDay.set(day, formsMap)
                     }
-
-                    record.forms = Array.from(formsMap.values())
+                    for (const [day, m] of perDay) ensureDay(day).forms = Array.from(m.values())
                 }
             } catch (err: any) {
                 log(`[Meta] Form breakdown fetch failed (non-critical): ${err?.message}`)
             }
 
-            return record
+            return { byDate, apiSuccess }
         }
 
-        // ─── Helper: Fetch Meta Ads for a single date (multi-account) ────────
-        async function fetchMeta(targetDate: string) {
-            const record = { spend: 0, impressions: 0, clicks: 0, account_reach: 0, campaigns: [] as any[], meta_ads: [] as any[], meta_adsets: [] as any[], forms: [] as any[] }
+        // ─── Multi-account wrapper (RANGO): consolida todas las cuentas por fecha ──
+        async function fetchMetaRange(startDate: string, endDate: string) {
+            const byDate = new Map<string, any>()
 
             // Build account list — multi-account if configured, legacy fallback otherwise
             let accountsToFetch: { account_id: string; token: string }[] = []
@@ -924,69 +995,77 @@ export async function GET(request: Request) {
 
             if (accountsToFetch.length === 0) {
                 log(`[Meta] Sin config para el cliente.`)
-                return record
+                return { byDate, apiSuccess: false, configured: false }
             }
 
-            // Fetch all accounts in parallel for this date
+            // Fetch all accounts in parallel for the whole range
             const accountResults = await Promise.all(
-                accountsToFetch.map(({ account_id, token }) => fetchMetaSingleAccount(targetDate, account_id, token))
+                accountsToFetch.map(({ account_id, token }) => fetchMetaSingleAccountRange(startDate, endDate, account_id, token))
             )
 
-            // Merge results from all accounts
-            let anySuccess = false
+            let apiSuccess = false
+            let anyData = false
+            // Merge results from all accounts, per day
             for (const r of accountResults) {
-                record.spend += r.spend
-                record.impressions += r.impressions
-                record.clicks += r.clicks
-                record.account_reach += r.account_reach  // suma de reach deduplicado por cuenta
-                // Inyectar account_reach en cada campaña para poder filtrarlo en el dashboard
-                const campaignsWithReach = r.campaigns.map((c: any) => ({
-                    ...c,
-                    account_reach: r.account_reach,
-                }))
-                record.campaigns.push(...campaignsWithReach)
-                record.meta_ads.push(...(r.meta_ads || []))
-                record.meta_adsets.push(...(r.meta_adsets || []))
-                // Merge forms: sum metrics for same form_id across accounts
-                for (const f of (r.forms || [])) {
-                    const existing = record.forms.find((x: any) => x.form_id === f.form_id)
-                    if (existing) {
-                        existing.leads       += f.leads || 0
-                        existing.spend       += f.spend || 0
-                        existing.impressions += f.impressions || 0
-                        existing.clicks      += f.clicks || 0
-                    } else {
-                        record.forms.push({ ...f })
+                if (r.apiSuccess) apiSuccess = true
+                for (const [day, src] of r.byDate as Map<string, any>) {
+                    const record = byDate.get(day) || emptyMetaRecord(true)
+                    record.spend += src.spend
+                    record.impressions += src.impressions
+                    record.clicks += src.clicks
+                    record.account_reach += src.account_reach  // suma de reach deduplicado por cuenta
+                    // Inyectar account_reach en cada campaña para poder filtrarlo en el dashboard
+                    const campaignsWithReach = src.campaigns.map((c: any) => ({
+                        ...c,
+                        account_reach: src.account_reach,
+                    }))
+                    record.campaigns.push(...campaignsWithReach)
+                    record.meta_ads.push(...(src.meta_ads || []))
+                    record.meta_adsets.push(...(src.meta_adsets || []))
+                    if (src.campaigns.length > 0 || src.spend > 0) anyData = true
+                    // Merge forms: sum metrics for same form_id across accounts
+                    for (const f of (src.forms || [])) {
+                        const existing = record.forms.find((x: any) => x.form_id === f.form_id)
+                        if (existing) {
+                            existing.leads       += f.leads || 0
+                            existing.spend       += f.spend || 0
+                            existing.impressions += f.impressions || 0
+                            existing.clicks      += f.clicks || 0
+                        } else {
+                            record.forms.push({ ...f })
+                        }
                     }
+
+                    byDate.set(day, record)
                 }
-                if (r.campaigns.length > 0 || r.spend > 0) anySuccess = true
             }
 
-            // Dedup across accounts: campaign_ids are globally unique in Meta
-            if (accountsToFetch.length > 1 && record.campaigns.length > 0) {
-                const crossDedup = new Map<string, any>()
-                for (const c of record.campaigns) {
-                    const key = c.campaign_id || `${c.account_id}:${c.name}`
-                    crossDedup.set(key, c)
+            // Dedup cross-cuenta POR DÍA (campaign_id es único global en Meta) y
+            // recolección de claves de custom conversions de TODOS los días.
+            const allCustomKeys = new Set<string>()
+            for (const [, record] of byDate) {
+                if (accountsToFetch.length > 1 && record.campaigns.length > 0) {
+                    const crossDedup = new Map<string, any>()
+                    for (const c of record.campaigns) {
+                        const key = c.campaign_id || `${c.account_id}:${c.name}`
+                        crossDedup.set(key, c)
+                    }
+                    record.campaigns = Array.from(crossDedup.values())
                 }
-                record.campaigns = Array.from(crossDedup.values())
+                record.campaigns.forEach((camp: any) => {
+                    if (camp.custom_conversions) {
+                        Object.keys(camp.custom_conversions).forEach((k) => allCustomKeys.add(k))
+                    }
+                })
             }
-
             // El enriquecimiento de targeting/geo ya se hizo por cuenta dentro de
-            // fetchMetaSingleAccount (cacheado por actId), y el spread del merge
+            // fetchMetaSingleAccountRange (cacheado por actId), y el spread del merge
             // preserva `targeting_regions` en cada campaña.
 
-            platformLogs.meta = anySuccess ? 'Conectado OK' : 'Sin Datos'
-            log(`[Meta] ${targetDate} Total consolidado — Spend: ${record.spend.toFixed(2)}, Campañas: ${record.campaigns.length}`)
+            platformLogs.meta = !apiSuccess ? 'Error/Desconectado' : (anyData ? 'Conectado OK' : 'Sin Datos')
+            log(`[Meta] ${startDate}..${endDate} Total consolidado — días con datos: ${byDate.size}`)
 
-            // Auto-discover custom conversions → upsert into catalog
-            const allCustomKeys = new Set<string>()
-            record.campaigns.forEach((camp: any) => {
-                if (camp.custom_conversions) {
-                    Object.keys(camp.custom_conversions).forEach(k => allCustomKeys.add(k))
-                }
-            })
-
+            // Auto-discover custom conversions → upsert into catalog (last_seen = fin del rango)
             if (allCustomKeys.size > 0) {
                 const catalogRows = Array.from(allCustomKeys).map((key) => {
                     const label = key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()).trim()
@@ -995,7 +1074,7 @@ export async function GET(request: Request) {
                         conversion_key: key,
                         label: `Lead ${label.replace('Lead', '').trim() || label}`,
                         field_id: `meta_custom_${key}`,
-                        last_seen: targetDate,
+                        last_seen: endDate,
                     }
                 })
 
@@ -1010,13 +1089,28 @@ export async function GET(request: Request) {
                 }
             }
 
-            return record
+            return { byDate, apiSuccess, configured: true }
         }
 
-        // ─── Helper: Fetch TikTok Ads for a single advertiser account + date ───
-        async function fetchTikTokSingleAccount(targetDate: string, advertiserId: string, token: string) {
-            const record = { spend: 0, impressions: 0, clicks: 0, conversions: 0, campaigns: [] as any[], tiktok_ads: [] as any[], tiktok_adgroups: [] as any[], apiSuccess: false }
-            log(`[TikTok] ${targetDate} Consultando advertiser_id: ${advertiserId}`)
+        const emptyTikTokRecord = (apiSuccess: boolean) => ({
+            spend: 0, impressions: 0, clicks: 0, conversions: 0,
+            campaigns: [] as any[], tiktok_ads: [] as any[], tiktok_adgroups: [] as any[], apiSuccess,
+        })
+
+        // ─── Helper: Fetch TikTok Ads for a single advertiser account, RANGO COMPLETO ───
+        // Pide TODO el rango en UNA llamada por nivel (añadiendo `stat_time_day` a las
+        // dimensiones) en vez de una llamada por día → reduce drásticamente las llamadas.
+        // Devuelve un Map<fecha, record> + apiSuccess del rango completo.
+        async function fetchTikTokSingleAccountRange(startDate: string, endDate: string, advertiserId: string, token: string) {
+            const byDate = new Map<string, any>()
+            let apiSuccess = false
+            log(`[TikTok] Rango ${startDate}..${endDate} Consultando advertiser_id: ${advertiserId}`)
+
+            const ensureDay = (day: string) => {
+                let rec = byDate.get(day)
+                if (!rec) { rec = emptyTikTokRecord(true); byDate.set(day, rec) }
+                return rec
+            }
 
             try {
                 // Catálogo de nombres (campaign/ad/adgroup) — cacheado por cuenta,
@@ -1024,8 +1118,10 @@ export async function GET(request: Request) {
                 const tkNames = await loadTikTokNames(advertiserId, token)
                 const campaignMap = tkNames.campaigns
 
-                // ─── Helper: fetch ad or adgroup level report for this date ─────
-                async function fetchTikTokAtLevel(level: 'ad' | 'adgroup'): Promise<any[]> {
+                // ─── Helper: fetch ad/adgroup level para TODO el rango ─────
+                // Devuelve Map<fecha, item[]> deduplicado por id dentro de cada día.
+                async function fetchTikTokAtLevelRange(level: 'ad' | 'adgroup'): Promise<Map<string, any[]>> {
+                    const flat = new Map<string, any[]>()
                     try {
                         const dataLevel = level === 'ad' ? 'AUCTION_AD' : 'AUCTION_ADGROUP'
                         const idDim     = level === 'ad' ? 'ad_id'      : 'adgroup_id'
@@ -1035,7 +1131,7 @@ export async function GET(request: Request) {
                         // Nombres ya cargados desde la caché por cuenta (no se vuelve a pedir)
                         const nameMap = level === 'ad' ? tkNames.ads : tkNames.adgroups
 
-                        const dims = level === 'ad' ? ['ad_id'] : ['adgroup_id']
+                        const dims = [idDim, 'stat_time_day']
 
                         const rptUrl = new URL('https://business-api.tiktok.com/open_api/v1.3/report/integrated/get/')
                         rptUrl.searchParams.append('advertiser_id', advertiserId)
@@ -1043,21 +1139,25 @@ export async function GET(request: Request) {
                         rptUrl.searchParams.append('data_level', dataLevel)
                         rptUrl.searchParams.append('dimensions', JSON.stringify(dims))
                         rptUrl.searchParams.append('metrics', JSON.stringify(['spend', 'impressions', 'clicks', 'conversion']))
-                        rptUrl.searchParams.append('start_date', targetDate)
-                        rptUrl.searchParams.append('end_date', targetDate)
+                        rptUrl.searchParams.append('start_date', startDate)
+                        rptUrl.searchParams.append('end_date', endDate)
 
                         const rptPaged = await fetchTikTokPaged(rptUrl, token)
                         if (!rptPaged.ok) {
-                            log(`[TikTok] fetchTikTokAtLevel(${level}) error: ${rptPaged.message}`)
-                            return []
+                            log(`[TikTok] fetchTikTokAtLevelRange(${level}) error: ${rptPaged.message}`)
+                            return flat
                         }
 
-                        const items: any[] = []
+                        // Dedup por id DENTRO de cada día (stat_time_day separa los días)
+                        const perDay = new Map<string, Map<string, any>>()
                         rptPaged.list.forEach((item: any) => {
                             const d  = item.dimensions || {}
                             const m  = item.metrics    || {}
+                            const day = String(d.stat_time_day || '').slice(0, 10)
+                            if (!day) return
                             const id = String(d[idDim] || '')
-                            const out: any = {
+                            const dayMap = perDay.get(day) || new Map<string, any>()
+                            dayMap.set(id || nameMap.get(id) || 'Desconocido', {
                                 [idKey]:     id || null,
                                 [nameKey]:   nameMap.get(id) || id || 'Desconocido',
                                 spend:       parseFloat(m.spend       || '0'),
@@ -1065,54 +1165,54 @@ export async function GET(request: Request) {
                                 clicks:      parseInt(m.clicks        || '0'),
                                 conversions: parseInt(m.conversion    || '0'),
                                 account_id:  advertiserId,
-                            }
-                            items.push(out)
+                            })
+                            perDay.set(day, dayMap)
                         })
-
-                        const deduped = new Map<string, any>()
-                        for (const it of items) deduped.set(it[idKey] || it[nameKey], it)
-                        log(`[TikTok] ${targetDate} ${level}: ${deduped.size} registros`)
-                        return Array.from(deduped.values())
+                        for (const [day, m] of perDay) flat.set(day, Array.from(m.values()))
+                        log(`[TikTok] ${startDate}..${endDate} ${level}: ${flat.size} días con registros`)
+                        return flat
                     } catch (e: any) {
-                        log(`[TikTok] fetchTikTokAtLevel(${level}) catch: ${e.message}`)
-                        return []
+                        log(`[TikTok] fetchTikTokAtLevelRange(${level}) catch: ${e.message}`)
+                        return flat
                     }
                 }
 
-                // Fetch reports from TikTok Business API
+                // Reporte campaign-level para TODO el rango (clave: campaign_id + stat_time_day)
                 const url = new URL('https://business-api.tiktok.com/open_api/v1.3/report/integrated/get/')
                 url.searchParams.append('advertiser_id', advertiserId)
                 url.searchParams.append('report_type', 'BASIC')
                 url.searchParams.append('data_level', 'AUCTION_CAMPAIGN')
-                url.searchParams.append('dimensions', JSON.stringify(['campaign_id']))
+                url.searchParams.append('dimensions', JSON.stringify(['campaign_id', 'stat_time_day']))
                 url.searchParams.append('metrics', JSON.stringify(['spend', 'impressions', 'clicks', 'conversion']))
-                url.searchParams.append('start_date', targetDate)
-                url.searchParams.append('end_date', targetDate)
+                url.searchParams.append('start_date', startDate)
+                url.searchParams.append('end_date', endDate)
 
                 const campReport = await fetchTikTokPaged(url, token)
 
                 if (campReport.ok) {
+                    apiSuccess = true
                     if (campReport.list.length > 0) {
-                        log(`[TikTok] ${targetDate} RAW primer resultado: ${JSON.stringify(campReport.list[0])}`)
+                        log(`[TikTok] ${startDate}..${endDate} RAW primer resultado: ${JSON.stringify(campReport.list[0])}`)
                     }
-                    let totalSpend = 0, totalImpr = 0, totalClicks = 0, totalConv = 0
-                    const campaignsArr: any[] = []
 
                     campReport.list.forEach((camp: any) => {
                         const dims = camp.dimensions || {}
                         const mets = camp.metrics || {}
+                        const day = String(dims.stat_time_day || '').slice(0, 10)
+                        if (!day) return
                         const cSpend = parseFloat(mets.spend || '0')
                         const cImpr = parseInt(mets.impressions || '0')
                         const cClicks = parseInt(mets.clicks || '0')
                         const cConv = parseInt(mets.conversion || '0')
 
-                        totalSpend += cSpend
-                        totalImpr += cImpr
-                        totalClicks += cClicks
-                        totalConv += cConv
+                        const rec = ensureDay(day)
+                        rec.spend += cSpend
+                        rec.impressions += cImpr
+                        rec.clicks += cClicks
+                        rec.conversions += cConv
 
                         const cId = (dims.campaign_id || '').toString()
-                        campaignsArr.push({
+                        rec.campaigns.push({
                             campaign_id: cId || null,
                             name: campaignMap.get(cId) || 'Desconocida',
                             spend: cSpend,
@@ -1123,37 +1223,27 @@ export async function GET(request: Request) {
                         })
                     })
 
-                    record.spend = totalSpend
-                    record.impressions = totalImpr
-                    record.clicks = totalClicks
-                    record.conversions = totalConv
-                    record.campaigns = campaignsArr
-                    record.apiSuccess = true
-                    log(`[TikTok] ${targetDate} [${advertiserId}] Spend: ${totalSpend}, Campañas: ${campaignsArr.length}`)
-
-                    // Fetch ad-level and adgroup-level breakdowns in parallel
-                    const [tiktokAdsResult, tiktokAdgroupsResult] = await Promise.all([
-                        fetchTikTokAtLevel('ad'),
-                        fetchTikTokAtLevel('adgroup'),
+                    // ad-level y adgroup-level para TODO el rango, en paralelo
+                    const [adsByDate, adgroupsByDate] = await Promise.all([
+                        fetchTikTokAtLevelRange('ad'),
+                        fetchTikTokAtLevelRange('adgroup'),
                     ])
-                    record.tiktok_ads      = tiktokAdsResult
-                    record.tiktok_adgroups = tiktokAdgroupsResult
+                    for (const [day, ads] of adsByDate) ensureDay(day).tiktok_ads = ads
+                    for (const [day, ag] of adgroupsByDate) ensureDay(day).tiktok_adgroups = ag
+
+                    log(`[TikTok] ${startDate}..${endDate} [${advertiserId}] días con datos: ${byDate.size}`)
                 } else {
-                    log(`[TikTok] ${targetDate} [${advertiserId}] Error de API: ${campReport.message}`)
+                    log(`[TikTok] ${startDate}..${endDate} [${advertiserId}] Error de API: ${campReport.message}`)
                 }
             } catch (e: any) {
                 log(`[TikTok] [${advertiserId}] Catch Error: ${e.message}`)
             }
-            return record
+            return { byDate, apiSuccess }
         }
 
-        // ─── Multi-account wrapper: iterates tiktok_accounts, consolidates ───
-        async function fetchTikTok(targetDate: string) {
-            const record = {
-                spend: 0, impressions: 0, clicks: 0, conversions: 0,
-                campaigns: [] as any[], tiktok_ads: [] as any[], tiktok_adgroups: [] as any[],
-                apiSuccess: false,
-            }
+        // ─── Multi-account wrapper (RANGO): consolida todas las cuentas por fecha ───
+        async function fetchTikTokRange(startDate: string, endDate: string) {
+            const byDate = new Map<string, any>()
 
             // Build list of accounts to sync (multi-account or legacy single-account)
             let accountsToFetch: { advertiser_id: string; token: string }[] = []
@@ -1170,32 +1260,35 @@ export async function GET(request: Request) {
 
             if (accountsToFetch.length === 0) {
                 platformLogs.tiktok = 'Sin configurar'
-                log(`[TikTok] ${targetDate} Sin cuentas configuradas`)
-                return record
+                log(`[TikTok] ${startDate}..${endDate} Sin cuentas configuradas`)
+                return { byDate, apiSuccess: false, configured: false }
             }
 
             const results = await Promise.all(
                 accountsToFetch.map(({ advertiser_id, token }) =>
-                    fetchTikTokSingleAccount(targetDate, advertiser_id, token)
+                    fetchTikTokSingleAccountRange(startDate, endDate, advertiser_id, token)
                 )
             )
 
+            let apiSuccess = false
             for (const r of results) {
-                record.spend       += r.spend
-                record.impressions += r.impressions
-                record.clicks      += r.clicks
-                record.conversions += r.conversions
-                record.campaigns.push(...r.campaigns)
-                record.tiktok_ads.push(...r.tiktok_ads)
-                record.tiktok_adgroups.push(...r.tiktok_adgroups)
-                if (r.apiSuccess) record.apiSuccess = true
+                if (r.apiSuccess) apiSuccess = true
+                for (const [day, rec] of r.byDate as Map<string, any>) {
+                    const acc = byDate.get(day) || emptyTikTokRecord(true)
+                    acc.spend       += rec.spend
+                    acc.impressions += rec.impressions
+                    acc.clicks      += rec.clicks
+                    acc.conversions += rec.conversions
+                    acc.campaigns.push(...rec.campaigns)
+                    acc.tiktok_ads.push(...rec.tiktok_ads)
+                    acc.tiktok_adgroups.push(...rec.tiktok_adgroups)
+                    byDate.set(day, acc)
+                }
             }
 
-            if (record.apiSuccess) {
-                platformLogs.tiktok = record.campaigns.length > 0 || record.spend > 0 ? 'Conectado OK' : 'Sin Datos'
-            }
-            log(`[TikTok] ${targetDate} Total — Spend: ${record.spend.toFixed(2)}, Campañas: ${record.campaigns.length}, Cuentas: ${accountsToFetch.length}`)
-            return record
+            platformLogs.tiktok = !apiSuccess ? 'Error/Desconectado' : (byDate.size > 0 ? 'Conectado OK' : 'Sin Datos')
+            log(`[TikTok] ${startDate}..${endDate} Total — días con datos: ${byDate.size}, Cuentas: ${accountsToFetch.length}`)
+            return { byDate, apiSuccess, configured: true }
         }
 
         // ─── Helper: Fetch Hotmart for a single date ────────────────────────
@@ -1550,52 +1643,121 @@ export async function GET(request: Request) {
             return record
         }
 
-        // ─── Pre-fetch existing sync hashes for idempotency ───
+        // ─── Pre-fetch existing rows: sync_hash (idempotencia) + datos previos por
+        // plataforma (para detectar inconsistencias: cero nuevo vs. valor previo > 0) ───
         const { data: existingHashRows } = await adminSupabase
             .from('metricas_diarias')
-            .select('fecha, sync_hash')
+            .select('fecha, sync_hash, meta_spend, tiktok_spend, meta_campaigns, tiktok_campaigns')
             .eq('cliente_id', cliente.id)
             .in('fecha', datesToSync)
         const existingHashMap = new Map<string, string>(
             (existingHashRows || []).map((r: any) => [r.fecha, r.sync_hash])
         )
+        // Fila previa completa por fecha — para los guards de preservación/inconsistencia.
+        const existingRowMap = new Map<string, any>(
+            (existingHashRows || []).map((r: any) => [r.fecha, r])
+        )
+        const hasMetaData = (r: any) => Number(r?.meta_spend) > 0 || (Array.isArray(r?.meta_campaigns) && r.meta_campaigns.length > 0)
+        const hasTikTokData = (r: any) => Number(r?.tiktok_spend) > 0 || (Array.isArray(r?.tiktok_campaigns) && r.tiktok_campaigns.length > 0)
+
+        // ─── Ventana de refresco: NO re-descargar fechas ya guardadas ───
+        // Las plataformas reajustan los datos recientes, así que los últimos N días
+        // siempre se re-piden; las fechas más antiguas que YA tienen datos en BD se
+        // saltan (no se llama a la API). datesToSync está ordenado viejo→nuevo y las
+        // fechas ISO (YYYY-MM-DD) comparan cronológicamente como strings.
+        const META_REFRESH_DAYS = 7    // Meta reajusta atribución ~7 días
+        const TIKTOK_REFRESH_DAYS = 3  // TikTok reajusta ~pocos días
+        const metaConfigured = (Array.isArray(config.meta_accounts) && config.meta_accounts.length > 0) || (!!config.meta_token && !!config.meta_account_id)
+        const tiktokConfigured = (Array.isArray(config.tiktok_accounts) && config.tiktok_accounts.length > 0) || (!!config.tiktok_access_token && !!config.tiktok_advertiser_id)
+
+        // Primera fecha (más antigua) que cae en la ventana o que aún no tiene datos en BD.
+        // null = todas las fechas viejas ya están descargadas y fuera de ventana → no se pide nada.
+        const effectiveStart = (refreshDays: number, hasData: (r: any) => boolean): string | null => {
+            for (const d of datesToSync) {
+                const ageDays = differenceInDays(new Date(), parseISO(d))
+                if (ageDays <= refreshDays || !hasData(existingRowMap.get(d))) return d
+            }
+            return null
+        }
+        const metaStart = metaConfigured ? effectiveStart(META_REFRESH_DAYS, hasMetaData) : null
+        const tiktokStart = tiktokConfigured ? effectiveStart(TIKTOK_REFRESH_DAYS, hasTikTokData) : null
+
+        // Una sola llamada por nivel/cuenta para TODO el rango efectivo (en vez de 1/día).
+        const emptyRangeMeta = { byDate: new Map<string, any>(), apiSuccess: true, configured: metaConfigured }
+        const emptyRangeTikTok = { byDate: new Map<string, any>(), apiSuccess: true, configured: tiktokConfigured }
+        const [metaResult, tiktokResult] = await Promise.all([
+            metaStart ? fetchMetaRange(metaStart, endDateStr) : Promise.resolve(emptyRangeMeta),
+            tiktokStart ? fetchTikTokRange(tiktokStart, endDateStr) : Promise.resolve(emptyRangeTikTok),
+        ])
+        const metaByDate = metaResult.byDate as Map<string, any>
+        const tiktokByDate = tiktokResult.byDate as Map<string, any>
+        if (metaStart && metaStart !== datesToSync[0]) log(`[Meta] No re-descarga: se piden desde ${metaStart} (rango pedido empezaba en ${datesToSync[0]})`)
+        if (tiktokStart && tiktokStart !== datesToSync[0]) log(`[TikTok] No re-descarga: se piden desde ${tiktokStart} (rango pedido empezaba en ${datesToSync[0]})`)
+        if (!metaStart && metaConfigured) log(`[Meta] Todas las fechas ya descargadas y fuera de ventana — sin llamadas a la API`)
+        if (!tiktokStart && tiktokConfigured) log(`[TikTok] Todas las fechas ya descargadas y fuera de ventana — sin llamadas a la API`)
 
         // ─── Process all dates: chunked in parallel (Batching) ───
-        // El pool de rate-limit (src/lib/rate-limit.ts) ya gobierna la TASA real de
-        // peticiones, así que el chunk es solo una palanca de memoria/scheduling.
-        // Lo adaptamos al número de cuentas: con más cuentas, cada fecha ya abre
-        // más peticiones en paralelo, así que reducimos el chunk.
-        const metaAccts = (Array.isArray(config.meta_accounts) ? config.meta_accounts.length : 0) || (config.meta_account_id ? 1 : 0)
-        const tiktokAccts = (Array.isArray(config.tiktok_accounts) ? config.tiktok_accounts.length : 0) || (config.tiktok_advertiser_id ? 1 : 0)
-        const totalAccounts = Math.max(1, metaAccts + tiktokAccts)
-        const CHUNK_SIZE = Math.max(3, Math.min(10, Math.floor(40 / totalAccounts)));
+        // Meta/TikTok ya vienen del Map por rango; aquí solo se piden Hotmart y GA4 por día.
+        // El chunk es palanca de memoria/scheduling (el pool de rate-limit ya gobierna la TASA).
+        const totalAccounts = Math.max(1, (metaConfigured ? 1 : 0) + (tiktokConfigured ? 1 : 0))
+        const CHUNK_SIZE = Math.max(4, Math.min(15, Math.floor(45 / totalAccounts)));
         const upsertPayloads: any[] = [];
-        
+
         for (let i = 0; i < datesToSync.length; i += CHUNK_SIZE) {
             const chunk = datesToSync.slice(i, i + CHUNK_SIZE);
             log(`[Batch] Procesando chunk de fechas en paralelo: ${chunk.join(', ')}`);
-            
+
             const chunkResults = await Promise.all(
                 chunk.map(async (targetDate) => {
-                    // Fetch Meta, TikTok, Hotmart and GA4 in parallel for this specific date
-                    const [metaRecord, tiktokRecord, hotmartRecord, gaRecord] = await Promise.all([
-                        fetchMeta(targetDate),
-                        fetchTikTok(targetDate),
+                    // Hotmart y GA4 por día; Meta/TikTok salen del Map por rango.
+                    const [hotmartRecord, gaRecord] = await Promise.all([
                         fetchHotmart(targetDate),
                         fetchGA4(targetDate),
                     ]);
-                    
-                    return { targetDate, metaRecord, tiktokRecord, hotmartRecord, gaRecord };
+                    // ¿Se pidió esta plataforma para esta fecha? (false = fecha vieja ya descargada)
+                    const metaFetched = !!metaStart && targetDate >= metaStart
+                    const tiktokFetched = !!tiktokStart && targetDate >= tiktokStart
+                    const metaRecord = metaFetched ? (metaByDate.get(targetDate) ?? emptyMetaRecord(metaResult.apiSuccess)) : emptyMetaRecord(true)
+                    const tiktokRecord = tiktokFetched ? (tiktokByDate.get(targetDate) ?? emptyTikTokRecord(tiktokResult.apiSuccess)) : emptyTikTokRecord(true)
+
+                    return { targetDate, metaRecord, tiktokRecord, hotmartRecord, gaRecord, metaFetched, tiktokFetched };
                 })
             );
-            
+
             // Collect the results for the mass upsert list
             for (const res of chunkResults) {
-                const { targetDate, metaRecord, tiktokRecord, hotmartRecord, gaRecord } = res;
+                const { targetDate, metaRecord, tiktokRecord, hotmartRecord, gaRecord, metaFetched, tiktokFetched } = res;
+
+                const daysAgo = differenceInDays(new Date(), parseISO(targetDate))
+                const prevRow = existingRowMap.get(targetDate)
+
+                // ─── Red de seguridad per-plataforma (Meta + TikTok) ───
+                // Se OMITEN los campos de una plataforma del upsert (preservando lo que ya hay
+                // en BD) cuando:
+                //   • NO se pidió en esta corrida (fecha vieja ya descargada, fuera de ventana), o
+                //   • la API falló de verdad (apiSuccess=false: red caída, error, throttle agotado), o
+                //   • devolvió CERO donde la BD ya tenía datos (inconsistencia/posible desconexión).
+                // Solo el fallo real o la inconsistencia (con datos previos) generan ALERTA;
+                // el skip por "ya descargado" es esperado y silencioso.
+                const hasAnyTikTokConfig = (Array.isArray(config.tiktok_accounts) && config.tiktok_accounts.length > 0) || !!config.tiktok_access_token
+                const tiktokApiFailed = tiktokFetched && hasAnyTikTokConfig && !tiktokRecord.apiSuccess
+                const tiktokInconsistent = tiktokFetched && hasAnyTikTokConfig && !tiktokApiFailed && tiktokRecord.spend === 0 && hasTikTokData(prevRow)
+                const tiktokFailed = !tiktokFetched || tiktokApiFailed || tiktokInconsistent
+
+                const hasAnyMetaConfig = (Array.isArray(config.meta_accounts) && config.meta_accounts.length > 0) || !!config.meta_token
+                const metaApiFailed = metaFetched && hasAnyMetaConfig && !metaRecord.apiSuccess
+                const metaInconsistent = metaFetched && hasAnyMetaConfig && !metaApiFailed && metaRecord.spend === 0 && hasMetaData(prevRow)
+                const metaFailed = !metaFetched || metaApiFailed || metaInconsistent
+
+                if ((metaApiFailed || metaInconsistent) && hasMetaData(prevRow)) {
+                    inconsistencyAlerts.push({ cliente: cliente.nombre, platform: 'Meta', fecha: targetDate, reason: metaApiFailed ? 'api_disconnected' : 'zero_vs_previous' })
+                }
+                if ((tiktokApiFailed || tiktokInconsistent) && hasTikTokData(prevRow)) {
+                    inconsistencyAlerts.push({ cliente: cliente.nombre, platform: 'TikTok', fecha: targetDate, reason: tiktokApiFailed ? 'api_disconnected' : 'zero_vs_previous' })
+                }
 
                 // Guard: skip empty responses for dates older than 2 days
                 // (prevents overwriting good data with stale empty API responses)
-                const daysAgo = differenceInDays(new Date(), parseISO(targetDate))
                 const isEmptyMeta = metaRecord.campaigns.length === 0 && metaRecord.spend === 0
                 const isEmptyTikTok = tiktokRecord.campaigns.length === 0 && tiktokRecord.spend === 0
                 const isAllEmpty = isEmptyMeta && isEmptyTikTok && hotmartRecord.principal === 0 && hotmartRecord.ventas_count === 0 && gaRecord.sessions === 0
@@ -1604,11 +1766,6 @@ export async function GET(request: Request) {
                     results.push({ cliente_id: cliente.id, date: targetDate, status: 'skipped_empty', platform_status: { ...platformLogs } } as any)
                     continue
                 }
-
-                // Per-platform guard: if TikTok API failed (not just zero spend, but actual API error),
-                // skip TikTok fields in the upsert to preserve previously-synced data in the DB.
-                const hasAnyTikTokConfig = (Array.isArray(config.tiktok_accounts) && config.tiktok_accounts.length > 0) || !!config.tiktok_access_token
-                const tiktokFailed = hasAnyTikTokConfig && !tiktokRecord.apiSuccess
 
                 // ─── Merge funnel breakdown: Hotmart sales + GA4 page views per tab ───
                 // Total pagos_iniciados (suma de payment_page_views de todos los funnels)
@@ -1642,21 +1799,28 @@ export async function GET(request: Request) {
                     continue
                 }
 
-                if (tiktokFailed) {
-                    log(`[TikTok] ${targetDate} API falló — se omiten campos TikTok del upsert para preservar datos existentes`)
+                if (metaFailed && metaFetched) {
+                    log(`[Meta] ${targetDate} ${metaApiFailed ? 'API falló' : 'devolvió cero con datos previos'} — se omiten campos Meta del upsert para preservar datos existentes`)
+                }
+                if (tiktokFailed && tiktokFetched) {
+                    log(`[TikTok] ${targetDate} ${tiktokApiFailed ? 'API falló' : 'devolvió cero con datos previos'} — se omiten campos TikTok del upsert para preservar datos existentes`)
                 }
 
                 upsertPayloads.push({
                     cliente_id: cliente.id,
                     fecha: targetDate,
                     sync_hash: payloadHash,
-                    meta_spend: metaRecord.spend,
-                    meta_impressions: metaRecord.impressions,
-                    meta_clicks: metaRecord.clicks,
-                    meta_campaigns: metaRecord.campaigns,
-                    meta_ads:      metaRecord.meta_ads,
-                    meta_adsets:   metaRecord.meta_adsets,
-                    meta_forms:    metaRecord.forms,
+                    // Only include Meta fields when the API call actually succeeded and is consistent.
+                    // On failure/inconsistency, preserve whatever is already in the DB for these columns.
+                    ...(!metaFailed && {
+                        meta_spend: metaRecord.spend,
+                        meta_impressions: metaRecord.impressions,
+                        meta_clicks: metaRecord.clicks,
+                        meta_campaigns: metaRecord.campaigns,
+                        meta_ads:      metaRecord.meta_ads,
+                        meta_adsets:   metaRecord.meta_adsets,
+                        meta_forms:    metaRecord.forms,
+                    }),
                     // Only include TikTok fields when the API call actually succeeded.
                     // On failure, preserve whatever is already in the DB for these columns.
                     ...(!tiktokFailed && {
@@ -1728,6 +1892,27 @@ export async function GET(request: Request) {
             message: failedNames.join(', ').slice(0, 300),
             link: '/dashboard',
             metadata: { cliente_ids: failedClienteIds, range: { start: startDateStr, end: endDateStr } },
+        })
+    }
+
+    // Aviso in-app a admins de desconexión/inconsistencia de API (un aviso agregado por corrida).
+    // Estos casos NO sobrescribieron la BD (se preservaron los datos previos), pero requieren
+    // revisión humana: una API caída o un cero que contradice datos ya descargados.
+    if (inconsistencyAlerts.length > 0 && process.env.SUPABASE_SERVICE_ROLE_KEY) {
+        const disconnected = inconsistencyAlerts.filter((a) => a.reason === 'api_disconnected').length
+        const summary = inconsistencyAlerts
+            .slice(0, 12)
+            .map((a) => `${a.cliente}: ${a.platform} ${a.fecha}`)
+            .join(', ')
+        await notifyUsers({
+            db: adminSupabase,
+            type: 'sync_failed',
+            severity: 'warning',
+            audience: 'admins',
+            title: `Posible desconexión/inconsistencia de API (${inconsistencyAlerts.length} caso${inconsistencyAlerts.length > 1 ? 's' : ''})`,
+            message: `Se preservaron los datos existentes${disconnected > 0 ? ` (${disconnected} por API caída)` : ''}: ${summary}`.slice(0, 300),
+            link: '/dashboard',
+            metadata: { reason: 'api_disconnected_or_inconsistent', alerts: inconsistencyAlerts.slice(0, 100), range: { start: startDateStr, end: endDateStr } },
         })
     }
 
