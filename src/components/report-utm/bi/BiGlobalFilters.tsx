@@ -170,7 +170,14 @@ export function BiGlobalFilters({ initialFilters, onChange, clienteLocked, onCli
                     <input
                         type="date"
                         value={dateFrom}
-                        onChange={e => { setDateFrom(e.target.value); setActivePreset(null) }}
+                        max={dateTo || undefined}
+                        onChange={e => {
+                            const val = e.target.value
+                            if (!val) return
+                            setDateFrom(val)
+                            setActivePreset(null)
+                            onChange({ ...buildFilters(), date_from: val })
+                        }}
                         className="w-full px-3 py-2 text-xs rounded-lg bg-muted border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
                     />
                 </div>
@@ -180,7 +187,14 @@ export function BiGlobalFilters({ initialFilters, onChange, clienteLocked, onCli
                     <input
                         type="date"
                         value={dateTo}
-                        onChange={e => { setDateTo(e.target.value); setActivePreset(null) }}
+                        min={dateFrom || undefined}
+                        onChange={e => {
+                            const val = e.target.value
+                            if (!val) return
+                            setDateTo(val)
+                            setActivePreset(null)
+                            onChange({ ...buildFilters(), date_to: val })
+                        }}
                         className="w-full px-3 py-2 text-xs rounded-lg bg-muted border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
                     />
                 </div>

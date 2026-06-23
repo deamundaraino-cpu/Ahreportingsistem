@@ -1,7 +1,7 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
-import { reportUtmClient } from '@/lib/report-utm/client'
+import { reportUtmClient, reportUtmAdminClient } from '@/lib/report-utm/client'
 import { createClient } from '@/utils/supabase/server'
 import { generateWebhookSecret } from '@/lib/report-utm/webhook-auth'
 import { encrypt } from '@/lib/report-utm/encryption'
@@ -12,6 +12,20 @@ import { getMetaAccountsForCliente, syncMetaLeadsForCliente, discoverAndSubscrib
 type ActionResult = { ok: true; secret?: string; events_received?: number } | { ok: false; error: string }
 type SimpleResult = { ok: true } | { ok: false; error: string }
 type SyncResult = { ok: true; imported: number; forms: number } | { ok: false; error: string }
+
+async function getUserRole(): Promise<string | null> {
+    const supabase = await createClient()
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return null
+    const { data: profile } = await supabase
+        .from('user_profiles')
+        .select('role')
+        .eq('id', user.id)
+        .single()
+    return profile?.role ?? null
+}
+
+const S2S_ALLOWED_ROLES = new Set(['admin', 'trafficker'])
 
 export async function activateHotmartIntegrationAction(clienteId: string): Promise<ActionResult> {
     const supabase = await reportUtmClient()
@@ -189,7 +203,10 @@ export async function setShopifyIntegrationStatusAction(
 // ── S2S (server-to-server pixel) ──────────────────────────────────
 
 export async function activateS2SIntegrationAction(clienteId: string): Promise<ActionResult> {
-    const supabase = await reportUtmClient()
+    const role = await getUserRole()
+    if (!role || !S2S_ALLOWED_ROLES.has(role)) return { ok: false, error: 'Sin permisos para activar S2S' }
+
+    const supabase = await reportUtmAdminClient()
     const token = generateWebhookSecret()
 
     const { error } = await supabase
@@ -212,7 +229,10 @@ export async function activateS2SIntegrationAction(clienteId: string): Promise<A
 }
 
 export async function rotateS2STokenAction(clienteId: string): Promise<ActionResult> {
-    const supabase = await reportUtmClient()
+    const role = await getUserRole()
+    if (!role || !S2S_ALLOWED_ROLES.has(role)) return { ok: false, error: 'Sin permisos para rotar el token S2S' }
+
+    const supabase = await reportUtmAdminClient()
     const token = generateWebhookSecret()
 
     const { error } = await supabase
@@ -231,7 +251,10 @@ export async function setS2SIntegrationStatusAction(
     clienteId: string,
     status: 'active' | 'inactive',
 ): Promise<SimpleResult> {
-    const supabase = await reportUtmClient()
+    const role = await getUserRole()
+    if (!role || !S2S_ALLOWED_ROLES.has(role)) return { ok: false, error: 'Sin permisos para cambiar el estado S2S' }
+
+    const supabase = await reportUtmAdminClient()
     const { error } = await supabase
         .from('integrations')
         .update({ status })
