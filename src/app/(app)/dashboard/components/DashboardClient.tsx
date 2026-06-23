@@ -266,7 +266,7 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
     initialKeyword?: string
     userRole?: string
 }) {
-    const { cliente, metrics, prevMetrics = [], weeks, allLayouts, tabs: initialTabs = [], conversionesCatalogo = [], availablePlatforms: availablePlatformsArr = ['meta'] } = data
+    const { cliente, metrics, prevMetrics = [], weeks, allLayouts, tabTemplates = [], tabs: initialTabs = [], conversionesCatalogo = [], availablePlatforms: availablePlatformsArr = ['meta'] } = data
     const platformSet = useMemo(() => new Set<string>(availablePlatformsArr), [availablePlatformsArr])
     const searchParams = useSearchParams()
     const tabFromUrl = searchParams.get('tab')
@@ -1616,6 +1616,7 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                     onClose={() => setShowTabModal(false)}
                     clienteId={cliente.id}
                     allLayouts={allLayouts}
+                    tabTemplates={tabTemplates}
                     tabToEdit={tabToEdit}
                     clienteHasHotmart={platformSet.has('hotmart')}
                 />

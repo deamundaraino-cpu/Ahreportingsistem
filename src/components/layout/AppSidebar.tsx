@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { createClient } from '@/utils/supabase/client'
 import { ThemeToggle } from '@/components/theme/ThemeToggle'
+import { APP_VERSION } from '@/lib/version'
 import {
     Users,
     BarChart3,
@@ -299,6 +300,9 @@ export function AppSidebar({ initialRole = 'viewer', userId = '' }: { initialRol
                             Cerrar Sesión
                         </button>
                     </form>
+                    <p className="px-3 pt-1 text-center text-[10px] font-medium text-muted-foreground/50 tracking-wide">
+                        Ad House Reporting · v{APP_VERSION}
+                    </p>
                 </div>
             </aside>
         </>

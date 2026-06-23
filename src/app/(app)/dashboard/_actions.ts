@@ -82,7 +82,7 @@ export async function getDashboardData(clientId: string, startStr: string, endSt
   const supabase = await createAdminClient();
 
   // Fetch client + global assigned layout + client tabs + conversions catalog + campaign groups + all layout templates
-  const [clienteRes, clienteLayoutRes, tabsRes, conversionesRes, campaignGroupsRes, allLayoutsRes] =
+  const [clienteRes, clienteLayoutRes, tabsRes, conversionesRes, campaignGroupsRes, allLayoutsRes, tabTemplatesRes] =
     await Promise.all([
       supabase
         .from('clientes')
@@ -115,6 +115,7 @@ export async function getDashboardData(clientId: string, startStr: string, endSt
         .eq('cliente_id', clientId)
         .order('nombre', { ascending: true }),
       supabase.from('layouts_reporte').select('*').order('nombre'),
+      supabase.from('tab_templates').select('*').order('nombre'),
     ]);
 
   const cliente = clienteRes.data?.[0];
@@ -217,6 +218,7 @@ export async function getDashboardData(clientId: string, startStr: string, endSt
     weeks,
     layout,
     allLayouts: allLayoutsRes.data || [],
+    tabTemplates: tabTemplatesRes.data || [],
     clienteLayoutId: clienteLayoutRes.data?.id || null,
     tabs: tabsRes.data || [],
     conversionesCatalogo: conversionesRes.data || [],
@@ -317,6 +319,8 @@ export async function saveClienteTab(
     fecha_inicio?: string;
     fecha_finalizacion?: string;
     presupuesto_objetivo?: number;
+    /** Solo al crear: copia la visualización de esta plantilla de pestaña (tab_templates). */
+    template_id?: string;
     hotmart_funnel?: {
       enabled?: boolean;
       principal_names?: string[];
@@ -350,9 +354,22 @@ export async function saveClienteTab(
       .eq('cliente_id', clienteId);
     if (error) return { error: error.message };
   } else {
+    // Al crear desde plantilla, copiamos su visualización (solo layout).
+    const vizFields: Record<string, any> = {};
+    if (payload.template_id) {
+      const { data: template } = await supabase
+        .from('tab_templates')
+        .select('*')
+        .eq('id', payload.template_id)
+        .single();
+      if (template) {
+        for (const f of TAB_VIZ_FIELDS) vizFields[f] = (template as any)[f] ?? null;
+      }
+    }
     const { error } = await supabase.from('cliente_tabs').insert({
       cliente_id: clienteId,
       ...baseFields,
+      ...vizFields,
       orden: payload.orden || 0,
     });
     if (error) return { error: error.message };
@@ -427,6 +444,146 @@ export async function duplicateClienteTab(clienteId: string, tabId: string) {
 
   if (insertError) return { error: insertError.message };
   revalidatePath(`/dashboard/${clienteId}`);
+  return { success: true };
+}
+
+// ─── Tab templates (plantillas de pestañas, globales) ───────────────────────
+// Guardan SOLO la visualización de una pestaña para reutilizarla en otras
+// campañas. No incluyen keyword_meta / fechas / presupuesto.
+
+const TAB_VIZ_FIELDS = [
+  'columnas',
+  'tarjetas',
+  'graficos',
+  'text_blocks',
+  'custom_metrics',
+  'ranking_tables',
+  'blocks_order',
+] as const;
+
+/**
+ * List all global tab templates (for the "new tab" selector).
+ */
+export async function listTabTemplates() {
+  const supabase = await createAdminClient();
+  const { data, error } = await supabase
+    .from('tab_templates')
+    .select('*')
+    .order('nombre', { ascending: true });
+  if (error) return { data: [], error: error.message };
+  return { data: data || [], error: null };
+}
+
+/**
+ * Save the visualization of an existing tab as a reusable global template.
+ * Falls back to the tab's associated layout (plantilla_id) when the tab has
+ * no per-tab overrides of its own.
+ */
+export async function saveTabAsTemplate(
+  clienteId: string,
+  tabId: string,
+  nombre: string,
+  descripcion?: string
+) {
+  if (!nombre?.trim()) return { error: 'El nombre de la plantilla es obligatorio' };
+  const supabase = await createAdminClient();
+
+  const { data: tab, error: fetchError } = await supabase
+    .from('cliente_tabs')
+    .select('*')
+    .eq('id', tabId)
+    .eq('cliente_id', clienteId)
+    .single();
+  if (fetchError || !tab) return { error: fetchError?.message || 'Pestaña no encontrada' };
+
+  const viz: Record<string, any> = {};
+  for (const f of TAB_VIZ_FIELDS) viz[f] = (tab as any)[f] ?? null;
+
+  // Fallback: si la pestaña no tiene overrides propios pero referencia una
+  // plantilla de layout, copiamos la visualización desde ahí.
+  const hasOwnViz = TAB_VIZ_FIELDS.some((f) => {
+    const v = (tab as any)[f];
+    return Array.isArray(v) ? v.length > 0 : v != null;
+  });
+  if (!hasOwnViz && tab.plantilla_id) {
+    const { data: layout } = await supabase
+      .from('layouts_reporte')
+      .select('*')
+      .eq('id', tab.plantilla_id)
+      .single();
+    if (layout) for (const f of TAB_VIZ_FIELDS) viz[f] = (layout as any)[f] ?? viz[f];
+  }
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  const { error } = await supabase.from('tab_templates').insert({
+    nombre: nombre.trim(),
+    descripcion: descripcion?.trim() || null,
+    ...viz,
+    created_by: user?.id || null,
+  });
+  if (error) return { error: error.message };
+
+  revalidatePath(`/dashboard/${clienteId}`);
+  return { success: true };
+}
+
+/**
+ * Apply a template's visualization onto an existing tab (replaces its layout).
+ */
+export async function applyTemplateToTab(clienteId: string, tabId: string, templateId: string) {
+  const supabase = await createAdminClient();
+
+  const { data: template, error: tErr } = await supabase
+    .from('tab_templates')
+    .select('*')
+    .eq('id', templateId)
+    .single();
+  if (tErr || !template) return { error: tErr?.message || 'Plantilla no encontrada' };
+
+  const viz: Record<string, any> = {};
+  for (const f of TAB_VIZ_FIELDS) viz[f] = (template as any)[f] ?? null;
+
+  const { error } = await supabase
+    .from('cliente_tabs')
+    .update({ ...viz, updated_at: new Date().toISOString() })
+    .eq('id', tabId)
+    .eq('cliente_id', clienteId);
+  if (error) return { error: error.message };
+
+  revalidatePath(`/dashboard/${clienteId}`);
+  return { success: true };
+}
+
+/**
+ * Rename / re-describe a global tab template.
+ */
+export async function renameTabTemplate(templateId: string, nombre: string, descripcion?: string) {
+  if (!nombre?.trim()) return { error: 'El nombre es obligatorio' };
+  const supabase = await createAdminClient();
+  const { error } = await supabase
+    .from('tab_templates')
+    .update({
+      nombre: nombre.trim(),
+      descripcion: descripcion?.trim() || null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', templateId);
+  if (error) return { error: error.message };
+  revalidatePath('/admin/layouts');
+  return { success: true };
+}
+
+/**
+ * Delete a global tab template.
+ */
+export async function deleteTabTemplate(templateId: string) {
+  const supabase = await createAdminClient();
+  const { error } = await supabase.from('tab_templates').delete().eq('id', templateId);
+  if (error) return { error: error.message };
+  revalidatePath('/admin/layouts');
   return { success: true };
 }
 

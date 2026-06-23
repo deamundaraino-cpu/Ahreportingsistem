@@ -1,5 +1,7 @@
 import { getLayouts } from '../settings/_actions'
 import { LayoutBuilderClient } from './LayoutBuilderClient'
+import { TabTemplatesManager } from './TabTemplatesManager'
+import { listTabTemplates } from '../../dashboard/_actions'
 import { createClient } from '@/utils/supabase/server'
 import { redirect } from 'next/navigation'
 
@@ -17,7 +19,7 @@ export default async function LayoutsPage() {
     const role = profile?.role ?? 'viewer'
     const isAdmin = ['superadmin', 'admin'].includes(role)
 
-    const layouts = await getLayouts()
+    const [layouts, tabTemplatesRes] = await Promise.all([getLayouts(), listTabTemplates()])
 
     return (
         <div className="space-y-6">
@@ -26,6 +28,7 @@ export default async function LayoutsPage() {
                 <p className="text-muted-foreground">Crea y edita plantillas de métricas para asignarlas a tus clientes.</p>
             </div>
             <LayoutBuilderClient layouts={layouts} isAdmin={isAdmin} />
+            <TabTemplatesManager templates={tabTemplatesRes.data || []} isAdmin={isAdmin} />
         </div>
     )
 }

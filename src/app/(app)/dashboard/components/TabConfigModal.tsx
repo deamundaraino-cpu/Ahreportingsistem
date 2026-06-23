@@ -5,8 +5,8 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Button } from '@/components/ui/button'
-import { Trash2, ChevronDown, ChevronRight, Zap, Copy } from 'lucide-react'
-import { saveClienteTab, deleteClienteTab, duplicateClienteTab } from '../_actions'
+import { Trash2, ChevronDown, ChevronRight, Zap, Copy, Bookmark } from 'lucide-react'
+import { saveClienteTab, deleteClienteTab, duplicateClienteTab, saveTabAsTemplate } from '../_actions'
 import { toast } from 'sonner'
 
 type HotmartFunnel = {
@@ -32,6 +32,7 @@ export function TabConfigModal({
     onClose,
     clienteId,
     allLayouts,
+    tabTemplates = [],
     tabToEdit = null,
     clienteHasHotmart = false,
 }: {
@@ -39,11 +40,15 @@ export function TabConfigModal({
     onClose: () => void
     clienteId: string
     allLayouts: any[]
+    tabTemplates?: any[]
     tabToEdit?: any | null
     clienteHasHotmart?: boolean
 }) {
     const [nombre, setNombre] = useState(tabToEdit?.nombre || '')
     const [keyword, setKeyword] = useState(tabToEdit?.keyword_meta || '')
+    // Plantilla de pestaña a aplicar al crear una nueva (solo visualización)
+    const [templateId, setTemplateId] = useState('none')
+    const [savingTemplate, setSavingTemplate] = useState(false)
     const [layoutId, setLayoutId] = useState(tabToEdit?.plantilla_id || 'none')
     const [fechaInicio, setFechaInicio] = useState(tabToEdit?.fecha_inicio || '')
     const [fechaFinalizacion, setFechaFinalizacion] = useState(tabToEdit?.fecha_finalizacion || '')
@@ -73,6 +78,21 @@ export function TabConfigModal({
         onClose()
     }
 
+    async function handleSaveAsTemplate() {
+        if (!tabToEdit?.id) return
+        const name = window.prompt(
+            'Nombre de la plantilla (guarda la visualización de esta pestaña para reutilizarla en otras campañas):',
+            tabToEdit.nombre || ''
+        )
+        if (name === null) return
+        if (!name.trim()) { toast.error('El nombre de la plantilla es obligatorio'); return }
+        setSavingTemplate(true)
+        const res = await saveTabAsTemplate(clienteId, tabToEdit.id, name)
+        setSavingTemplate(false)
+        if (res.error) { toast.error('Error al guardar plantilla: ' + res.error); return }
+        toast.success(`Plantilla "${name.trim()}" guardada`)
+    }
+
     const handleSave = async () => {
         if (!nombre || !keyword) return
         setSaving(true)
@@ -99,6 +119,7 @@ export function TabConfigModal({
             fecha_inicio: fechaInicio || undefined,
             fecha_finalizacion: fechaFinalizacion || undefined,
             presupuesto_objetivo: presupuestoObjetivo ? parseFloat(presupuestoObjetivo) : undefined,
+            template_id: !tabToEdit && templateId !== 'none' ? templateId : undefined,
             hotmart_funnel,
         })
         setSaving(false)
@@ -125,6 +146,30 @@ export function TabConfigModal({
                 </DialogHeader>
 
                 <div className="space-y-4 py-4">
+                    {/* Partir de plantilla (solo al crear una pestaña nueva) */}
+                    {!tabToEdit && tabTemplates.length > 0 && (
+                        <div className="space-y-2 rounded-lg border border-border bg-card/50 p-3">
+                            <label className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground">
+                                <Bookmark className="w-3.5 h-3.5" />
+                                Partir de una plantilla
+                            </label>
+                            <Select value={templateId} onValueChange={setTemplateId}>
+                                <SelectTrigger className="w-full bg-card border-border">
+                                    <SelectValue placeholder="En blanco..." />
+                                </SelectTrigger>
+                                <SelectContent className="bg-card border-border text-foreground z-[120]">
+                                    <SelectItem value="none">En blanco</SelectItem>
+                                    {tabTemplates.map(t => (
+                                        <SelectItem key={t.id} value={t.id}>{t.nombre}</SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                            <p className="text-[10px] text-muted-foreground/70">
+                                Copia la visualización (tarjetas, gráficos, ranking, métricas) de una pestaña guardada. El filtro de campaña lo defines abajo.
+                            </p>
+                        </div>
+                    )}
+
                     <div className="space-y-2">
                         <label className="text-xs font-semibold text-muted-foreground">Nombre de la Pestaña</label>
                         <Input
@@ -337,6 +382,18 @@ export function TabConfigModal({
                             >
                                 <Copy className="w-3.5 h-3.5" />
                                 {duplicating ? 'Duplicando...' : 'Duplicar'}
+                            </Button>
+                        )}
+                        {tabToEdit && (
+                            <Button
+                                type="button"
+                                variant="outline"
+                                onClick={handleSaveAsTemplate}
+                                disabled={savingTemplate || saving}
+                                className="text-xs h-8 px-3 border-border text-foreground/90 hover:bg-accent gap-1.5"
+                            >
+                                <Bookmark className="w-3.5 h-3.5" />
+                                {savingTemplate ? 'Guardando...' : 'Guardar como plantilla'}
                             </Button>
                         )}
                     </div>
