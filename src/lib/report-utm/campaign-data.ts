@@ -403,6 +403,26 @@ function round2(n: number): number {
 // Umbral mínimo de similitud para ofrecer una sugerencia (no autoaplicar).
 const SUGGEST_THRESHOLD = 0.45
 
+export type InvalidUtmReason = 'macro_no_renderizado' | 'sin_utm'
+
+// Valores vacíos/centinela que no representan ninguna campaña.
+const EMPTY_UTM = new Set(['', '(vacío)', '(vacio)', '(empty)', '(none)', '(not set)', 'not set', 'null', 'undefined', 'n/a', 'na'])
+
+/**
+ * Detecta UTMs que NO son atribuibles a una campaña concreta:
+ *  - macros sin renderizar de Meta/TikTok: {{campaign.name}}, {{ad.name}},
+ *    {campaign.name}, __CAMPAIGN_NAME__, %campaign_name%…
+ *  - valores vacíos o centinela.
+ * Estas no deben ofrecerse para mapeo manual (un macro abarca muchas campañas).
+ */
+function classifyInvalidUtm(value: string): InvalidUtmReason | null {
+    const v = value.trim()
+    if (EMPTY_UTM.has(v.toLowerCase())) return 'sin_utm'
+    // Macros sin sustituir en cualquiera de las sintaxis habituales.
+    if (/\{\{.*?\}\}|\{[a-z0-9_.]+\}|__[A-Z0-9_]+__|%[a-z0-9_]+%/i.test(v)) return 'macro_no_renderizado'
+    return null
+}
+
 interface CrossContext {
     idx: CampaignIndex
     overrides: Override[]
@@ -475,8 +495,19 @@ export interface MatchCoverage {
     methods: Record<MatchMethod, number>
 }
 
-/** (Puro) valores UTM de leads que NO cruzaron exacto, con su mejor sugerencia. */
-function computeSuggestions(ctx: CrossContext): UnmatchedRow[] {
+export interface InvalidUtmRow {
+    field: string
+    value: string
+    count: number
+    reason: InvalidUtmReason
+}
+
+/**
+ * (Puro) valores UTM de leads que NO cruzaron exacto, separados en:
+ *  - `suggestions`: valores reales mapeables (con mejor candidato por similitud)
+ *  - `invalid`: macros sin renderizar / vacíos (no mapeables, problema de datos)
+ */
+function computeUnmatched(ctx: CrossContext): { suggestions: UnmatchedRow[]; invalid: InvalidUtmRow[] } {
     const { idx, overrides, leads } = ctx
     const counts = new Map<string, number>()
     for (const l of leads) {
@@ -487,21 +518,79 @@ function computeSuggestions(ctx: CrossContext): UnmatchedRow[] {
         const k = `${field}||${v}`
         counts.set(k, (counts.get(k) ?? 0) + 1)
     }
-    return Array.from(counts.entries())
-        .map(([k, count]) => {
-            const field = k.split('||')[0]
-            const value = k.slice(field.length + 2)
-            return { field, value, count, suggestion: bestSuggestion(value, idx) }
+    const suggestions: UnmatchedRow[] = []
+    const invalid: InvalidUtmRow[] = []
+    for (const [k, count] of counts) {
+        const field = k.split('||')[0]
+        const value = k.slice(field.length + 2)
+        const bad = classifyInvalidUtm(value)
+        if (bad) invalid.push({ field, value, count, reason: bad })
+        else suggestions.push({ field, value, count, suggestion: bestSuggestion(value, idx) })
+    }
+    suggestions.sort((a, b) => b.count - a.count)
+    invalid.sort((a, b) => b.count - a.count)
+    return { suggestions: suggestions.slice(0, 200), invalid: invalid.slice(0, 50) }
+}
+
+export interface UtmCampaignRow {
+    value: string                       // valor de utm_campaign (o '(vacío)')
+    count: number                       // leads con ese utm_campaign
+    matched_campaign: string | null     // campaña a la que cruzó (dominante)
+    distinct_campaigns: number          // nº de campañas distintas a las que cruzó
+    method: MatchMethod                 // método de match dominante
+    invalid_reason: InvalidUtmReason | null
+    suggestion: CampaignSuggestion | null   // solo si no cruzó y es mapeable
+}
+
+const ZERO_METHODS = (): Record<MatchMethod, number> => ({
+    override: 0, utm_id_campaign: 0, utm_id_ad: 0, name: 0, content_ad: 0, term_adset: 0, none: 0,
+})
+
+function topEntry<T extends string>(m: Record<T, number> | Map<T, number>): T | null {
+    const entries = m instanceof Map ? Array.from(m.entries()) : (Object.entries(m) as [T, number][])
+    let best: T | null = null
+    let bestC = -1
+    for (const [k, c] of entries) { if (c > bestC) { bestC = c; best = k } }
+    return best
+}
+
+/**
+ * (Puro) desglose de TODOS los valores de utm_campaign de los leads con su estado
+ * de cruce (a qué campaña, por qué método) — para que el trafficker confirme que
+ * cada UTM de los leads se visualiza y, si no cruzó, lo pueda mapear.
+ */
+function computeUtmBreakdown(ctx: CrossContext): UtmCampaignRow[] {
+    const { idx, overrides, leads } = ctx
+    type G = { count: number; methods: Record<MatchMethod, number>; campaigns: Map<string, number> }
+    const groups = new Map<string, G>()
+    for (const l of leads) {
+        const value = ((l.utm_campaign as string) || '').trim() || '(vacío)'
+        const m = matchToCampaign(l, idx, overrides)
+        const campName = m.key ? (idx.campaigns.get(m.key)?.name ?? null) : null
+        let g = groups.get(value)
+        if (!g) { g = { count: 0, methods: ZERO_METHODS(), campaigns: new Map() }; groups.set(value, g) }
+        g.count += 1
+        g.methods[m.method] += 1
+        if (campName) g.campaigns.set(campName, (g.campaigns.get(campName) ?? 0) + 1)
+    }
+    return Array.from(groups.entries())
+        .map(([value, g]) => {
+            const crossed = g.count - g.methods.none
+            const matched_campaign = crossed > 0 ? topEntry(g.campaigns) : null
+            // Método dominante; si cruzó, excluye 'none' para no mostrar un badge contradictorio.
+            const methodPool = crossed > 0 ? { ...g.methods, none: 0 } : g.methods
+            const method = (topEntry(methodPool) ?? 'none') as MatchMethod
+            const invalid_reason = crossed === 0 ? classifyInvalidUtm(value) : null
+            const suggestion = crossed === 0 && !invalid_reason ? bestSuggestion(value, idx) : null
+            return { value, count: g.count, matched_campaign, distinct_campaigns: g.campaigns.size, method, invalid_reason, suggestion }
         })
         .sort((a, b) => b.count - a.count)
-        .slice(0, 200)
+        .slice(0, 500)
 }
 
 /** (Puro) cobertura del cruce: total de leads y conteo por método de match. */
 function computeCoverage(ctx: CrossContext): MatchCoverage {
-    const methods: Record<MatchMethod, number> = {
-        override: 0, utm_id_campaign: 0, utm_id_ad: 0, name: 0, content_ad: 0, term_adset: 0, none: 0,
-    }
+    const methods = ZERO_METHODS()
     for (const l of ctx.leads) {
         const m = matchToCampaign(l, ctx.idx, ctx.overrides)
         methods[m.method] += 1
@@ -519,20 +608,26 @@ function campaignsFromIndex(idx: CampaignIndex): { campaign_id: string | null; n
 export interface CrossDiagnostics {
     campaigns: { campaign_id: string | null; name: string; platform: 'meta' | 'tiktok'; spend: number }[]
     suggestions: UnmatchedRow[]
+    invalid: InvalidUtmRow[]
+    breakdown: UtmCampaignRow[]
     coverage: MatchCoverage
 }
 
 /**
- * Diagnóstico combinado para la UI de cruce: campañas, sugerencias (no cruzados
- * con mejor candidato por similitud) y cobertura por método. Carga los leads y el
- * índice UNA sola vez.
+ * Diagnóstico combinado para la UI de cruce: campañas, desglose de TODOS los
+ * utm_campaign con su estado de match, sugerencias (no cruzados mapeables), UTMs
+ * inválidas (macros/vacíos) y cobertura por método. Carga los leads y el índice
+ * UNA sola vez.
  */
 export async function getCrossDiagnostics(params: CampaignCrossParams): Promise<CrossDiagnostics> {
     const ctx = await loadCrossContext(params)
-    if (!ctx) return { campaigns: [], suggestions: [], coverage: { total: 0, methods: { override: 0, utm_id_campaign: 0, utm_id_ad: 0, name: 0, content_ad: 0, term_adset: 0, none: 0 } } }
+    if (!ctx) return { campaigns: [], suggestions: [], invalid: [], breakdown: [], coverage: { total: 0, methods: ZERO_METHODS() } }
+    const { suggestions, invalid } = computeUnmatched(ctx)
     return {
         campaigns: campaignsFromIndex(ctx.idx),
-        suggestions: computeSuggestions(ctx),
+        suggestions,
+        invalid,
+        breakdown: computeUtmBreakdown(ctx),
         coverage: computeCoverage(ctx),
     }
 }

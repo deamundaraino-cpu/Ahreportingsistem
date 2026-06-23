@@ -29,6 +29,8 @@ export async function GET(req: NextRequest) {
         overrides: overrides ?? [],
         campaigns: diag.campaigns,
         suggestions: diag.suggestions,
+        invalid: diag.invalid,
+        breakdown: diag.breakdown,
         coverage: diag.coverage,
     })
 }
