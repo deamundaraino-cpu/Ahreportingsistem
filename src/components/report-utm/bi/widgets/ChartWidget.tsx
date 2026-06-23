@@ -12,50 +12,90 @@ import {
     PieChart, Pie, Tooltip as PieTooltip, Legend,
     XAxis, YAxis, Tooltip, CartesianGrid,
 } from 'recharts'
-import type { BiFilters, WidgetConfig, WidgetType } from '../BiTypes'
+import type { BiFilters, WidgetConfig, WidgetType, CalculatedField } from '../BiTypes'
 import type { BiMetric, BiDimension, BiQueryRow, BiPivotRow } from '@/lib/report-utm/bi-metadata'
-import { METRIC_META, DIMENSION_META, appendUtmFilters, utmFilterSignature } from '@/lib/report-utm/bi-metadata'
+import { METRIC_META, DIMENSION_META, appendUtmFilters, utmFilterSignature, applyValueFilters } from '@/lib/report-utm/bi-metadata'
 
 const COLORS = [
     '#10b981', '#06b6d4', '#8b5cf6', '#f59e0b',
     '#ef4444', '#3b82f6', '#f97316', '#ec4899', '#14b8a6', '#84cc16',
 ]
 
+type ColFormat = 'number' | 'currency' | 'percent' | 'ratio'
+
 interface Props {
     title: string
     type: WidgetType
     config: WidgetConfig
     filters: BiFilters
+    calculatedFields?: CalculatedField[]
     onDrill?: (dimension: string, value: string) => void
 }
 
-function fmtNum(value: number, metric: BiMetric): string {
-    const m = METRIC_META[metric]
-    if (!m) return String(Math.round(value))
-    if (m.format === 'currency') return `$${value.toLocaleString('es-AR', { maximumFractionDigits: 0 })}`
-    if (m.format === 'percent')  return `${value.toFixed(1)}%`
-    if (m.format === 'ratio')    return `${value.toFixed(2)}x`
+function fmtNum(value: number, format: ColFormat): string {
+    if (format === 'currency') return `$${value.toLocaleString('es-AR', { maximumFractionDigits: 0 })}`
+    if (format === 'percent')  return `${value.toFixed(1)}%`
+    if (format === 'ratio')    return `${value.toFixed(2)}x`
     if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`
     if (value >= 1_000)     return `${(value / 1_000).toFixed(1)}k`
     return Math.round(value).toLocaleString('es-AR')
 }
 
-const TOOLTIP_STYLE = { fontSize: 11, borderRadius: 8, border: '1px solid hsl(var(--border))', background: 'hsl(var(--card))' }
+function truncateLabel(s: string, max = 28): string {
+    return s.length > max ? s.slice(0, max - 1) + '…' : s
+}
 
-export function ChartWidget({ title, type, config, filters, onDrill }: Props) {
+// Tooltip propio con clases de tema (bg-card/text-foreground) → legible en claro y
+// oscuro. Evita depender de hsl(var(--card)) inline (puede no coincidir con el tema).
+interface ChartTooltipProps {
+    active?: boolean
+    payload?: Array<{ name?: string | number; value?: number | string; color?: string }>
+    label?: string | number
+    format: ColFormat
+}
+function ChartTooltip({ active, payload, label, format }: ChartTooltipProps) {
+    if (!active || !payload || payload.length === 0) return null
+    const hasLabel = label !== undefined && label !== null && String(label) !== ''
+    return (
+        <div className="rounded-lg border border-border bg-card px-2.5 py-1.5 shadow-md text-[11px] max-w-[340px]">
+            {hasLabel && (
+                <p className="font-medium text-foreground mb-1 break-words">{String(label)}</p>
+            )}
+            {payload.map((p, i) => {
+                const showName = p.name !== undefined && p.name !== 'value'
+                return (
+                    <div key={i} className="flex items-start gap-1.5">
+                        {p.color && <span className="h-2 w-2 rounded-sm shrink-0 mt-1" style={{ background: p.color }} />}
+                        {showName && (
+                            <span className="text-muted-foreground break-words min-w-0 flex-1">{String(p.name)}</span>
+                        )}
+                        <span className="text-foreground font-mono tabular-nums ml-auto shrink-0 pl-2">{fmtNum(Number(p.value ?? 0), format)}</span>
+                    </div>
+                )
+            })}
+        </div>
+    )
+}
+
+export function ChartWidget({ title, type, config, filters, calculatedFields = [], onDrill }: Props) {
     const [rows, setRows]       = useState<BiQueryRow[]>([])
     const [pivot, setPivot]     = useState<{ rows: BiPivotRow[]; seriesKeys: string[] } | null>(null)
     const [loading, setLoading] = useState(true)
     const [error, setError]     = useState<string | null>(null)
 
-    const metric    = (config.metric as BiMetric) ?? 'leads_count'
+    const metric    = String(config.metric ?? 'leads_count')
     const dimension = (config.dimension as BiDimension) ?? 'utm_source'
     const dimension2 = config.dimension2 && config.dimension2 !== 'none' ? config.dimension2 : undefined
     const grouping  = config.date_grouping ?? 'day'
     const limit     = config.limit ?? 15
     const sort      = config.sort ?? 'desc'
     const baseColor = config.color ?? COLORS[0]
-    const usePivot  = !!dimension2 && (type === 'bar' || type === 'combo' || type === 'area' || type === 'line')
+
+    // El metric puede ser una métrica base o un campo calculado. El pivot
+    // (dimensión secundaria) no soporta calc, así que se usa la ruta estándar.
+    const calcField = calculatedFields.find(c => c.name === metric)
+    const format: ColFormat = (calcField?.format ?? METRIC_META[metric as BiMetric]?.format ?? 'number') as ColFormat
+    const usePivot  = !calcField && !!dimension2 && (type === 'bar' || type === 'combo' || type === 'area' || type === 'line')
 
     useEffect(() => {
         setLoading(true)
@@ -80,6 +120,7 @@ export function ChartWidget({ title, type, config, filters, onDrill }: Props) {
         if (filters.date_from)  params.set('date_from', filters.date_from)
         if (filters.date_to)    params.set('date_to', filters.date_to)
         appendUtmFilters(params, filters)
+        if (calcField) params.set(`calc[${calcField.name}]`, calcField.expression)
 
         fetch(`/api/report-utm/bi/query?${params}`)
             .then(r => r.json())
@@ -89,12 +130,12 @@ export function ChartWidget({ title, type, config, filters, onDrill }: Props) {
             })
             .catch(() => setError('Error al cargar'))
             .finally(() => setLoading(false))
-    }, [metric, dimension, dimension2, usePivot, grouping, limit, sort, filters.cliente_id, filters.date_from, filters.date_to, utmFilterSignature(filters)])
+    }, [metric, calcField?.expression, dimension, dimension2, usePivot, grouping, limit, sort, filters.cliente_id, filters.date_from, filters.date_to, utmFilterSignature(filters)])
 
     const dimLabel = DIMENSION_META[dimension]?.label ?? dimension
-    const metLabel = METRIC_META[metric]?.label ?? metric
+    const metLabel = METRIC_META[metric as BiMetric]?.label ?? calcField?.name ?? metric
 
-    const chartData = rows.map(r => ({
+    const chartData = applyValueFilters(rows, config.value_filters).map(r => ({
         name:  r.dimension_value ?? 'Total',
         value: Number(r[metric as keyof BiQueryRow] ?? 0),
     }))
@@ -119,19 +160,19 @@ export function ChartWidget({ title, type, config, filters, onDrill }: Props) {
             ) : usePivot && pivot ? (
                 pivot.rows.length === 0
                     ? <Empty />
-                    : <PivotChartBody type={type} pivot={pivot} metric={metric} />
+                    : <PivotChartBody type={type} pivot={pivot} format={format} />
             ) : chartData.length === 0 ? (
                 <Empty />
             ) : type === 'line' ? (
-                <LineChartBody data={chartData} metric={metric} color={baseColor} />
+                <LineChartBody data={chartData} format={format} color={baseColor} />
             ) : type === 'area' ? (
-                <AreaChartBody data={chartData} metric={metric} color={baseColor} />
+                <AreaChartBody data={chartData} format={format} color={baseColor} />
             ) : type === 'bar' || type === 'combo' ? (
-                <BarChartBody data={chartData} metric={metric} color={baseColor} onClick={handleClick} />
+                <BarChartBody data={chartData} format={format} color={baseColor} onClick={handleClick} />
             ) : type === 'scatter' ? (
-                <ScatterChartBody data={chartData} metric={metric} color={baseColor} />
+                <ScatterChartBody data={chartData} format={format} color={baseColor} />
             ) : type === 'pie' ? (
-                <PieChartBody data={chartData} metric={metric} onClick={handleClick} />
+                <PieChartBody data={chartData} format={format} onClick={handleClick} />
             ) : null}
         </div>
     )
@@ -141,22 +182,22 @@ function Empty() {
     return <p className="text-xs text-muted-foreground text-center py-8">Sin datos en este rango</p>
 }
 
-function LineChartBody({ data, metric, color }: { data: { name: string; value: number }[]; metric: BiMetric; color: string }) {
+function LineChartBody({ data, format, color }: { data: { name: string; value: number }[]; format: ColFormat; color: string }) {
     return (
         <ResponsiveContainer width="100%" height={200}>
             <LineChart data={data} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="currentColor" className="text-border" strokeOpacity={0.5} />
                 <XAxis dataKey="name" tick={{ fontSize: 10, fill: 'currentColor' }} className="text-muted-foreground" tickLine={false} />
                 <YAxis tick={{ fontSize: 10, fill: 'currentColor' }} className="text-muted-foreground" tickLine={false} axisLine={false}
-                    tickFormatter={v => fmtNum(Number(v), metric)} />
-                <Tooltip formatter={(v: number) => fmtNum(v, metric)} contentStyle={TOOLTIP_STYLE} />
+                    tickFormatter={v => fmtNum(Number(v), format)} />
+                <Tooltip content={<ChartTooltip format={format} />} />
                 <Line type="monotone" dataKey="value" stroke={color} strokeWidth={2} dot={false} activeDot={{ r: 4 }} />
             </LineChart>
         </ResponsiveContainer>
     )
 }
 
-function AreaChartBody({ data, metric, color }: { data: { name: string; value: number }[]; metric: BiMetric; color: string }) {
+function AreaChartBody({ data, format, color }: { data: { name: string; value: number }[]; format: ColFormat; color: string }) {
     return (
         <ResponsiveContainer width="100%" height={200}>
             <AreaChart data={data} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
@@ -169,24 +210,24 @@ function AreaChartBody({ data, metric, color }: { data: { name: string; value: n
                 <CartesianGrid strokeDasharray="3 3" stroke="currentColor" className="text-border" strokeOpacity={0.5} />
                 <XAxis dataKey="name" tick={{ fontSize: 10, fill: 'currentColor' }} className="text-muted-foreground" tickLine={false} />
                 <YAxis tick={{ fontSize: 10, fill: 'currentColor' }} className="text-muted-foreground" tickLine={false} axisLine={false}
-                    tickFormatter={v => fmtNum(Number(v), metric)} />
-                <Tooltip formatter={(v: number) => fmtNum(v, metric)} contentStyle={TOOLTIP_STYLE} />
+                    tickFormatter={v => fmtNum(Number(v), format)} />
+                <Tooltip content={<ChartTooltip format={format} />} />
                 <Area type="monotone" dataKey="value" stroke={color} strokeWidth={2} fill={`url(#grad-${color.replace('#', '')})`} />
             </AreaChart>
         </ResponsiveContainer>
     )
 }
 
-function BarChartBody({ data, metric, color, onClick }: { data: { name: string; value: number }[]; metric: BiMetric; color: string; onClick?: (n: string) => void }) {
+function BarChartBody({ data, format, color, onClick }: { data: { name: string; value: number }[]; format: ColFormat; color: string; onClick?: (n: string) => void }) {
     const top = data.slice(0, 15)
     return (
         <ResponsiveContainer width="100%" height={Math.max(180, top.length * 28)}>
             <BarChart data={top} layout="vertical" margin={{ top: 0, right: 16, left: 0, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="currentColor" className="text-border" strokeOpacity={0.4} horizontal={false} />
                 <XAxis type="number" tick={{ fontSize: 10, fill: 'currentColor' }} className="text-muted-foreground" tickLine={false}
-                    tickFormatter={v => fmtNum(Number(v), metric)} />
+                    tickFormatter={v => fmtNum(Number(v), format)} />
                 <YAxis type="category" dataKey="name" width={100} tick={{ fontSize: 10, fill: 'currentColor' }} className="text-muted-foreground" tickLine={false} axisLine={false} />
-                <Tooltip formatter={(v: number) => fmtNum(v, metric)} contentStyle={TOOLTIP_STYLE} cursor={{ fill: 'currentColor', fillOpacity: 0.05 }} />
+                <Tooltip content={<ChartTooltip format={format} />} cursor={{ fill: 'currentColor', fillOpacity: 0.05 }} />
                 <Bar dataKey="value" radius={[0, 4, 4, 0]} onClick={(d: { name?: string }) => d?.name && onClick?.(d.name)} cursor={onClick ? 'pointer' : undefined}>
                     {top.map((_, i) => <Cell key={i} fill={color === COLORS[0] ? COLORS[i % COLORS.length] : color} />)}
                 </Bar>
@@ -195,7 +236,7 @@ function BarChartBody({ data, metric, color, onClick }: { data: { name: string; 
     )
 }
 
-function ScatterChartBody({ data, metric, color }: { data: { name: string; value: number }[]; metric: BiMetric; color: string }) {
+function ScatterChartBody({ data, format, color }: { data: { name: string; value: number }[]; format: ColFormat; color: string }) {
     const points = data.map((d, i) => ({ x: i + 1, y: d.value, name: d.name }))
     return (
         <ResponsiveContainer width="100%" height={220}>
@@ -203,38 +244,50 @@ function ScatterChartBody({ data, metric, color }: { data: { name: string; value
                 <CartesianGrid strokeDasharray="3 3" stroke="currentColor" className="text-border" strokeOpacity={0.4} />
                 <XAxis type="number" dataKey="x" name="#" tick={{ fontSize: 10, fill: 'currentColor' }} className="text-muted-foreground" tickLine={false} />
                 <YAxis type="number" dataKey="y" tick={{ fontSize: 10, fill: 'currentColor' }} className="text-muted-foreground" tickLine={false} axisLine={false}
-                    tickFormatter={v => fmtNum(Number(v), metric)} />
+                    tickFormatter={v => fmtNum(Number(v), format)} />
                 <ZAxis range={[60, 60]} />
-                <Tooltip
-                    formatter={(v: number) => fmtNum(v, metric)}
-                    labelFormatter={() => ''}
-                    contentStyle={TOOLTIP_STYLE}
-                    cursor={{ strokeDasharray: '3 3' }}
-                />
+                <Tooltip content={<ChartTooltip format={format} />} cursor={{ strokeDasharray: '3 3' }} />
                 <Scatter data={points} fill={color} />
             </ScatterChart>
         </ResponsiveContainer>
     )
 }
 
-function PieChartBody({ data, metric, onClick }: { data: { name: string; value: number }[]; metric: BiMetric; onClick?: (n: string) => void }) {
+function PieChartBody({ data, format, onClick }: { data: { name: string; value: number }[]; format: ColFormat; onClick?: (n: string) => void }) {
     const top = data.slice(0, 8)
     return (
-        <ResponsiveContainer width="100%" height={220}>
-            <PieChart>
-                <Pie data={top} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={80} innerRadius={44} paddingAngle={2}
-                    onClick={(d: { name?: string }) => d?.name && onClick?.(d.name)} cursor={onClick ? 'pointer' : undefined}>
-                    {top.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
-                </Pie>
-                <PieTooltip formatter={(v: number) => fmtNum(v, metric)} contentStyle={TOOLTIP_STYLE} />
-                <Legend iconSize={8} wrapperStyle={{ fontSize: 10 }} />
-            </PieChart>
-        </ResponsiveContainer>
+        <div className="flex flex-col gap-2 h-full min-h-0">
+            <ResponsiveContainer width="100%" height={160}>
+                <PieChart>
+                    <Pie data={top} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={70} innerRadius={40} paddingAngle={2}
+                        onClick={(d: { name?: string }) => d?.name && onClick?.(d.name)} cursor={onClick ? 'pointer' : undefined}>
+                        {top.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} stroke="hsl(var(--card))" strokeWidth={1.5} />)}
+                    </Pie>
+                    <PieTooltip content={<ChartTooltip format={format} />} />
+                </PieChart>
+            </ResponsiveContainer>
+            {/* Leyenda custom: nombres truncados (full en tooltip), valor, theme-aware */}
+            <div className="grid grid-cols-1 gap-y-1 overflow-y-auto max-h-32 pr-1">
+                {top.map((d, i) => (
+                    <button
+                        key={d.name}
+                        type="button"
+                        title={d.name}
+                        onClick={() => onClick?.(d.name)}
+                        className={`flex items-center gap-2 text-left rounded px-1 py-0.5 ${onClick ? 'hover:bg-accent cursor-pointer' : 'cursor-default'}`}
+                    >
+                        <span className="h-2.5 w-2.5 rounded-sm shrink-0" style={{ background: COLORS[i % COLORS.length] }} />
+                        <span className="text-[11px] text-foreground truncate flex-1">{d.name}</span>
+                        <span className="text-[11px] text-muted-foreground font-mono tabular-nums shrink-0">{fmtNum(d.value, format)}</span>
+                    </button>
+                ))}
+            </div>
+        </div>
     )
 }
 
 // ── Pivot (dimensión secundaria): apilado / combo ─────────────────────
-function PivotChartBody({ type, pivot, metric }: { type: WidgetType; pivot: { rows: BiPivotRow[]; seriesKeys: string[] }; metric: BiMetric }) {
+function PivotChartBody({ type, pivot, format }: { type: WidgetType; pivot: { rows: BiPivotRow[]; seriesKeys: string[] }; format: ColFormat }) {
     const data = pivot.rows.map(r => ({ name: r.dimension_value, ...r.series }))
     const keys = pivot.seriesKeys
 
@@ -245,9 +298,9 @@ function PivotChartBody({ type, pivot, metric }: { type: WidgetType; pivot: { ro
                 <Chart data={data} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="currentColor" className="text-border" strokeOpacity={0.5} />
                     <XAxis dataKey="name" tick={{ fontSize: 10, fill: 'currentColor' }} className="text-muted-foreground" tickLine={false} />
-                    <YAxis tick={{ fontSize: 10, fill: 'currentColor' }} className="text-muted-foreground" tickLine={false} axisLine={false} tickFormatter={v => fmtNum(Number(v), metric)} />
-                    <Tooltip formatter={(v: number) => fmtNum(v, metric)} contentStyle={TOOLTIP_STYLE} />
-                    <Legend iconSize={8} wrapperStyle={{ fontSize: 10 }} />
+                    <YAxis tick={{ fontSize: 10, fill: 'currentColor' }} className="text-muted-foreground" tickLine={false} axisLine={false} tickFormatter={v => fmtNum(Number(v), format)} />
+                    <Tooltip content={<ChartTooltip format={format} />} />
+                    <Legend iconSize={8} wrapperStyle={{ fontSize: 10 }} formatter={(value: string) => <span title={value} className="text-muted-foreground">{truncateLabel(value, 18)}</span>} />
                     {keys.map((k, i) => type === 'area'
                         ? <Area key={k} type="monotone" dataKey={k} stackId="1" stroke={COLORS[i % COLORS.length]} fill={COLORS[i % COLORS.length]} fillOpacity={0.5} />
                         : <Line key={k} type="monotone" dataKey={k} stroke={COLORS[i % COLORS.length]} strokeWidth={2} dot={false} />
@@ -264,9 +317,9 @@ function PivotChartBody({ type, pivot, metric }: { type: WidgetType; pivot: { ro
             <ChartComp data={data} margin={{ top: 4, right: 16, left: 0, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="currentColor" className="text-border" strokeOpacity={0.4} />
                 <XAxis dataKey="name" tick={{ fontSize: 10, fill: 'currentColor' }} className="text-muted-foreground" tickLine={false} />
-                <YAxis tick={{ fontSize: 10, fill: 'currentColor' }} className="text-muted-foreground" tickLine={false} axisLine={false} tickFormatter={v => fmtNum(Number(v), metric)} />
-                <Tooltip formatter={(v: number) => fmtNum(v, metric)} contentStyle={TOOLTIP_STYLE} cursor={{ fill: 'currentColor', fillOpacity: 0.05 }} />
-                <Legend iconSize={8} wrapperStyle={{ fontSize: 10 }} />
+                <YAxis tick={{ fontSize: 10, fill: 'currentColor' }} className="text-muted-foreground" tickLine={false} axisLine={false} tickFormatter={v => fmtNum(Number(v), format)} />
+                <Tooltip content={<ChartTooltip format={format} />} cursor={{ fill: 'currentColor', fillOpacity: 0.05 }} />
+                <Legend iconSize={8} wrapperStyle={{ fontSize: 10 }} formatter={(value: string) => <span title={value} className="text-muted-foreground">{truncateLabel(value, 18)}</span>} />
                 {keys.map((k, i) => (
                     <Bar key={k} dataKey={k} stackId="a" fill={COLORS[i % COLORS.length]} radius={i === keys.length - 1 ? [4, 4, 0, 0] : undefined} />
                 ))}

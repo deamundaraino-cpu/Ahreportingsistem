@@ -5,14 +5,19 @@ import { ArrowUpDown } from 'lucide-react'
 import { Skeleton } from '@/components/ui/skeleton'
 import type { BiFilters, WidgetConfig, ConditionalRule, CalculatedField } from '../BiTypes'
 import type { BiMetric, BiQueryRow } from '@/lib/report-utm/bi-metadata'
-import { METRIC_META, DIMENSION_META, appendUtmFilters, utmFilterSignature } from '@/lib/report-utm/bi-metadata'
+import { METRIC_META, DIMENSION_META, appendUtmFilters, utmFilterSignature, applyValueFilters } from '@/lib/report-utm/bi-metadata'
 
 interface Props {
     title: string
     config: WidgetConfig
     filters: BiFilters
     calculatedFields?: CalculatedField[]
+    /** Alto del widget (1x/2x/3x): escala la altura visible de la tabla antes de scroll. */
+    h?: number
 }
+
+// Altura visible (px) de la tabla según el "Alto" del widget. Más allá, scroll interno.
+const TABLE_MAX_H: Record<number, number> = { 1: 320, 2: 540, 3: 760 }
 
 type ColFormat = 'number' | 'currency' | 'percent' | 'ratio'
 
@@ -28,7 +33,7 @@ function fmtVal(value: number | null | undefined, format: ColFormat): string {
 
 const ADDITIVE = new Set(['leads_count', 'sales_count', 'revenue', 'spend', 'clicks', 'impressions'])
 
-export function TableWidget({ title, config, filters, calculatedFields = [] }: Props) {
+export function TableWidget({ title, config, filters, calculatedFields = [], h = 1 }: Props) {
     const [rows, setRows]     = useState<BiQueryRow[]>([])
     const [loading, setLoading] = useState(true)
     const [error, setError]   = useState<string | null>(null)
@@ -82,7 +87,10 @@ export function TableWidget({ title, config, filters, calculatedFields = [] }: P
             .finally(() => setLoading(false))
     }, [rawMetrics, dimension, filters.cliente_id, filters.date_from, filters.date_to, utmFilterSignature(filters)])
 
-    const sorted = [...rows].sort((a, b) => {
+    // Filtros por valor: oculta filas que no cumplan (ej. spend > 0)
+    const filteredRows = applyValueFilters(rows, config.value_filters)
+
+    const sorted = [...filteredRows].sort((a, b) => {
         if (!sortKey) return 0
         const av = Number(a[sortKey] ?? 0)
         const bv = Number(b[sortKey] ?? 0)
@@ -98,7 +106,7 @@ export function TableWidget({ title, config, filters, calculatedFields = [] }: P
     function computeTotals(): Record<string, number> {
         const t: Record<string, number> = {}
         for (const m of baseMetrics) {
-            if (ADDITIVE.has(m)) t[m] = rows.reduce((s, r) => s + Number(r[m] ?? 0), 0)
+            if (ADDITIVE.has(m)) t[m] = filteredRows.reduce((s, r) => s + Number(r[m] ?? 0), 0)
         }
         // ratios derivados
         if (colKeys.includes('cpl'))  t.cpl  = t.leads_count ? round2(t.spend / t.leads_count) : 0
@@ -126,9 +134,16 @@ export function TableWidget({ title, config, filters, calculatedFields = [] }: P
 
     return (
         <div className="rounded-2xl border border-border bg-card overflow-hidden flex flex-col h-full">
-            <div className="px-5 py-4 border-b border-border">
-                <p className="text-sm font-semibold text-foreground">{title}</p>
-                <p className="text-[10px] text-muted-foreground mt-0.5">Por {dimLabel}</p>
+            <div className="px-5 py-4 border-b border-border flex items-center justify-between gap-2">
+                <div>
+                    <p className="text-sm font-semibold text-foreground">{title}</p>
+                    <p className="text-[10px] text-muted-foreground mt-0.5">Por {dimLabel}</p>
+                </div>
+                {(config.value_filters?.length ?? 0) > 0 && !loading && !error && (
+                    <span className="shrink-0 text-[10px] font-mono text-muted-foreground bg-muted/60 px-2 py-1 rounded-md">
+                        {filteredRows.length} de {rows.length} filas
+                    </span>
+                )}
             </div>
 
             {loading ? (
@@ -142,7 +157,7 @@ export function TableWidget({ title, config, filters, calculatedFields = [] }: P
             ) : sorted.length === 0 ? (
                 <p className="text-xs text-muted-foreground text-center py-8">Sin datos</p>
             ) : (
-                <div className="overflow-auto max-h-[320px]">
+                <div className="overflow-auto" style={{ maxHeight: TABLE_MAX_H[h] ?? TABLE_MAX_H[1] }}>
                     <table className="w-full">
                         <thead className="bg-muted/60 sticky top-0">
                             <tr className="text-left text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">

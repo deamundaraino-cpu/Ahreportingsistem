@@ -29,19 +29,50 @@ function daysAgo(n: number): string {
     return toISODate(new Date(Date.now() - n * 86400_000))
 }
 
-const PRESETS = [
-    { label: '7d',  days: 7 },
-    { label: '14d', days: 14 },
-    { label: '30d', days: 30 },
-    { label: '90d', days: 90 },
+// Fecha de calendario LOCAL (evita corrimiento de día por zona horaria en
+// los atajos de calendario: hoy/ayer/este mes).
+function isoLocal(d: Date): string {
+    const y = d.getFullYear()
+    const m = String(d.getMonth() + 1).padStart(2, '0')
+    const day = String(d.getDate()).padStart(2, '0')
+    return `${y}-${m}-${day}`
+}
+
+function rollingRange(days: number): { from: string; to: string } {
+    return { from: daysAgo(days), to: toISODate(new Date()) }
+}
+
+interface Preset { key: string; label: string; range: () => { from: string; to: string } }
+
+const PRESETS: Preset[] = [
+    { key: 'today',     label: 'Hoy',      range: () => { const t = isoLocal(new Date()); return { from: t, to: t } } },
+    { key: 'yesterday', label: 'Ayer',     range: () => { const y = isoLocal(new Date(Date.now() - 86400_000)); return { from: y, to: y } } },
+    { key: 'month',     label: 'Este mes', range: () => { const n = new Date(); return { from: isoLocal(new Date(n.getFullYear(), n.getMonth(), 1)), to: isoLocal(n) } } },
+    { key: '7d',  label: '7d',  range: () => rollingRange(7) },
+    { key: '14d', label: '14d', range: () => rollingRange(14) },
+    { key: '30d', label: '30d', range: () => rollingRange(30) },
+    { key: '90d', label: '90d', range: () => rollingRange(90) },
 ]
+
+// Detecta si un rango coincide exactamente con un preset (para resaltarlo).
+function detectPreset(from: string, to: string): string | null {
+    for (const p of PRESETS) {
+        const r = p.range()
+        if (r.from === from && r.to === to) return p.key
+    }
+    return null
+}
+
+const MONTH_RANGE = PRESETS.find(p => p.key === 'month')!.range()
 
 export function BiGlobalFilters({ initialFilters, onChange, clienteLocked, onClienteChange }: Props) {
     const [clientes, setClientes] = useState<Cliente[]>([])
     const [clienteId, setClienteId] = useState(initialFilters.cliente_id ?? '')
-    const [dateFrom, setDateFrom]   = useState(initialFilters.date_from ?? daysAgo(30))
-    const [dateTo, setDateTo]       = useState(initialFilters.date_to ?? toISODate(new Date()))
-    const [activePreset, setActivePreset] = useState<number | null>(30)
+    const [dateFrom, setDateFrom]   = useState(initialFilters.date_from ?? MONTH_RANGE.from)
+    const [dateTo, setDateTo]       = useState(initialFilters.date_to ?? MONTH_RANGE.to)
+    const [activePreset, setActivePreset] = useState<string | null>(
+        () => detectPreset(initialFilters.date_from ?? MONTH_RANGE.from, initialFilters.date_to ?? MONTH_RANGE.to)
+    )
 
     // Filtros UTM como variables globales del reporte (valor + operador)
     const [utm, setUtm] = useState<Record<string, string>>(() => {
@@ -80,12 +111,11 @@ export function BiGlobalFilters({ initialFilters, onChange, clienteLocked, onCli
         return f
     }
 
-    function applyPreset(days: number) {
-        const from = daysAgo(days)
-        const to   = toISODate(new Date())
+    function applyPreset(p: Preset) {
+        const { from, to } = p.range()
         setDateFrom(from)
         setDateTo(to)
-        setActivePreset(days)
+        setActivePreset(p.key)
         onChange({ ...buildFilters(), date_from: from, date_to: to })
     }
 
@@ -112,15 +142,15 @@ export function BiGlobalFilters({ initialFilters, onChange, clienteLocked, onCli
             <div className="flex items-center gap-2">
                 <Filter className="h-4 w-4 text-muted-foreground" />
                 <span className="text-xs font-medium text-muted-foreground">Filtros globales</span>
-                <HelpTip text="Estos filtros afectan a TODOS los widgets del informe a la vez. Elige cliente y rango de fechas, o usa los atajos 7d/14d/30d/90d. Pulsa Aplicar para refrescar." />
+                <HelpTip text="Estos filtros afectan a TODOS los widgets del informe a la vez. Elige cliente y rango de fechas, o usa los atajos Hoy/Ayer/Este mes/7d/14d/30d/90d. Pulsa Aplicar para refrescar." />
                 <div className="flex-1" />
-                <div className="flex gap-1">
+                <div className="flex flex-wrap gap-1 justify-end">
                     {PRESETS.map(p => (
                         <button
-                            key={p.days}
-                            onClick={() => applyPreset(p.days)}
+                            key={p.key}
+                            onClick={() => applyPreset(p)}
                             className={`px-2 py-1 rounded-md text-[10px] font-medium transition-colors ${
-                                activePreset === p.days
+                                activePreset === p.key
                                     ? 'bg-emerald-500 text-white'
                                     : 'bg-muted text-muted-foreground hover:bg-accent hover:text-foreground'
                             }`}

@@ -30,12 +30,17 @@ interface Props {
     readonly?: boolean
 }
 
-function daysAgo(n: number): string {
-    return new Date(Date.now() - n * 86400_000).toISOString().slice(0, 10)
+// Fecha de calendario LOCAL (mismo criterio que el preset "Este mes" de los filtros)
+function isoLocal(d: Date): string {
+    const y = d.getFullYear()
+    const m = String(d.getMonth() + 1).padStart(2, '0')
+    const day = String(d.getDate()).padStart(2, '0')
+    return `${y}-${m}-${day}`
 }
 
-function toISODate(d: Date): string {
-    return d.toISOString().slice(0, 10)
+function startOfMonth(): string {
+    const n = new Date()
+    return isoLocal(new Date(n.getFullYear(), n.getMonth(), 1))
 }
 
 function genId(): string {
@@ -45,8 +50,8 @@ function genId(): string {
 export function BiReportCanvas({ report: initialReport, readonly }: Props) {
     const [report, setReport] = useState<BiReport>(initialReport)
     const [filters, setFilters] = useState<BiFilters>({
-        date_from: daysAgo(30),
-        date_to:   toISODate(new Date()),
+        date_from: startOfMonth(),
+        date_to:   isoLocal(new Date()),
         ...(initialReport.filters ?? {}),
         // El cliente asignado al informe manda como filtro por defecto
         ...(initialReport.cliente_id ? { cliente_id: initialReport.cliente_id } : {}),

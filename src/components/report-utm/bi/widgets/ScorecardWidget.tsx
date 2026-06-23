@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { TrendingUp, TrendingDown, Minus, Loader2 } from 'lucide-react'
-import type { BiFilters, WidgetConfig } from '../BiTypes'
+import type { BiFilters, WidgetConfig, CalculatedField } from '../BiTypes'
 import type { BiMetric } from '@/lib/report-utm/bi-metadata'
 import { METRIC_META, appendUtmFilters, utmFilterSignature } from '@/lib/report-utm/bi-metadata'
 
@@ -10,34 +10,35 @@ interface Props {
     title: string
     config: WidgetConfig
     filters: BiFilters
+    calculatedFields?: CalculatedField[]
 }
 
-function formatVal(value: number, metric: BiMetric): string {
-    const meta = METRIC_META[metric]
-    if (!meta) return String(Math.round(value))
-    if (meta.format === 'currency') {
+type ValFormat = 'number' | 'currency' | 'percent' | 'ratio'
+
+function formatVal(value: number, format: ValFormat): string {
+    if (format === 'currency') {
         return value.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
     }
-    if (meta.format === 'percent') return `${value.toFixed(1)}%`
-    if (meta.format === 'ratio')   return `${value.toFixed(2)}x`
+    if (format === 'percent') return `${value.toFixed(1)}%`
+    if (format === 'ratio')   return `${value.toFixed(2)}x`
     if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`
     if (value >= 1_000)     return `${(value / 1_000).toFixed(1)}k`
     return Math.round(value).toLocaleString('es-AR')
 }
 
-function currencyPrefix(metric: BiMetric): string {
-    const meta = METRIC_META[metric]
-    return meta?.format === 'currency' ? '$ ' : ''
-}
-
-export function ScorecardWidget({ title, config, filters }: Props) {
+export function ScorecardWidget({ title, config, filters, calculatedFields = [] }: Props) {
     const [value, setValue]   = useState<number | null>(null)
     const [prev, setPrev]     = useState<number | null>(null)
     const [loading, setLoading] = useState(true)
     const [error, setError]   = useState<string | null>(null)
 
-    const metric  = (config.metric as BiMetric) ?? 'leads_count'
+    const metric  = String(config.metric ?? 'leads_count')
     const compare = !!config.compare_period
+
+    // El metric puede ser una métrica base o un campo calculado.
+    const calcField = calculatedFields.find(c => c.name === metric)
+    const format: ValFormat = (calcField?.format ?? METRIC_META[metric as BiMetric]?.format ?? 'number') as ValFormat
+    const label = METRIC_META[metric as BiMetric]?.label ?? calcField?.name ?? metric
 
     useEffect(() => {
         setLoading(true)
@@ -49,6 +50,7 @@ export function ScorecardWidget({ title, config, filters }: Props) {
         if (filters.date_from)  params.set('date_from', filters.date_from)
         if (filters.date_to)    params.set('date_to', filters.date_to)
         appendUtmFilters(params, filters)
+        if (calcField) params.set(`calc[${calcField.name}]`, calcField.expression)
 
         fetch(`/api/report-utm/bi/query?${params}`)
             .then(r => r.json())
@@ -66,7 +68,7 @@ export function ScorecardWidget({ title, config, filters }: Props) {
             })
             .catch(() => setError('Error al cargar'))
             .finally(() => setLoading(false))
-    }, [metric, compare, filters.cliente_id, filters.date_from, filters.date_to, utmFilterSignature(filters)])
+    }, [metric, calcField?.expression, compare, filters.cliente_id, filters.date_from, filters.date_to, utmFilterSignature(filters)])
 
     const delta = compare && prev !== null && prev !== 0 && value !== null
         ? ((value - prev) / prev) * 100
@@ -85,11 +87,11 @@ export function ScorecardWidget({ title, config, filters }: Props) {
             ) : (
                 <div className="space-y-1.5">
                     <div className="flex items-end gap-1">
-                        {currencyPrefix(metric) && (
-                            <span className="text-base font-medium text-muted-foreground pb-0.5">{currencyPrefix(metric)}</span>
+                        {format === 'currency' && (
+                            <span className="text-base font-medium text-muted-foreground pb-0.5">$ </span>
                         )}
                         <p className="text-3xl font-bold font-mono tabular-nums text-foreground leading-none">
-                            {value !== null ? formatVal(value, metric) : '—'}
+                            {value !== null ? formatVal(value, format) : '—'}
                         </p>
                     </div>
                     {compare && delta !== null && (
@@ -101,7 +103,7 @@ export function ScorecardWidget({ title, config, filters }: Props) {
                 </div>
             )}
             <p className="text-[10px] text-muted-foreground/60 uppercase tracking-wider">
-                {METRIC_META[metric]?.label ?? metric}
+                {label}
             </p>
         </div>
     )

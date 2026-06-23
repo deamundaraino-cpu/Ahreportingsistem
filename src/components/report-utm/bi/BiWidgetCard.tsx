@@ -130,16 +130,16 @@ function WidgetRenderer({
 }) {
     switch (widget.type) {
         case 'scorecard':
-            return <ScorecardWidget title={widget.title} config={widget.config} filters={filters} />
+            return <ScorecardWidget title={widget.title} config={widget.config} filters={filters} calculatedFields={calculatedFields} />
         case 'line':
         case 'area':
         case 'bar':
         case 'combo':
         case 'pie':
         case 'scatter':
-            return <ChartWidget title={widget.title} type={widget.type} config={widget.config} filters={filters} onDrill={onDrill} />
+            return <ChartWidget title={widget.title} type={widget.type} config={widget.config} filters={filters} calculatedFields={calculatedFields} onDrill={onDrill} />
         case 'table':
-            return <TableWidget title={widget.title} config={widget.config} filters={filters} calculatedFields={calculatedFields} />
+            return <TableWidget title={widget.title} config={widget.config} filters={filters} calculatedFields={calculatedFields} h={widget.h} />
         case 'funnel':
             return <FunnelWidget title={widget.title} config={widget.config} filters={filters} />
         case 'slicer':

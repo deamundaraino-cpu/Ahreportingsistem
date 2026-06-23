@@ -1,10 +1,10 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { X, Plus, Search } from 'lucide-react'
-import type { BiWidget, WidgetType, WidgetConfig, CalculatedField, ConditionalRule } from './BiTypes'
-import type { BiMetric, BiDimension } from '@/lib/report-utm/bi-metadata'
-import { METRIC_META, DIMENSION_META } from '@/lib/report-utm/bi-metadata'
+import { X, Plus, Search, AlertTriangle } from 'lucide-react'
+import type { BiWidget, WidgetType, WidgetConfig, CalculatedField, ConditionalRule, ValueFilter } from './BiTypes'
+import type { BiMetric, BiDimension, ValueOp } from '@/lib/report-utm/bi-metadata'
+import { METRIC_META, DIMENSION_META, VALUE_OPS } from '@/lib/report-utm/bi-metadata'
 import { HelpTip } from './HelpTip'
 
 interface Props {
@@ -51,16 +51,19 @@ export function BiWidgetEditor({ widget, calculatedFields = [], onSave, onClose 
     const [color, setColor]   = useState(widget?.config?.color ?? COLOR_OPTIONS[0])
     const [showTotals, setShowTotals] = useState(widget?.config?.show_totals !== false)
     const [conditional, setConditional] = useState<ConditionalRule[]>(widget?.config?.conditional ?? [])
+    const [valueFilters, setValueFilters] = useState<ValueFilter[]>(widget?.config?.value_filters ?? [])
     const [slicerMode, setSlicerMode] = useState<'dropdown' | 'list' | 'daterange'>(widget?.config?.slicer_mode ?? 'dropdown')
     const [metricSearch, setMetricSearch] = useState('')
 
-    // Métricas disponibles = base + campos calculados (estos solo en tablas)
-    const calcAsMetrics = calculatedFields.map(c => ({ value: c.name, label: `∑ ${c.name}` }))
-    const metricOptions = (type === 'table' ? [...ALL_METRICS, ...calcAsMetrics] : ALL_METRICS)
-        .filter(m => !metricSearch || m.label.toLowerCase().includes(metricSearch.toLowerCase()))
-
     const isChart = ['line', 'area', 'bar', 'combo', 'pie', 'scatter'].includes(type)
     const supportsDim2 = ['bar', 'combo', 'area', 'line'].includes(type)
+
+    // Métricas disponibles = base + campos calculados. Los campos calculados se
+    // pueden usar en tablas, scorecards y gráficas (no en funnel/slicer).
+    const calcAsMetrics = calculatedFields.map(c => ({ value: c.name, label: `∑ ${c.name}` }))
+    const allowCalc = type === 'table' || type === 'scorecard' || isChart
+    const metricOptions = (allowCalc ? [...ALL_METRICS, ...calcAsMetrics] : ALL_METRICS)
+        .filter(m => !metricSearch || m.label.toLowerCase().includes(metricSearch.toLowerCase()))
 
     // Columnas de tabla (multi-columna): el config.metric guarda la lista separada por coma.
     const tableCols = String(metric).split(',').map(s => s.trim()).filter(Boolean)
@@ -70,6 +73,27 @@ export function BiWidgetEditor({ widget, calculatedFields = [], onSave, onClose 
             : [...tableCols, col]
         setMetric(next.join(','))
     }
+
+    // Las métricas de campaña (gasto/CPL/alcance…) no se desglosan por dimensiones
+    // de lead: el gasto cae en una fila "(total)". Solo cruzan global, por fecha o
+    // por "Campaña (cruzada)". Avisamos para orientar a la dimensión correcta.
+    const isAdMetric = (m: string) => {
+        const meta = METRIC_META[m as BiMetric]
+        return !!meta && (meta.source === 'ads' || (meta.source === 'computed' && m !== 'conversion_rate'))
+    }
+    const selectedMetrics = type === 'table' ? tableCols : [String(metric)]
+    const showAdDimWarning =
+        type !== 'scorecard' && type !== 'funnel' && type !== 'slicer' &&
+        dim !== 'none' && dim !== 'date' && dim !== 'campaign' &&
+        selectedMetrics.some(isAdMetric)
+
+    // Métricas que se pueden usar para filtrar filas por valor (las que el widget trae)
+    const metricLabelOf = (k: string) =>
+        METRIC_META[k as BiMetric]?.label ?? calculatedFields.find(c => c.name === k)?.name ?? k
+    const valueFilterChoices = (type === 'table'
+        ? (tableCols.length ? tableCols : ALL_METRICS.map(m => String(m.value)))
+        : [String(metric)]
+    ).filter(Boolean)
 
     useEffect(() => {
         if (!title) {
@@ -101,6 +125,7 @@ export function BiWidgetEditor({ widget, calculatedFields = [], onSave, onClose 
             if (type === 'table') {
                 config.show_totals = showTotals
                 if (conditional.length) config.conditional = conditional
+                if (valueFilters.length) config.value_filters = valueFilters
             }
         }
         onSave({
@@ -280,6 +305,15 @@ export function BiWidgetEditor({ widget, calculatedFields = [], onSave, onClose 
                                             <option key={d.value} value={d.value}>{d.label}</option>
                                         ))}
                                     </select>
+                                    {showAdDimWarning && (
+                                        <div className="mt-2 flex items-start gap-2 rounded-lg border border-amber-300/60 dark:border-amber-500/30 bg-amber-50/60 dark:bg-amber-500/10 px-3 py-2">
+                                            <AlertTriangle className="h-3.5 w-3.5 text-amber-500 shrink-0 mt-0.5" />
+                                            <p className="text-[11px] text-amber-700 dark:text-amber-300 leading-snug">
+                                                El gasto y las métricas de campaña no se desglosan por <strong>{DIMENSION_META[dim]?.label ?? dim}</strong> (caerían en una fila “(total)”).
+                                                Para ver gasto / CPL por campaña usa la dimensión <strong>Campaña (cruzada)</strong>; o usa <strong>Fecha</strong> para la evolución.
+                                            </p>
+                                        </div>
+                                    )}
                                 </div>
                             )}
 
@@ -429,6 +463,59 @@ export function BiWidgetEditor({ widget, calculatedFields = [], onSave, onClose 
                                         className="flex items-center gap-1 text-[11px] font-medium text-emerald-600 dark:text-emerald-400 hover:underline"
                                     >
                                         <Plus className="h-3 w-3" /> Agregar regla
+                                    </button>
+                                </div>
+                            )}
+
+                            {/* Filtros por valor (tabla y gráficas): ocultar filas que no cumplan */}
+                            {(type === 'table' || isChart) && (
+                                <div className="rounded-xl border border-border p-3 space-y-2">
+                                    <p className="flex items-center gap-1 text-[11px] font-medium text-foreground">
+                                        Filtrar filas por valor
+                                        <HelpTip text="Oculta las filas que no cumplan la condición. Ej: Gasto > 0 quita campañas sin gasto; CPL ≤ 50 deja solo leads baratos; Leads entre 10 y 100. Si hay varias, deben cumplirse todas (Y)." />
+                                    </p>
+                                    {valueFilters.map((f, i) => (
+                                        <div key={i} className="flex items-center gap-1.5 flex-wrap">
+                                            <select
+                                                value={f.metric}
+                                                onChange={e => setValueFilters(v => v.map((r, idx) => idx === i ? { ...r, metric: e.target.value } : r))}
+                                                className="px-2 py-1 text-[11px] rounded bg-muted border border-border text-foreground max-w-[140px]"
+                                            >
+                                                {valueFilterChoices.map(k => <option key={k} value={k}>{metricLabelOf(k)}</option>)}
+                                            </select>
+                                            <select
+                                                value={f.op}
+                                                title="Operador"
+                                                onChange={e => setValueFilters(v => v.map((r, idx) => idx === i ? { ...r, op: e.target.value as ValueOp } : r))}
+                                                className="px-1 py-1 text-[11px] rounded bg-muted border border-border text-foreground"
+                                            >
+                                                {VALUE_OPS.map(o => <option key={o.value} value={o.value} title={o.label}>{o.short} {o.label}</option>)}
+                                            </select>
+                                            <input
+                                                type="number" value={f.value}
+                                                onChange={e => setValueFilters(v => v.map((r, idx) => idx === i ? { ...r, value: parseFloat(e.target.value) || 0 } : r))}
+                                                className="w-16 px-2 py-1 text-[11px] font-mono rounded bg-muted border border-border text-foreground"
+                                            />
+                                            {f.op === 'between' && (
+                                                <>
+                                                    <span className="text-[10px] text-muted-foreground">y</span>
+                                                    <input
+                                                        type="number" value={f.value2 ?? 0}
+                                                        onChange={e => setValueFilters(v => v.map((r, idx) => idx === i ? { ...r, value2: parseFloat(e.target.value) || 0 } : r))}
+                                                        className="w-16 px-2 py-1 text-[11px] font-mono rounded bg-muted border border-border text-foreground"
+                                                    />
+                                                </>
+                                            )}
+                                            <button onClick={() => setValueFilters(v => v.filter((_, idx) => idx !== i))} className="p-1 text-muted-foreground hover:text-red-500">
+                                                <X className="h-3 w-3" />
+                                            </button>
+                                        </div>
+                                    ))}
+                                    <button
+                                        onClick={() => setValueFilters(v => [...v, { metric: valueFilterChoices[0] ?? 'spend', op: 'gt', value: 0 }])}
+                                        className="flex items-center gap-1 text-[11px] font-medium text-emerald-600 dark:text-emerald-400 hover:underline"
+                                    >
+                                        <Plus className="h-3 w-3" /> Agregar filtro
                                     </button>
                                 </div>
                             )}

@@ -1,4 +1,6 @@
-import type { BiMetric, BiDimension, DateGrouping } from '@/lib/report-utm/bi-metadata'
+import type { BiMetric, BiDimension, DateGrouping, ValueFilter } from '@/lib/report-utm/bi-metadata'
+
+export type { ValueFilter } from '@/lib/report-utm/bi-metadata'
 
 export type WidgetType =
     | 'scorecard'
@@ -38,6 +40,7 @@ export interface WidgetConfig {
     compare_period?: boolean         // scorecard: comparar vs período anterior
     color?: string                   // color base del widget (hex)
     conditional?: ConditionalRule[]  // formato condicional en tablas
+    value_filters?: ValueFilter[]    // ocultar filas que no cumplan condiciones numéricas
     show_totals?: boolean            // fila de totales en tablas
     // Power BI extras
     slicer_mode?: SlicerMode         // slicer: tipo de control

@@ -1,6 +1,13 @@
 import { createAdminClient } from '@/utils/supabase/server'
 import type { BiQueryRow } from './bi-metadata'
+import { AD_JSONB_METRICS } from './bi-metadata'
 import { fetchAllRows, applyOneFilter } from './bi-query'
+
+function zeroAdMetrics(): Record<string, number> {
+    const e: Record<string, number> = {}
+    for (const k of AD_JSONB_METRICS) e[k] = 0
+    return e
+}
 
 // ============================================================
 // Cruce leads/ventas ↔ campañas (gasto).
@@ -46,6 +53,7 @@ interface CampaignAgg {
     impressions: number
     clicks: number
     platform_leads: number   // leads reportados por la plataforma (referencia)
+    extra: Record<string, number>   // métricas de campaña aditivas (alcance, video, compras…)
 }
 
 interface CampaignIndex {
@@ -145,7 +153,7 @@ async function loadCampaignIndex(
         const key = `${platform}:${campId ?? normName(name)}`
         let agg = idx.campaigns.get(key)
         if (!agg) {
-            agg = { key, campaign_id: campId, name: name || '(sin nombre)', platform, spend: 0, impressions: 0, clicks: 0, platform_leads: 0 }
+            agg = { key, campaign_id: campId, name: name || '(sin nombre)', platform, spend: 0, impressions: 0, clicks: 0, platform_leads: 0, extra: zeroAdMetrics() }
             idx.campaigns.set(key, agg)
             if (campId) idx.byCampaignId.set(campId, key)
             if (name) idx.byName.set(normName(name), key)
@@ -163,9 +171,13 @@ async function loadCampaignIndex(
         const inRange = typeof row.fecha === 'string' ? row.fecha >= dateFrom : true
         const metaCamps = (row.meta_campaigns as Record<string, unknown>[] | null) ?? []
         for (const c of metaCamps) {
-            upsert('meta', (c.campaign_id as string) ?? null, (c.name as string) ?? '', inRange, {
+            const key = upsert('meta', (c.campaign_id as string) ?? null, (c.name as string) ?? '', inRange, {
                 spend: num(c.spend), impressions: num(c.impressions), clicks: num(c.clicks), leads: num(c.leads),
             })
+            if (inRange) {
+                const agg = idx.campaigns.get(key)!
+                for (const k of AD_JSONB_METRICS) agg.extra[k] += num(c[k])
+            }
         }
         // Indexa ad_id y nombre de ad/adset → campaña (para cruzar utm_id=ad_id,
         // utm_content=ad_name, utm_term=adset_name).
@@ -311,17 +323,18 @@ export async function runCampaignQuery(params: CampaignCrossParams): Promise<BiQ
     ])
 
     // Acumulador por campaña
-    type Acc = { name: string; spend: number; impressions: number; clicks: number; leads: number; sales: number; revenue: number; methods: Record<string, number> }
+    type Acc = { name: string; spend: number; impressions: number; clicks: number; leads: number; sales: number; revenue: number; methods: Record<string, number>; extra: Record<string, number> }
     const acc = new Map<string, Acc>()
     function ensure(key: string, name: string): Acc {
         let a = acc.get(key)
-        if (!a) { a = { name, spend: 0, impressions: 0, clicks: 0, leads: 0, sales: 0, revenue: 0, methods: {} }; acc.set(key, a) }
+        if (!a) { a = { name, spend: 0, impressions: 0, clicks: 0, leads: 0, sales: 0, revenue: 0, methods: {}, extra: zeroAdMetrics() }; acc.set(key, a) }
         return a
     }
     // Sembrar con todas las campañas conocidas (para que aparezcan aunque no tengan leads)
     for (const c of idx.campaigns.values()) {
         const a = ensure(c.key, c.name)
         a.spend += c.spend; a.impressions += c.impressions; a.clicks += c.clicks
+        for (const k of AD_JSONB_METRICS) a.extra[k] += c.extra[k]
     }
     const UNMATCHED = '__none__'
 
@@ -361,12 +374,17 @@ export async function runCampaignQuery(params: CampaignCrossParams): Promise<BiQ
     }
 
     // Construir filas BiQueryRow
-    const rows: BiQueryRow[] = Array.from(acc.entries()).map(([, a]) => {
+    const rows: BiQueryRow[] = Array.from(acc.entries()).map(([key, a]) => {
         const spend = round2(a.spend)
         const revenue = round2(a.revenue)
-        return {
+        const reach = a.extra.reach ?? 0
+        // Cada campaña es de una plataforma → su gasto va a meta o tiktok.
+        const isTiktok = key.startsWith('tiktok:')
+        const row: BiQueryRow = {
             dimension_value: a.name,
             spend,
+            meta_spend: isTiktok ? 0 : spend,
+            tiktok_spend: isTiktok ? spend : 0,
             impressions: a.impressions,
             clicks: a.clicks,
             leads_count: a.leads,
@@ -378,7 +396,12 @@ export async function runCampaignQuery(params: CampaignCrossParams): Promise<BiQ
             conversion_rate: a.leads > 0 ? round2((a.sales / a.leads) * 100) : null,
             cpc: a.clicks > 0 && spend > 0 ? round2(spend / a.clicks) : null,
             cpm: a.impressions > 0 && spend > 0 ? round2((spend / a.impressions) * 1000) : null,
+            // Métricas de campaña aditivas + ratios recalculados
+            frequency: reach > 0 ? round2(a.impressions / reach) : null,
+            ctr: a.impressions > 0 ? round2((a.clicks / a.impressions) * 100) : null,
         }
+        for (const k of AD_JSONB_METRICS) row[k] = round2(a.extra[k])
+        return row
     })
 
     rows.sort((x, y) => Number(y.spend ?? 0) - Number(x.spend ?? 0))

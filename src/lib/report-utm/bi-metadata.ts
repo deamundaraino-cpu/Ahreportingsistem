@@ -9,6 +9,8 @@ export type BiMetric =
     | 'sales_count'
     | 'revenue'
     | 'spend'
+    | 'meta_spend'
+    | 'tiktok_spend'
     | 'cpl'
     | 'cpa'
     | 'roas'
@@ -17,6 +19,36 @@ export type BiMetric =
     | 'impressions'
     | 'cpc'
     | 'cpm'
+    // ── Métricas de campaña (de metricas_diarias.meta_campaigns/tiktok_campaigns) ──
+    | 'reach'
+    | 'frequency'
+    | 'ctr'
+    | 'link_clicks'
+    | 'leads_form'
+    | 'purchases'
+    | 'landing_page_views'
+    | 'complete_registration'
+    | 'results'
+    | 'video_views'
+    | 'video_thruplay'
+    | 'messaging_conversations'
+    | 'post_engagement'
+    | 'post_reactions'
+    | 'post_shares'
+    | 'post_comments'
+
+/**
+ * Métricas de campaña ADITIVAS que se suman desde el JSONB `meta_campaigns`
+ * (TikTok no las reporta → contribuyen 0). `spend`/`clicks`/`impressions` se
+ * toman de las columnas escalares. `frequency`/`ctr` se recalculan de totales.
+ * Las claves coinciden con los campos del objeto de campaña.
+ */
+export const AD_JSONB_METRICS = [
+    'reach', 'link_clicks', 'leads_form', 'purchases', 'landing_page_views',
+    'complete_registration', 'results', 'video_views', 'video_thruplay',
+    'messaging_conversations', 'post_engagement', 'post_reactions',
+    'post_shares', 'post_comments',
+] as const
 
 export type BiDimension =
     | 'none'
@@ -83,7 +115,9 @@ export const METRIC_META: Record<BiMetric, { label: string; format: 'number' | '
     leads_count:     { label: 'Leads',           format: 'number',   source: 'leads' },
     sales_count:     { label: 'Ventas',          format: 'number',   source: 'sales' },
     revenue:         { label: 'Revenue',         format: 'currency', source: 'sales' },
-    spend:           { label: 'Gasto',           format: 'currency', source: 'ads' },
+    spend:           { label: 'Gasto total',     format: 'currency', source: 'ads' },
+    meta_spend:      { label: 'Gasto Meta',      format: 'currency', source: 'ads' },
+    tiktok_spend:    { label: 'Gasto TikTok',    format: 'currency', source: 'ads' },
     cpl:             { label: 'CPL',             format: 'currency', source: 'computed' },
     cpa:             { label: 'CPA',             format: 'currency', source: 'computed' },
     roas:            { label: 'ROAS',            format: 'ratio',    source: 'computed' },
@@ -92,6 +126,23 @@ export const METRIC_META: Record<BiMetric, { label: string; format: 'number' | '
     impressions:     { label: 'Impresiones',     format: 'number',   source: 'ads' },
     cpc:             { label: 'CPC',             format: 'currency', source: 'computed' },
     cpm:             { label: 'CPM',             format: 'currency', source: 'computed' },
+    // ── Campaña ──
+    reach:                  { label: 'Alcance',            format: 'number',  source: 'ads' },
+    frequency:              { label: 'Frecuencia',         format: 'ratio',   source: 'computed' },
+    ctr:                    { label: 'CTR',                format: 'percent', source: 'computed' },
+    link_clicks:            { label: 'Clics de enlace',    format: 'number',  source: 'ads' },
+    leads_form:             { label: 'Leads de formulario',format: 'number',  source: 'ads' },
+    purchases:              { label: 'Compras',            format: 'number',  source: 'ads' },
+    landing_page_views:     { label: 'Vistas de landing',  format: 'number',  source: 'ads' },
+    complete_registration:  { label: 'Registros',          format: 'number',  source: 'ads' },
+    results:                { label: 'Resultados',         format: 'number',  source: 'ads' },
+    video_views:            { label: 'Reproducciones',     format: 'number',  source: 'ads' },
+    video_thruplay:         { label: 'ThruPlay',           format: 'number',  source: 'ads' },
+    messaging_conversations:{ label: 'Conversaciones',     format: 'number',  source: 'ads' },
+    post_engagement:        { label: 'Interacciones',      format: 'number',  source: 'ads' },
+    post_reactions:         { label: 'Reacciones',         format: 'number',  source: 'ads' },
+    post_shares:            { label: 'Compartidos',        format: 'number',  source: 'ads' },
+    post_comments:          { label: 'Comentarios',        format: 'number',  source: 'ads' },
 }
 
 export const DIMENSION_META: Record<BiDimension, { label: string }> = {
@@ -109,6 +160,51 @@ export const DIMENSION_META: Record<BiDimension, { label: string }> = {
     form_plugin:       { label: 'Plugin' },
     attribution_method:{ label: 'Atribución' },
     platform:          { label: 'Plataforma' },
+}
+
+// ── Filtros por valor (ocultar filas que no cumplan una condición numérica) ──
+// Ej: spend > 0 oculta campañas sin gasto; cpl ≤ 50 deja solo leads baratos.
+export type ValueOp = 'eq' | 'neq' | 'gt' | 'gte' | 'lt' | 'lte' | 'between'
+
+export interface ValueFilter {
+    metric: string          // clave de métrica/columna a evaluar
+    op: ValueOp
+    value: number
+    value2?: number         // solo para 'between'
+}
+
+export const VALUE_OPS: { value: ValueOp; label: string; short: string }[] = [
+    { value: 'gt',      label: 'mayor que',     short: '>' },
+    { value: 'gte',     label: 'mayor o igual', short: '≥' },
+    { value: 'lt',      label: 'menor que',     short: '<' },
+    { value: 'lte',     label: 'menor o igual', short: '≤' },
+    { value: 'eq',      label: 'igual a',       short: '=' },
+    { value: 'neq',     label: 'distinto de',   short: '≠' },
+    { value: 'between', label: 'entre',         short: '↔' },
+]
+
+export function matchesValueFilter(v: number, f: ValueFilter): boolean {
+    const a = f.value
+    switch (f.op) {
+        case 'eq':  return v === a
+        case 'neq': return v !== a
+        case 'gt':  return v > a
+        case 'gte': return v >= a
+        case 'lt':  return v < a
+        case 'lte': return v <= a
+        case 'between': {
+            const b = f.value2 ?? a
+            const lo = Math.min(a, b), hi = Math.max(a, b)
+            return v >= lo && v <= hi
+        }
+        default: return true
+    }
+}
+
+/** Filtra filas dejando solo las que cumplen TODAS las condiciones de valor. */
+export function applyValueFilters(rows: BiQueryRow[], filters?: ValueFilter[]): BiQueryRow[] {
+    if (!filters || filters.length === 0) return rows
+    return rows.filter(r => filters.every(f => matchesValueFilter(Number(r[f.metric] ?? 0), f)))
 }
 
 // ── Filtros UTM (variables globales del reporte) ──────────────────────

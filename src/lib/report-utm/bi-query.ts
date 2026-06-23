@@ -1,6 +1,6 @@
 import { createAdminClient } from '@/utils/supabase/server'
 import type { BiMetric, BiDimension, DateGrouping, BiQueryParams, BiQueryRow, BiPivotRow } from './bi-metadata'
-import { evaluateExpression, parseFilterValue } from './bi-metadata'
+import { evaluateExpression, parseFilterValue, AD_JSONB_METRICS } from './bi-metadata'
 
 // Re-export para compatibilidad con imports existentes que apuntaban acá.
 export type { BiMetric, BiDimension, DateGrouping, BiQueryParams, BiQueryRow, BiPivotRow } from './bi-metadata'
@@ -11,15 +11,18 @@ export { METRIC_META, DIMENSION_META } from './bi-metadata'
 export async function runBiQuery(params: BiQueryParams): Promise<BiQueryRow[]> {
     const supabase = await createAdminClient()
 
-    const needsLeads = params.metrics.some(m =>
-        ['leads_count', 'cpl', 'conversion_rate'].includes(m)
-    )
-    const needsSales = params.metrics.some(m =>
-        ['sales_count', 'revenue', 'cpa', 'roas', 'conversion_rate'].includes(m)
-    )
-    const needsAds = params.metrics.some(m =>
-        ['spend', 'cpl', 'cpa', 'roas', 'clicks', 'impressions', 'cpc', 'cpm'].includes(m)
-    )
+    // Tokens requeridos = métricas pedidas ∪ identificadores referenciados en las
+    // expresiones de campos calculados. Así un scorecard/gráfica cuyo único "metric"
+    // es un campo calculado (ej. "spend / leads_count") dispara el fetch correcto.
+    const required = new Set<string>(params.metrics)
+    for (const cf of params.calculated ?? []) {
+        for (const id of cf.expression.match(/[a-z_][a-z0-9_]*/gi) ?? []) required.add(id)
+    }
+    const requires = (keys: string[]) => keys.some(k => required.has(k))
+
+    const needsLeads = requires(['leads_count', 'cpl', 'conversion_rate'])
+    const needsSales = requires(['sales_count', 'revenue', 'cpa', 'roas', 'conversion_rate'])
+    const needsAds   = requires(['spend', 'meta_spend', 'tiktok_spend', 'cpl', 'cpa', 'roas', 'clicks', 'impressions', 'cpc', 'cpm', 'frequency', 'ctr', ...AD_JSONB_METRICS])
 
     const dateFrom = params.date_from ?? new Date(Date.now() - 30 * 86400_000).toISOString().slice(0, 10)
     const dateTo   = params.date_to   ?? new Date().toISOString().slice(0, 10)
@@ -40,7 +43,7 @@ export async function runBiQuery(params: BiQueryParams): Promise<BiQueryRow[]> {
     }
 
     // ── ADS query (metricas_diarias) ──────────────────────────────────
-    let adsData: Array<{ dim: string | null; spend: number; clicks: number; impressions: number }> = []
+    let adsData: AdRow[] = []
     if (needsAds) {
         adsData = await queryAdsDirect(supabase, params, dateFrom, dateTo, lim)
     }
@@ -138,6 +141,20 @@ async function querySalesDirect(
         .sort((a, b) => b.revenue - a.revenue)
 }
 
+interface AdRow {
+    dim: string | null
+    spend: number
+    clicks: number
+    impressions: number
+    [metric: string]: number | string | null   // métricas de campaña adicionales (del JSONB)
+}
+
+function newAdEntry(): Record<string, number> {
+    const e: Record<string, number> = { spend: 0, meta_spend: 0, tiktok_spend: 0, clicks: 0, impressions: 0 }
+    for (const k of AD_JSONB_METRICS) e[k] = 0
+    return e
+}
+
 async function queryAdsDirect(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     supabase: any,
@@ -145,11 +162,13 @@ async function queryAdsDirect(
     dateFrom: string,
     dateTo: string,
     lim: number
-): Promise<Array<{ dim: string | null; spend: number; clicks: number; impressions: number }>> {
-    // metricas_diarias lives in the public schema
+): Promise<AdRow[]> {
+    // metricas_diarias lives in the public schema. Se leen las columnas escalares
+    // (gasto/clics/impresiones, fiables) + el JSONB meta_campaigns para sumar el
+    // resto de métricas de campaña (alcance, video, compras, resultados…).
     let q = (await (await import('@/utils/supabase/server')).createAdminClient())
         .from('metricas_diarias')
-        .select('fecha,meta_spend,tiktok_spend,meta_clicks,tiktok_clicks,meta_impressions,tiktok_impressions')
+        .select('fecha,meta_spend,tiktok_spend,meta_clicks,tiktok_clicks,meta_impressions,tiktok_impressions,meta_campaigns')
         .gte('fecha', dateFrom)
         .lte('fecha', dateTo)
         .limit(lim)
@@ -175,7 +194,7 @@ async function queryAdsDirect(
     if (error || !data) return []
 
     const grouping = params.date_grouping ?? 'day'
-    const map = new Map<string, { spend: number; clicks: number; impressions: number }>()
+    const map = new Map<string, Record<string, number>>()
 
     for (const r of data as Record<string, unknown>[]) {
         let dim = 'total'
@@ -183,14 +202,23 @@ async function queryAdsDirect(
             const fecha = String(r.fecha ?? '')
             dim = truncateDate(fecha, grouping)
         }
-        const entry = map.get(dim) ?? { spend: 0, clicks: 0, impressions: 0 }
-        entry.spend       += Number(r.meta_spend ?? 0) + Number(r.tiktok_spend ?? 0)
+        let entry = map.get(dim)
+        if (!entry) { entry = newAdEntry(); map.set(dim, entry) }
+        const metaSpend   = Number(r.meta_spend ?? 0)
+        const tiktokSpend = Number(r.tiktok_spend ?? 0)
+        entry.meta_spend   += metaSpend
+        entry.tiktok_spend += tiktokSpend
+        entry.spend        += metaSpend + tiktokSpend
         entry.clicks      += Number(r.meta_clicks ?? 0) + Number(r.tiktok_clicks ?? 0)
         entry.impressions += Number(r.meta_impressions ?? 0) + Number(r.tiktok_impressions ?? 0)
-        map.set(dim, entry)
+        // Resto de métricas de campaña desde el JSONB meta_campaigns (TikTok no las trae)
+        const camps = (r.meta_campaigns as Record<string, unknown>[] | null) ?? []
+        for (const c of camps) {
+            for (const k of AD_JSONB_METRICS) entry[k] += Number(c[k] ?? 0)
+        }
     }
 
-    return Array.from(map.entries()).map(([dim, v]) => ({ dim, ...v }))
+    return Array.from(map.entries()).map(([dim, v]) => ({ dim, ...v } as AdRow))
 }
 
 // ── Merge ─────────────────────────────────────────────────────────────
@@ -199,7 +227,7 @@ function mergeResults(
     params: BiQueryParams,
     leadsData: Array<{ dim: string | null; count: number }>,
     salesData: Array<{ dim: string | null; sales: number; revenue: number }>,
-    adsData:   Array<{ dim: string | null; spend: number; clicks: number; impressions: number }>
+    adsData:   AdRow[]
 ): BiQueryRow[] {
     const keys = new Set<string>()
     leadsData.forEach(r => keys.add(r.dim ?? 'total'))
@@ -220,9 +248,12 @@ function mergeResults(
         const leads_count = lead?.count ?? 0
         const sales_count = sale?.sales ?? 0
         const revenue     = Number((sale?.revenue ?? 0).toFixed(2))
-        const spend       = Number((ad?.spend ?? 0).toFixed(2))
+        const spend        = Number((ad?.spend ?? 0).toFixed(2))
+        const meta_spend   = Number((Number(ad?.meta_spend ?? 0)).toFixed(2))
+        const tiktok_spend = Number((Number(ad?.tiktok_spend ?? 0)).toFixed(2))
         const clicks      = ad?.clicks ?? 0
         const impressions = ad?.impressions ?? 0
+        const reach       = Number(ad?.reach ?? 0)
 
         const row: BiQueryRow = { dimension_value: key === 'total' ? null : key }
 
@@ -230,6 +261,8 @@ function mergeResults(
         if (params.metrics.includes('sales_count'))     row.sales_count     = sales_count
         if (params.metrics.includes('revenue'))         row.revenue         = revenue
         if (params.metrics.includes('spend'))           row.spend           = spend
+        if (params.metrics.includes('meta_spend'))      row.meta_spend      = meta_spend
+        if (params.metrics.includes('tiktok_spend'))    row.tiktok_spend    = tiktok_spend
         if (params.metrics.includes('clicks'))          row.clicks          = clicks
         if (params.metrics.includes('impressions'))     row.impressions     = impressions
         if (params.metrics.includes('cpl'))             row.cpl             = leads_count > 0 && spend > 0 ? round2(spend / leads_count) : null
@@ -238,18 +271,27 @@ function mergeResults(
         if (params.metrics.includes('conversion_rate')) row.conversion_rate = leads_count > 0 ? round2((sales_count / leads_count) * 100) : null
         if (params.metrics.includes('cpc'))             row.cpc             = clicks > 0 && spend > 0 ? round2(spend / clicks) : null
         if (params.metrics.includes('cpm'))             row.cpm             = impressions > 0 && spend > 0 ? round2((spend / impressions) * 1000) : null
+        // Métricas de campaña aditivas (del JSONB) + ratios recalculados
+        for (const k of AD_JSONB_METRICS) {
+            if (params.metrics.includes(k)) row[k] = Number(ad?.[k] ?? 0)
+        }
+        if (params.metrics.includes('frequency')) row.frequency = reach > 0 ? round2(impressions / reach) : null
+        if (params.metrics.includes('ctr'))       row.ctr       = impressions > 0 ? round2((clicks / impressions) * 100) : null
 
         // Campos calculados: se evalúan sobre las métricas base de la fila.
         if (params.calculated?.length) {
             const baseValues: Record<string, number> = {
-                leads_count, sales_count, revenue, spend, clicks, impressions,
+                leads_count, sales_count, revenue, spend, meta_spend, tiktok_spend, clicks, impressions, reach,
                 cpl: Number(row.cpl ?? 0),
                 cpa: Number(row.cpa ?? 0),
                 roas: Number(row.roas ?? 0),
                 conversion_rate: Number(row.conversion_rate ?? 0),
                 cpc: Number(row.cpc ?? 0),
                 cpm: Number(row.cpm ?? 0),
+                frequency: reach > 0 ? round2(impressions / reach) : 0,
+                ctr: impressions > 0 ? round2((clicks / impressions) * 100) : 0,
             }
+            for (const k of AD_JSONB_METRICS) baseValues[k] = Number(ad?.[k] ?? 0)
             for (const cf of params.calculated) {
                 row[cf.name] = evaluateExpression(cf.expression, baseValues)
             }
