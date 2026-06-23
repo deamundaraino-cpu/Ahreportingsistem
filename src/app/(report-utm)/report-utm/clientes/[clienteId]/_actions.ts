@@ -204,9 +204,9 @@ export async function setShopifyIntegrationStatusAction(
 
 export async function activateS2SIntegrationAction(clienteId: string): Promise<ActionResult> {
     const role = await getUserRole()
-    if (!role || !S2S_ALLOWED_ROLES.has(role)) return { ok: false, error: `Sin permisos para activar S2S (rol detectado: ${role ?? 'ninguno'})` }
+    if (!role || !S2S_ALLOWED_ROLES.has(role)) return { ok: false, error: `Sin permisos para activar S2S (rol: ${role ?? 'ninguno'})` }
 
-    const supabase = await reportUtmAdminClient()
+    const supabase = await reportUtmClient()
     const token = generateWebhookSecret()
 
     const { error } = await supabase
@@ -230,9 +230,9 @@ export async function activateS2SIntegrationAction(clienteId: string): Promise<A
 
 export async function rotateS2STokenAction(clienteId: string): Promise<ActionResult> {
     const role = await getUserRole()
-    if (!role || !S2S_ALLOWED_ROLES.has(role)) return { ok: false, error: `Sin permisos para rotar el token S2S (rol detectado: ${role ?? 'ninguno'})` }
+    if (!role || !S2S_ALLOWED_ROLES.has(role)) return { ok: false, error: `Sin permisos para rotar el token S2S (rol: ${role ?? 'ninguno'})` }
 
-    const supabase = await reportUtmAdminClient()
+    const supabase = await reportUtmClient()
     const token = generateWebhookSecret()
 
     const { error } = await supabase
@@ -252,9 +252,9 @@ export async function setS2SIntegrationStatusAction(
     status: 'active' | 'inactive',
 ): Promise<SimpleResult> {
     const role = await getUserRole()
-    if (!role || !S2S_ALLOWED_ROLES.has(role)) return { ok: false, error: `Sin permisos para cambiar el estado S2S (rol detectado: ${role ?? 'ninguno'})` }
+    if (!role || !S2S_ALLOWED_ROLES.has(role)) return { ok: false, error: `Sin permisos para cambiar el estado S2S (rol: ${role ?? 'ninguno'})` }
 
-    const supabase = await reportUtmAdminClient()
+    const supabase = await reportUtmClient()
     const { error } = await supabase
         .from('integrations')
         .update({ status })
