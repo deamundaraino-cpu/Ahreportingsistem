@@ -181,25 +181,64 @@ function ChartEditor({ chart, onChange, availableMetrics, campaignGroups, campai
                         onChange={v => onChange({ ...chart, account_id: v || undefined })}
                     />
                 )}
-                <div className="flex items-center gap-3">
-                <CampaignFilterPicker
-                    value={chart.campaignFilter}
-                    onChange={v => onChange({ ...chart, campaignFilter: v })}
-                    campaignGroups={campaignGroups}
-                    campaignNames={campaignNames}
-                />
-                <div className="flex items-center gap-1 flex-shrink-0">
-                    <span className="text-[10px] text-muted-foreground/70">Alto:</span>
-                    <input
-                        type="number"
-                        value={chart.height || 240}
-                        onChange={e => onChange({ ...chart, height: Math.max(100, Number(e.target.value)) })}
-                        className="w-14 h-6 text-xs text-center bg-background border border-border text-foreground/90 rounded outline-none"
-                        min={100}
-                        max={600}
+                <div className="flex items-center gap-3 flex-wrap">
+                    <CampaignFilterPicker
+                        value={chart.campaignFilter}
+                        onChange={v => onChange({ ...chart, campaignFilter: v })}
+                        campaignGroups={campaignGroups}
+                        campaignNames={campaignNames}
                     />
-                    <span className="text-[9px] text-muted-foreground/50">px</span>
-                </div>
+                    <div className="flex items-center gap-1">
+                        <span className="text-[10px] text-muted-foreground/70">Agrupación:</span>
+                        <select
+                            value={chart.dimension || ''}
+                            onChange={(e) => {
+                                const dim = e.target.value || undefined
+                                onChange({ ...chart, dimension: dim as any })
+                            }}
+                            className="bg-background border border-border text-foreground/90 rounded px-1.5 py-0.5 text-[10px]"
+                        >
+                            <option value="">Temporal (Fecha)</option>
+                            <optgroup label="Meta">
+                                <option value="campaigns">Meta: Campañas</option>
+                                <option value="adsets">Meta: Conjuntos de Anuncios</option>
+                                <option value="ads">Meta: Anuncios</option>
+                            </optgroup>
+                            <optgroup label="TikTok">
+                                <option value="tiktok_campaigns">TikTok: Campañas</option>
+                                <option value="tiktok_adgroups">TikTok: Grupos de Anuncios</option>
+                                <option value="tiktok_ads">TikTok: Anuncios</option>
+                            </optgroup>
+                        </select>
+                    </div>
+
+                    {chart.dimension && (
+                        <div className="flex items-center gap-1">
+                            <span className="text-[10px] text-muted-foreground/70">Top N:</span>
+                            <select
+                                value={chart.topN || 10}
+                                onChange={(e) => onChange({ ...chart, topN: Number(e.target.value) })}
+                                className="bg-background border border-border text-foreground/90 rounded px-1.5 py-0.5 text-[10px]"
+                            >
+                                {[5, 10, 15, 20, 30].map(n => (
+                                    <option key={n} value={n}>Top {n}</option>
+                                ))}
+                            </select>
+                        </div>
+                    )}
+
+                    <div className="flex items-center gap-1 flex-shrink-0">
+                        <span className="text-[10px] text-muted-foreground/70">Alto:</span>
+                        <input
+                            type="number"
+                            value={chart.height || 240}
+                            onChange={e => onChange({ ...chart, height: Math.max(100, Number(e.target.value)) })}
+                            className="w-14 h-6 text-xs text-center bg-background border border-border text-foreground/90 rounded outline-none"
+                            min={100}
+                            max={600}
+                        />
+                        <span className="text-[9px] text-muted-foreground/50">px</span>
+                    </div>
                 </div>
             </div>
         </div>

@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from "next/server"
 const ADMIN_ONLY_ROUTES = [
   '/admin/users',
   '/admin/api-tokens',
+  '/admin/configuracion',
   '/admin/reports',
   '/admin/whatsapp',
 ]

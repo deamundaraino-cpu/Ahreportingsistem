@@ -7,7 +7,7 @@ import {
   Zap,
   Link2,
   Settings,
-  Key,
+  Sliders,
   TrendingUp,
   Globe,
   ShoppingCart,
@@ -153,10 +153,10 @@ export default async function DashboardHomePage() {
             color="zinc"
           />
           <QuickLink
-            href="/admin/api-tokens"
-            icon={<Key className="h-5 w-5" />}
-            title="API Tokens"
-            description="Gestiona tokens de acceso"
+            href="/admin/configuracion"
+            icon={<Sliders className="h-5 w-5" />}
+            title="Configuración"
+            description="Gestiona alertas y servidor MCP"
             color="amber"
           />
           <QuickLink

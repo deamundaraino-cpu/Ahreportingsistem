@@ -4,6 +4,7 @@
 
 export const IN_APP_NOTIFICATION_TYPES = [
   'alert_threshold',
+  'alert_metric',
   'ticket_created',
   'ticket_updated',
   'sale_approved',
@@ -22,6 +23,7 @@ export type NotificationSeverity = 'info' | 'success' | 'warning' | 'error';
 // Etiquetas legibles para la UI (filtros, preferencias).
 export const IN_APP_NOTIFICATION_TYPE_LABELS: Record<InAppNotificationType, string> = {
   alert_threshold: 'Alerta de presupuesto',
+  alert_metric: 'Alerta de métrica condicional',
   ticket_created: 'Ticket nuevo',
   ticket_updated: 'Ticket actualizado',
   sale_approved: 'Venta aprobada',

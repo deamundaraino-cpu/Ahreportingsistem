@@ -48,6 +48,7 @@ import { SortableContext, horizontalListSortingStrategy, verticalListSortingStra
 
 import { CSS } from '@dnd-kit/utilities'
 import { enrichMetaRow, enrichTikTokRow, filterCampaignList } from '@/lib/campaign-filter'
+import { enrichOfflineRow } from '@/lib/offline-filter'
 import type { CampaignFilterSpec } from '@/lib/layout-types'
 
 // ─── Helper Functions ────────────────────────────────────────────────────────
@@ -835,6 +836,9 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                 : filteredMetrics.map((m: any) =>
                     applyCompoundFilter(m, effectiveKeyword, t.campaignFilter, data.campaignGroups)
                 )
+            if (t.sheetFilter) {
+                rows = rows.map((r: any) => enrichOfflineRow(r, t.sheetFilter))
+            }
             if (t.account_id) {
                 rows = rows.map((r: any) => filterRowByTikTokAccount(r, t.account_id, effectiveKeyword, data.campaignGroups))
             }
@@ -849,6 +853,9 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                     : prevFilteredMetrics.map((m: any) =>
                         applyCompoundFilter(m, effectiveKeyword, t.campaignFilter, data.campaignGroups)
                     )
+                if (t.sheetFilter) {
+                    prevRows = prevRows.map((r: any) => enrichOfflineRow(r, t.sheetFilter))
+                }
                 if (t.account_id) {
                     prevRows = prevRows.map((r: any) => filterRowByTikTokAccount(r, t.account_id, effectiveKeyword, data.campaignGroups))
                 }
@@ -1394,9 +1401,13 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                                             {filteredMetrics.length > 0 && visibleCols.filter((c: ColDef) => c.formula !== 'fecha').length > 0 && (
                                                 <div className="px-4 py-2.5 border-b border-border bg-background/40 flex flex-wrap gap-x-6 gap-y-1.5">
                                                     {visibleCols.filter((c: ColDef) => c.formula !== 'fecha').slice(0, 7).map((col: ColDef) => {
-                                                        const colRows = col.campaignFilter
-                                                            ? filteredMetrics.map((r: any) => applyCompoundFilter(r, effectiveKeyword, col.campaignFilter, data.campaignGroups))
-                                                            : filteredMetrics
+                                                        let colRows = filteredMetrics
+                                                        if (col.campaignFilter) {
+                                                            colRows = colRows.map((r: any) => applyCompoundFilter(r, effectiveKeyword, col.campaignFilter, data.campaignGroups))
+                                                        }
+                                                        if (col.sheetFilter) {
+                                                            colRows = colRows.map((r: any) => enrichOfflineRow(r, col.sheetFilter))
+                                                        }
                                                         const val = aggregateFormula(col.formula, colRows, varContext, sourceMapping, platformSet, layoutCustomMetrics)
                                                         const hl = col.highlight ? highlightClass(val, col) : 'text-foreground'
                                                         return (
@@ -1490,7 +1501,10 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                                                                                     </TableCell>
                                                                                 )
                                                                             }
-                                                                            const rowForCol = applyCompoundFilter(raw, effectiveKeyword, col.campaignFilter, data.campaignGroups)
+                                                                            let rowForCol = applyCompoundFilter(raw, effectiveKeyword, col.campaignFilter, data.campaignGroups)
+                                                                            if (col.sheetFilter) {
+                                                                                rowForCol = enrichOfflineRow(rowForCol, col.sheetFilter)
+                                                                            }
                                                                             const val = evaluateFormula(col.formula, rowForCol, varContext, sourceMapping, platformSet, layoutCustomMetrics)
                                                                             const hl = highlightClass(val, col)
                                                                             if (col.isManual) {
@@ -1536,9 +1550,13 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                                                                             if (col.formula === 'fecha') {
                                                                                 return <TableCell key={col.id} className="text-indigo-600 dark:text-indigo-300 font-bold tracking-tight">Sem {week.weekNumber}</TableCell>
                                                                             }
-                                                                            const colWeekRows = col.campaignFilter
-                                                                                ? weekRows.map((r: any) => applyCompoundFilter(r, effectiveKeyword, col.campaignFilter, data.campaignGroups))
-                                                                                : weekRows
+                                                                            let colWeekRows = weekRows
+                                                                            if (col.campaignFilter) {
+                                                                                colWeekRows = colWeekRows.map((r: any) => applyCompoundFilter(r, effectiveKeyword, col.campaignFilter, data.campaignGroups))
+                                                                            }
+                                                                            if (col.sheetFilter) {
+                                                                                colWeekRows = colWeekRows.map((r: any) => enrichOfflineRow(r, col.sheetFilter))
+                                                                            }
                                                                             const val = aggregateFormula(col.formula, colWeekRows, varContext, sourceMapping, platformSet, layoutCustomMetrics)
                                                                             const hl = col.highlight ? highlightClass(val, col) : ''
                                                                             return (
@@ -1629,6 +1647,8 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                     allLayouts={allLayouts || []}
                     isCustomized={layoutIsCustomized}
                     conversionesCatalogo={conversionesCatalogo}
+                    googleSheetsConversiones={cliente.config_api?.google_sheets_conversiones}
+                    conversionesOfflineRaw={data.conversionesOfflineRaw || []}
                     campaignGroups={data.campaignGroups || []}
                     campaignNames={allCampaignNames}
                     onClose={() => setShowModal(false)}

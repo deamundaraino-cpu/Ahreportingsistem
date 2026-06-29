@@ -38,6 +38,24 @@ export interface FormFilterSpec {
     value: string | string[]
 }
 
+export type SheetFilterOperator =
+    | 'equals'
+    | 'not_equals'
+    | 'includes'
+    | 'excludes'
+    | 'any_of'
+    | 'none_of'
+    | 'greater_than'
+    | 'less_than'
+    | 'greater_equal'
+    | 'less_equal'
+
+export interface SheetFilterSpec {
+    field: string // e.g. "sheet_rango_inversion" or standard fields "tipo", "fuente", "notas"
+    operator: SheetFilterOperator
+    value: string | string[]
+}
+
 /**
  * Attribution strategy presets for layouts.
  * Determines which data sources are used for semantic aliases ($visitas, $conversiones, etc.)
@@ -61,6 +79,7 @@ export interface ColDef {
     isManual?: boolean
     campaignFilter?: CampaignFilterSpec
     formFilter?: FormFilterSpec
+    sheetFilter?: SheetFilterSpec
 }
 
 export interface CardDef {
@@ -73,6 +92,7 @@ export interface CardDef {
     color?: CardColor
     campaignFilter?: CampaignFilterSpec
     formFilter?: FormFilterSpec
+    sheetFilter?: SheetFilterSpec
     account_id?: string
     // Visualization variants
     variant?: CardVariant
@@ -105,6 +125,7 @@ export interface ChartDef {
     height?: number
     campaignFilter?: CampaignFilterSpec
     formFilter?: FormFilterSpec
+    sheetFilter?: SheetFilterSpec
     account_id?: string
     yAxes?: ('left' | 'right')[]
     types?: ('line' | 'bar' | 'area' | '')[]
@@ -112,6 +133,8 @@ export interface ChartDef {
     showDataLabels?: boolean
     periodicity?: 'day' | 'week' | 'month' | 'year'
     units?: ('number' | 'currency' | 'percent')[]
+    dimension?: 'campaigns' | 'ads' | 'adsets' | 'tiktok_campaigns' | 'tiktok_ads' | 'tiktok_adgroups'
+    topN?: number
 }
 
 export interface TextBlockDef {
@@ -151,6 +174,7 @@ export interface RankingTableDef {
     showRank?: boolean
     campaignFilter?: CampaignFilterSpec
     formFilter?: FormFilterSpec
+    sheetFilter?: SheetFilterSpec
     account_id?: string
 }
 

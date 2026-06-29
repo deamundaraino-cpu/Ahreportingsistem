@@ -17,6 +17,7 @@ import {
     Shield,
     FileText,
     Key,
+    Sliders,
     ArrowLeftRight,
     MessageCircle,
     Bell,
@@ -91,9 +92,7 @@ export function AppSidebar({ initialRole = 'viewer', userId = '' }: { initialRol
         { name: 'Ajustes de Sistema', href: '/admin/settings', icon: Settings, show: true },
         { name: 'Constructor de Layouts', href: '/admin/layouts', icon: Users, show: true },
         { name: 'Reportes Mensuales', href: '/admin/reports', icon: FileText, show: hasAdminAccess },
-        { name: 'Gestión de Usuarios', href: '/admin/users', icon: Shield, show: hasAdminAccess },
-        { name: 'API & Integraciones', href: '/admin/api-tokens', icon: Key, show: hasAdminAccess },
-        { name: 'WhatsApp', href: '/admin/whatsapp', icon: MessageCircle, show: hasAdminAccess },
+        { name: 'Configuración y Alertas', href: '/admin/configuracion', icon: Sliders, show: hasAdminAccess },
     ].filter(item => item.show)
 
     const isActive = (path: string) => pathname?.startsWith(path)

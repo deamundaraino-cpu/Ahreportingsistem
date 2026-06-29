@@ -6,6 +6,7 @@ import { getAgencyAccessToken, hasAgencyGoogleConnection } from '@/lib/integrati
 import { notifyUsers } from '@/lib/notifications/notify'
 import { colombiaToday, colombiaYesterday } from '@/lib/date-utils'
 import { metaFetch, tiktokFetch, hotmartFetch, ga4Run, setRetryDeadline } from '@/lib/rate-limit'
+import { evaluateAlertRules } from '@/lib/notifications/rules-engine'
 
 export const maxDuration = 300 // 5 minutos — necesario para sincronizar rangos amplios
 
@@ -663,6 +664,9 @@ export async function GET(request: Request) {
                                 if (type.startsWith('offsite_conversion.fb_pixel_custom.')) {
                                     const key = type.replace('offsite_conversion.fb_pixel_custom.', '').toLowerCase()
                                     cCustomConversions[key] = (cCustomConversions[key] || 0) + val
+                                } else if (type.startsWith('offsite_conversion.custom.')) {
+                                    const key = type.replace('offsite_conversion.custom.', '').toLowerCase()
+                                    cCustomConversions[key] = (cCustomConversions[key] || 0) + val
                                 }
                             })
                         }
@@ -845,6 +849,9 @@ export async function GET(request: Request) {
                             const val = parseInt(cv.value || '0')
                             if (type.startsWith('offsite_conversion.fb_pixel_custom.')) {
                                 const key = type.replace('offsite_conversion.fb_pixel_custom.', '').toLowerCase()
+                                iCustomConversions[key] = (iCustomConversions[key] || 0) + val
+                            } else if (type.startsWith('offsite_conversion.custom.')) {
+                                const key = type.replace('offsite_conversion.custom.', '').toLowerCase()
                                 iCustomConversions[key] = (iCustomConversions[key] || 0) + val
                             }
                         })
@@ -1067,12 +1074,40 @@ export async function GET(request: Request) {
 
             // Auto-discover custom conversions → upsert into catalog (last_seen = fin del rango)
             if (allCustomKeys.size > 0) {
+                const customConversionNames: Record<string, string> = {}
+                await Promise.all(
+                    accountsToFetch.map(async ({ account_id, token }) => {
+                        try {
+                            const actId = account_id.startsWith('act_') ? account_id : `act_${account_id}`
+                            const ccUrl = new URL(`https://graph.facebook.com/v19.0/${actId}/customconversions`)
+                            ccUrl.searchParams.append('access_token', token)
+                            ccUrl.searchParams.append('fields', 'id,name')
+                            const res = await fetch(ccUrl.toString())
+                            const ccData = await res.json()
+                            if (ccData.data) {
+                                ccData.data.forEach((cc: any) => {
+                                    customConversionNames[cc.id] = cc.name
+                                })
+                            }
+                        } catch (e: any) {
+                            log(`[Meta] Error consultando customconversions (non-critical): ${e?.message}`)
+                        }
+                    })
+                )
+
                 const catalogRows = Array.from(allCustomKeys).map((key) => {
-                    const label = key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()).trim()
+                    const isNumeric = /^\d+$/.test(key)
+                    let label = ''
+                    if (isNumeric && customConversionNames[key]) {
+                        label = customConversionNames[key]
+                    } else {
+                        const cleanLabel = key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()).trim()
+                        label = `Lead ${cleanLabel.replace('Lead', '').trim() || cleanLabel}`
+                    }
                     return {
                         cliente_id: cliente.id,
                         conversion_key: key,
-                        label: `Lead ${label.replace('Lead', '').trim() || label}`,
+                        label: label,
                         field_id: `meta_custom_${key}`,
                         last_seen: endDate,
                     }
@@ -1916,5 +1951,17 @@ export async function GET(request: Request) {
         })
     }
 
-    return NextResponse.json({ message: 'Sync complete', results, debugLogs })
+    // Evaluar reglas de alertas condicionales
+    let alertsEvaluated = 0
+    let alertsTriggered = 0
+    try {
+        const evalRes = await evaluateAlertRules(adminSupabase)
+        alertsEvaluated = evalRes.evaluated
+        alertsTriggered = evalRes.triggered
+        log(`[Alerts Engine] ✓ Evaluated ${alertsEvaluated} rules, triggered ${alertsTriggered} alerts.`)
+    } catch (err) {
+        log(`[Alerts Engine] ❌ Error running rules engine: ${err}`)
+    }
+
+    return NextResponse.json({ message: 'Sync complete', results, debugLogs, alerts: { evaluated: alertsEvaluated, triggered: alertsTriggered } })
 }

@@ -60,7 +60,7 @@ export interface ConversionRow {
   valor: number | null
   fuente: string
   notas: string
-  custom_fields: Record<string, number>
+  custom_fields: Record<string, any>
 }
 
 export interface ConversionDiaria {
@@ -234,14 +234,14 @@ export async function fetchConversionesFromSheet(config: ConversionesConfig): Pr
   }
 
   // Determinar qué columnas extra procesar
-  // Si hay custom_columns configuradas → solo las que tienen include:true y type numérico
-  // Si no hay configuración → todas las numéricas (comportamiento legacy)
+  // Si hay custom_columns configuradas → las que tienen include:true (incluyendo texto/fecha)
+  // Si no hay configuración → todas las detectadas por defecto
   const customCols = config.custom_columns
   let extraColsToProcess: Array<{ header: string; sanitized: string; type: CustomColumnType }>
 
   if (customCols && Object.keys(customCols).length > 0) {
     extraColsToProcess = Object.entries(customCols)
-      .filter(([, def]) => def.include && def.type !== 'date' && def.type !== 'text')
+      .filter(([, def]) => def.include)
       .map(([sanitized, def]) => ({ header: def.col_name, sanitized, type: def.type }))
   } else {
     // Legacy: detectar automáticamente
@@ -265,12 +265,16 @@ export async function fetchConversionesFromSheet(config: ConversionesConfig): Pr
 
     if (cantidad <= 0) continue
 
-    const custom_fields: Record<string, number> = {}
+    const custom_fields: Record<string, any> = {}
     for (const col of extraColsToProcess) {
       const raw = (row.get(col.header) || '').toString().trim()
       if (!raw) continue
-      const n = toNumber(raw)
-      if (!isNaN(n)) custom_fields[col.sanitized] = n
+      if (col.type === 'count' || col.type === 'currency' || col.type === 'percentage') {
+        const n = toNumber(raw)
+        if (!isNaN(n)) custom_fields[col.sanitized] = n
+      } else {
+        custom_fields[col.sanitized] = raw
+      }
     }
 
     conversiones.push({ fecha, tipo, cantidad, valor, fuente, notas, custom_fields })
@@ -308,15 +312,16 @@ export function computeConversionesAggregates(
 
     for (const [k, v] of Object.entries(row.custom_fields)) {
       const colType = customColumnsConfig?.[k]?.type ?? 'count'
+      if (colType === 'text' || colType === 'date') continue
 
       if (colType === 'percentage') {
         // Promedio ponderado: cada fila contribuye val*cantidad
         if (!entry._pct_sums[k]) entry._pct_sums[k] = { total: 0, weight: 0 }
-        entry._pct_sums[k].total  += v * row.cantidad
+        entry._pct_sums[k].total  += (v as number) * row.cantidad
         entry._pct_sums[k].weight += row.cantidad
       } else {
         // count / currency → suma directa
-        entry.custom_fields[k] = (entry.custom_fields[k] ?? 0) + v
+        entry.custom_fields[k] = (entry.custom_fields[k] ?? 0) + (v as number)
       }
     }
   }
@@ -375,6 +380,7 @@ export async function saveConversionesToDb(
     const toInsert = rows.map(r => ({
       cliente_id: clienteId, fecha: r.fecha, tipo: r.tipo,
       cantidad: r.cantidad, valor: r.valor, fuente: r.fuente, notas: r.notas,
+      custom_fields: r.custom_fields,
     }))
     for (let i = 0; i < toInsert.length; i += 500) {
       const { error } = await supabase.from('conversiones_offline').insert(toInsert.slice(i, i + 500))

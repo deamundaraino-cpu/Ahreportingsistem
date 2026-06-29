@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef, useCallback, useEffect } from 'react'
+import { useState, useRef, useCallback, useEffect, useMemo } from 'react'
 import { cloneLayoutForCliente, saveClienteLayout, resetClienteLayout, saveTabOverrides } from '../_actions'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -10,7 +10,7 @@ import {
     ChevronLeft, Eye, EyeOff, LayoutPanelTop, Plus, Database, BarChart3, Copy
 } from 'lucide-react'
 import { Popover, PopoverContent, PopoverTrigger, PopoverAnchor } from '@/components/ui/popover'
-import type { ColDef, CardDef, ChartDef, ChartType, ReportLayout, CardColor, CampaignFilterSpec, CampaignFilterOperator, RankingTableDef, RankingColumnDef, CardVariant, CardThreshold } from '@/lib/layout-types'
+import type { ColDef, CardDef, ChartDef, ChartType, ReportLayout, CardColor, CampaignFilterSpec, CampaignFilterOperator, SheetFilterSpec, SheetFilterOperator, RankingTableDef, RankingColumnDef, CardVariant, CardThreshold } from '@/lib/layout-types'
 import { toast } from 'sonner'
 
 // ─── Available Metrics for Dropdown ──────────────────────────────────────────
@@ -165,11 +165,46 @@ export const AVAILABLE_METRICS = [
 ]
 
 /** Build dynamic metric list merging static + catalog custom conversions */
-export function buildAvailableMetrics(conversionesCatalogo: { conversion_key: string; label: string; field_id: string }[]) {
-    const dynamic = conversionesCatalogo.map(c => ({ id: c.field_id, label: `Meta: ${c.label}` }))
-    // Merge, removing duplicates by id
+export function buildAvailableMetrics(
+    conversionesCatalogo: { conversion_key: string; label: string; field_id: string }[] = [],
+    googleSheetsConversiones?: any[]
+) {
+    const dynamic = (conversionesCatalogo || []).map(c => ({ id: c.field_id, label: `Meta: ${c.label}` }))
+
+    const offlineMetrics = [
+        { id: 'offline_leads',        label: 'Offline: Leads' },
+        { id: 'offline_ventas',       label: 'Offline: Ventas' },
+        { id: 'offline_revenue',      label: 'Offline: Revenue' },
+        { id: 'offline_total',        label: 'Offline: Total' },
+        { id: 'offline_cpa',          label: 'Offline: CPA Real' },
+        { id: 'offline_close_rate',   label: 'Offline: Close Rate (%)' },
+        { id: 'offline_roas',         label: 'Offline: ROAS Real' },
+        { id: 'total_leads',          label: 'Offline: Leads Totales' },
+        { id: 'total_cpl',            label: 'Offline: CPL Real' },
+    ]
+
+    const sheetCustomMetrics: { id: string; label: string }[] = []
+    if (googleSheetsConversiones && Array.isArray(googleSheetsConversiones)) {
+        for (const config of googleSheetsConversiones) {
+            if (!config.enabled || !config.custom_columns) continue
+            for (const [sanitized, col] of Object.entries(config.custom_columns as Record<string, any>)) {
+                if (col.include && col.type !== 'date' && col.type !== 'text') {
+                    sheetCustomMetrics.push({
+                        id: `sheet_${sanitized}`,
+                        label: `GSheets: ${col.label}`
+                    })
+                }
+            }
+        }
+    }
+
     const existing = new Set(AVAILABLE_METRICS.map(m => m.id))
-    const extras = dynamic.filter(d => !existing.has(d.id))
+    const extras = [
+        ...dynamic,
+        ...offlineMetrics,
+        ...sheetCustomMetrics
+    ].filter(d => !existing.has(d.id))
+
     return [...AVAILABLE_METRICS, ...extras]
 }
 
@@ -183,7 +218,7 @@ export function FormulaInput({ value, onChange, disabled, availableMetrics }: {
 }) {
     const inputRef = useRef<HTMLInputElement>(null)
     const [search, setSearch] = useState('')
-    const [activeTab, setActiveTab] = useState<'all' | 'meta' | 'tiktok' | 'ventas' | 'ga4'>('all')
+    const [activeTab, setActiveTab] = useState<'all' | 'meta' | 'tiktok' | 'ventas' | 'ga4' | 'offline'>('all')
     const metrics = availableMetrics || AVAILABLE_METRICS
 
     const insertMetric = (metricId: string) => {
@@ -201,6 +236,7 @@ export function FormulaInput({ value, onChange, disabled, availableMetrics }: {
         if (activeTab === 'tiktok') return m.id.startsWith('tiktok_')
         if (activeTab === 'ventas') return m.id.startsWith('ventas_') || m.id.startsWith('total_') || m.id.startsWith('funnel_')
         if (activeTab === 'ga4') return m.id.startsWith('ga_')
+        if (activeTab === 'offline') return m.id.startsWith('offline_') || m.id.startsWith('sheet_') || m.label.startsWith('Offline:') || m.label.startsWith('GSheets:')
         return true
     })
 
@@ -231,14 +267,14 @@ export function FormulaInput({ value, onChange, disabled, availableMetrics }: {
                             />
                         </div>
                         <div className="flex gap-1 p-1 bg-background border-b border-border text-[9px] overflow-x-auto custom-scrollbar">
-                            {(['all', 'meta', 'tiktok', 'ventas', 'ga4'] as const).map(tab => (
+                            {(['all', 'meta', 'tiktok', 'ventas', 'ga4', 'offline'] as const).map(tab => (
                                 <button
                                     key={tab}
                                     type="button"
                                     onClick={() => setActiveTab(tab)}
                                     className={`px-1.5 py-0.5 rounded transition whitespace-nowrap flex-shrink-0 ${activeTab === tab ? 'bg-indigo-600 text-white font-semibold' : 'text-muted-foreground hover:text-foreground'}`}
                                 >
-                                    {tab === 'all' ? 'Todos' : tab === 'ventas' ? 'Ventas' : tab === 'ga4' ? 'GA4' : tab === 'tiktok' ? 'TikTok' : 'Meta'}
+                                    {tab === 'all' ? 'Todos' : tab === 'ventas' ? 'Ventas' : tab === 'ga4' ? 'GA4' : tab === 'tiktok' ? 'TikTok' : tab === 'offline' ? 'Offline' : 'Meta'}
                                 </button>
                             ))}
                         </div>
@@ -310,7 +346,7 @@ export function MetricTypeSelector({ prefix, suffix, onChange }: {
 // ─── DnD Column Row ───────────────────────────────────────────────────────────
 
 function DraggableColumnRow({
-    col, index, onDragStart, onDragOver, onDrop, onUpdate, onRemove, availableMetrics, campaignGroups = [], campaignNames = []
+    col, index, onDragStart, onDragOver, onDrop, onUpdate, onRemove, availableMetrics, campaignGroups = [], campaignNames = [], googleSheetsConversiones = [], conversionesOfflineRaw = []
 }: {
     col: ColDef
     index: number
@@ -322,6 +358,8 @@ function DraggableColumnRow({
     availableMetrics?: { id: string; label: string }[]
     campaignGroups?: { id: string; nombre: string }[]
     campaignNames?: string[]
+    googleSheetsConversiones?: any[]
+    conversionesOfflineRaw?: any[]
 }) {
     return (
         <div
@@ -384,6 +422,13 @@ function DraggableColumnRow({
                                 onChange={v => onUpdate({ ...col, campaignFilter: v })}
                                 campaignGroups={campaignGroups}
                                 campaignNames={campaignNames}
+                            />
+
+                            <SheetFilterPicker
+                                value={col.sheetFilter}
+                                onChange={v => onUpdate({ ...col, sheetFilter: v })}
+                                googleSheetsConversiones={googleSheetsConversiones}
+                                conversionesOfflineRaw={conversionesOfflineRaw}
                             />
 
                             {col.isManual && (
@@ -455,7 +500,7 @@ export const COLOR_OPTIONS: { val: CardColor; bg: string }[] = [
 ]
 
 function DraggableCardRow({
-    card, index, onDragStart, onDragOver, onDrop, onUpdate, onRemove, onDuplicate, availableMetrics, campaignGroups = [], campaignNames = [], tiktokAccounts = []
+    card, index, onDragStart, onDragOver, onDrop, onUpdate, onRemove, onDuplicate, availableMetrics, campaignGroups = [], campaignNames = [], tiktokAccounts = [], googleSheetsConversiones = [], conversionesOfflineRaw = []
 }: {
     card: CardDef
     index: number
@@ -469,6 +514,8 @@ function DraggableCardRow({
     campaignGroups?: { id: string; nombre: string }[]
     campaignNames?: string[]
     tiktokAccounts?: { id: string; label: string; advertiser_id: string }[]
+    googleSheetsConversiones?: any[]
+    conversionesOfflineRaw?: any[]
 }) {
     return (
         <div
@@ -520,6 +567,12 @@ function DraggableCardRow({
                             onChange={v => onUpdate({ ...card, campaignFilter: v })}
                             campaignGroups={campaignGroups}
                             campaignNames={campaignNames}
+                        />
+                        <SheetFilterPicker
+                            value={card.sheetFilter}
+                            onChange={v => onUpdate({ ...card, sheetFilter: v })}
+                            googleSheetsConversiones={googleSheetsConversiones}
+                            conversionesOfflineRaw={conversionesOfflineRaw}
                         />
                     </div>
                     {hasTikTokFormula(card.formula) && (
@@ -657,7 +710,7 @@ export const CHART_COLOR_OPTIONS = [
 ]
 
 function DraggableChartRow({
-    chart, index, onDragStart, onDragOver, onDrop, onUpdate, onRemove, onDuplicate, availableMetrics, campaignGroups = [], campaignNames = [], tiktokAccounts = []
+    chart, index, onDragStart, onDragOver, onDrop, onUpdate, onRemove, onDuplicate, availableMetrics, campaignGroups = [], campaignNames = [], tiktokAccounts = [], googleSheetsConversiones = [], conversionesOfflineRaw = []
 }: {
     chart: ChartDef
     index: number
@@ -671,6 +724,8 @@ function DraggableChartRow({
     campaignGroups?: { id: string; nombre: string }[]
     campaignNames?: string[]
     tiktokAccounts?: { id: string; label: string; advertiser_id: string }[]
+    googleSheetsConversiones?: any[]
+    conversionesOfflineRaw?: any[]
 }) {
     const isCircular = chart.type === 'donut' || chart.type === 'pie' || chart.type === 'radial' || chart.type === 'funnel'
     const maxMetrics = chart.type === 'scatter' ? 2 : isCircular ? 6 : 5
@@ -903,7 +958,46 @@ function DraggableChartRow({
             <div className="pl-6 pt-2 border-t border-border space-y-2 text-[10px]">
                 {/* Periodicity & Show Data Labels */}
                 <div className="flex flex-wrap items-center gap-4">
-                    {isCartesian && (
+                    <div className="flex flex-col gap-0.5">
+                        <span className="text-muted-foreground/70 font-medium">Agrupación:</span>
+                        <select
+                            value={chart.dimension || ''}
+                            onChange={(e) => {
+                                const dim = e.target.value || undefined
+                                onUpdate({ ...chart, dimension: dim as any })
+                            }}
+                            className="bg-background border border-border text-foreground/90 rounded px-1.5 py-0.5 outline-none hover:border-muted-foreground/30 cursor-pointer text-[9px]"
+                        >
+                            <option value="">Temporal (Fecha)</option>
+                            <optgroup label="Meta">
+                                <option value="campaigns">Meta: Campañas</option>
+                                <option value="adsets">Meta: Conjuntos de Anuncios</option>
+                                <option value="ads">Meta: Anuncios</option>
+                            </optgroup>
+                            <optgroup label="TikTok">
+                                <option value="tiktok_campaigns">TikTok: Campañas</option>
+                                <option value="tiktok_adgroups">TikTok: Grupos de Anuncios</option>
+                                <option value="tiktok_ads">TikTok: Anuncios</option>
+                            </optgroup>
+                        </select>
+                    </div>
+
+                    {chart.dimension && (
+                        <div className="flex flex-col gap-0.5">
+                            <span className="text-muted-foreground/70 font-medium">Top N:</span>
+                            <select
+                                value={chart.topN || 10}
+                                onChange={(e) => onUpdate({ ...chart, topN: Number(e.target.value) })}
+                                className="bg-background border border-border text-foreground/90 rounded px-1.5 py-0.5 outline-none hover:border-muted-foreground/30 cursor-pointer text-[9px]"
+                            >
+                                {[5, 10, 15, 20, 30].map(n => (
+                                    <option key={n} value={n}>Top {n}</option>
+                                ))}
+                            </select>
+                        </div>
+                    )}
+
+                    {isCartesian && !chart.dimension && (
                         <div className="flex flex-col gap-0.5">
                             <span className="text-muted-foreground/70 font-medium">Temporalidad por defecto:</span>
                             <select
@@ -948,6 +1042,12 @@ function DraggableChartRow({
                             onChange={v => onUpdate({ ...chart, campaignFilter: v })}
                             campaignGroups={campaignGroups}
                             campaignNames={campaignNames}
+                        />
+                        <SheetFilterPicker
+                            value={chart.sheetFilter}
+                            onChange={v => onUpdate({ ...chart, sheetFilter: v })}
+                            googleSheetsConversiones={googleSheetsConversiones}
+                            conversionesOfflineRaw={conversionesOfflineRaw}
                         />
                         <div className="flex items-center gap-1 flex-shrink-0">
                             <span className="text-muted-foreground/70">Alto:</span>
@@ -1214,6 +1314,154 @@ export function CampaignFilterPicker({
     )
 }
 
+const SHEET_OPERATORS = [
+    { value: 'equals', label: 'Igual a' },
+    { value: 'not_equals', label: 'Diferente de' },
+    { value: 'includes', label: 'Contiene' },
+    { value: 'excludes', label: 'No contiene' },
+    { value: 'any_of', label: 'Cualquiera de' },
+    { value: 'none_of', label: 'Ninguno de' },
+    { value: 'greater_than', label: 'Mayor que (>)' },
+    { value: 'less_than', label: 'Menor que (<)' },
+    { value: 'greater_equal', label: 'Mayor o igual (>=)' },
+    { value: 'less_equal', label: 'Menor o igual (<=)' },
+]
+
+export function SheetFilterPicker({
+    value,
+    onChange,
+    googleSheetsConversiones = [],
+    conversionesOfflineRaw = [],
+}: {
+    value?: SheetFilterSpec
+    onChange: (v: SheetFilterSpec | undefined) => void
+    googleSheetsConversiones?: any[]
+    conversionesOfflineRaw?: any[]
+}) {
+    const hasSheets = googleSheetsConversiones && googleSheetsConversiones.length > 0
+    if (!hasSheets) return null
+
+    const currentField = value?.field || ''
+    const currentOp: SheetFilterOperator = value?.operator || 'equals'
+
+    const uniqueValues = useMemo(() => {
+        if (!currentField || !conversionesOfflineRaw || conversionesOfflineRaw.length === 0) return []
+        const fieldKey = currentField.startsWith('sheet_') ? currentField.replace('sheet_', '') : currentField
+        const set = new Set<string>()
+        conversionesOfflineRaw.forEach(row => {
+            let val = ''
+            if (fieldKey === 'tipo') val = row.tipo
+            else if (fieldKey === 'fuente') val = row.fuente
+            else if (fieldKey === 'notas') val = row.notas
+            else val = row.custom_fields?.[fieldKey] ?? ''
+
+            if (val !== undefined && val !== null && val !== '') {
+                set.add(String(val))
+            }
+        })
+        return Array.from(set).sort()
+    }, [currentField, conversionesOfflineRaw])
+
+    function handleFieldChange(field: string) {
+        if (!field) {
+            onChange(undefined)
+            return
+        }
+        onChange({ field, operator: currentOp, value: '' })
+    }
+
+    function handleOperatorChange(op: SheetFilterOperator) {
+        if (!currentField) return
+        onChange({ field: currentField, operator: op, value: value?.value || '' })
+    }
+
+    function handleValueChange(val: string) {
+        if (!currentField) return
+        onChange({ field: currentField, operator: currentOp, value: val })
+    }
+
+    const hasFilter = value !== undefined && !!value.field
+
+    return (
+        <div className="flex items-center gap-1.5 flex-shrink-0" title="Filtro de Google Sheets (opcional)">
+            <span className="text-[10px] text-muted-foreground/70 flex-shrink-0">Sheet:</span>
+
+            {/* Field selector */}
+            <select
+                value={currentField}
+                onChange={e => handleFieldChange(e.target.value)}
+                className="h-6 text-xs bg-background border border-border text-foreground/90 rounded px-1.5 max-w-[130px]"
+            >
+                <option value="">Filtro Sheet...</option>
+                <optgroup label="Campos Estándar">
+                    <option value="tipo">Tipo</option>
+                    <option value="fuente">Fuente</option>
+                    <option value="notas">Notas</option>
+                </optgroup>
+                <optgroup label="Campos del Sheet">
+                    {googleSheetsConversiones.map(config => {
+                        if (!config.enabled || !config.custom_columns) return null
+                        return Object.entries(config.custom_columns).map(([sanitized, col]: [string, any]) => {
+                            if (!col.include) return null
+                            return (
+                                <option key={sanitized} value={`sheet_${sanitized}`}>
+                                    {col.label}
+                                </option>
+                            )
+                        })
+                    })}
+                </optgroup>
+            </select>
+
+            {currentField && (
+                <>
+                    {/* Operator selector */}
+                    <select
+                        value={currentOp}
+                        onChange={e => handleOperatorChange(e.target.value as SheetFilterOperator)}
+                        className="h-6 text-xs bg-background border border-border text-foreground/90 rounded px-1.5 max-w-[120px]"
+                    >
+                        {SHEET_OPERATORS.map(op => (
+                            <option key={op.value} value={op.value}>{op.label}</option>
+                        ))}
+                    </select>
+
+                    {/* Value selector/input */}
+                    {uniqueValues.length > 0 ? (
+                        <select
+                            value={typeof value?.value === 'string' ? value.value : ''}
+                            onChange={e => handleValueChange(e.target.value)}
+                            className="h-6 text-xs bg-background border border-border text-foreground/90 rounded px-1.5 max-w-[150px]"
+                        >
+                            <option value="">Valor...</option>
+                            {uniqueValues.map(val => (
+                                <option key={val} value={val}>{val}</option>
+                            ))}
+                        </select>
+                    ) : (
+                        <Input
+                            value={typeof value?.value === 'string' ? value.value : ''}
+                            onChange={e => handleValueChange(e.target.value)}
+                            placeholder="Valor..."
+                            className="h-6 text-xs bg-background border-border text-foreground/90 w-28"
+                        />
+                    )}
+                </>
+            )}
+
+            {hasFilter && (
+                <button
+                    onClick={() => onChange(undefined)}
+                    title="Limpiar filtro de Sheet"
+                    className="text-muted-foreground/70 hover:text-red-400 transition flex-shrink-0"
+                >
+                    <X className="w-3 h-3" />
+                </button>
+            )}
+        </div>
+    )
+}
+
 // ─── Main Modal ───────────────────────────────────────────────────────────────
 
 export function LayoutConfigModal({
@@ -1225,6 +1473,8 @@ export function LayoutConfigModal({
     onLayoutApplied,
     tabId,
     conversionesCatalogo = [],
+    googleSheetsConversiones = [],
+    conversionesOfflineRaw = [],
     campaignGroups = [],
     campaignNames = [],
     tiktokAccounts = [],
@@ -1237,11 +1487,13 @@ export function LayoutConfigModal({
     onLayoutApplied: (layout: ReportLayout) => void
     tabId?: string
     conversionesCatalogo?: { conversion_key: string; label: string; field_id: string }[]
+    googleSheetsConversiones?: any[]
+    conversionesOfflineRaw?: any[]
     campaignGroups?: { id: string; nombre: string }[]
     campaignNames?: string[]
     tiktokAccounts?: { id: string; label: string; advertiser_id: string }[]
 }) {
-    const availableMetrics = buildAvailableMetrics(conversionesCatalogo)
+    const availableMetrics = buildAvailableMetrics(conversionesCatalogo, googleSheetsConversiones)
     const [step, setStep] = useState<'select' | 'edit'>(currentLayout ? 'edit' : 'select')
     const [workingLayout, setWorkingLayout] = useState<ReportLayout | null>(currentLayout)
     const [loading, setLoading] = useState(false)
@@ -1704,6 +1956,8 @@ export function LayoutConfigModal({
                                                 availableMetrics={availableMetrics}
                                                 campaignGroups={campaignGroups}
                                                 campaignNames={campaignNames}
+                                                googleSheetsConversiones={googleSheetsConversiones}
+                                                conversionesOfflineRaw={conversionesOfflineRaw}
                                             />
                                         </div>
                                     ))}
@@ -1749,6 +2003,8 @@ export function LayoutConfigModal({
                                                 campaignGroups={campaignGroups}
                                                 campaignNames={campaignNames}
                                                 tiktokAccounts={tiktokAccounts}
+                                                googleSheetsConversiones={googleSheetsConversiones}
+                                                conversionesOfflineRaw={conversionesOfflineRaw}
                                             />
                                         </div>
                                     ))}
@@ -1801,6 +2057,8 @@ export function LayoutConfigModal({
                                         campaignGroups={campaignGroups}
                                         campaignNames={campaignNames}
                                         tiktokAccounts={tiktokAccounts}
+                                        googleSheetsConversiones={googleSheetsConversiones}
+                                        conversionesOfflineRaw={conversionesOfflineRaw}
                                     />
                                 ))}
                                 {(!workingLayout.graficos || workingLayout.graficos.length === 0) && (

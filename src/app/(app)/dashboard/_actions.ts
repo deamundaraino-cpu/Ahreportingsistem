@@ -140,7 +140,7 @@ export async function getDashboardData(clientId: string, startStr: string, endSt
   if (startStr !== 'all') leadsQuery = leadsQuery.gte('date', startStr);
   leadsQuery = leadsQuery.lte('date', endStr);
 
-  let convOfflineQuery = supabase.from('conversiones_offline_diarias').select('*').eq('cliente_id', cliente.id);
+  let convOfflineQuery = supabase.from('conversiones_offline').select('*').eq('cliente_id', cliente.id);
   if (startStr !== 'all') convOfflineQuery = convOfflineQuery.gte('fecha', startStr);
   convOfflineQuery = convOfflineQuery.lte('fecha', endStr);
 
@@ -169,24 +169,28 @@ export async function getDashboardData(clientId: string, startStr: string, endSt
     prevMetricsPromise,
   ]);
 
-  // Aggregate conversiones_offline_diarias por fecha
-  // (múltiples filas por fecha — una por tipo+fuente — se colapsan en un objeto por fecha)
-  // Los custom_fields se exponen con prefijo sheet_ para que el formula engine los detecte.
-  const convOfflineByDate = new Map<string, Record<string, number>>();
+  // Aggregate individual conversiones_offline rows by date
+  const convOfflineByDate = new Map<string, { summary: Record<string, number>; rows: any[] }>();
   for (const row of convOfflineRes.data || []) {
-    const entry = convOfflineByDate.get(row.fecha) || { offline_leads: 0, offline_ventas: 0, offline_revenue: 0, offline_total: 0 };
-    const cantidad = row.total_cantidad || 0;
-    const valor    = Number(row.total_valor) || 0;
-    if (row.tipo === 'lead')  entry.offline_leads  += cantidad;
-    if (row.tipo === 'venta') entry.offline_ventas += cantidad;
-    entry.offline_revenue += valor;
-    entry.offline_total   += cantidad;
-    // Aplanar custom_fields con prefijo sheet_
-    for (const [k, v] of Object.entries((row.custom_fields as Record<string, number>) || {})) {
-      const key = `sheet_${k}`;
-      entry[key] = (entry[key] ?? 0) + Number(v);
+    const dayData = convOfflineByDate.get(row.fecha) || {
+      summary: { offline_leads: 0, offline_ventas: 0, offline_revenue: 0, offline_total: 0 },
+      rows: []
+    };
+    const cantidad = row.cantidad || 0;
+    const valor    = Number(row.valor) || 0;
+    if (row.tipo === 'lead')  dayData.summary.offline_leads  += cantidad;
+    if (row.tipo === 'venta') dayData.summary.offline_ventas += cantidad;
+    dayData.summary.offline_revenue += valor;
+    dayData.summary.offline_total   += cantidad;
+    // Flatten numeric custom_fields into summary with prefix sheet_
+    for (const [k, v] of Object.entries((row.custom_fields as Record<string, any>) || {})) {
+      if (typeof v === 'number') {
+        const key = `sheet_${k}`;
+        dayData.summary[key] = (dayData.summary[key] ?? 0) + Number(v);
+      }
     }
-    convOfflineByDate.set(row.fecha, entry);
+    dayData.rows.push(row);
+    convOfflineByDate.set(row.fecha, dayData);
   }
 
   // Merge leads data into metrics by date
@@ -202,7 +206,10 @@ export async function getDashboardData(clientId: string, startStr: string, endSt
         leads_no_calificados: leadDay.leads_no_calificados,
         tasa_calificacion: leadDay.tasa_calificacion,
       } : {}),
-      ...(offlineDay ?? {}),
+      ...(offlineDay ? {
+        ...offlineDay.summary,
+        offline_rows: offlineDay.rows,
+      } : { offline_rows: [] }),
     };
   });
 
@@ -1026,7 +1033,7 @@ export async function getMirrorDashboardData(token: string, from?: string, to?: 
   if (startStr !== 'all') mirrorLeadsQuery = mirrorLeadsQuery.gte('date', startStr);
   mirrorLeadsQuery = mirrorLeadsQuery.lte('date', endStr);
 
-  let mirrorConvOfflineQuery = supabase.from('conversiones_offline_diarias').select('*').eq('cliente_id', cliente.id);
+  let mirrorConvOfflineQuery = supabase.from('conversiones_offline').select('*').eq('cliente_id', cliente.id);
   if (startStr !== 'all') mirrorConvOfflineQuery = mirrorConvOfflineQuery.gte('fecha', startStr);
   mirrorConvOfflineQuery = mirrorConvOfflineQuery.lte('fecha', endStr);
 
@@ -1058,20 +1065,26 @@ export async function getMirrorDashboardData(token: string, from?: string, to?: 
       mirrorConvOfflineQuery,
     ]);
 
-  const mirrorConvOfflineByDate = new Map<string, Record<string, number>>();
+  const mirrorConvOfflineByDate = new Map<string, { summary: Record<string, number>; rows: any[] }>();
   for (const row of mirrorConvOfflineRes.data || []) {
-    const entry = mirrorConvOfflineByDate.get(row.fecha) || { offline_leads: 0, offline_ventas: 0, offline_revenue: 0, offline_total: 0 };
-    const cantidad = row.total_cantidad || 0;
-    const valor    = Number(row.total_valor) || 0;
-    if (row.tipo === 'lead')  entry.offline_leads  += cantidad;
-    if (row.tipo === 'venta') entry.offline_ventas += cantidad;
-    entry.offline_revenue += valor;
-    entry.offline_total   += cantidad;
-    for (const [k, v] of Object.entries((row.custom_fields as Record<string, number>) || {})) {
-      const key = `sheet_${k}`;
-      entry[key] = (entry[key] ?? 0) + Number(v);
+    const dayData = mirrorConvOfflineByDate.get(row.fecha) || {
+      summary: { offline_leads: 0, offline_ventas: 0, offline_revenue: 0, offline_total: 0 },
+      rows: []
+    };
+    const cantidad = row.cantidad || 0;
+    const valor    = Number(row.valor) || 0;
+    if (row.tipo === 'lead')  dayData.summary.offline_leads  += cantidad;
+    if (row.tipo === 'venta') dayData.summary.offline_ventas += cantidad;
+    dayData.summary.offline_revenue += valor;
+    dayData.summary.offline_total   += cantidad;
+    for (const [k, v] of Object.entries((row.custom_fields as Record<string, any>) || {})) {
+      if (typeof v === 'number') {
+        const key = `sheet_${k}`;
+        dayData.summary[key] = (dayData.summary[key] ?? 0) + Number(v);
+      }
     }
-    mirrorConvOfflineByDate.set(row.fecha, entry);
+    dayData.rows.push(row);
+    mirrorConvOfflineByDate.set(row.fecha, dayData);
   }
 
   const leadsMap = new Map((leadsRes.data || []).map((l: any) => [l.date, l]));
@@ -1080,7 +1093,10 @@ export async function getMirrorDashboardData(token: string, from?: string, to?: 
     const offlineDay = mirrorConvOfflineByDate.get(m.fecha);
     return {
       ...(leadDay ? { ...m, ...leadDay } : m),
-      ...(offlineDay ?? {}),
+      ...(offlineDay ? {
+        ...offlineDay.summary,
+        offline_rows: offlineDay.rows,
+      } : { offline_rows: [] }),
     };
   });
 

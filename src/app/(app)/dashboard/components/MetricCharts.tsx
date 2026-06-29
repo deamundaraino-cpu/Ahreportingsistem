@@ -1,4 +1,4 @@
-﻿'use client'
+'use client'
 
 import React, { useState, useMemo, useEffect } from 'react'
 import {
@@ -19,6 +19,8 @@ import { format, parseISO, isValid, startOfWeek, startOfMonth, startOfYear } fro
 import { es } from 'date-fns/locale'
 import type { ChartDef } from '@/lib/layout-types'
 import { enrichMetaRow, filterCampaignList } from '@/lib/campaign-filter'
+import { enrichOfflineRow } from '@/lib/offline-filter'
+import { aggregateRankingRows } from '@/lib/ranking-aggregation'
 
 // ─── Palette ──────────────────────────────────────────────────────────────────
 const PALETTE: Record<string, string> = {
@@ -95,7 +97,8 @@ function buildGroupedData(
     availablePlatforms?: Set<string>,
     customMetrics: Record<string, string> = {},
     campaignFilter?: import('@/lib/layout-types').CampaignFilterSpec,
-    campaignGroups: any[] = []
+    campaignGroups: any[] = [],
+    sheetFilter?: import('@/lib/layout-types').SheetFilterSpec
 ): Array<Record<string, any>> {
     const validRows = metrics.filter((r: any) => {
         if (!r.fecha) return false
@@ -103,11 +106,20 @@ function buildGroupedData(
         return isValid(d)
     })
 
-    // Aplica filtro de campaña a cada fila individualmente si está configurado
+    // Aplica filtro de campaña y de sheets a cada fila individualmente si están configurados
     const hasFilter = campaignFilter && (
         Array.isArray(campaignFilter.value) ? campaignFilter.value.length > 0 : campaignFilter.value !== ''
     )
-    const prepareRow = (row: any) => hasFilter ? enrichMetaRow(row, campaignFilter!, campaignGroups) : row
+    const prepareRow = (row: any) => {
+        let r = row
+        if (hasFilter) {
+            r = enrichMetaRow(r, campaignFilter!, campaignGroups)
+        }
+        if (sheetFilter) {
+            r = enrichOfflineRow(r, sheetFilter)
+        }
+        return r
+    }
 
     if (periodicity === 'day') {
         return validRows.map((row: any) => {
@@ -172,6 +184,46 @@ function buildGroupedData(
         })
         return pt
     })
+}
+
+function buildDimensionData(
+    metrics: any[],
+    formulas: string[],
+    dimension: 'campaigns' | 'ads' | 'adsets' | 'tiktok_campaigns' | 'tiktok_ads' | 'tiktok_adgroups',
+    varContext: Record<string, number> = {},
+    sourceMapping: Record<string, string> = {},
+    availablePlatforms?: Set<string>,
+    customMetrics: Record<string, string> = {},
+    campaignFilter?: import('@/lib/layout-types').CampaignFilterSpec,
+    campaignGroups: any[] = [],
+    accountId?: string,
+    effectiveKeyword?: string,
+    topN: number = 10
+): Array<Record<string, any>> {
+    const isTikTok = dimension.startsWith('tiktok_')
+    const platforms = isTikTok ? new Set(['tiktok']) : new Set(['meta'])
+
+    // Aggregate ranking rows using the same logic as RankingTableBlock
+    const aggregated = aggregateRankingRows(metrics, dimension, campaignFilter, accountId, effectiveKeyword, campaignGroups)
+
+    const withValues = aggregated.map(row => {
+        const pt: Record<string, any> = {
+            date: row._name, // using "date" as the key so Recharts' existing setup works with minimal changes
+            rawName: row._name,
+            id: row._id,
+        }
+        formulas.forEach(f => {
+            const v = evaluateFormula(f, row, varContext, sourceMapping, platforms, customMetrics)
+            pt[getLabel(f)] = v === null || isNaN(v as number) ? 0 : (v as number)
+        })
+        return pt
+    })
+
+    // Sort by the first formula descending to show the top items
+    const firstMetric = getLabel(formulas[0])
+    const sorted = withValues.sort((a, b) => (b[firstMetric] || 0) - (a[firstMetric] || 0))
+
+    return sorted.slice(0, topN)
 }
 
 // ─── Shared axis / grid styles ────────────────────────────────────────────────
@@ -313,7 +365,24 @@ function SingleMetricChart({
     const formulas = useMemo(() => chart.valueFormulas.filter(Boolean), [chart.valueFormulas])
 
     // Build grouped data — el campaignFilter se aplica por fila dentro de buildGroupedData
+    // Build grouped data or dimension data
     const data = useMemo(() => {
+        if (chart.dimension) {
+            return buildDimensionData(
+                sourceMetrics,
+                formulas,
+                chart.dimension,
+                varContext,
+                sourceMapping,
+                platformSet,
+                layoutCustomMetrics,
+                hasOwnFilter ? chart.campaignFilter : undefined,
+                campaignGroups,
+                chart.account_id,
+                effectiveKeyword,
+                chart.topN || 10
+            )
+        }
         return buildGroupedData(
             sourceMetrics,
             formulas,
@@ -323,9 +392,10 @@ function SingleMetricChart({
             platformSet,
             layoutCustomMetrics,
             hasOwnFilter ? chart.campaignFilter : undefined,
-            campaignGroups
+            campaignGroups,
+            chart.sheetFilter
         )
-    }, [sourceMetrics, formulas, periodicity, varContext, sourceMapping, platformSet, layoutCustomMetrics, chart.campaignFilter, campaignGroups, hasOwnFilter])
+    }, [sourceMetrics, formulas, periodicity, chart.dimension, chart.topN, chart.account_id, varContext, sourceMapping, platformSet, layoutCustomMetrics, chart.campaignFilter, campaignGroups, hasOwnFilter, chart.sheetFilter, effectiveKeyword])
 
     if (!formulas.length) return null
 
@@ -340,6 +410,18 @@ function SingleMetricChart({
         color: colors[i],
         unit: localUnits[i] || 'number',
     }))
+
+    // Slices for dimension-based circular charts
+    const dimensionTotals = useMemo(() => {
+        if (!chart.dimension) return []
+        const firstCat = categories[0]
+        return data.map((row, i) => ({
+            name: row.date,
+            value: row[firstCat] || 0,
+            color: colors[i % colors.length],
+            unit: localUnits[0] || 'number',
+        }))
+    }, [chart.dimension, categories, data, colors, localUnits])
 
     const isCartesian = ['area', 'stacked_area', 'bar', 'stacked_bar', 'line', 'composed'].includes(chart.type)
 
@@ -391,7 +473,7 @@ function SingleMetricChart({
                 
                 {/* Periodicity Selector & Info Badge */}
                 <div className="flex items-center gap-3 self-end sm:self-start">
-                    {isCartesian && (
+                    {isCartesian && !chart.dimension && (
                         <div className="inline-flex bg-background p-0.5 rounded-lg border border-border">
                             {(['day', 'week', 'month', 'year'] as const).map(p => (
                                 <button
@@ -422,6 +504,7 @@ function SingleMetricChart({
                     categories={categories}
                     colors={colors}
                     totals={totalByCategory}
+                    dimensionTotals={dimensionTotals}
                     chartId={chart.id}
                     localTypes={localTypes}
                     localUnits={localUnits}
@@ -431,19 +514,27 @@ function SingleMetricChart({
     )
 }
 
+const formatXAxis = (val: string) => {
+    if (!val) return ''
+    if (val.length > 15) return val.slice(0, 15) + '...'
+    return val
+}
+
 // ─── Chart Body Switcher ──────────────────────────────────────────────────────
-function ChartBody({ chart, data, categories, colors, totals, chartId, localTypes, localUnits }: {
+function ChartBody({ chart, data, categories, colors, totals, dimensionTotals, chartId, localTypes, localUnits }: {
     chart: ChartDef
     data: Array<Record<string, any>>
     categories: string[]
     colors: string[]
     totals: { name: string; value: number; color: string; unit?: string }[]
+    dimensionTotals?: { name: string; value: number; color: string; unit?: string }[]
     chartId: string
     localTypes: string[]
     localUnits: string[]
 }) {
     const H = chart.height || 240
     const type = chart.type
+    const circularData = (chart.dimension && dimensionTotals && dimensionTotals.length > 0) ? dimensionTotals : totals
 
     // Helper to get series visualization type
     const getSeriesType = (index: number, chartType: string, customTypes?: string[]) => {
@@ -478,7 +569,7 @@ function ChartBody({ chart, data, categories, colors, totals, chartId, localType
                         })}
                     </defs>
                     <CartesianGrid {...GRID} vertical={false} />
-                    <XAxis dataKey="date" tick={TICK} axisLine={false} tickLine={false} />
+                    <XAxis dataKey="date" tick={TICK} axisLine={false} tickLine={false} tickFormatter={chart.dimension ? formatXAxis : undefined} />
                     {hasLeft && (
                         <YAxis
                             yAxisId="left"
@@ -583,19 +674,19 @@ function ChartBody({ chart, data, categories, colors, totals, chartId, localType
         <ResponsiveContainer width="100%" height={H}>
             <PieChart>
                 <Pie
-                    data={totals}
+                    data={circularData}
                     cx="50%" cy="50%"
                     innerRadius={type === 'donut' ? '52%' : 0}
                     outerRadius="78%"
                     dataKey="value" nameKey="name"
                     paddingAngle={type === 'donut' ? 3 : 1}
                     label={chart.showDataLabels ? ({ name, value }) => {
-                        const item = totals.find(t => t.name === name)
+                        const item = circularData.find(t => t.name === name)
                         return `${name}: ${fmtVal(value, item?.unit)}`
                     } : false}
                 >
-                    {totals.map((t, i) => (
-                        <Cell key={t.name} fill={colors[i]} stroke="transparent" />
+                    {circularData.map((t, i) => (
+                        <Cell key={t.name} fill={t.color} stroke="transparent" />
                     ))}
                 </Pie>
                 <Tooltip content={<CustomTooltip categories={categories} localUnits={localUnits} />} />
@@ -611,12 +702,12 @@ function ChartBody({ chart, data, categories, colors, totals, chartId, localType
         <ResponsiveContainer width="100%" height={H}>
             <RadialBarChart
                 cx="50%" cy="50%" innerRadius="20%" outerRadius="90%"
-                data={totals.map((t, i) => ({ ...t, fill: colors[i] }))}
+                data={circularData.map((t, i) => ({ ...t, fill: t.color }))}
                 startAngle={90} endAngle={-270}
             >
                 <PolarGrid gridType="circle" stroke="rgba(255,255,255,0.05)" />
                 <RadialBar dataKey="value" background={{ fill: 'rgba(255,255,255,0.03)' }}
-                    cornerRadius={4} label={chart.showDataLabels ? { fill: '#a1a1aa', fontSize: 10, formatter: (val: any, index: number) => fmtVal(val, totals[index]?.unit) } : false} />
+                    cornerRadius={4} label={chart.showDataLabels ? { fill: '#a1a1aa', fontSize: 10, formatter: (val: any, index: number) => fmtVal(val, circularData[index]?.unit) } : false} />
                 <Tooltip content={<CustomTooltip categories={categories} localUnits={localUnits} />} />
                 <Legend
                     formatter={(v) => <span style={{ color: '#a1a1aa', fontSize: 11 }}>{v}</span>}
@@ -645,8 +736,8 @@ function ChartBody({ chart, data, categories, colors, totals, chartId, localType
     }
 
     if (type === 'funnel') {
-        const funnelData = totals.map((t, i) => ({
-            name: t.name, value: t.value, fill: colors[i],
+        const funnelData = circularData.map((t, i) => ({
+            name: t.name, value: t.value, fill: t.color,
         }))
         return (
             <ResponsiveContainer width="100%" height={H}>
@@ -654,14 +745,14 @@ function ChartBody({ chart, data, categories, colors, totals, chartId, localType
                     <Tooltip content={<CustomTooltip categories={categories} localUnits={localUnits} />} />
                     <Funnel dataKey="value" data={funnelData} isAnimationActive>
                         {funnelData.map((d, i) => (
-                            <Cell key={d.name} fill={colors[i]} stroke="transparent" />
+                            <Cell key={d.name} fill={d.fill} stroke="transparent" />
                         ))}
                         {chart.showDataLabels && (
                             <LabelList position="center" content={({ value, x, y, width, height, index }: any) => (
                                 <text x={x + (width ?? 0) / 2} y={y + (height ?? 0) / 2 + 1}
                                     textAnchor="middle" dominantBaseline="middle"
                                     style={{ fill: '#fff', fontSize: 11, fontWeight: 600 }}>
-                                    {fmtVal(value, totals[index]?.unit)}
+                                    {fmtVal(value, circularData[index]?.unit)}
                                 </text>
                             )} />
                         )}
