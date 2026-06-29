@@ -26,7 +26,17 @@ import {
 
 const REPORT_UTM_ENABLED = process.env.NEXT_PUBLIC_REPORT_UTM_ENABLED === 'true'
 
-export function AppSidebar({ initialRole = 'viewer', userId = '' }: { initialRole?: string; userId?: string }) {
+export function AppSidebar({ 
+    initialRole = 'viewer', 
+    userId = '', 
+    appName = 'AdsHouse', 
+    appTag = 'Reporting' 
+}: { 
+    initialRole?: string; 
+    userId?: string; 
+    appName?: string; 
+    appTag?: string 
+}) {
     const pathname = usePathname()
     const [isOpen, setIsOpen] = useState(false)
     const [role, setRole] = useState<string | null>(initialRole)
@@ -135,19 +145,29 @@ export function AppSidebar({ initialRole = 'viewer', userId = '' }: { initialRol
 
                 {/* Logo area */}
                 <div className="flex h-[68px] items-center px-5 border-b border-sidebar-border">
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-3 w-full">
                         {/* Brand icon: red-to-blue gradient matching logo */}
-                        <div className="flex h-9 w-9 items-center justify-center rounded-lg shadow-md brand-gradient-reporting">
+                        <div className="flex h-9 w-9 items-center justify-center rounded-lg shadow-md brand-gradient-reporting shrink-0 default-logo-element">
                             <BarChart3 className="h-4.5 w-4.5 text-white" />
                         </div>
-                        <div className="flex flex-col leading-tight">
+                        <div className="flex flex-col leading-tight default-logo-element">
                             <span className="text-base font-bold tracking-tight text-foreground">
-                                AdsHouse
+                                {appName}
                             </span>
                             <span className="text-[10px] font-medium text-muted-foreground tracking-wide uppercase">
-                                Reporting
+                                {appTag}
                             </span>
                         </div>
+                        {/* Custom logo container */}
+                        <div 
+                            className="custom-logo-container hidden h-9 w-full max-w-[180px]" 
+                            style={{ 
+                                backgroundImage: 'var(--brand-logo-url)', 
+                                backgroundSize: 'contain', 
+                                backgroundRepeat: 'no-repeat', 
+                                backgroundPosition: 'left center' 
+                            }} 
+                        />
                     </div>
                 </div>
 

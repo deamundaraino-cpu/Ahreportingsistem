@@ -38,7 +38,15 @@ const NAV_CONFIG = [
     { name: 'Integraciones', href: '/report-utm/integraciones', icon: Settings },
 ]
 
-export function ReportUtmSidebar({ role }: { role: string }) {
+export function ReportUtmSidebar({ 
+    role, 
+    utmName = 'Report-UTM', 
+    utmTag = 'Tracking & Atribución' 
+}: { 
+    role: string; 
+    utmName?: string; 
+    utmTag?: string 
+}) {
     const pathname = usePathname()
     const [isOpen, setIsOpen] = useState(false)
 
@@ -125,18 +133,28 @@ export function ReportUtmSidebar({ role }: { role: string }) {
             `}>
                 {/* Logo + Workspace label */}
                 <div className="flex h-[68px] items-center px-5 border-b border-sidebar-border">
-                    <div className="flex items-center gap-3">
-                        <div className="flex h-9 w-9 items-center justify-center rounded-lg shadow-md brand-gradient-utm">
+                    <div className="flex items-center gap-3 w-full">
+                        <div className="flex h-9 w-9 items-center justify-center rounded-lg shadow-md brand-gradient-utm default-logo-element shrink-0">
                             <BarChart2 className="h-4.5 w-4.5 text-white" />
                         </div>
-                        <div className="flex flex-col leading-tight">
+                        <div className="flex flex-col leading-tight default-logo-element">
                             <span className="text-base font-bold tracking-tight text-foreground">
-                                Report-UTM
+                                {utmName}
                             </span>
                             <span className="text-[10px] font-medium text-emerald-500 dark:text-emerald-400 tracking-wide uppercase">
-                                Tracking & Atribución
+                                {utmTag}
                             </span>
                         </div>
+                        {/* Custom logo container */}
+                        <div 
+                            className="custom-logo-container hidden h-9 w-full max-w-[180px]" 
+                            style={{ 
+                                backgroundImage: 'var(--brand-logo-url)', 
+                                backgroundSize: 'contain', 
+                                backgroundRepeat: 'no-repeat', 
+                                backgroundPosition: 'left center' 
+                            }} 
+                        />
                     </div>
                 </div>
 

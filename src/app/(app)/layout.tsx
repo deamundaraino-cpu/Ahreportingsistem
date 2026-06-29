@@ -1,7 +1,7 @@
 import { AppSidebar } from '@/components/layout/AppSidebar'
 import { NotificationBell } from '@/components/notifications/NotificationBell'
 import { ReactNode } from 'react'
-import { createClient } from '@/utils/supabase/server'
+import { createClient, createAdminClient } from '@/utils/supabase/server'
 import { Toaster } from 'sonner'
 
 export default async function AppLayout({ children }: { children: ReactNode }) {
@@ -22,6 +22,22 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
         }
     }
 
+    let branding: { app_name?: string; app_tag?: string; utm_name?: string; utm_tag?: string; logo_url?: string; colors?: { primary?: string; secondary?: string } } | null = null
+    const url = process.env.NEXT_PUBLIC_SUPABASE_URL
+    const key = process.env.SUPABASE_SERVICE_ROLE_KEY
+    if (url && key) {
+        try {
+            const supabaseAdmin = await createAdminClient()
+            const { data } = await supabaseAdmin.from('system_settings').select('value').eq('key', 'branding').single()
+            branding = data?.value
+        } catch (e) {
+            console.error('Failed to load branding in AppLayout:', e)
+        }
+    }
+
+    const appName = branding?.app_name || 'AdsHouse'
+    const appTag = branding?.app_tag || 'Reporting'
+
     return (
         <div className="flex min-h-screen bg-background text-foreground font-sans selection:bg-brand-blue/20">
             {/* Ambient background glows — brand colors, very subtle */}
@@ -30,7 +46,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
                 <div className="absolute bottom-[-20%] right-[-10%] w-[50%] h-[50%] ambient-glow-blue" />
             </div>
 
-            <AppSidebar initialRole={role} userId={userId} />
+            <AppSidebar initialRole={role} userId={userId} appName={appName} appTag={appTag} />
 
             {/* Main Content Area */}
             <div className="flex-1 flex flex-col relative w-full transition-all duration-300 ease-in-out lg:ml-64">
@@ -42,9 +58,19 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
                 {/* Mobile header */}
                 <header className="lg:hidden h-14 border-b border-border flex items-center justify-between px-4 bg-background/80 backdrop-blur-md sticky top-0 z-30">
                     <span className="w-9" aria-hidden />
-                    <span className="text-base font-bold tracking-tight text-foreground">
-                        AdsHouse
+                    <span className="text-base font-bold tracking-tight text-foreground default-logo-element">
+                        {appName}
                     </span>
+                    {/* Custom logo container */}
+                    <div 
+                        className="custom-logo-container hidden h-8 w-32" 
+                        style={{ 
+                            backgroundImage: 'var(--brand-logo-url)', 
+                            backgroundSize: 'contain', 
+                            backgroundRepeat: 'no-repeat', 
+                            backgroundPosition: 'center' 
+                        }} 
+                    />
                     {userId ? <NotificationBell userId={userId} /> : <span className="w-9" aria-hidden />}
                 </header>
 

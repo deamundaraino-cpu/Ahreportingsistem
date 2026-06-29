@@ -1,4 +1,4 @@
-import { getNotificationRules, getClientesAndTabs } from './_actions';
+import { getNotificationRules, getClientesAndTabs, getBrandingSettings } from './_actions';
 import { ConfiguracionClient } from './components/ConfiguracionClient';
 import { Settings } from 'lucide-react';
 import {
@@ -51,6 +51,7 @@ export default async function ConfiguracionPage() {
     waMessages,
     initialUsers,
     allClients,
+    branding,
   ] = await Promise.all([
     getNotificationRules(),
     getClientesAndTabs(),
@@ -62,6 +63,7 @@ export default async function ConfiguracionPage() {
     getRecentMessages(),
     getUsers(),
     getAllClients(),
+    getBrandingSettings(),
   ]);
 
   const waStatus = 'status' in waStatusRes ? ((waStatusRes as any).status ?? null) : null;
@@ -101,6 +103,7 @@ export default async function ConfiguracionPage() {
         allClients={allClients as any[]}
         currentRole={role}
         currentUserId={user.id}
+        initialBranding={branding}
       />
     </div>
   );

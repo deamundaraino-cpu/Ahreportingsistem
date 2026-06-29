@@ -1,6 +1,6 @@
 import { ReactNode } from 'react'
 import { redirect } from 'next/navigation'
-import { createClient } from '@/utils/supabase/server'
+import { createClient, createAdminClient } from '@/utils/supabase/server'
 import { ReportUtmSidebar } from '@/components/report-utm/ReportUtmSidebar'
 
 export default async function ReportUtmLayout({ children }: { children: ReactNode }) {
@@ -22,6 +22,22 @@ export default async function ReportUtmLayout({ children }: { children: ReactNod
 
     const role = profile?.role ?? 'viewer'
 
+    let branding: { app_name?: string; app_tag?: string; utm_name?: string; utm_tag?: string; logo_url?: string; colors?: { primary?: string; secondary?: string } } | null = null
+    const url = process.env.NEXT_PUBLIC_SUPABASE_URL
+    const key = process.env.SUPABASE_SERVICE_ROLE_KEY
+    if (url && key) {
+        try {
+            const supabaseAdmin = await createAdminClient()
+            const { data } = await supabaseAdmin.from('system_settings').select('value').eq('key', 'branding').single()
+            branding = data?.value
+        } catch (e) {
+            console.error('Failed to load branding in ReportUtmLayout:', e)
+        }
+    }
+
+    const utmName = branding?.utm_name || 'Report-UTM'
+    const utmTag = branding?.utm_tag || 'Tracking & Atribución'
+
     return (
         <div className="flex min-h-screen bg-background text-foreground font-sans selection:bg-emerald-500/20">
             {/* Ambient glow distinto al reporting para diferenciar visualmente */}
@@ -30,13 +46,25 @@ export default async function ReportUtmLayout({ children }: { children: ReactNod
                 <div className="absolute bottom-[-20%] left-[-10%] w-[50%] h-[50%] ambient-glow-violet" />
             </div>
 
-            <ReportUtmSidebar role={role} />
+            <ReportUtmSidebar role={role} utmName={utmName} utmTag={utmTag} />
 
             <div className="flex-1 flex flex-col relative w-full transition-all duration-300 ease-in-out lg:ml-64">
-                <header className="lg:hidden h-14 border-b border-border flex items-center justify-center bg-background/90 backdrop-blur-xl sticky top-0 z-30">
-                    <span className="text-base font-bold tracking-tight text-foreground">
-                        Report-UTM
+                <header className="lg:hidden h-14 border-b border-border flex items-center justify-between px-4 bg-background/90 backdrop-blur-xl sticky top-0 z-30">
+                    <span className="w-9" aria-hidden />
+                    <span className="text-base font-bold tracking-tight text-foreground default-logo-element">
+                        {utmName}
                     </span>
+                    {/* Custom logo container */}
+                    <div 
+                        className="custom-logo-container hidden h-8 w-32" 
+                        style={{ 
+                            backgroundImage: 'var(--brand-logo-url)', 
+                            backgroundSize: 'contain', 
+                            backgroundRepeat: 'no-repeat', 
+                            backgroundPosition: 'center' 
+                        }} 
+                    />
+                    <span className="w-9" aria-hidden />
                 </header>
 
                 <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8 pt-6 pb-24 lg:pb-8 animate-in fade-in duration-300">

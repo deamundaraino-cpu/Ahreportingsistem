@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { createClient } from '@/utils/supabase/client'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
@@ -16,9 +16,27 @@ export default function LoginPage() {
     const [password, setPassword] = useState('')
     const [loading, setLoading] = useState(false)
     const [error, setError] = useState<string | null>(null)
+    const [appName, setAppName] = useState('AdsHouse')
+    const [appTag, setAppTag] = useState('Reporting')
 
     const router = useRouter()
     const supabase = createClient()
+
+    useEffect(() => {
+        async function loadBranding() {
+            try {
+                const { data } = await supabase.from('system_settings').select('value').eq('key', 'branding').single()
+                if (data?.value) {
+                    const val = data.value as { app_name?: string; app_tag?: string }
+                    if (val.app_name) setAppName(val.app_name)
+                    if (val.app_tag) setAppTag(val.app_tag)
+                }
+            } catch {
+                // ignore
+            }
+        }
+        loadBranding()
+    }, [supabase])
 
     async function handleLogin(e: React.FormEvent) {
         e.preventDefault()
@@ -50,17 +68,27 @@ export default function LoginPage() {
 
             {/* Logo mark */}
             <div className="flex items-center gap-3 mb-8 relative">
-                <div className="flex h-12 w-12 items-center justify-center rounded-xl shadow-lg brand-gradient-reporting">
+                <div className="flex h-12 w-12 items-center justify-center rounded-xl shadow-lg brand-gradient-reporting default-logo-element shrink-0">
                     <BarChart3 className="h-6 w-6 text-white" />
                 </div>
-                <div className="flex flex-col leading-tight">
+                <div className="flex flex-col leading-tight default-logo-element">
                     <span className="text-2xl font-bold tracking-tight text-foreground">
-                        AdsHouse
+                        {appName}
                     </span>
                     <span className="text-xs font-medium text-muted-foreground tracking-widest uppercase">
-                        Reporting
+                        {appTag}
                     </span>
                 </div>
+                {/* Custom logo container */}
+                <div 
+                    className="custom-logo-container hidden h-12 w-48" 
+                    style={{ 
+                        backgroundImage: 'var(--brand-logo-url)', 
+                        backgroundSize: 'contain', 
+                        backgroundRepeat: 'no-repeat', 
+                        backgroundPosition: 'center' 
+                    }} 
+                />
             </div>
 
             <Card className="w-full max-w-md relative

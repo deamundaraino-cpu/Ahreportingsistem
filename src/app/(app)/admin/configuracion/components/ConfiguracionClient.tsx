@@ -34,15 +34,20 @@ import {
   VolumeX,
   MessageCircle,
   Users,
+  Palette,
+  Upload,
+  Loader2,
 } from 'lucide-react';
 import { WhatsAppConfigClient } from '../../whatsapp/components/WhatsAppConfigClient';
 import { UserManagementClient } from '../../users/UserManagementClient';
+import { createClient } from '@/utils/supabase/client';
 import {
   createNotificationRule,
   updateNotificationRule,
   deleteNotificationRule,
   testRule,
   triggerRulesEvaluation,
+  updateBrandingSettings,
 } from '../_actions';
 import { type RuleRow } from '@/lib/notifications/rules-engine';
 
@@ -62,6 +67,7 @@ interface Props {
   allClients: any[];
   currentRole: string;
   currentUserId: string;
+  initialBranding?: any;
 }
 
 const METRIC_LABELS: Record<string, string> = {
@@ -110,6 +116,44 @@ function ToggleSwitch({
   );
 }
 
+async function convertLogoToWebP(file: File, maxPx = 1024, quality = 0.9): Promise<File> {
+  if (file.type === 'image/svg+xml' || file.name.endsWith('.svg')) {
+    return file;
+  }
+  try {
+    const bitmap = await createImageBitmap(file);
+    let { width, height } = bitmap;
+    if (width > maxPx || height > maxPx) {
+      const ratio = Math.min(maxPx / width, maxPx / height);
+      width = Math.round(width * ratio);
+      height = Math.round(height * ratio);
+    }
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('No se pudo obtener el contexto 2D del canvas');
+    ctx.drawImage(bitmap, 0, 0, width, height);
+    bitmap.close();
+    return new Promise((resolve, reject) => {
+      canvas.toBlob(
+        (blob) => {
+          if (!blob) {
+            reject(new Error('Conversión WebP fallida'));
+            return;
+          }
+          resolve(new File([blob], file.name.replace(/\.[^.]+$/, '.webp'), { type: 'image/webp' }));
+        },
+        'image/webp',
+        quality
+      );
+    });
+  } catch (err) {
+    console.warn('Fallo convertLogoToWebP, usando archivo original:', err);
+    return file;
+  }
+}
+
 export function ConfiguracionClient({
   initialRules,
   clientes,
@@ -126,12 +170,100 @@ export function ConfiguracionClient({
   allClients,
   currentRole,
   currentUserId,
+  initialBranding,
 }: Props) {
   const [rules, setRules] = useState<RuleRow[]>(initialRules);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isTestOpen, setIsTestOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isEvaluating, setIsEvaluating] = useState(false);
+
+  // Branding states
+  const [logoUrl, setLogoUrl] = useState<string>(initialBranding?.logo_url || '');
+  const [primaryColor, setPrimaryColor] = useState<string>(initialBranding?.colors?.primary || '#1E6AB5');
+  const [secondaryColor, setSecondaryColor] = useState<string>(initialBranding?.colors?.secondary || '#E53529');
+  const [appName, setAppName] = useState<string>(initialBranding?.app_name || 'AdsHouse');
+  const [appTag, setAppTag] = useState<string>(initialBranding?.app_tag || 'Reporting');
+  const [utmName, setUtmName] = useState<string>(initialBranding?.utm_name || 'Report-UTM');
+  const [utmTag, setUtmTag] = useState<string>(initialBranding?.utm_tag || 'Tracking & Atribución');
+  const [uploadingLogo, setUploadingLogo] = useState<boolean>(false);
+  const [savingBranding, setSavingBranding] = useState<boolean>(false);
+
+  const PREDEFINED_THEMES = [
+    { name: 'AdsHouse Original', primary: '#1E6AB5', secondary: '#E53529' },
+    { name: 'Esmeralda Premium', primary: '#10B981', secondary: '#8B5CF6' },
+    { name: 'Océano Profundo', primary: '#0A5F9E', secondary: '#0D9488' },
+    { name: 'Púrpura Elegante', primary: '#7C3AED', secondary: '#DB2777' },
+    { name: 'Ocaso Dorado', primary: '#D97706', secondary: '#DC2626' },
+    { name: 'Negro Clásico', primary: '#1F2937', secondary: '#4B5563' },
+  ];
+
+  const handleLogoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 2 * 1024 * 1024) {
+      toast.error('El archivo excede el tamaño máximo permitido de 2MB');
+      return;
+    }
+
+    setUploadingLogo(true);
+    try {
+      const processedFile = await convertLogoToWebP(file);
+      const supabase = createClient();
+      const fileExt = processedFile.name.split('.').pop();
+      const filePath = `branding/logo_${Date.now()}.${fileExt}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from('bitacoras-images')
+        .upload(filePath, processedFile, { contentType: processedFile.type, upsert: true });
+
+      if (uploadError) throw uploadError;
+
+      const { data: { publicUrl } } = supabase.storage
+        .from('bitacoras-images')
+        .getPublicUrl(filePath);
+
+      setLogoUrl(publicUrl);
+      toast.success('Logo subido e incorporado correctamente');
+    } catch (err: any) {
+      console.error('Error uploading logo:', err);
+      toast.error('Error al subir logo: ' + (err.message || 'Error desconocido'));
+    } finally {
+      setUploadingLogo(false);
+    }
+  };
+
+  const handleSaveBranding = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSavingBranding(true);
+    try {
+      const payload = {
+        logo_url: logoUrl.trim(),
+        app_name: appName.trim(),
+        app_tag: appTag.trim(),
+        utm_name: utmName.trim(),
+        utm_tag: utmTag.trim(),
+        colors: {
+          primary: primaryColor,
+          secondary: secondaryColor,
+        },
+      };
+
+      const res = await updateBrandingSettings(payload);
+      if (res.error) throw new Error(res.error);
+      
+      toast.success('Personalización y Branding guardados. La página se actualizará.');
+      // Refresh the page to reload variables
+      setTimeout(() => {
+        window.location.reload();
+      }, 1000);
+    } catch (err: any) {
+      toast.error(err.message || 'Error al guardar personalización');
+    } finally {
+      setSavingBranding(false);
+    }
+  };
 
   // Form states
   const [editingRuleId, setEditingRuleId] = useState<string | null>(null);
@@ -355,6 +487,15 @@ export function ConfiguracionClient({
             <Zap className="h-4 w-4 text-violet-500" />
             Servidor MCP & API
           </TabsTrigger>
+          {currentRole === 'superadmin' && (
+            <TabsTrigger
+              value="branding"
+              className="data-[state=active]:bg-card rounded-md px-4 py-2 flex items-center gap-2 text-sm font-medium"
+            >
+              <Palette className="h-4 w-4 text-pink-500" />
+              Personalización
+            </TabsTrigger>
+          )}
         </TabsList>
 
         {/* ── ALERTS TAB ─────────────────────────────────────────────────── */}
@@ -529,6 +670,314 @@ export function ConfiguracionClient({
             currentUserId={currentUserId}
           />
         </TabsContent>
+        
+        {/* ── PERSONALIZACIÓN TAB ─────────────────────────────────────────── */}
+        {currentRole === 'superadmin' && (
+          <TabsContent value="branding" className="outline-none">
+            <Card className="bg-card border-border shadow-lg">
+              <CardHeader className="py-4 px-6 border-b border-border">
+                <CardTitle className="text-lg flex items-center gap-2">
+                  <Palette className="h-5 w-5 text-pink-500" />
+                  Personalización Visual
+                </CardTitle>
+                <CardDescription>
+                  Cambia el logo principal de la aplicación y la paleta de colores. Estos cambios se aplicarán para todos los usuarios.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="p-6">
+                <form onSubmit={handleSaveBranding} className="space-y-6">
+                  
+                  {/* Seccion LOGO */}
+                  <div className="space-y-4">
+                    <h4 className="text-sm font-semibold text-foreground border-b border-border pb-1.5">
+                      Logo de la Aplicación
+                    </h4>
+                    
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      <div className="space-y-3">
+                        <Label htmlFor="logo-url-input">URL del Logo</Label>
+                        <Input
+                          id="logo-url-input"
+                          type="text"
+                          value={logoUrl}
+                          onChange={(e) => setLogoUrl(e.target.value)}
+                          placeholder="https://ejemplo.com/logo.png"
+                          className="bg-muted/50 border-border"
+                        />
+                        <p className="text-xs text-muted-foreground">
+                          Puedes ingresar una URL directa de tu logo (SVG o PNG recomendado), o bien subir una imagen de tu equipo.
+                        </p>
+                        
+                        <div className="pt-2">
+                          <Label className="block mb-2 text-xs font-semibold">Subir imagen desde el equipo</Label>
+                          <div className="flex items-center gap-2">
+                            <label className="flex items-center gap-1.5 px-3 py-2 bg-muted hover:bg-muted/80 text-foreground text-xs font-medium rounded-md border border-border cursor-pointer transition-colors">
+                              <Upload className="h-3.5 w-3.5" />
+                              {uploadingLogo ? 'Subiendo...' : 'Seleccionar Archivo'}
+                              <input
+                                type="file"
+                                accept="image/*"
+                                onChange={handleLogoUpload}
+                                disabled={uploadingLogo}
+                                className="hidden"
+                              />
+                            </label>
+                            {uploadingLogo && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
+                          </div>
+                          <span className="text-[10px] text-muted-foreground mt-1 block">
+                            Formatos soportados: PNG, JPG, WEBP, SVG. Máx. 2MB.
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Preview de logo */}
+                      <div className="flex flex-col items-center justify-center p-4 border border-dashed border-border rounded-lg bg-muted/20">
+                        <span className="text-xs font-semibold text-muted-foreground mb-3">Vista Previa del Logo</span>
+                        {logoUrl ? (
+                          <div className="flex flex-col items-center gap-2">
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img src={logoUrl} alt="Logo Preview" className="h-12 max-h-12 w-auto object-contain bg-white dark:bg-zinc-900 p-2 rounded border border-border" />
+                            <Button 
+                              type="button" 
+                              variant="ghost" 
+                              size="sm" 
+                              onClick={() => setLogoUrl('')} 
+                              className="text-[10px] text-red-500 hover:text-red-600 h-6 px-2"
+                            >
+                              Eliminar logo
+                            </Button>
+                          </div>
+                        ) : (
+                          <div className="text-center p-4 text-xs text-muted-foreground/60">
+                            No hay un logo personalizado configurado. Se mostrará el logo original (AdsHouse).
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Seccion NOMBRES */}
+                  <div className="space-y-4 pt-2">
+                    <h4 className="text-sm font-semibold text-foreground border-b border-border pb-1.5">
+                      Nombres y Etiquetas de la Aplicación
+                    </h4>
+                    <p className="text-xs text-muted-foreground">
+                      Define los títulos y etiquetas que se mostrarán en la barra lateral y en las páginas de login/registro cuando no haya un logo personalizado activo.
+                    </p>
+                    
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="space-y-1.5">
+                        <Label className="text-xs font-semibold">Nombre Principal (App)</Label>
+                        <Input
+                          type="text"
+                          value={appName}
+                          onChange={(e) => setAppName(e.target.value)}
+                          placeholder="Ej. AdsHouse"
+                          className="h-9 bg-muted/50 border-border"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label className="text-xs font-semibold">Subtítulo / Etiqueta (App)</Label>
+                        <Input
+                          type="text"
+                          value={appTag}
+                          onChange={(e) => setAppTag(e.target.value)}
+                          placeholder="Ej. Reporting"
+                          className="h-9 bg-muted/50 border-border"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label className="text-xs font-semibold">Nombre Principal (Report-UTM)</Label>
+                        <Input
+                          type="text"
+                          value={utmName}
+                          onChange={(e) => setUtmName(e.target.value)}
+                          placeholder="Ej. Report-UTM"
+                          className="h-9 bg-muted/50 border-border"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label className="text-xs font-semibold">Subtítulo / Etiqueta (Report-UTM)</Label>
+                        <Input
+                          type="text"
+                          value={utmTag}
+                          onChange={(e) => setUtmTag(e.target.value)}
+                          placeholder="Ej. Tracking & Atribución"
+                          className="h-9 bg-muted/50 border-border"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Seccion COLORES */}
+                  <div className="space-y-4 pt-2">
+                    <h4 className="text-sm font-semibold text-foreground border-b border-border pb-1.5">
+                      Paleta de Colores de la Aplicación
+                    </h4>
+
+                    {/* Predefined Themes */}
+                    <div className="space-y-2">
+                      <Label className="text-xs font-semibold">Temas Rápidos de Color</Label>
+                      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2.5">
+                        {PREDEFINED_THEMES.map((theme) => {
+                          const isActive = primaryColor.toLowerCase() === theme.primary.toLowerCase() && secondaryColor.toLowerCase() === theme.secondary.toLowerCase();
+                          return (
+                            <button
+                              key={theme.name}
+                              type="button"
+                              onClick={() => {
+                                setPrimaryColor(theme.primary);
+                                setSecondaryColor(theme.secondary);
+                              }}
+                              className={`p-2.5 rounded-lg border text-left flex flex-col justify-between h-20 transition-all ${
+                                isActive 
+                                  ? 'border-foreground shadow-sm ring-1 ring-foreground/20 bg-muted/40' 
+                                  : 'border-border hover:border-muted-foreground/40 bg-card'
+                              }`}
+                            >
+                              <span className="text-[11px] font-bold text-foreground truncate w-full">{theme.name}</span>
+                              <div className="flex gap-1.5 mt-2">
+                                <div className="w-5 h-5 rounded-full border border-black/10" style={{ backgroundColor: theme.primary }} title="Color Primario" />
+                                <div className="w-5 h-5 rounded-full border border-black/10" style={{ backgroundColor: theme.secondary }} title="Color Secundario" />
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2">
+                      {/* Color Pickers */}
+                      <div className="space-y-4">
+                        <div className="grid grid-cols-2 gap-4">
+                          <div className="space-y-1.5">
+                            <Label htmlFor="primary-color-picker">Color Primario (Blue)</Label>
+                            <div className="flex gap-2">
+                              <Input
+                                id="primary-color-picker"
+                                type="color"
+                                value={primaryColor}
+                                onChange={(e) => setPrimaryColor(e.target.value)}
+                                className="w-10 h-10 p-0 border border-border rounded cursor-pointer"
+                              />
+                              <Input
+                                type="text"
+                                value={primaryColor}
+                                onChange={(e) => setPrimaryColor(e.target.value)}
+                                className="flex-1 bg-muted/50 border-border font-mono text-xs"
+                                placeholder="#1E6AB5"
+                              />
+                            </div>
+                          </div>
+
+                          <div className="space-y-1.5">
+                            <Label htmlFor="secondary-color-picker">Color Secundario (Red)</Label>
+                            <div className="flex gap-2">
+                              <Input
+                                id="secondary-color-picker"
+                                type="color"
+                                value={secondaryColor}
+                                onChange={(e) => setSecondaryColor(e.target.value)}
+                                className="w-10 h-10 p-0 border border-border rounded cursor-pointer"
+                              />
+                              <Input
+                                type="text"
+                                value={secondaryColor}
+                                onChange={(e) => setSecondaryColor(e.target.value)}
+                                className="flex-1 bg-muted/50 border-border font-mono text-xs"
+                                placeholder="#E53529"
+                              />
+                            </div>
+                          </div>
+                        </div>
+
+                        <p className="text-xs text-muted-foreground leading-normal">
+                          El <b>Color Primario</b> se usará para la barra lateral activa, botones principales, enlaces y bordes de enfoque. El <b>Color Secundario</b> se aplicará en avisos críticos, insignias y elementos acentuados.
+                        </p>
+                      </div>
+
+                      {/* Live preview */}
+                      <div className="border border-border rounded-lg p-4 bg-muted/10 space-y-3">
+                        <span className="text-xs font-semibold text-muted-foreground block">
+                          Previsualización en Tiempo Real
+                        </span>
+                        
+                        <div className="border border-border rounded-lg overflow-hidden flex h-36 bg-background">
+                          {/* Sidebar mockup */}
+                          <div className="w-16 border-r border-border bg-card flex flex-col p-1.5 space-y-1.5 justify-between">
+                            <div className="space-y-1.5">
+                              <div className="h-4 rounded flex items-center justify-center text-[7px] font-bold" style={{ background: `linear-gradient(135deg, ${secondaryColor} 0%, ${primaryColor} 100%)`, color: '#fff' }}>
+                                LOGO
+                              </div>
+                              <div className="h-3 w-full rounded" style={{ backgroundColor: primaryColor }} />
+                              <div className="h-3 w-5/6 rounded bg-muted" />
+                              <div className="h-3 w-3/4 rounded bg-muted" />
+                            </div>
+                            <div className="h-3 w-full rounded bg-muted" />
+                          </div>
+                          
+                          {/* Content mockup */}
+                          <div className="flex-1 p-3 flex flex-col justify-between">
+                            <div className="space-y-1.5">
+                              <div className="h-2 w-1/3 rounded bg-muted" />
+                              <div className="h-4 w-1/2 rounded" style={{ backgroundColor: primaryColor }} />
+                              <div className="h-2 w-full rounded bg-muted/50" />
+                              <div className="h-2 w-full rounded bg-muted/50" />
+                            </div>
+                            <div className="flex gap-2">
+                              <button type="button" className="h-5 px-2 rounded text-[8px] font-medium text-white shadow-sm flex items-center" style={{ backgroundColor: primaryColor }}>
+                                Guardar
+                              </button>
+                              <button type="button" className="h-5 px-2 rounded text-[8px] font-medium border border-border bg-card flex items-center" style={{ color: secondaryColor, borderColor: `${secondaryColor}40` }}>
+                                Alerta Activa
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Submit Button */}
+                  <div className="border-t border-border pt-4 flex justify-end gap-3">
+                    <Button 
+                      type="button" 
+                      variant="outline" 
+                      onClick={() => {
+                        setLogoUrl(initialBranding?.logo_url || '');
+                        setPrimaryColor(initialBranding?.colors?.primary || '#1E6AB5');
+                        setSecondaryColor(initialBranding?.colors?.secondary || '#E53529');
+                        setAppName(initialBranding?.app_name || 'AdsHouse');
+                        setAppTag(initialBranding?.app_tag || 'Reporting');
+                        setUtmName(initialBranding?.utm_name || 'Report-UTM');
+                        setUtmTag(initialBranding?.utm_tag || 'Tracking & Atribución');
+                        toast.info('Cambios restablecidos');
+                      }}
+                      className="border-border hover:bg-muted text-xs"
+                    >
+                      Deshacer Cambios
+                    </Button>
+                    <Button
+                      type="submit"
+                      disabled={savingBranding || uploadingLogo}
+                      className="bg-blue-600 hover:bg-blue-500 text-white font-medium text-xs flex items-center gap-1.5 disabled:opacity-50"
+                    >
+                      {savingBranding ? (
+                        <>
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          Guardando Ajustes...
+                        </>
+                      ) : (
+                        'Guardar Branding'
+                      )}
+                    </Button>
+                  </div>
+
+                </form>
+              </CardContent>
+            </Card>
+          </TabsContent>
+        )}
       </Tabs>
 
       {/* ── NEW / EDIT RULE DIALOG ────────────────────────────────────── */}

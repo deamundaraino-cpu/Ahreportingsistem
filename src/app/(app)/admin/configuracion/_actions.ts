@@ -320,3 +320,68 @@ export async function testRule(ruleId: string) {
     return { error: err.message || 'Error al probar regla' };
   }
 }
+
+async function requireSuperAdmin(): Promise<{ ok: true } | { ok: false; error: string }> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: 'No autorizado' };
+
+  const { data: profile } = await supabase
+    .from('user_profiles')
+    .select('role')
+    .eq('id', user.id)
+    .single();
+
+  const role = profile?.role ?? 'viewer';
+  if (role !== 'superadmin') {
+    return { ok: false, error: 'Sin permisos de súper administrador' };
+  }
+  return { ok: true };
+}
+
+export async function getBrandingSettings() {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from('system_settings')
+    .select('value')
+    .eq('key', 'branding')
+    .maybeSingle();
+
+  if (error) {
+    console.error('Error fetching branding settings:', error);
+    return null;
+  }
+  return data?.value || null;
+}
+
+export async function updateBrandingSettings(brandingValue: { 
+  logo_url: string; 
+  app_name?: string; 
+  app_tag?: string; 
+  utm_name?: string; 
+  utm_tag?: string; 
+  colors: { primary: string; secondary: string } 
+}) {
+  const guard = await requireSuperAdmin();
+  if (!guard.ok) return { error: guard.error };
+
+  const supabase = await createAdminClient();
+  const { error } = await supabase
+    .from('system_settings')
+    .upsert({
+      key: 'branding',
+      value: brandingValue,
+      updated_at: new Date().toISOString(),
+    });
+
+  if (error) {
+    console.error('Error updating branding settings:', error);
+    return { error: error.message };
+  }
+
+  revalidatePath('/', 'layout');
+  return { success: true };
+}
+

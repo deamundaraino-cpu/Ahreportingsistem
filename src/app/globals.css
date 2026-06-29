@@ -412,3 +412,12 @@
 .bitacora-content a:hover { opacity: 0.8; }
 .bitacora-content img { max-width: 100%; border-radius: 6px; margin: 0.5rem 0; }
 .dark .bitacora-content a { color: hsl(213 94% 68%); }
+
+/* ── Custom Branding visibility triggers ── */
+body.has-custom-logo .default-logo-element {
+  display: none !important;
+}
+body.has-custom-logo .custom-logo-container {
+  display: block !important;
+}
+
