@@ -182,6 +182,8 @@ export function ConfiguracionClient({
 
   // Branding states
   const [logoUrl, setLogoUrl] = useState<string>(initialBranding?.logo_url || '');
+  const [faviconUrl, setFaviconUrl] = useState<string>(initialBranding?.favicon_url || '');
+  const [uploadingFavicon, setUploadingFavicon] = useState<boolean>(false);
   const [primaryColor, setPrimaryColor] = useState<string>(initialBranding?.colors?.primary || '#1E6AB5');
   const [secondaryColor, setSecondaryColor] = useState<string>(initialBranding?.colors?.secondary || '#E53529');
   const [appName, setAppName] = useState<string>(initialBranding?.app_name || 'AdsHouse');
@@ -236,12 +238,50 @@ export function ConfiguracionClient({
     }
   };
 
+  const handleFaviconUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 1 * 1024 * 1024) {
+      toast.error('El favicon excede el tamaño máximo permitido de 1MB');
+      return;
+    }
+
+    setUploadingFavicon(true);
+    try {
+      // No convertimos a WebP: el favicon se sube en su formato original
+      // (.ico / .png / .svg) para máxima compatibilidad con navegadores.
+      const supabase = createClient();
+      const fileExt = file.name.split('.').pop();
+      const filePath = `branding/favicon_${Date.now()}.${fileExt}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from('bitacoras-images')
+        .upload(filePath, file, { contentType: file.type, upsert: true });
+
+      if (uploadError) throw uploadError;
+
+      const { data: { publicUrl } } = supabase.storage
+        .from('bitacoras-images')
+        .getPublicUrl(filePath);
+
+      setFaviconUrl(publicUrl);
+      toast.success('Favicon subido correctamente');
+    } catch (err: any) {
+      console.error('Error uploading favicon:', err);
+      toast.error('Error al subir favicon: ' + (err.message || 'Error desconocido'));
+    } finally {
+      setUploadingFavicon(false);
+    }
+  };
+
   const handleSaveBranding = async (e: React.FormEvent) => {
     e.preventDefault();
     setSavingBranding(true);
     try {
       const payload = {
         logo_url: logoUrl.trim(),
+        favicon_url: faviconUrl.trim(),
         app_name: appName.trim(),
         app_tag: appTag.trim(),
         utm_name: utmName.trim(),
@@ -767,6 +807,75 @@ export function ConfiguracionClient({
                     </div>
                   </div>
 
+                  {/* Seccion FAVICON */}
+                  <div className="space-y-4 pt-2">
+                    <h4 className="text-sm font-semibold text-foreground border-b border-border pb-1.5">
+                      Favicon (Ícono de la Pestaña)
+                    </h4>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      <div className="space-y-3">
+                        <Label htmlFor="favicon-url-input">URL del Favicon</Label>
+                        <Input
+                          id="favicon-url-input"
+                          type="text"
+                          value={faviconUrl}
+                          onChange={(e) => setFaviconUrl(e.target.value)}
+                          placeholder="https://ejemplo.com/favicon.ico"
+                          className="bg-muted/50 border-border"
+                        />
+                        <p className="text-xs text-muted-foreground">
+                          Ícono que aparece en la pestaña del navegador. Recomendado: imagen cuadrada (.ico, .png o .svg). Se aplicará tras guardar y recargar.
+                        </p>
+
+                        <div className="pt-2">
+                          <Label className="block mb-2 text-xs font-semibold">Subir favicon desde el equipo</Label>
+                          <div className="flex items-center gap-2">
+                            <label className="flex items-center gap-1.5 px-3 py-2 bg-muted hover:bg-muted/80 text-foreground text-xs font-medium rounded-md border border-border cursor-pointer transition-colors">
+                              <Upload className="h-3.5 w-3.5" />
+                              {uploadingFavicon ? 'Subiendo...' : 'Seleccionar Archivo'}
+                              <input
+                                type="file"
+                                accept="image/x-icon,image/png,image/svg+xml,image/*"
+                                onChange={handleFaviconUpload}
+                                disabled={uploadingFavicon}
+                                className="hidden"
+                              />
+                            </label>
+                            {uploadingFavicon && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
+                          </div>
+                          <span className="text-[10px] text-muted-foreground mt-1 block">
+                            Formatos soportados: ICO, PNG, SVG. Máx. 1MB.
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Preview de favicon */}
+                      <div className="flex flex-col items-center justify-center p-4 border border-dashed border-border rounded-lg bg-muted/20">
+                        <span className="text-xs font-semibold text-muted-foreground mb-3">Vista Previa del Favicon</span>
+                        {faviconUrl ? (
+                          <div className="flex flex-col items-center gap-2">
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img src={faviconUrl} alt="Favicon Preview" className="h-8 w-8 object-contain bg-white dark:bg-zinc-900 p-1 rounded border border-border" />
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => setFaviconUrl('')}
+                              className="text-[10px] text-red-500 hover:text-red-600 h-6 px-2"
+                            >
+                              Eliminar favicon
+                            </Button>
+                          </div>
+                        ) : (
+                          <div className="text-center p-4 text-xs text-muted-foreground/60">
+                            No hay un favicon personalizado configurado. Se mostrará el ícono original.
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
                   {/* Seccion NOMBRES */}
                   <div className="space-y-4 pt-2">
                     <h4 className="text-sm font-semibold text-foreground border-b border-border pb-1.5">
@@ -956,6 +1065,7 @@ export function ConfiguracionClient({
                       variant="outline" 
                       onClick={() => {
                         setLogoUrl(initialBranding?.logo_url || '');
+                        setFaviconUrl(initialBranding?.favicon_url || '');
                         setPrimaryColor(initialBranding?.colors?.primary || '#1E6AB5');
                         setSecondaryColor(initialBranding?.colors?.secondary || '#E53529');
                         setAppName(initialBranding?.app_name || 'AdsHouse');
@@ -970,7 +1080,7 @@ export function ConfiguracionClient({
                     </Button>
                     <Button
                       type="submit"
-                      disabled={savingBranding || uploadingLogo}
+                      disabled={savingBranding || uploadingLogo || uploadingFavicon}
                       className="bg-blue-600 hover:bg-blue-500 text-white font-medium text-xs flex items-center gap-1.5 disabled:opacity-50"
                     >
                       {savingBranding ? (

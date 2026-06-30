@@ -15,7 +15,7 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export async function generateMetadata(): Promise<Metadata> {
-  let branding: { app_name?: string; app_tag?: string; utm_name?: string; utm_tag?: string; logo_url?: string; colors?: { primary?: string; secondary?: string } } | null = null;
+  let branding: { app_name?: string; app_tag?: string; utm_name?: string; utm_tag?: string; logo_url?: string; favicon_url?: string; colors?: { primary?: string; secondary?: string } } | null = null;
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (url && key) {
@@ -29,9 +29,18 @@ export async function generateMetadata(): Promise<Metadata> {
   }
   const appName = branding?.app_name || "AdsHouse";
   const appTag = branding?.app_tag || "Reporting";
+  // Favicon personalizado del branding; si no hay, se usa /favicon.ico (public).
+  // Importante: ya NO existe src/app/favicon.ico porque la convención de archivo
+  // tiene prioridad sobre este campo `icons` y bloquearía el favicon personalizado.
+  const faviconUrl = branding?.favicon_url?.trim() || "/favicon.ico";
   return {
     title: `${appName} ${appTag}`,
     description: "Panel de Reportes de Meta Ads y Hotmart",
+    icons: {
+      icon: faviconUrl,
+      shortcut: faviconUrl,
+      apple: faviconUrl,
+    },
   };
 }
 

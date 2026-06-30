@@ -359,13 +359,14 @@ export async function getBrandingSettings() {
   return data?.value || null;
 }
 
-export async function updateBrandingSettings(brandingValue: { 
-  logo_url: string; 
-  app_name?: string; 
-  app_tag?: string; 
-  utm_name?: string; 
-  utm_tag?: string; 
-  colors: { primary: string; secondary: string } 
+export async function updateBrandingSettings(brandingValue: {
+  logo_url: string;
+  favicon_url?: string;
+  app_name?: string;
+  app_tag?: string;
+  utm_name?: string;
+  utm_tag?: string;
+  colors: { primary: string; secondary: string }
 }) {
   const guard = await requireSuperAdmin();
   if (!guard.ok) return { error: guard.error };
