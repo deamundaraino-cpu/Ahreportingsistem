@@ -392,6 +392,9 @@ async function fireAlert(
       clienteId: clientId,
       notificationType: 'alert_threshold',
       message: `🚨 *${title}*\n\n${message}`,
+      // Alertas: notifica SIEMPRE al grupo general del equipo y además al
+      // grupo del cliente si lo tiene (unión deduplicada).
+      includeTeamAlertGroup: true,
     });
   }
 }

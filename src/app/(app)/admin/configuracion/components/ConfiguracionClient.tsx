@@ -63,6 +63,7 @@ interface Props {
   waRoutes: any[];
   waClientes: any[];
   waMessages: any[];
+  waAlertTeamGroup: { group_id: string | null; enabled: boolean };
   initialUsers: any[];
   allClients: any[];
   currentRole: string;
@@ -166,6 +167,7 @@ export function ConfiguracionClient({
   waRoutes,
   waClientes,
   waMessages,
+  waAlertTeamGroup,
   initialUsers,
   allClients,
   currentRole,
@@ -658,6 +660,7 @@ export function ConfiguracionClient({
             routes={waRoutes}
             clientes={waClientes}
             messages={waMessages}
+            alertTeamGroup={waAlertTeamGroup}
           />
         </TabsContent>
 

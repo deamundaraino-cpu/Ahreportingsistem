@@ -16,6 +16,7 @@ import {
   setRouteEnabled,
   deleteRoute,
   sendManualWhatsApp,
+  setAlertTeamGroup,
 } from '../_actions';
 
 type Group = { id: string; group_id: string; group_name: string; enabled: boolean };
@@ -51,6 +52,7 @@ export function WhatsAppConfigClient({
   routes,
   clientes,
   messages,
+  alertTeamGroup,
 }: {
   status: GatewayStatus | null;
   gatewayError: string | null;
@@ -59,6 +61,7 @@ export function WhatsAppConfigClient({
   routes: Route[];
   clientes: Cliente[];
   messages: Message[];
+  alertTeamGroup: { group_id: string | null; enabled: boolean };
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -72,6 +75,10 @@ export function WhatsAppConfigClient({
   // Form: envío manual
   const [manualCliente, setManualCliente] = useState<string>(GLOBAL);
   const [manualMsg, setManualMsg] = useState('');
+
+  // Grupo general del equipo (alertas)
+  const [teamGroup, setTeamGroup] = useState<string>(alertTeamGroup.group_id ?? '');
+  const [teamGroupEnabled, setTeamGroupEnabled] = useState<boolean>(alertTeamGroup.enabled);
 
   function notify(kind: 'ok' | 'err', text: string) {
     setFeedback({ kind, text });
@@ -115,6 +122,17 @@ export function WhatsAppConfigClient({
       const res = await deleteRoute(id);
       if (res.error) notify('err', res.error);
       else notify('ok', 'Ruta eliminada');
+    });
+  }
+
+  function handleSaveTeamGroup() {
+    startTransition(async () => {
+      const res = await setAlertTeamGroup({
+        groupId: teamGroup || null,
+        enabled: teamGroupEnabled,
+      });
+      if (res.error) notify('err', res.error);
+      else notify('ok', 'Grupo general del equipo guardado');
     });
   }
 
@@ -238,6 +256,50 @@ export function WhatsAppConfigClient({
               ))}
             </ul>
           )}
+        </CardContent>
+      </Card>
+
+      {/* ── Grupo general del equipo (alertas) ───────────── */}
+      <Card className="bg-card border-border">
+        <CardHeader>
+          <CardTitle className="text-foreground">Grupo general de alertas del equipo</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <p className="text-muted-foreground/80 text-sm">
+            Todas las alertas de reglas se envían <strong>siempre</strong> a este grupo, además del
+            grupo del cliente si lo tiene. Si el cliente no tiene grupo propio, solo se notifica
+            aquí.
+          </p>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-2 items-center">
+            <select
+              className={`${selectCls} md:col-span-2`}
+              value={teamGroup}
+              onChange={(e) => setTeamGroup(e.target.value)}
+            >
+              <option value="">— grupo —</option>
+              {groups.map((g) => (
+                <option key={g.group_id} value={g.group_id}>
+                  {g.group_name}
+                </option>
+              ))}
+            </select>
+            <label className="flex items-center gap-2 text-sm text-foreground/90">
+              <input
+                type="checkbox"
+                checked={teamGroupEnabled}
+                onChange={(e) => setTeamGroupEnabled(e.target.checked)}
+                className="h-4 w-4 rounded border-input"
+              />
+              Activo
+            </label>
+          </div>
+          <button
+            onClick={handleSaveTeamGroup}
+            disabled={pending}
+            className="rounded-md bg-emerald-600 text-white text-sm px-4 py-2 hover:bg-emerald-500 disabled:opacity-50"
+          >
+            Guardar grupo del equipo
+          </button>
         </CardContent>
       </Card>
 

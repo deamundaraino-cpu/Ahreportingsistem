@@ -181,6 +181,46 @@ export async function sendManualWhatsApp(input: { clienteId: string | null; mess
   return { success: true, sent: result.sent, failed: result.failed };
 }
 
+// ── Grupo general fijo del equipo (alertas) ──────────────────────
+const ALERT_TEAM_GROUP_KEY = 'whatsapp_alert_team_group';
+
+export async function getAlertTeamGroup(): Promise<{
+  group_id: string | null;
+  enabled: boolean;
+}> {
+  const admin = await createAdminClient();
+  const { data } = await admin
+    .from('system_settings')
+    .select('value')
+    .eq('key', ALERT_TEAM_GROUP_KEY)
+    .maybeSingle();
+
+  const value = (data?.value ?? null) as { group_id?: string | null; enabled?: boolean } | null;
+  return {
+    group_id: value?.group_id ?? null,
+    enabled: value?.enabled ?? false,
+  };
+}
+
+export async function setAlertTeamGroup(input: {
+  groupId: string | null;
+  enabled: boolean;
+}) {
+  const guard = await requireAdmin();
+  if (!guard.ok) return { error: guard.error };
+
+  const admin = await createAdminClient();
+  const { error } = await admin.from('system_settings').upsert({
+    key: ALERT_TEAM_GROUP_KEY,
+    value: { group_id: input.groupId, enabled: input.enabled },
+    updated_at: new Date().toISOString(),
+  });
+  if (error) return { error: error.message };
+
+  revalidatePath('/admin/whatsapp');
+  return { success: true };
+}
+
 // ── Log reciente ─────────────────────────────────────────────────
 export async function getRecentMessages() {
   const admin = await createAdminClient();

@@ -8,6 +8,7 @@ import {
   getRoutes,
   getClientesMin,
   getRecentMessages,
+  getAlertTeamGroup,
 } from '../whatsapp/_actions';
 import { getUsers, getAllClients } from '../users/_actions';
 import { createClient } from '@/utils/supabase/server';
@@ -49,6 +50,7 @@ export default async function ConfiguracionPage() {
     waRoutes,
     waClientes,
     waMessages,
+    waAlertTeamGroup,
     initialUsers,
     allClients,
     branding,
@@ -61,6 +63,7 @@ export default async function ConfiguracionPage() {
     getRoutes(),
     getClientesMin(),
     getRecentMessages(),
+    getAlertTeamGroup(),
     getUsers(),
     getAllClients(),
     getBrandingSettings(),
@@ -99,6 +102,7 @@ export default async function ConfiguracionPage() {
         waRoutes={waRoutes as any[]}
         waClientes={waClientes as any[]}
         waMessages={waMessages as any[]}
+        waAlertTeamGroup={waAlertTeamGroup}
         initialUsers={initialUsers as any[]}
         allClients={allClients as any[]}
         currentRole={role}

@@ -19,7 +19,31 @@ export type SendNotificationArgs = {
   clienteId: string | null; // null = solo aplican rutas globales por tipo
   notificationType: NotificationType;
   message: string;
+  // Solo para alertas: además de las rutas del cliente, envía SIEMPRE al
+  // grupo general fijo del equipo (system_settings 'whatsapp_alert_team_group').
+  // El resultado es la unión deduplicada de ambos destinos.
+  includeTeamAlertGroup?: boolean;
 };
+
+// Key en system_settings que guarda el grupo general fijo del equipo para alertas.
+const ALERT_TEAM_GROUP_KEY = 'whatsapp_alert_team_group';
+
+/**
+ * Lee el grupo general fijo del equipo para alertas desde system_settings.
+ * Devuelve el group_id si está configurado y habilitado, si no null.
+ */
+async function getAlertTeamGroupId(db: Db): Promise<string | null> {
+  const { data } = await db
+    .from('system_settings')
+    .select('value')
+    .eq('key', ALERT_TEAM_GROUP_KEY)
+    .maybeSingle();
+
+  const value = (data?.value ?? null) as { group_id?: string | null; enabled?: boolean } | null;
+  if (!value || value.enabled === false) return null;
+  const groupId = value.group_id?.trim();
+  return groupId ? groupId : null;
+}
 
 export type SendNotificationResult = {
   sent: number;
@@ -38,8 +62,32 @@ type RouteRow = { group_id: string };
 async function resolveTargetGroups(
   db: Db,
   clienteId: string | null,
-  notificationType: NotificationType
+  notificationType: NotificationType,
+  includeTeamAlertGroup = false
 ): Promise<string[]> {
+  // Modo aditivo (alertas): rutas del cliente UNIÓN grupo general del equipo.
+  // No se usa el fallback global por tipo; el grupo del equipo es el destino
+  // garantizado, y el grupo del cliente se suma si existe.
+  if (includeTeamAlertGroup) {
+    const groupIds = new Set<string>();
+
+    const teamGroupId = await getAlertTeamGroupId(db);
+    if (teamGroupId) groupIds.add(teamGroupId);
+
+    if (clienteId) {
+      const { data: clientRoutes } = await db
+        .from('whatsapp_routes')
+        .select('group_id')
+        .eq('enabled', true)
+        .eq('notification_type', notificationType)
+        .eq('cliente_id', clienteId);
+
+      for (const r of (clientRoutes ?? []) as RouteRow[]) groupIds.add(r.group_id);
+    }
+
+    return [...groupIds];
+  }
+
   if (clienteId) {
     const { data: clientRoutes } = await db
       .from('whatsapp_routes')
@@ -69,9 +117,14 @@ async function resolveTargetGroups(
 export async function sendWhatsAppNotification(
   args: SendNotificationArgs
 ): Promise<SendNotificationResult> {
-  const { db, clienteId, notificationType, message } = args;
+  const { db, clienteId, notificationType, message, includeTeamAlertGroup } = args;
 
-  const groups = await resolveTargetGroups(db, clienteId, notificationType);
+  const groups = await resolveTargetGroups(
+    db,
+    clienteId,
+    notificationType,
+    includeTeamAlertGroup
+  );
   if (groups.length === 0) {
     return { sent: 0, failed: 0, skipped: true };
   }
