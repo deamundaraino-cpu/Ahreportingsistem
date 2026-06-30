@@ -134,7 +134,10 @@ export async function triggerRulesEvaluation() {
 
   try {
     const supabase = await createAdminClient();
-    const result = await evaluateAlertRules(supabase);
+    // force: evalúa y envía notificaciones reales ignorando el cooldown (y sin
+    // escribirlo), para verificar la entrega a los grupos sin afectar la
+    // corrida automática nocturna.
+    const result = await evaluateAlertRules(supabase, { force: true });
     revalidatePath('/admin/configuracion');
     return { success: true, ...result };
   } catch (err: any) {

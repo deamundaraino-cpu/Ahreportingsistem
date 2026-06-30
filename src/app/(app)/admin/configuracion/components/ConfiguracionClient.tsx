@@ -448,7 +448,15 @@ export function ConfiguracionClient({
       const res = await triggerRulesEvaluation();
       if ('error' in res && res.error) throw new Error(res.error);
       if ('evaluated' in res && 'triggered' in res) {
-        toast.success(`Evaluación completada. Reglas evaluadas: ${res.evaluated}, Alertas disparadas: ${res.triggered}`);
+        if (res.triggered > 0) {
+          toast.success(
+            `Evaluación completada. Se enviaron ${res.triggered} alerta(s) real(es) a los grupos (de ${res.evaluated} pestaña(s) evaluada(s)).`
+          );
+        } else {
+          toast.success(
+            `Evaluación completada. ${res.evaluated} pestaña(s) evaluada(s), ninguna cumple su condición ahora mismo, así que no se envió ninguna notificación.`
+          );
+        }
       }
     } catch (err: any) {
       toast.error(err.message || 'Error ejecutando evaluación');

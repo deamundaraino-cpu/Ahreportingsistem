@@ -41,8 +41,13 @@ interface TabInfo {
  *   - If a rule specifies a particular tab_id, only that tab is evaluated
  */
 export async function evaluateAlertRules(
-  db: SupabaseClient
+  db: SupabaseClient,
+  options: { force?: boolean } = {}
 ): Promise<{ evaluated: number; triggered: number }> {
+  // force = true → ejecución manual de prueba ("Evaluar Ahora"): ignora el
+  // cooldown (reenvía aunque ya se haya disparado) y NO lo escribe, para no
+  // suprimir la corrida automática de la madrugada. El worker llama sin force.
+  const { force = false } = options;
   let evaluated = 0;
   let triggered = 0;
 
@@ -130,13 +135,15 @@ export async function evaluateAlertRules(
           evaluated++;
 
           try {
-            // D. Check per-tab cooldown
+            // D. Check per-tab cooldown (skipped on forced manual evaluation)
             const cooldownKey = `${rule.id}|${clientId}|${tab.id}`;
-            const lastTriggeredTs = cooldownMap.get(cooldownKey);
-            if (lastTriggeredTs !== undefined) {
-              const cooldownMs = rule.cooldown_hours * 60 * 60 * 1000;
-              if (Date.now() - lastTriggeredTs < cooldownMs) {
-                continue; // This tab is still in cooldown for this rule
+            if (!force) {
+              const lastTriggeredTs = cooldownMap.get(cooldownKey);
+              if (lastTriggeredTs !== undefined) {
+                const cooldownMs = rule.cooldown_hours * 60 * 60 * 1000;
+                if (Date.now() - lastTriggeredTs < cooldownMs) {
+                  continue; // This tab is still in cooldown for this rule
+                }
               }
             }
 
@@ -240,21 +247,24 @@ export async function evaluateAlertRules(
                 totalSpend, tabBudget
               );
 
-              // K. Update per-tab cooldown in DB
-              await db
-                .from('notification_rule_cooldowns')
-                .upsert(
-                  {
-                    rule_id: rule.id,
-                    cliente_id: clientId,
-                    tab_id: tab.id,
-                    last_triggered_at: new Date().toISOString(),
-                  },
-                  { onConflict: 'rule_id,cliente_id,tab_id' }
-                );
+              // K. Update per-tab cooldown in DB (skipped on forced manual
+              // evaluation so it doesn't suppress the scheduled nightly run)
+              if (!force) {
+                await db
+                  .from('notification_rule_cooldowns')
+                  .upsert(
+                    {
+                      rule_id: rule.id,
+                      cliente_id: clientId,
+                      tab_id: tab.id,
+                      last_triggered_at: new Date().toISOString(),
+                    },
+                    { onConflict: 'rule_id,cliente_id,tab_id' }
+                  );
 
-              // Update in-memory map to prevent double-firing in same evaluation pass
-              cooldownMap.set(cooldownKey, Date.now());
+                // Update in-memory map to prevent double-firing in same evaluation pass
+                cooldownMap.set(cooldownKey, Date.now());
+              }
             }
           } catch (err) {
             console.error(
