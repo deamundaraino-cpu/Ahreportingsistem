@@ -3,7 +3,6 @@ import { DateRangeSelector } from "../components/DateRangeSelector"
 import { DashboardClient } from "../components/DashboardClient"
 import { GoogleSheetsLeadsCard } from "../components/GoogleSheetsLeadsCard"
 import { ConversionesOfflineCard } from "../components/ConversionesOfflineCard"
-import { CopyLinkButton } from "../components/CopyLinkButton"
 import { PublicLinkButton } from "../components/PublicLinkButton"
 import { BitacorasSidebar } from "../components/BitacorasSidebar"
 import { getBitacoras } from "../../admin/settings/[id]/_actions"
@@ -61,7 +60,6 @@ export default async function DashboardPage(props: {
                 <div>
                     <div className="flex items-center gap-3 mb-1">
                         <h2 className="text-2xl font-bold tracking-tight text-foreground">{dashboardData?.cliente?.nombre ?? 'Dashboard'}</h2>
-                        <CopyLinkButton clientId={clientId} />
                         <PublicLinkButton
                             clienteId={clientId}
                             tabs={dashboardData?.tabs || []}
