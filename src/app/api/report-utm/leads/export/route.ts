@@ -13,7 +13,11 @@ export const dynamic = 'force-dynamic'
  * solo superadmin/admin/trafficker autenticados pueden exportar.
  */
 
-const EXPORT_CAP = 10000
+// PostgREST limita cada respuesta a `db-max-rows` (≈1000) sin importar el
+// `.limit()` que se pida, así que traemos TODO paginando con `.range()`.
+const PAGE_SIZE = 1000
+// Tope de seguridad para evitar bucles infinitos ante datasets enormes.
+const MAX_ROWS = 500_000
 
 const COLUMNS: { key: string; header: string }[] = [
     { key: 'created_at', header: 'Fecha' },
@@ -58,12 +62,6 @@ export async function GET(req: NextRequest) {
     const sp = req.nextUrl.searchParams
     const supabase = await reportUtmClient()
 
-    let query = supabase
-        .from('lead_events')
-        .select(
-            'created_at, lead_name, lead_email, lead_phone, form_name, form_plugin, utm_source, utm_medium, utm_campaign, utm_content, utm_term, utm_id, click_id, attribution_method, ip_country, page_url, raw_fields',
-        )
-
     const clienteId = sp.get('clienteId')
     const formPlugin = sp.get('form_plugin')
     const utmSource = sp.get('utm_source')
@@ -72,23 +70,45 @@ export async function GET(req: NextRequest) {
     const from = sp.get('from')
     const to = sp.get('to')
 
-    if (clienteId) query = query.eq('cliente_id', clienteId)
-    if (formPlugin) query = query.eq('form_plugin', formPlugin)
-    if (utmSource) query = query.ilike('utm_source', `%${utmSource}%`)
-    if (utmCampaign) query = query.ilike('utm_campaign', `%${utmCampaign}%`)
-    if (utmContent) query = query.ilike('utm_content', `%${utmContent}%`)
-    if (from) query = query.gte('created_at', from)
-    if (to) query = query.lte('created_at', to)
+    // Si `to` viene como fecha (YYYY-MM-DD) sin hora, incluimos todo ese día
+    // hasta las 23:59:59 — igual que la página de leads. Sin esto la
+    // exportación por rango excluía casi todo el último día del rango.
+    const toBound = to && /^\d{4}-\d{2}-\d{2}$/.test(to) ? `${to}T23:59:59` : to
 
-    const { data, error } = await query
-        .order('created_at', { ascending: false })
-        .limit(EXPORT_CAP)
-
-    if (error) {
-        return NextResponse.json({ error: error.message }, { status: 500 })
+    // Aplica todos los filtros a una query nueva (se reconstruye por página).
+    const applyFilters = () => {
+        let q = supabase
+            .from('lead_events')
+            .select(
+                'created_at, lead_name, lead_email, lead_phone, form_name, form_plugin, utm_source, utm_medium, utm_campaign, utm_content, utm_term, utm_id, click_id, attribution_method, ip_country, page_url, raw_fields',
+            )
+        if (clienteId) q = q.eq('cliente_id', clienteId)
+        if (formPlugin) q = q.eq('form_plugin', formPlugin)
+        if (utmSource) q = q.ilike('utm_source', `%${utmSource}%`)
+        if (utmCampaign) q = q.ilike('utm_campaign', `%${utmCampaign}%`)
+        if (utmContent) q = q.ilike('utm_content', `%${utmContent}%`)
+        if (from) q = q.gte('created_at', from)
+        if (toBound) q = q.lte('created_at', toBound)
+        return q
     }
 
-    const rows = (data ?? []) as Record<string, unknown>[]
+    // Pagina con `.range()` hasta agotar el dataset: PostgREST devuelve como
+    // máximo ≈1000 filas por respuesta, así que un solo request nunca baja todo.
+    const rows: Record<string, unknown>[] = []
+    for (let offset = 0; offset < MAX_ROWS; offset += PAGE_SIZE) {
+        const { data, error } = await applyFilters()
+            .order('created_at', { ascending: false })
+            .range(offset, offset + PAGE_SIZE - 1)
+
+        if (error) {
+            return NextResponse.json({ error: error.message }, { status: 500 })
+        }
+
+        const batch = (data ?? []) as Record<string, unknown>[]
+        rows.push(...batch)
+        // Última página: vino incompleta (o vacía).
+        if (batch.length < PAGE_SIZE) break
+    }
 
     // Descubre todas las claves de campos personalizados (raw_fields) presentes,
     // en orden de aparición, para darle a cada una su propia columna en el CSV.
