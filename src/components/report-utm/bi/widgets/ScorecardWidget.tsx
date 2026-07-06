@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { TrendingUp, TrendingDown, Minus, Loader2 } from 'lucide-react'
 import type { BiFilters, WidgetConfig, CalculatedField } from '../BiTypes'
 import type { BiMetric } from '@/lib/report-utm/bi-metadata'
-import { METRIC_META, appendUtmFilters, utmFilterSignature } from '@/lib/report-utm/bi-metadata'
+import { METRIC_META, appendUtmFilters, utmFilterSignature, appendFieldFilters, fieldFilterSignature, appendAdvancedFilter, advancedFilterSignature, fieldMetricLabel, fieldMetricFormat } from '@/lib/report-utm/bi-metadata'
 
 interface Props {
     title: string
@@ -35,10 +35,10 @@ export function ScorecardWidget({ title, config, filters, calculatedFields = [] 
     const metric  = String(config.metric ?? 'leads_count')
     const compare = !!config.compare_period
 
-    // El metric puede ser una métrica base o un campo calculado.
+    // El metric puede ser una métrica base, un campo calculado o una métrica de campo.
     const calcField = calculatedFields.find(c => c.name === metric)
-    const format: ValFormat = (calcField?.format ?? METRIC_META[metric as BiMetric]?.format ?? 'number') as ValFormat
-    const label = METRIC_META[metric as BiMetric]?.label ?? calcField?.name ?? metric
+    const format: ValFormat = (calcField?.format ?? METRIC_META[metric as BiMetric]?.format ?? fieldMetricFormat(metric) ?? 'number') as ValFormat
+    const label = METRIC_META[metric as BiMetric]?.label ?? fieldMetricLabel(metric) ?? calcField?.name ?? metric
 
     useEffect(() => {
         setLoading(true)
@@ -50,6 +50,8 @@ export function ScorecardWidget({ title, config, filters, calculatedFields = [] 
         if (filters.date_from)  params.set('date_from', filters.date_from)
         if (filters.date_to)    params.set('date_to', filters.date_to)
         appendUtmFilters(params, filters)
+        appendFieldFilters(params, filters)
+        appendAdvancedFilter(params, filters)
         if (calcField) params.set(`calc[${calcField.name}]`, calcField.expression)
 
         fetch(`/api/report-utm/bi/query?${params}`)
@@ -68,7 +70,7 @@ export function ScorecardWidget({ title, config, filters, calculatedFields = [] 
             })
             .catch(() => setError('Error al cargar'))
             .finally(() => setLoading(false))
-    }, [metric, calcField?.expression, compare, filters.cliente_id, filters.date_from, filters.date_to, utmFilterSignature(filters)])
+    }, [metric, calcField?.expression, compare, filters.cliente_id, filters.date_from, filters.date_to, utmFilterSignature(filters), fieldFilterSignature(filters), advancedFilterSignature(filters)])
 
     const delta = compare && prev !== null && prev !== 0 && value !== null
         ? ((value - prev) / prev) * 100

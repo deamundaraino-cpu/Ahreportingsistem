@@ -30,9 +30,9 @@ export interface ConditionalRule {
 }
 
 export interface WidgetConfig {
-    metric?: BiMetric | string       // comma-separated for multi-metric widgets
-    dimension?: BiDimension
-    dimension2?: BiDimension         // dimensión secundaria (stacked / combo / matrix)
+    metric?: BiMetric | string       // comma-separated for multi-metric widgets; incluye tokens fieldagg:
+    dimension?: BiDimension | string // incluye tokens field:<clave> (campos de formulario)
+    dimension2?: BiDimension | string // dimensión secundaria (stacked / combo / matrix)
     date_grouping?: DateGrouping
     metrics?: BiMetric[]             // used in funnel widget
     limit?: number                   // Top-N

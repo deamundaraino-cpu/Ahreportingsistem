@@ -1,13 +1,18 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { X, Plus, Trash2, Calculator } from 'lucide-react'
 import type { CalculatedField } from './BiTypes'
-import { METRIC_META, evaluateExpression } from '@/lib/report-utm/bi-metadata'
+import type { FormFieldMeta } from '@/lib/report-utm/bi-metadata'
+import { METRIC_META, evaluateExpression, fieldMetricAlias, humanizeFieldKey } from '@/lib/report-utm/bi-metadata'
 import { HelpTip } from './HelpTip'
 
 interface Props {
     fields: CalculatedField[]
+    /** Cliente vigente (para ofrecer sus campos de formulario numéricos). */
+    clienteId?: string
+    dateFrom?: string
+    dateTo?: string
     onSave: (fields: CalculatedField[]) => void
     onClose: () => void
 }
@@ -24,11 +29,33 @@ const SAMPLE: Record<string, number> = {
     clicks: 800, impressions: 40000, cpl: 9, cpa: 75, roas: 4, conversion_rate: 12, cpc: 1.12, cpm: 22.5,
 }
 
-export function BiCalcFieldsModal({ fields: initial, onSave, onClose }: Props) {
+export function BiCalcFieldsModal({ fields: initial, clienteId, dateFrom, dateTo, onSave, onClose }: Props) {
     const [fields, setFields] = useState<CalculatedField[]>(initial)
     const [name, setName] = useState('')
     const [expr, setExpr] = useState('')
     const [fmt, setFmt]   = useState<'number' | 'currency' | 'percent' | 'ratio'>('number')
+    const [formFields, setFormFields] = useState<FormFieldMeta[]>([])
+
+    useEffect(() => {
+        if (!clienteId) { setFormFields([]); return }
+        const params = new URLSearchParams({ cliente_id: clienteId })
+        if (dateFrom) params.set('date_from', dateFrom)
+        if (dateTo)   params.set('date_to', dateTo)
+        let cancelled = false
+        fetch(`/api/report-utm/bi/form-fields?${params}`)
+            .then(r => r.json())
+            .then(json => { if (!cancelled) setFormFields(json.data ?? []) })
+            .catch(() => { if (!cancelled) setFormFields([]) })
+        return () => { cancelled = true }
+    }, [clienteId, dateFrom, dateTo])
+
+    // Alias de métricas de campo numéricas usables dentro de las expresiones.
+    const fieldAliases = formFields
+        .filter(f => f.type === 'number')
+        .flatMap(f => ([
+            { alias: fieldMetricAlias('sum', f.key), desc: `Suma de ${humanizeFieldKey(f.label)}` },
+            { alias: fieldMetricAlias('avg', f.key), desc: `Promedio de ${humanizeFieldKey(f.label)}` },
+        ]))
 
     const preview = expr ? evaluateExpression(expr, SAMPLE) : null
     const validName = /^[a-z_][a-z0-9_]*$/i.test(name)
@@ -125,6 +152,19 @@ export function BiCalcFieldsModal({ fields: initial, onSave, onClose }: Props) {
                         <details className="text-[10px] text-muted-foreground">
                             <summary className="cursor-pointer hover:text-foreground">Métricas disponibles</summary>
                             <p className="mt-1 font-mono leading-relaxed">{BASE_METRICS.join(', ')}</p>
+                            {fieldAliases.length > 0 && (
+                                <div className="mt-2">
+                                    <p className="text-[10px] font-semibold text-foreground/70 not-italic mb-0.5">Campos del formulario (numéricos)</p>
+                                    <ul className="space-y-0.5">
+                                        {fieldAliases.map(fa => (
+                                            <li key={fa.alias} className="flex items-baseline gap-1.5">
+                                                <code className="font-mono text-emerald-600 dark:text-emerald-400">{fa.alias}</code>
+                                                <span className="opacity-70">— {fa.desc}</span>
+                                            </li>
+                                        ))}
+                                    </ul>
+                                </div>
+                            )}
                         </details>
                     </div>
                 </div>

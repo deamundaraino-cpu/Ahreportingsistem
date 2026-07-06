@@ -14,7 +14,11 @@ import {
 } from 'recharts'
 import type { BiFilters, WidgetConfig, WidgetType, CalculatedField } from '../BiTypes'
 import type { BiMetric, BiDimension, BiQueryRow, BiPivotRow } from '@/lib/report-utm/bi-metadata'
-import { METRIC_META, DIMENSION_META, appendUtmFilters, utmFilterSignature, applyValueFilters } from '@/lib/report-utm/bi-metadata'
+import {
+    METRIC_META, DIMENSION_META, appendUtmFilters, utmFilterSignature, applyValueFilters,
+    appendFieldFilters, fieldFilterSignature, appendAdvancedFilter, advancedFilterSignature,
+    fieldMetricLabel, fieldMetricFormat, fieldDimLabel, isFieldMetric,
+} from '@/lib/report-utm/bi-metadata'
 
 const COLORS = [
     '#10b981', '#06b6d4', '#8b5cf6', '#f59e0b',
@@ -94,8 +98,10 @@ export function ChartWidget({ title, type, config, filters, calculatedFields = [
     // El metric puede ser una métrica base o un campo calculado. El pivot
     // (dimensión secundaria) no soporta calc, así que se usa la ruta estándar.
     const calcField = calculatedFields.find(c => c.name === metric)
-    const format: ColFormat = (calcField?.format ?? METRIC_META[metric as BiMetric]?.format ?? 'number') as ColFormat
-    const usePivot  = !calcField && !!dimension2 && (type === 'bar' || type === 'combo' || type === 'area' || type === 'line')
+    const format: ColFormat = (calcField?.format ?? METRIC_META[metric as BiMetric]?.format ?? fieldMetricFormat(metric) ?? 'number') as ColFormat
+    // El pivot (dimensión secundaria) solo cuenta filas/suma revenue → no aplica
+    // ni a campos calculados ni a métricas de campo (sum/avg de raw_fields).
+    const usePivot  = !calcField && !isFieldMetric(metric) && !!dimension2 && (type === 'bar' || type === 'combo' || type === 'area' || type === 'line')
 
     useEffect(() => {
         setLoading(true)
@@ -120,6 +126,8 @@ export function ChartWidget({ title, type, config, filters, calculatedFields = [
         if (filters.date_from)  params.set('date_from', filters.date_from)
         if (filters.date_to)    params.set('date_to', filters.date_to)
         appendUtmFilters(params, filters)
+        appendFieldFilters(params, filters)
+        appendAdvancedFilter(params, filters)
         if (calcField) params.set(`calc[${calcField.name}]`, calcField.expression)
 
         fetch(`/api/report-utm/bi/query?${params}`)
@@ -130,10 +138,10 @@ export function ChartWidget({ title, type, config, filters, calculatedFields = [
             })
             .catch(() => setError('Error al cargar'))
             .finally(() => setLoading(false))
-    }, [metric, calcField?.expression, dimension, dimension2, usePivot, grouping, limit, sort, filters.cliente_id, filters.date_from, filters.date_to, utmFilterSignature(filters)])
+    }, [metric, calcField?.expression, dimension, dimension2, usePivot, grouping, limit, sort, filters.cliente_id, filters.date_from, filters.date_to, utmFilterSignature(filters), fieldFilterSignature(filters), advancedFilterSignature(filters)])
 
-    const dimLabel = DIMENSION_META[dimension]?.label ?? dimension
-    const metLabel = METRIC_META[metric as BiMetric]?.label ?? calcField?.name ?? metric
+    const dimLabel = DIMENSION_META[dimension]?.label ?? fieldDimLabel(dimension) ?? dimension
+    const metLabel = METRIC_META[metric as BiMetric]?.label ?? fieldMetricLabel(metric) ?? calcField?.name ?? metric
 
     const chartData = applyValueFilters(rows, config.value_filters).map(r => ({
         name:  r.dimension_value ?? 'Total',
@@ -149,7 +157,7 @@ export function ChartWidget({ title, type, config, filters, calculatedFields = [
             <div className="flex items-center justify-between">
                 <p className="text-sm font-semibold text-foreground">{title}</p>
                 <span className="text-[10px] text-muted-foreground font-mono">
-                    {dimLabel}{dimension2 ? ` × ${DIMENSION_META[dimension2]?.label}` : ''} · {metLabel}
+                    {dimLabel}{dimension2 ? ` × ${DIMENSION_META[dimension2 as BiDimension]?.label ?? fieldDimLabel(dimension2) ?? dimension2}` : ''} · {metLabel}
                 </span>
             </div>
 

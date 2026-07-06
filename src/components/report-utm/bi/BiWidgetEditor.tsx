@@ -3,16 +3,27 @@
 import { useState, useEffect } from 'react'
 import { X, Plus, Search, AlertTriangle } from 'lucide-react'
 import type { BiWidget, WidgetType, WidgetConfig, CalculatedField, ConditionalRule, ValueFilter } from './BiTypes'
-import type { BiMetric, BiDimension, ValueOp } from '@/lib/report-utm/bi-metadata'
-import { METRIC_META, DIMENSION_META, VALUE_OPS } from '@/lib/report-utm/bi-metadata'
+import type { BiMetric, BiDimension, ValueOp, FieldAgg, FormFieldMeta } from '@/lib/report-utm/bi-metadata'
+import {
+    METRIC_META, DIMENSION_META, VALUE_OPS, FIELD_AGGS,
+    makeFieldDim, makeFieldMetric, humanizeFieldKey, fieldDimLabel, fieldMetricLabel,
+} from '@/lib/report-utm/bi-metadata'
 import { HelpTip } from './HelpTip'
 
 interface Props {
     widget?: BiWidget | null
     calculatedFields?: CalculatedField[]
+    /** Cliente vigente del informe (para descubrir sus campos de formulario). */
+    clienteId?: string
+    dateFrom?: string
+    dateTo?: string
     onSave: (widget: BiWidget) => void
     onClose: () => void
 }
+
+const FIELD_AGG_LABEL = Object.fromEntries(FIELD_AGGS.map(a => [a.value, a.label])) as Record<FieldAgg, string>
+const AGGS_FOR = (t: 'number' | 'text'): FieldAgg[] =>
+    t === 'number' ? ['sum', 'avg', 'min', 'max', 'count'] : ['count']
 
 const WIDGET_TYPES: { value: WidgetType; label: string; desc: string }[] = [
     { value: 'scorecard', label: 'Scorecard', desc: 'KPI único' },
@@ -36,12 +47,13 @@ function genId(): string {
     return Math.random().toString(36).slice(2, 10)
 }
 
-export function BiWidgetEditor({ widget, calculatedFields = [], onSave, onClose }: Props) {
+export function BiWidgetEditor({ widget, calculatedFields = [], clienteId, dateFrom, dateTo, onSave, onClose }: Props) {
     const [type,   setType]   = useState<WidgetType>(widget?.type ?? 'scorecard')
     const [title,  setTitle]  = useState(widget?.title ?? '')
-    const [metric, setMetric] = useState(widget?.config?.metric ?? 'leads_count')
-    const [dim,    setDim]    = useState<BiDimension>(widget?.config?.dimension ?? 'utm_source')
-    const [dim2,   setDim2]   = useState<BiDimension>(widget?.config?.dimension2 ?? 'none')
+    const [metric, setMetric] = useState<string>(String(widget?.config?.metric ?? 'leads_count'))
+    const [dim,    setDim]    = useState<string>(widget?.config?.dimension ?? 'utm_source')
+    const [dim2,   setDim2]   = useState<string>(widget?.config?.dimension2 ?? 'none')
+    const [formFields, setFormFields] = useState<FormFieldMeta[]>([])
     const [grouping, setGrouping] = useState<'day' | 'week' | 'month'>(widget?.config?.date_grouping ?? 'day')
     const [colSpan, setColSpan] = useState(widget?.w ?? 2)
     const [rowSpan, setRowSpan] = useState(widget?.h ?? 1)
@@ -55,14 +67,48 @@ export function BiWidgetEditor({ widget, calculatedFields = [], onSave, onClose 
     const [slicerMode, setSlicerMode] = useState<'dropdown' | 'list' | 'daterange'>(widget?.config?.slicer_mode ?? 'dropdown')
     const [metricSearch, setMetricSearch] = useState('')
 
+    // Campos de formulario del cliente (raw_fields) → dimensiones + métricas.
+    useEffect(() => {
+        if (!clienteId) { setFormFields([]); return }
+        const params = new URLSearchParams({ cliente_id: clienteId })
+        if (dateFrom) params.set('date_from', dateFrom)
+        if (dateTo)   params.set('date_to', dateTo)
+        let cancelled = false
+        fetch(`/api/report-utm/bi/form-fields?${params}`)
+            .then(r => r.json())
+            .then(json => { if (!cancelled) setFormFields(json.data ?? []) })
+            .catch(() => { if (!cancelled) setFormFields([]) })
+        return () => { cancelled = true }
+    }, [clienteId, dateFrom, dateTo])
+
     const isChart = ['line', 'area', 'bar', 'combo', 'pie', 'scatter'].includes(type)
     const supportsDim2 = ['bar', 'combo', 'area', 'line'].includes(type)
+
+    // Opciones derivadas de los campos de formulario descubiertos.
+    const fieldDimOptions = formFields.map(f => ({ value: makeFieldDim(f.key), label: humanizeFieldKey(f.label) }))
+    const fieldMetricOptions = formFields.flatMap(f =>
+        AGGS_FOR(f.type).map(agg => ({
+            value: makeFieldMetric(agg, f.key),
+            label: `${FIELD_AGG_LABEL[agg]} · ${humanizeFieldKey(f.label)}`,
+        }))
+    )
+    // Dimensiones base + de campo (para los selectores de dimensión y slicer).
+    const dimOptions: { value: string; label: string }[] = [...ALL_DIMS, ...fieldDimOptions]
+
+    // Etiquetas que resuelven también tokens de campo.
+    const resolveMetricLabel = (k: string) =>
+        METRIC_META[k as BiMetric]?.label ?? fieldMetricLabel(k) ?? calculatedFields.find(c => c.name === k)?.name ?? k
+    const resolveDimLabel = (d: string) =>
+        DIMENSION_META[d as BiDimension]?.label ?? fieldDimLabel(d) ?? d
 
     // Métricas disponibles = base + campos calculados. Los campos calculados se
     // pueden usar en tablas, scorecards y gráficas (no en funnel/slicer).
     const calcAsMetrics = calculatedFields.map(c => ({ value: c.name, label: `∑ ${c.name}` }))
     const allowCalc = type === 'table' || type === 'scorecard' || isChart
-    const metricOptions = (allowCalc ? [...ALL_METRICS, ...calcAsMetrics] : ALL_METRICS)
+    // Las métricas de campo (sum/avg/… de raw_fields) se usan igual que las calc.
+    const metricOptions = (allowCalc
+        ? [...ALL_METRICS, ...calcAsMetrics, ...fieldMetricOptions]
+        : ALL_METRICS)
         .filter(m => !metricSearch || m.label.toLowerCase().includes(metricSearch.toLowerCase()))
 
     // Columnas de tabla (multi-columna): el config.metric guarda la lista separada por coma.
@@ -88,8 +134,7 @@ export function BiWidgetEditor({ widget, calculatedFields = [], onSave, onClose 
         selectedMetrics.some(isAdMetric)
 
     // Métricas que se pueden usar para filtrar filas por valor (las que el widget trae)
-    const metricLabelOf = (k: string) =>
-        METRIC_META[k as BiMetric]?.label ?? calculatedFields.find(c => c.name === k)?.name ?? k
+    const metricLabelOf = resolveMetricLabel
     const valueFilterChoices = (type === 'table'
         ? (tableCols.length ? tableCols : ALL_METRICS.map(m => String(m.value)))
         : [String(metric)]
@@ -97,8 +142,8 @@ export function BiWidgetEditor({ widget, calculatedFields = [], onSave, onClose 
 
     useEffect(() => {
         if (!title) {
-            const m = METRIC_META[metric as BiMetric]?.label ?? metric
-            const d = DIMENSION_META[dim]?.label ?? dim
+            const m = resolveMetricLabel(String(metric))
+            const d = resolveDimLabel(dim)
             setTitle(type === 'funnel' ? 'Funnel de Conversión' : type === 'scorecard' ? m : `${m} por ${d}`)
         }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -215,10 +260,10 @@ export function BiWidgetEditor({ widget, calculatedFields = [], onSave, onClose 
                                     </label>
                                     <select
                                         value={dim}
-                                        onChange={e => setDim(e.target.value as BiDimension)}
+                                        onChange={e => setDim(e.target.value)}
                                         className="w-full px-3 py-2 text-sm rounded-lg bg-muted border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
                                     >
-                                        {ALL_DIMS.filter(d => d.value !== 'none' && d.value !== 'date').map(d => (
+                                        {dimOptions.filter(d => d.value !== 'none' && d.value !== 'date').map(d => (
                                             <option key={d.value} value={d.value}>{d.label}</option>
                                         ))}
                                     </select>
@@ -298,10 +343,10 @@ export function BiWidgetEditor({ widget, calculatedFields = [], onSave, onClose 
                                     </label>
                                     <select
                                         value={dim}
-                                        onChange={e => setDim(e.target.value as BiDimension)}
+                                        onChange={e => setDim(e.target.value)}
                                         className="w-full px-3 py-2 text-sm rounded-lg bg-muted border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
                                     >
-                                        {ALL_DIMS.filter(d => d.value !== 'none').map(d => (
+                                        {dimOptions.filter(d => d.value !== 'none').map(d => (
                                             <option key={d.value} value={d.value}>{d.label}</option>
                                         ))}
                                     </select>
@@ -309,7 +354,7 @@ export function BiWidgetEditor({ widget, calculatedFields = [], onSave, onClose 
                                         <div className="mt-2 flex items-start gap-2 rounded-lg border border-amber-300/60 dark:border-amber-500/30 bg-amber-50/60 dark:bg-amber-500/10 px-3 py-2">
                                             <AlertTriangle className="h-3.5 w-3.5 text-amber-500 shrink-0 mt-0.5" />
                                             <p className="text-[11px] text-amber-700 dark:text-amber-300 leading-snug">
-                                                El gasto y las métricas de campaña no se desglosan por <strong>{DIMENSION_META[dim]?.label ?? dim}</strong> (caerían en una fila “(total)”).
+                                                El gasto y las métricas de campaña no se desglosan por <strong>{resolveDimLabel(dim)}</strong> (caerían en una fila “(total)”).
                                                 Para ver gasto / CPL por campaña usa la dimensión <strong>Campaña (cruzada)</strong>; o usa <strong>Fecha</strong> para la evolución.
                                             </p>
                                         </div>
@@ -325,11 +370,11 @@ export function BiWidgetEditor({ widget, calculatedFields = [], onSave, onClose 
                                     </label>
                                     <select
                                         value={dim2}
-                                        onChange={e => setDim2(e.target.value as BiDimension)}
+                                        onChange={e => setDim2(e.target.value)}
                                         className="w-full px-3 py-2 text-sm rounded-lg bg-muted border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
                                     >
                                         <option value="none">Ninguna</option>
-                                        {ALL_DIMS.filter(d => d.value !== 'none' && d.value !== 'campaign' && d.value !== dim).map(d => (
+                                        {dimOptions.filter(d => d.value !== 'none' && d.value !== 'campaign' && d.value !== dim).map(d => (
                                             <option key={d.value} value={d.value}>{d.label}</option>
                                         ))}
                                     </select>

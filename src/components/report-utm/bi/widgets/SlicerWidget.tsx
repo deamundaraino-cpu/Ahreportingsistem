@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { Loader2, Filter, Check } from 'lucide-react'
 import type { BiFilters, WidgetConfig } from '../BiTypes'
 import type { BiDimension } from '@/lib/report-utm/bi-metadata'
-import { DIMENSION_META } from '@/lib/report-utm/bi-metadata'
+import { DIMENSION_META, fieldDimLabel } from '@/lib/report-utm/bi-metadata'
 
 interface Props {
     title: string
@@ -17,7 +17,7 @@ interface Props {
 export function SlicerWidget({ title, config, filters, onSetFilter, onSetDateRange }: Props) {
     const dimension = (config.dimension as BiDimension) ?? 'utm_source'
     const mode = config.slicer_mode ?? 'dropdown'
-    const dimLabel = DIMENSION_META[dimension]?.label ?? dimension
+    const dimLabel = DIMENSION_META[dimension]?.label ?? fieldDimLabel(dimension) ?? dimension
 
     const [values, setValues]   = useState<string[]>([])
     const [loading, setLoading] = useState(mode !== 'daterange')

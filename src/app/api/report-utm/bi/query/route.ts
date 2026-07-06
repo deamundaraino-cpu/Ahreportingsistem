@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { runBiQuery, runFunnelQuery, runComparison, runPivotQuery, runDistinctValues } from '@/lib/report-utm/bi-query'
 import { runCampaignQuery } from '@/lib/report-utm/campaign-data'
-import type { BiMetric, BiDimension, DateGrouping, CalculatedFieldDef } from '@/lib/report-utm/bi-metadata'
+import type { BiMetric, BiDimension, DateGrouping, CalculatedFieldDef, AdvancedFilter } from '@/lib/report-utm/bi-metadata'
+import { parseAdvancedFilter, advancedFilterHasConditions } from '@/lib/report-utm/bi-metadata'
 import { createClient } from '@/utils/supabase/server'
 
 export const dynamic = 'force-dynamic'
@@ -41,15 +42,22 @@ export async function GET(req: NextRequest) {
         if (m && value) calculated.push({ name: m[1], expression: value })
     }
 
+    // filtro avanzado guardado (Y de O): ?advanced=<json>
+    const advancedRaw = sp.get('advanced')
+    const parsedAdv = advancedRaw ? parseAdvancedFilter(advancedRaw) : undefined
+    const advancedFilter: AdvancedFilter | undefined =
+        parsedAdv && advancedFilterHasConditions(parsedAdv) ? parsedAdv : undefined
+
     const baseParams = {
         cliente_id, metrics, dimension, dimension2,
         date_from, date_to, date_grouping, filters, limit, sort,
         calculated: calculated.length ? calculated : undefined,
+        advancedFilter,
     }
 
     try {
         if (type === 'funnel') {
-            const data = await runFunnelQuery({ cliente_id, date_from, date_to, filters })
+            const data = await runFunnelQuery({ cliente_id, date_from, date_to, filters, advancedFilter })
             return NextResponse.json({ data })
         }
 

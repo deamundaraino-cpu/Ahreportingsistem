@@ -6,6 +6,11 @@ import { BiShareModal } from './BiShareModal'
 import { BiCalcFieldsModal } from './BiCalcFieldsModal'
 import { HelpTip } from './HelpTip'
 import type { CalculatedField } from './BiTypes'
+import type { AdvancedFilter } from '@/lib/report-utm/bi-metadata'
+import {
+    isFieldDim, fieldDimLabel,
+    ADVANCED_FILTER_KEY, parseAdvancedFilter, serializeAdvancedFilter, advancedFilterHasConditions,
+} from '@/lib/report-utm/bi-metadata'
 import {
     DndContext,
     closestCenter,
@@ -49,13 +54,24 @@ function genId(): string {
 
 export function BiReportCanvas({ report: initialReport, readonly }: Props) {
     const [report, setReport] = useState<BiReport>(initialReport)
-    const [filters, setFilters] = useState<BiFilters>({
-        date_from: startOfMonth(),
-        date_to:   isoLocal(new Date()),
-        ...(initialReport.filters ?? {}),
-        // El cliente asignado al informe manda como filtro por defecto
-        ...(initialReport.cliente_id ? { cliente_id: initialReport.cliente_id } : {}),
+    const [filters, setFilters] = useState<BiFilters>(() => {
+        // El filtro avanzado guardado vive bajo la clave reservada __adv; se
+        // maneja aparte (estado advancedFilter), no como filtro plano.
+        const base = { ...(initialReport.filters ?? {}) }
+        delete base[ADVANCED_FILTER_KEY]
+        return {
+            date_from: startOfMonth(),
+            date_to:   isoLocal(new Date()),
+            ...base,
+            ...(initialReport.cliente_id ? { cliente_id: initialReport.cliente_id } : {}),
+        }
     })
+    // Filtro avanzado (Y de O), inicializado desde lo persistido en el informe.
+    const [advancedFilter, setAdvancedFilter] = useState<AdvancedFilter>(
+        () => parseAdvancedFilter(initialReport.filters?.[ADVANCED_FILTER_KEY])
+    )
+    const [savingAdv, setSavingAdv] = useState(false)
+    const [advSaved, setAdvSaved]   = useState(false)
     const [editMode,   setEditMode]   = useState(false)
     const [editorOpen, setEditorOpen] = useState(false)
     const [editingWidget, setEditingWidget] = useState<BiWidget | null>(null)
@@ -177,9 +193,36 @@ export function BiReportCanvas({ report: initialReport, readonly }: Props) {
         setCalcOpen(false)
     }
 
+    // Guarda el filtro avanzado (Y de O) dentro de report.filters['__adv'].
+    async function handleSaveAdvancedFilter() {
+        setSavingAdv(true)
+        try {
+            const nextFilters = { ...(report.filters ?? {}), [ADVANCED_FILTER_KEY]: serializeAdvancedFilter(advancedFilter) }
+            setReport(prev => ({ ...prev, filters: nextFilters }))
+            await fetch(`/api/report-utm/bi/reports/${report.id}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ filters: nextFilters }),
+            })
+            setAdvSaved(true)
+            setTimeout(() => setAdvSaved(false), 2000)
+        } finally {
+            setSavingAdv(false)
+        }
+    }
+
+    // Filtros que reciben los widgets: los planos + el filtro avanzado serializado.
+    const widgetFilters: BiFilters = {
+        ...filters,
+        [ADVANCED_FILTER_KEY]: advancedFilterHasConditions(advancedFilter)
+            ? serializeAdvancedFilter(advancedFilter)
+            : undefined,
+    }
+
     const activeDrills = Object.entries(filters).filter(
-        ([k, v]) => v && (k.startsWith('utm_') || k === 'ip_country' || k === 'form_plugin' || k === 'attribution_method')
+        ([k, v]) => v && (k.startsWith('utm_') || k === 'ip_country' || k === 'form_plugin' || k === 'attribution_method' || isFieldDim(k))
     )
+    const drillLabel = (k: string) => fieldDimLabel(k) ?? k.replace('utm_', '')
 
     return (
         <div className="space-y-4">
@@ -284,6 +327,12 @@ export function BiReportCanvas({ report: initialReport, readonly }: Props) {
                 onChange={(f) => setFilters(f)}
                 clienteLocked={readonly || (!editMode && !!report.cliente_id)}
                 onClienteChange={editMode ? handleAssignCliente : undefined}
+                advancedFilter={advancedFilter}
+                onAdvancedChange={setAdvancedFilter}
+                onAdvancedSave={handleSaveAdvancedFilter}
+                savingAdvanced={savingAdv}
+                advancedSaved={advSaved}
+                readonly={readonly}
             />
 
             {/* Drill-down chips */}
@@ -299,7 +348,7 @@ export function BiReportCanvas({ report: initialReport, readonly }: Props) {
                             onClick={() => handleDrill(k, v as string)}
                             className="flex items-center gap-1 px-2 py-1 rounded-full bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 text-[11px] font-medium hover:bg-emerald-500/25 transition-colors"
                         >
-                            {k.replace('utm_', '')}: {v}
+                            {drillLabel(k)}: {v}
                             <X className="h-3 w-3" />
                         </button>
                     ))}
@@ -329,7 +378,7 @@ export function BiReportCanvas({ report: initialReport, readonly }: Props) {
                                 <BiWidgetCard
                                     key={widget.id}
                                     widget={widget}
-                                    filters={filters}
+                                    filters={widgetFilters}
                                     editMode={editMode}
                                     calculatedFields={report.calculated_fields ?? []}
                                     onEdit={w => { setEditingWidget(w); setEditorOpen(true) }}
@@ -350,6 +399,9 @@ export function BiReportCanvas({ report: initialReport, readonly }: Props) {
                 <BiWidgetEditor
                     widget={editingWidget}
                     calculatedFields={report.calculated_fields ?? []}
+                    clienteId={filters.cliente_id}
+                    dateFrom={filters.date_from}
+                    dateTo={filters.date_to}
                     onSave={handleSaveWidget}
                     onClose={() => { setEditorOpen(false); setEditingWidget(null) }}
                 />
@@ -368,6 +420,9 @@ export function BiReportCanvas({ report: initialReport, readonly }: Props) {
             {calcOpen && (
                 <BiCalcFieldsModal
                     fields={report.calculated_fields ?? []}
+                    clienteId={filters.cliente_id}
+                    dateFrom={filters.date_from}
+                    dateTo={filters.date_to}
                     onSave={handleSaveCalcFields}
                     onClose={() => setCalcOpen(false)}
                 />

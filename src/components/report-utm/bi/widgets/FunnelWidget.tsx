@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { Loader2, ArrowDown } from 'lucide-react'
 import type { BiFilters, WidgetConfig } from '../BiTypes'
-import { appendUtmFilters, utmFilterSignature } from '@/lib/report-utm/bi-metadata'
+import { appendUtmFilters, utmFilterSignature, appendFieldFilters, fieldFilterSignature, appendAdvancedFilter, advancedFilterSignature } from '@/lib/report-utm/bi-metadata'
 
 interface Props {
     title: string
@@ -44,13 +44,15 @@ export function FunnelWidget({ title, config: _, filters }: Props) {
         if (filters.date_from)  params.set('date_from', filters.date_from)
         if (filters.date_to)    params.set('date_to', filters.date_to)
         appendUtmFilters(params, filters)
+        appendFieldFilters(params, filters)
+        appendAdvancedFilter(params, filters)
 
         fetch(`/api/report-utm/bi/query?${params}`)
             .then(r => r.json())
             .then(json => setStages(json.data ?? []))
             .catch(() => setError('Error al cargar'))
             .finally(() => setLoading(false))
-    }, [filters.cliente_id, filters.date_from, filters.date_to, utmFilterSignature(filters)])
+    }, [filters.cliente_id, filters.date_from, filters.date_to, utmFilterSignature(filters), fieldFilterSignature(filters), advancedFilterSignature(filters)])
 
     const maxVal = stages.length > 0 ? Math.max(...stages.map(s => s.value), 1) : 1
 

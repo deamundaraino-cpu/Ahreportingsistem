@@ -1,6 +1,11 @@
 import { createAdminClient } from '@/utils/supabase/server'
-import type { BiMetric, BiDimension, DateGrouping, BiQueryParams, BiQueryRow, BiPivotRow } from './bi-metadata'
-import { evaluateExpression, parseFilterValue, AD_JSONB_METRICS } from './bi-metadata'
+import type { BiMetric, BiDimension, DateGrouping, BiQueryParams, BiQueryRow, BiPivotRow, FieldAgg, AdvancedFilter } from './bi-metadata'
+import {
+    evaluateExpression, parseFilterValue, AD_JSONB_METRICS,
+    isFieldDim, parseFieldDim, parseFieldMetric,
+    extractFieldMetricAliases, parseFieldNumber,
+    advancedFilterHasConditions, matchFilterCondition,
+} from './bi-metadata'
 
 // Re-export para compatibilidad con imports existentes que apuntaban acá.
 export type { BiMetric, BiDimension, DateGrouping, BiQueryParams, BiQueryRow, BiPivotRow } from './bi-metadata'
@@ -20,9 +25,32 @@ export async function runBiQuery(params: BiQueryParams): Promise<BiQueryRow[]> {
     }
     const requires = (keys: string[]) => keys.some(k => required.has(k))
 
-    const needsLeads = requires(['leads_count', 'cpl', 'conversion_rate'])
-    const needsSales = requires(['sales_count', 'revenue', 'cpa', 'roas', 'conversion_rate'])
-    const needsAds   = requires(['spend', 'meta_spend', 'tiktok_spend', 'cpl', 'cpa', 'roas', 'clicks', 'impressions', 'cpc', 'cpm', 'frequency', 'ctr', ...AD_JSONB_METRICS])
+    // ── Campos de formulario (raw_fields JSONB) ───────────────────────
+    // Dimensión de campo (agrupar por raw_fields.<clave>) + métricas de campo
+    // (sum/avg/… de un campo). Las métricas de campo pueden venir directamente
+    // en params.metrics o referenciadas por alias en expresiones calculadas.
+    const fieldDimKey = isFieldDim(params.dimension) ? parseFieldDim(params.dimension) : null
+    const fieldMetricReqs = new Map<string, FieldMetricReq>()
+    for (const m of params.metrics) {
+        const p = parseFieldMetric(m)
+        if (p) fieldMetricReqs.set(m, { agg: p.agg, key: p.key, outKey: m })
+    }
+    for (const cf of params.calculated ?? []) {
+        for (const fm of extractFieldMetricAliases(cf.expression)) {
+            if (!fieldMetricReqs.has(fm.alias)) {
+                fieldMetricReqs.set(fm.alias, { agg: fm.agg, key: fm.key, outKey: fm.alias })
+            }
+        }
+    }
+    const fieldMetrics = Array.from(fieldMetricReqs.values())
+    const isFieldDimQuery = fieldDimKey !== null
+
+    const needsLeads = requires(['leads_count', 'cpl', 'conversion_rate']) || isFieldDimQuery || fieldMetrics.length > 0
+    // Las ventas y el gasto no se pueden desglosar por un campo de formulario
+    // (sales_events / metricas_diarias no tienen raw_fields) → se omiten cuando
+    // se agrupa por campo para no romper el select ni inventar una fila "(total)".
+    const needsSales = !isFieldDimQuery && requires(['sales_count', 'revenue', 'cpa', 'roas', 'conversion_rate'])
+    const needsAds   = !isFieldDimQuery && requires(['spend', 'meta_spend', 'tiktok_spend', 'cpl', 'cpa', 'roas', 'clicks', 'impressions', 'cpc', 'cpm', 'frequency', 'ctr', ...AD_JSONB_METRICS])
 
     const dateFrom = params.date_from ?? new Date(Date.now() - 30 * 86400_000).toISOString().slice(0, 10)
     const dateTo   = params.date_to   ?? new Date().toISOString().slice(0, 10)
@@ -31,9 +59,9 @@ export async function runBiQuery(params: BiQueryParams): Promise<BiQueryRow[]> {
     // ── LEADS query ───────────────────────────────────────────────────
     // Conteo EXACTO (count para el total, paginación completa para agrupados).
     // El Top-N (params.limit) se aplica luego en mergeResults, no al traer filas.
-    let leadsData: Array<{ dim: string | null; count: number }> = []
+    let leadsData: LeadAgg[] = []
     if (needsLeads) {
-        leadsData = await queryLeadsDirect(supabase, params, dateFrom, dateTo)
+        leadsData = await queryLeadsDirect(supabase, params, dateFrom, dateTo, fieldMetrics)
     }
 
     // ── SALES query ───────────────────────────────────────────────────
@@ -49,7 +77,96 @@ export async function runBiQuery(params: BiQueryParams): Promise<BiQueryRow[]> {
     }
 
     // ── Merge results ─────────────────────────────────────────────────
-    return mergeResults(params, leadsData, salesData, adsData)
+    return mergeResults(params, leadsData, salesData, adsData, fieldMetrics)
+}
+
+// ── Campos de formulario: tipos de agregación ─────────────────────────
+
+interface FieldMetricReq { agg: FieldAgg; key: string; outKey: string }
+interface FieldAcc { sum: number; n: number; min: number; max: number; present: number }
+interface LeadAgg { dim: string | null; count: number; fields: Record<string, FieldAcc> }
+
+function newFieldAcc(): FieldAcc {
+    return { sum: 0, n: 0, min: Infinity, max: -Infinity, present: 0 }
+}
+
+function accumulateField(acc: FieldAcc, raw: unknown): void {
+    if (raw === null || raw === undefined) return
+    const s = String(raw).trim()
+    if (!s) return
+    acc.present++
+    const num = parseFieldNumber(s)
+    if (num !== null) {
+        acc.sum += num
+        acc.n++
+        if (num < acc.min) acc.min = num
+        if (num > acc.max) acc.max = num
+    }
+}
+
+function fieldAggValue(acc: FieldAcc | undefined, agg: FieldAgg): number {
+    if (!acc) return 0
+    switch (agg) {
+        case 'sum':   return round2(acc.sum)
+        case 'avg':   return acc.n > 0 ? round2(acc.sum / acc.n) : 0
+        case 'min':   return acc.n > 0 ? round2(acc.min) : 0
+        case 'max':   return acc.n > 0 ? round2(acc.max) : 0
+        case 'count': return acc.present
+        default:      return 0
+    }
+}
+
+// ── Filtro avanzado (Y de O): evaluación en memoria ───────────────────
+// Se evalúa sobre las filas ya traídas (leads/ventas). Columnas disponibles
+// por tabla: los leads tienen todas las dimensiones de lead; las ventas solo
+// UTMs + plataforma (no país/formulario/campos). Una condición sobre un campo
+// no disponible en esa tabla se ignora (no restringe) → el grupo O sigue.
+type AdvTable = 'leads' | 'sales'
+const LEAD_ADV_COLS = new Set(['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'utm_id', 'ip_country', 'form_name', 'form_plugin', 'attribution_method'])
+const SALES_ADV_COLS = new Set(['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'utm_id', 'platform'])
+
+function advCellValue(row: Record<string, unknown>, field: string, table: AdvTable): string | undefined {
+    const fk = parseFieldDim(field)
+    if (fk !== null) {
+        if (table !== 'leads') return undefined
+        const rf = (row.raw_fields as Record<string, unknown> | null) ?? null
+        return rf && rf[fk] !== null && rf[fk] !== undefined ? String(rf[fk]) : ''
+    }
+    const cols = table === 'sales' ? SALES_ADV_COLS : LEAD_ADV_COLS
+    if (!cols.has(field)) return undefined
+    return row[field] !== null && row[field] !== undefined ? String(row[field]) : ''
+}
+
+function evalAdvancedRow(row: Record<string, unknown>, af: AdvancedFilter | undefined, table: AdvTable): boolean {
+    if (!af?.groups?.length) return true
+    for (const g of af.groups) {
+        const conds = (g.conditions ?? []).filter(c => c.field && c.value && c.value.trim())
+        if (!conds.length) continue
+        let applicable = false, pass = false
+        for (const c of conds) {
+            const cell = advCellValue(row, c.field, table)
+            if (cell === undefined) continue   // campo no disponible en esta tabla → se ignora
+            applicable = true
+            if (matchFilterCondition(cell, c.op, c.value)) { pass = true; break }
+        }
+        if (applicable && !pass) return false  // el grupo tenía condiciones aplicables y ninguna matcheó
+    }
+    return true
+}
+
+/** Columnas que hay que traer para poder evaluar el filtro avanzado en una tabla. */
+function collectAdvancedColumns(af: AdvancedFilter | undefined, table: AdvTable): { cols: string[]; needsRawFields: boolean } {
+    const cols = new Set<string>()
+    let needsRawFields = false
+    for (const g of af?.groups ?? []) {
+        for (const c of g.conditions ?? []) {
+            if (!c.field || !c.value || !c.value.trim()) continue
+            if (parseFieldDim(c.field) !== null) { if (table === 'leads') needsRawFields = true; continue }
+            const set = table === 'sales' ? SALES_ADV_COLS : LEAD_ADV_COLS
+            if (set.has(c.field)) cols.add(c.field)
+        }
+    }
+    return { cols: Array.from(cols), needsRawFields }
 }
 
 // ── Direct PostgREST queries (no raw SQL needed) ──────────────────────
@@ -59,8 +176,9 @@ async function queryLeadsDirect(
     supabase: any,
     params: BiQueryParams,
     dateFrom: string,
-    dateTo: string
-): Promise<Array<{ dim: string | null; count: number }>> {
+    dateTo: string,
+    fieldMetrics: FieldMetricReq[]
+): Promise<LeadAgg[]> {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const applyBase = (q: any) => {
         q = q.gte('created_at', dateFrom + 'T00:00:00').lte('created_at', dateTo + 'T23:59:59')
@@ -68,41 +186,59 @@ async function queryLeadsDirect(
         return applyDimFilters(q, params.filters)
     }
 
-    // Total: conteo EXACTO en la base, sin traer filas (head + count).
-    if (params.dimension === 'none') {
+    const fieldKeys = [...new Set(fieldMetrics.map(f => f.key))]
+    const adv = params.advancedFilter
+    const advCols = collectAdvancedColumns(adv, 'leads')
+    const hasAdv = advancedFilterHasConditions(adv) && (advCols.cols.length > 0 || advCols.needsRawFields)
+    const needsRawFields = isFieldDim(params.dimension) || fieldKeys.length > 0 || advCols.needsRawFields
+
+    // Total sin agregar campos ni filtro avanzado: conteo EXACTO (head + count).
+    if (params.dimension === 'none' && fieldKeys.length === 0 && !hasAdv) {
         const { count, error } = await applyBase(
             supabase.schema('report_utm').from('lead_events').select('id', { count: 'exact', head: true })
         )
         if (error) return []
-        return [{ dim: 'total', count: count ?? 0 }]
+        return [{ dim: 'total', count: count ?? 0, fields: {} }]
     }
 
-    // Agrupado: traer TODAS las filas (paginado) y agrupar en memoria.
-    const rows = await fetchAllRows(() =>
-        applyBase(supabase.schema('report_utm').from('lead_events').select(buildLeadSelect(params.dimension)))
+    // Agrupado / métricas de campo / filtro avanzado: traer filas (paginado) y agrupar.
+    let rows = await fetchAllRows(() =>
+        applyBase(supabase.schema('report_utm').from('lead_events').select(buildLeadSelect(params.dimension, needsRawFields, advCols.cols)))
     )
-    return aggregateLeads(rows, params.dimension, params.date_grouping)
+    if (hasAdv) rows = rows.filter(r => evalAdvancedRow(r, adv, 'leads'))
+    return aggregateLeads(rows, params.dimension, params.date_grouping, fieldKeys)
 }
 
-function buildLeadSelect(dimension: BiDimension): string {
-    const cols = ['id', 'created_at']
-    if (dimension !== 'none' && dimension !== 'date') cols.push(dimension)
-    return cols.join(',')
+function buildLeadSelect(dimension: BiDimension, needsRawFields: boolean, extraCols: string[] = []): string {
+    const cols = new Set<string>(['id', 'created_at'])
+    if (dimension !== 'none' && dimension !== 'date' && !isFieldDim(dimension)) cols.add(dimension)
+    if (needsRawFields) cols.add('raw_fields')
+    for (const c of extraCols) cols.add(c)
+    return Array.from(cols).join(',')
 }
 
 function aggregateLeads(
     rows: Record<string, unknown>[],
     dimension: BiDimension,
-    grouping?: DateGrouping
-): Array<{ dim: string | null; count: number }> {
-    const map = new Map<string, number>()
+    grouping: DateGrouping | undefined,
+    fieldKeys: string[]
+): LeadAgg[] {
+    const map = new Map<string, LeadAgg>()
     for (const r of rows) {
         const dim = getDimValue(r, dimension, grouping)
-        map.set(dim, (map.get(dim) ?? 0) + 1)
+        let entry = map.get(dim)
+        if (!entry) { entry = { dim, count: 0, fields: {} }; map.set(dim, entry) }
+        entry.count++
+        if (fieldKeys.length) {
+            const rf = (r.raw_fields as Record<string, unknown> | null) ?? null
+            for (const key of fieldKeys) {
+                let acc = entry.fields[key]
+                if (!acc) { acc = newFieldAcc(); entry.fields[key] = acc }
+                accumulateField(acc, rf ? rf[key] : null)
+            }
+        }
     }
-    return Array.from(map.entries())
-        .map(([dim, count]) => ({ dim, count }))
-        .sort((a, b) => b.count - a.count)
+    return Array.from(map.values()).sort((a, b) => b.count - a.count)
 }
 
 async function querySalesDirect(
@@ -112,7 +248,14 @@ async function querySalesDirect(
     dateFrom: string,
     dateTo: string
 ): Promise<Array<{ dim: string | null; sales: number; revenue: number }>> {
-    const dimCols = params.dimension !== 'none' && params.dimension !== 'date' ? `,${params.dimension}` : ''
+    const adv = params.advancedFilter
+    const advCols = collectAdvancedColumns(adv, 'sales')
+    const hasAdv = advancedFilterHasConditions(adv) && advCols.cols.length > 0
+
+    const selectCols = new Set<string>(['id', 'created_at', 'amount', 'status', 'platform'])
+    if (params.dimension !== 'none' && params.dimension !== 'date' && !isFieldDim(params.dimension)) selectCols.add(params.dimension)
+    for (const c of advCols.cols) selectCols.add(c)
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const applyBase = (q: any) => {
         q = q.gte('created_at', dateFrom + 'T00:00:00')
@@ -123,9 +266,10 @@ async function querySalesDirect(
     }
 
     // Traer TODAS las ventas aprobadas (paginado) para sumar revenue exacto.
-    const data = await fetchAllRows(() =>
-        applyBase(supabase.schema('report_utm').from('sales_events').select(`id,created_at,amount,status,platform${dimCols}`))
+    let data = await fetchAllRows(() =>
+        applyBase(supabase.schema('report_utm').from('sales_events').select(Array.from(selectCols).join(',')))
     )
+    if (hasAdv) data = data.filter(r => evalAdvancedRow(r, adv, 'sales'))
 
     const map = new Map<string, { sales: number; revenue: number }>()
     for (const r of data as Record<string, unknown>[]) {
@@ -225,9 +369,10 @@ async function queryAdsDirect(
 
 function mergeResults(
     params: BiQueryParams,
-    leadsData: Array<{ dim: string | null; count: number }>,
+    leadsData: LeadAgg[],
     salesData: Array<{ dim: string | null; sales: number; revenue: number }>,
-    adsData:   AdRow[]
+    adsData:   AdRow[],
+    fieldMetrics: FieldMetricReq[]
 ): BiQueryRow[] {
     const keys = new Set<string>()
     leadsData.forEach(r => keys.add(r.dim ?? 'total'))
@@ -278,6 +423,14 @@ function mergeResults(
         if (params.metrics.includes('frequency')) row.frequency = reach > 0 ? round2(impressions / reach) : null
         if (params.metrics.includes('ctr'))       row.ctr       = impressions > 0 ? round2((clicks / impressions) * 100) : null
 
+        // Métricas de campo de formulario (sum/avg/min/max/count de raw_fields).
+        const fieldValues: Record<string, number> = {}
+        for (const fm of fieldMetrics) {
+            const v = fieldAggValue(lead?.fields[fm.key], fm.agg)
+            fieldValues[fm.outKey] = v
+            if (params.metrics.includes(fm.outKey as BiMetric)) row[fm.outKey] = v
+        }
+
         // Campos calculados: se evalúan sobre las métricas base de la fila.
         if (params.calculated?.length) {
             const baseValues: Record<string, number> = {
@@ -290,6 +443,7 @@ function mergeResults(
                 cpm: Number(row.cpm ?? 0),
                 frequency: reach > 0 ? round2(impressions / reach) : 0,
                 ctr: impressions > 0 ? round2((clicks / impressions) * 100) : 0,
+                ...fieldValues,   // aliases f_<agg>__<clave> disponibles en la expresión
             }
             for (const k of AD_JSONB_METRICS) baseValues[k] = Number(ad?.[k] ?? 0)
             for (const cf of params.calculated) {
@@ -373,8 +527,18 @@ export async function runPivotQuery(
 
     const cols = new Set<string>(['id', 'created_at'])
     if (isSales) { cols.add('amount'); cols.add('status'); cols.add('platform') }
-    if (dim1 !== 'none' && dim1 !== 'date' && dim1 !== 'platform') cols.add(dim1)
-    if (dim2 !== 'none' && dim2 !== 'date' && dim2 !== 'platform') cols.add(dim2)
+    if (dim1 !== 'none' && dim1 !== 'date' && dim1 !== 'platform' && !isFieldDim(dim1)) cols.add(dim1)
+    if (dim2 !== 'none' && dim2 !== 'date' && dim2 !== 'platform' && !isFieldDim(dim2)) cols.add(dim2)
+    // Ventas no tienen raw_fields → una dimensión de campo sobre ventas cae en
+    // "(sin valor)"; solo lead_events puede desglosar por campo de formulario.
+    if (!isSales && (isFieldDim(dim1) || isFieldDim(dim2))) cols.add('raw_fields')
+
+    // Columnas necesarias para el filtro avanzado en esta tabla.
+    const adv = params.advancedFilter
+    const advCols = collectAdvancedColumns(adv, isSales ? 'sales' : 'leads')
+    const hasAdv = advancedFilterHasConditions(adv) && (advCols.cols.length > 0 || advCols.needsRawFields)
+    for (const c of advCols.cols) cols.add(c)
+    if (advCols.needsRawFields) cols.add('raw_fields')
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const applyBase = (q: any) => {
@@ -385,9 +549,10 @@ export async function runPivotQuery(
     }
 
     // Traer TODAS las filas (paginado); el Top-N se aplica después sobre los grupos.
-    const data = await fetchAllRows(() =>
+    let data = await fetchAllRows(() =>
         applyBase(supabase.schema('report_utm').from(table).select(Array.from(cols).join(',')))
     )
+    if (hasAdv) data = data.filter(r => evalAdvancedRow(r, adv, isSales ? 'sales' : 'leads'))
 
     const grouping = params.date_grouping ?? 'day'
     const pivot = new Map<string, Map<string, number>>()
@@ -437,6 +602,13 @@ function getDimValue(row: Record<string, unknown>, dimension: BiDimension, group
         const dateStr = String(row.created_at ?? '')
         return truncateDate(dateStr.slice(0, 10), grouping ?? 'day')
     }
+    const fieldKey = parseFieldDim(dimension)
+    if (fieldKey !== null) {
+        const rf = (row.raw_fields as Record<string, unknown> | null) ?? null
+        const raw = rf ? rf[fieldKey] : null
+        const v = raw === null || raw === undefined ? '' : String(raw).trim()
+        return v || '(sin valor)'
+    }
     return String(row[dimension] ?? '(sin valor)')
 }
 
@@ -462,7 +634,7 @@ const VALID_DIM_KEYS = new Set([
     'ip_country', 'form_name', 'form_plugin', 'attribution_method', 'platform',
 ])
 function isValidDimKey(key: string): boolean {
-    return VALID_DIM_KEYS.has(key)
+    return VALID_DIM_KEYS.has(key) || isFieldDim(key)
 }
 
 /**
@@ -506,22 +678,25 @@ export function applyOneFilter(q: any, key: string, raw: string): any {
     const { op, value } = parseFilterValue(raw)
     const v = value.trim()
     if (!v) return q
+    // Los filtros de campo de formulario apuntan a la clave JSONB (raw_fields->>clave).
+    const fieldKey = parseFieldDim(key)
+    const col = fieldKey !== null ? `raw_fields->>${fieldKey}` : key
     // Escapar comodines de LIKE en el valor del usuario
     const esc = (s: string) => s.replace(/[%_]/g, m => `\\${m}`)
     switch (op) {
-        case 'neq':       return q.neq(key, v)
-        case 'contains':  return q.ilike(key, `%${esc(v)}%`)
-        case 'ncontains': return q.not(key, 'ilike', `%${esc(v)}%`)
-        case 'starts':    return q.ilike(key, `${esc(v)}%`)
-        case 'ends':      return q.ilike(key, `%${esc(v)}`)
+        case 'neq':       return q.neq(col, v)
+        case 'contains':  return q.ilike(col, `%${esc(v)}%`)
+        case 'ncontains': return q.not(col, 'ilike', `%${esc(v)}%`)
+        case 'starts':    return q.ilike(col, `${esc(v)}%`)
+        case 'ends':      return q.ilike(col, `%${esc(v)}`)
         case 'eq':
         default:
             // Multi-valor por comas → IN
             if (v.includes(',')) {
                 const vals = v.split(',').map(s => s.trim()).filter(Boolean)
-                return vals.length ? q.in(key, vals) : q
+                return vals.length ? q.in(col, vals) : q
             }
-            return q.eq(key, v)
+            return q.eq(col, v)
     }
 }
 
@@ -543,6 +718,31 @@ export async function runDistinctValues(params: {
     const dateFrom = params.date_from ?? new Date(Date.now() - 90 * 86400_000).toISOString().slice(0, 10)
     const dateTo   = params.date_to   ?? new Date().toISOString().slice(0, 10)
     const table = params.source === 'sales' ? 'sales_events' : 'lead_events'
+
+    // Dimensión de campo de formulario (raw_fields): las ventas no tienen
+    // raw_fields → los valores distintos siempre salen de lead_events.
+    const fieldKey = parseFieldDim(dim)
+    if (fieldKey !== null) {
+        const rows = await fetchAllRows(() => {
+            let q = supabase
+                .schema('report_utm')
+                .from('lead_events')
+                .select('raw_fields')
+                .gte('created_at', dateFrom + 'T00:00:00')
+                .lte('created_at', dateTo + 'T23:59:59')
+                .not('raw_fields', 'is', null)
+            if (params.cliente_id) q = q.eq('cliente_id', params.cliente_id)
+            return applyDimFilters(q, params.filters)
+        })
+        const set = new Set<string>()
+        for (const r of rows) {
+            const rf = (r.raw_fields as Record<string, unknown> | null) ?? null
+            const v = rf ? rf[fieldKey] : null
+            if (v !== null && v !== undefined && String(v).trim()) set.add(String(v).trim())
+        }
+        return Array.from(set).sort((a, b) => a.localeCompare(b)).slice(0, 500)
+    }
+
     const col = dim === 'platform' ? 'platform' : dim
 
     let q = supabase
@@ -575,6 +775,7 @@ export async function runFunnelQuery(params: {
     date_from?: string
     date_to?: string
     filters?: Record<string, string>
+    advancedFilter?: AdvancedFilter
 }): Promise<{ stage: string; value: number; label: string }[]> {
     const dateFrom = params.date_from ?? new Date(Date.now() - 30 * 86400_000).toISOString().slice(0, 10)
     const dateTo   = params.date_to   ?? new Date().toISOString().slice(0, 10)

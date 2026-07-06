@@ -1,10 +1,10 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Filter, RefreshCw, Tag, ChevronDown, X, Lock } from 'lucide-react'
+import { Filter, RefreshCw, SlidersHorizontal, ChevronDown, X, Lock, Plus, Save, Check } from 'lucide-react'
 import type { BiFilters } from './BiTypes'
-import { UTM_FILTER_KEYS, UTM_FILTER_LABELS, FILTER_OPS, parseFilterValue, encodeFilterValue } from '@/lib/report-utm/bi-metadata'
-import type { FilterOp } from '@/lib/report-utm/bi-metadata'
+import type { AdvancedFilter, FilterCondition, FilterOp, FormFieldMeta } from '@/lib/report-utm/bi-metadata'
+import { FILTER_OPS, FILTERABLE_BASE_DIMS, makeFieldDim, humanizeFieldKey } from '@/lib/report-utm/bi-metadata'
 import { HelpTip } from './HelpTip'
 
 interface Cliente {
@@ -19,6 +19,14 @@ interface Props {
     clienteLocked?: boolean
     /** Notifica cuando se cambia el cliente (solo en modo edición) para reasignar el informe. */
     onClienteChange?: (id: string) => void
+    // ── Filtro avanzado guardado (Y de O) ──
+    advancedFilter: AdvancedFilter
+    onAdvancedChange: (af: AdvancedFilter) => void
+    onAdvancedSave: () => void
+    savingAdvanced?: boolean
+    advancedSaved?: boolean
+    /** Vista de solo lectura (link público): muestra el filtro sin editarlo. */
+    readonly?: boolean
 }
 
 function toISODate(d: Date): string {
@@ -65,7 +73,17 @@ function detectPreset(from: string, to: string): string | null {
 
 const MONTH_RANGE = PRESETS.find(p => p.key === 'month')!.range()
 
-export function BiGlobalFilters({ initialFilters, onChange, clienteLocked, onClienteChange }: Props) {
+const FILTER_OP_SHORT: Record<string, string> = Object.fromEntries(FILTER_OPS.map(o => [o.value, o.short]))
+
+/** Condición con al menos campo + valor. */
+function validCond(c: FilterCondition): boolean {
+    return !!(c.field && c.value && c.value.trim())
+}
+
+export function BiGlobalFilters({
+    initialFilters, onChange, clienteLocked, onClienteChange,
+    advancedFilter, onAdvancedChange, onAdvancedSave, savingAdvanced, advancedSaved, readonly,
+}: Props) {
     const [clientes, setClientes] = useState<Cliente[]>([])
     const [clienteId, setClienteId] = useState(initialFilters.cliente_id ?? '')
     const [dateFrom, setDateFrom]   = useState(initialFilters.date_from ?? MONTH_RANGE.from)
@@ -74,22 +92,27 @@ export function BiGlobalFilters({ initialFilters, onChange, clienteLocked, onCli
         () => detectPreset(initialFilters.date_from ?? MONTH_RANGE.from, initialFilters.date_to ?? MONTH_RANGE.to)
     )
 
-    // Filtros UTM como variables globales del reporte (valor + operador)
-    const [utm, setUtm] = useState<Record<string, string>>(() => {
-        const init: Record<string, string> = {}
-        for (const k of UTM_FILTER_KEYS) if (initialFilters[k]) init[k] = parseFilterValue(initialFilters[k] as string).value
-        return init
-    })
-    const [utmOps, setUtmOps] = useState<Record<string, FilterOp>>(() => {
-        const init: Record<string, FilterOp> = {}
-        for (const k of UTM_FILTER_KEYS) if (initialFilters[k]) init[k] = parseFilterValue(initialFilters[k] as string).op
-        return init
-    })
-    const [showUtm, setShowUtm] = useState(() => Object.keys(
-        UTM_FILTER_KEYS.reduce((acc, k) => initialFilters[k] ? { ...acc, [k]: true } : acc, {})
-    ).length > 0)
+    const condCount = (advancedFilter.groups ?? []).reduce((n, g) => n + (g.conditions ?? []).filter(validCond).length, 0)
+    const [showFilters, setShowFilters] = useState(() => condCount > 0)
 
-    const activeUtmCount = Object.values(utm).filter(v => v && v.trim()).length
+    // Campos de formulario del cliente → opciones extra del constructor.
+    const [formFields, setFormFields] = useState<FormFieldMeta[]>([])
+    useEffect(() => {
+        if (!clienteId) { setFormFields([]); return }
+        const params = new URLSearchParams({ cliente_id: clienteId, date_from: dateFrom, date_to: dateTo })
+        let cancelled = false
+        fetch(`/api/report-utm/bi/form-fields?${params}`)
+            .then(r => r.json())
+            .then(json => { if (!cancelled) setFormFields(json.data ?? []) })
+            .catch(() => { if (!cancelled) setFormFields([]) })
+        return () => { cancelled = true }
+    }, [clienteId, dateFrom, dateTo])
+
+    const fieldOptions: { value: string; label: string }[] = [
+        ...FILTERABLE_BASE_DIMS,
+        ...formFields.map(f => ({ value: makeFieldDim(f.key), label: humanizeFieldKey(f.label) })),
+    ]
+    const labelOf = (field: string) => fieldOptions.find(o => o.value === field)?.label ?? field
 
     useEffect(() => {
         fetch('/api/report-utm/clientes')
@@ -99,16 +122,11 @@ export function BiGlobalFilters({ initialFilters, onChange, clienteLocked, onCli
     }, [])
 
     function buildFilters(): BiFilters {
-        const f: BiFilters = {
+        return {
             cliente_id: clienteId || undefined,
             date_from:  dateFrom,
             date_to:    dateTo,
         }
-        for (const k of UTM_FILTER_KEYS) {
-            const v = utm[k]
-            if (v && v.trim()) f[k] = encodeFilterValue(utmOps[k] ?? 'eq', v.trim())
-        }
-        return f
     }
 
     function applyPreset(p: Preset) {
@@ -119,23 +137,42 @@ export function BiGlobalFilters({ initialFilters, onChange, clienteLocked, onCli
         onChange({ ...buildFilters(), date_from: from, date_to: to })
     }
 
-    function handleApply() {
-        setActivePreset(null)
-        onChange(buildFilters())
+    // ── Mutadores del filtro avanzado ──
+    const groups = advancedFilter.groups ?? []
+    function emit(next: AdvancedFilter['groups']) {
+        onAdvancedChange({ groups: next })
+    }
+    function addGroup() {
+        emit([...groups, { conditions: [{ field: 'utm_source', op: 'eq', value: '' }] }])
+    }
+    function addCondition(gi: number) {
+        emit(groups.map((g, i) => i === gi
+            ? { conditions: [...g.conditions, { field: 'utm_source', op: 'eq', value: '' }] }
+            : g))
+    }
+    function setCondition(gi: number, ci: number, patch: Partial<FilterCondition>) {
+        emit(groups.map((g, i) => i === gi
+            ? { conditions: g.conditions.map((c, j) => j === ci ? { ...c, ...patch } : c) }
+            : g))
+    }
+    function removeCondition(gi: number, ci: number) {
+        const next = groups
+            .map((g, i) => i === gi ? { conditions: g.conditions.filter((_, j) => j !== ci) } : g)
+            .filter(g => g.conditions.length > 0)
+        emit(next)
+    }
+    function removeGroup(gi: number) {
+        emit(groups.filter((_, i) => i !== gi))
+    }
+    function clearAll() {
+        emit([])
     }
 
-    function setUtmValue(key: string, value: string) {
-        setUtm(prev => ({ ...prev, [key]: value }))
-    }
-
-    function setUtmOp(key: string, op: FilterOp) {
-        setUtmOps(prev => ({ ...prev, [key]: op }))
-    }
-
-    function clearUtm() {
-        setUtm({})
-        setUtmOps({})
-    }
+    // Descripción textual (para la vista de solo lectura).
+    const describe = groups
+        .map(g => '(' + g.conditions.filter(validCond).map(c => `${labelOf(c.field)} ${FILTER_OP_SHORT[c.op] ?? c.op} ${c.value}`).join(' O ') + ')')
+        .filter(s => s !== '()')
+        .join('  Y  ')
 
     return (
         <div className="rounded-2xl border border-border bg-card p-4 space-y-3">
@@ -179,7 +216,6 @@ export function BiGlobalFilters({ initialFilters, onChange, clienteLocked, onCli
                                 const val = e.target.value
                                 setClienteId(val)
                                 onClienteChange?.(val)
-                                // aplicar de inmediato (incluye el resto de filtros vigentes)
                                 onChange({ ...buildFilters(), cliente_id: val || undefined })
                             }}
                             className="w-full px-3 py-2 text-xs rounded-lg bg-muted border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
@@ -231,7 +267,7 @@ export function BiGlobalFilters({ initialFilters, onChange, clienteLocked, onCli
 
                 <div className="flex items-end">
                     <button
-                        onClick={handleApply}
+                        onClick={() => onChange(buildFilters())}
                         className="flex items-center gap-1.5 w-full px-3 py-2 rounded-lg text-xs font-medium text-white nav-active-emerald justify-center"
                     >
                         <RefreshCw className="h-3.5 w-3.5" />
@@ -240,76 +276,135 @@ export function BiGlobalFilters({ initialFilters, onChange, clienteLocked, onCli
                 </div>
             </div>
 
-            {/* Toggle filtros UTM (variables) */}
+            {/* ── Constructor de filtros guardados (Y de O) ── */}
             <div className="border-t border-border pt-3">
                 <button
-                    onClick={() => setShowUtm(v => !v)}
+                    onClick={() => setShowFilters(v => !v)}
                     className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground hover:text-foreground transition-colors"
                 >
-                    <Tag className="h-3.5 w-3.5" />
-                    Variables UTM
-                    <HelpTip text="Recorta todo el informe por valores UTM. Elige el operador: = igual, ≠ distinto, ∋ contiene, ∌ no contiene, ⊢ empieza, ⊣ termina. Ej: Campaña ∋ 'verano' deja solo campañas que contienen esa palabra. En = puedes poner varios valores separados por coma." />
-                    {activeUtmCount > 0 && (
+                    <SlidersHorizontal className="h-3.5 w-3.5" />
+                    Filtros del informe
+                    <HelpTip text="Define condiciones sobre las variables (UTMs, país, formulario, campos…). Dentro de un grupo se unen con O (cualquiera); los grupos entre sí con Y (todas). Ej: (Source = facebook O Source = instagram) Y (Campaña contiene verano). Guarda para que se apliquen siempre al abrir el informe." />
+                    {condCount > 0 && (
                         <span className="px-1.5 py-0.5 rounded-full bg-emerald-500 text-white text-[9px] font-semibold">
-                            {activeUtmCount}
+                            {condCount}
                         </span>
                     )}
-                    <ChevronDown className={`h-3.5 w-3.5 transition-transform ${showUtm ? 'rotate-180' : ''}`} />
+                    <ChevronDown className={`h-3.5 w-3.5 transition-transform ${showFilters ? 'rotate-180' : ''}`} />
                 </button>
 
-                {showUtm && (
-                    <div className="mt-3 space-y-3">
-                        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
-                            {UTM_FILTER_KEYS.map(key => (
-                                <div key={key}>
-                                    <label className="block text-[10px] font-medium text-muted-foreground mb-1">
-                                        {UTM_FILTER_LABELS[key]}
-                                    </label>
-                                    <div className="flex gap-1">
-                                        <select
-                                            value={utmOps[key] ?? 'eq'}
-                                            onChange={e => setUtmOp(key, e.target.value as FilterOp)}
-                                            title="Operador"
-                                            className="px-1 py-1.5 text-xs rounded-lg bg-muted border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
-                                        >
-                                            {FILTER_OPS.map(o => (
-                                                <option key={o.value} value={o.value} title={o.label}>{o.short}</option>
-                                            ))}
-                                        </select>
-                                        <input
-                                            type="text"
-                                            value={utm[key] ?? ''}
-                                            onChange={e => setUtmValue(key, e.target.value)}
-                                            onKeyDown={e => e.key === 'Enter' && handleApply()}
-                                            placeholder="cualquiera"
-                                            className="flex-1 min-w-0 px-2.5 py-1.5 text-xs rounded-lg bg-muted border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
-                                        />
+                {showFilters && (
+                    readonly ? (
+                        <div className="mt-3 text-[11px] text-muted-foreground">
+                            {condCount > 0
+                                ? <p className="font-mono leading-relaxed">{describe}</p>
+                                : <p>Sin filtros guardados.</p>}
+                        </div>
+                    ) : (
+                        <div className="mt-3 space-y-2">
+                            {groups.length === 0 && (
+                                <p className="text-[11px] text-muted-foreground">
+                                    Sin condiciones. Agrega un grupo para empezar a filtrar.
+                                </p>
+                            )}
+
+                            {groups.map((g, gi) => (
+                                <div key={gi}>
+                                    {gi > 0 && (
+                                        <div className="flex items-center gap-2 my-1.5">
+                                            <span className="px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-700 dark:text-amber-300 text-[10px] font-bold tracking-wider">Y</span>
+                                            <div className="flex-1 h-px bg-border" />
+                                        </div>
+                                    )}
+                                    <div className="rounded-xl border border-border bg-muted/20 p-2.5 space-y-1.5">
+                                        {g.conditions.map((c, ci) => (
+                                            <div key={ci} className="flex items-center gap-1.5 flex-wrap">
+                                                {ci > 0 && (
+                                                    <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 w-4 text-center">O</span>
+                                                )}
+                                                {ci === 0 && <span className="w-4" />}
+                                                <select
+                                                    value={c.field}
+                                                    onChange={e => setCondition(gi, ci, { field: e.target.value })}
+                                                    className="px-2 py-1.5 text-xs rounded-lg bg-muted border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500/40 max-w-[150px]"
+                                                >
+                                                    {fieldOptions.map(o => (
+                                                        <option key={o.value} value={o.value}>{o.label}</option>
+                                                    ))}
+                                                </select>
+                                                <select
+                                                    value={c.op}
+                                                    title="Operador"
+                                                    onChange={e => setCondition(gi, ci, { op: e.target.value as FilterOp })}
+                                                    className="px-1.5 py-1.5 text-xs rounded-lg bg-muted border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
+                                                >
+                                                    {FILTER_OPS.map(o => (
+                                                        <option key={o.value} value={o.value} title={o.label}>{o.short}</option>
+                                                    ))}
+                                                </select>
+                                                <input
+                                                    type="text"
+                                                    value={c.value}
+                                                    onChange={e => setCondition(gi, ci, { value: e.target.value })}
+                                                    placeholder="valor (coma = varios)"
+                                                    className="flex-1 min-w-[120px] px-2.5 py-1.5 text-xs rounded-lg bg-muted border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
+                                                />
+                                                <button
+                                                    onClick={() => removeCondition(gi, ci)}
+                                                    title="Quitar condición"
+                                                    className="p-1 text-muted-foreground hover:text-red-500"
+                                                >
+                                                    <X className="h-3.5 w-3.5" />
+                                                </button>
+                                            </div>
+                                        ))}
+                                        <div className="flex items-center gap-3 pl-5 pt-0.5">
+                                            <button
+                                                onClick={() => addCondition(gi)}
+                                                className="flex items-center gap-1 text-[11px] font-medium text-emerald-600 dark:text-emerald-400 hover:underline"
+                                            >
+                                                <Plus className="h-3 w-3" /> Condición (O)
+                                            </button>
+                                            <button
+                                                onClick={() => removeGroup(gi)}
+                                                className="flex items-center gap-1 text-[11px] font-medium text-muted-foreground hover:text-red-500"
+                                            >
+                                                <X className="h-3 w-3" /> Eliminar grupo
+                                            </button>
+                                        </div>
                                     </div>
                                 </div>
                             ))}
-                        </div>
-                        <div className="flex items-center gap-2">
-                            <button
-                                onClick={handleApply}
-                                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-medium text-white nav-active-emerald"
-                            >
-                                <RefreshCw className="h-3 w-3" />
-                                Aplicar variables
-                            </button>
-                            {activeUtmCount > 0 && (
+
+                            <div className="flex items-center gap-2 flex-wrap pt-1">
                                 <button
-                                    onClick={() => { clearUtm(); onChange({ cliente_id: clienteId || undefined, date_from: dateFrom, date_to: dateTo }) }}
-                                    className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-medium text-muted-foreground hover:bg-accent transition-colors"
+                                    onClick={addGroup}
+                                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-medium bg-muted text-foreground hover:bg-accent transition-colors"
                                 >
-                                    <X className="h-3 w-3" />
-                                    Limpiar
+                                    <Plus className="h-3 w-3" /> Agregar grupo (Y)
                                 </button>
-                            )}
-                            <p className="text-[10px] text-muted-foreground ml-auto">
-                                Recorta todos los widgets. Elige el operador a la izquierda de cada campo.
-                            </p>
+                                <button
+                                    onClick={onAdvancedSave}
+                                    disabled={savingAdvanced}
+                                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-medium text-white nav-active-emerald disabled:opacity-50"
+                                >
+                                    {advancedSaved ? <Check className="h-3 w-3" /> : <Save className="h-3 w-3" />}
+                                    {savingAdvanced ? 'Guardando…' : advancedSaved ? 'Guardado' : 'Guardar filtros'}
+                                </button>
+                                {condCount > 0 && (
+                                    <button
+                                        onClick={clearAll}
+                                        className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-medium text-muted-foreground hover:bg-accent transition-colors"
+                                    >
+                                        <X className="h-3 w-3" /> Limpiar
+                                    </button>
+                                )}
+                                <p className="text-[10px] text-muted-foreground ml-auto">
+                                    Se aplican en vivo. Guarda para que queden fijos al informe.
+                                </p>
+                            </div>
                         </div>
-                    </div>
+                    )
                 )}
             </div>
         </div>

@@ -4,8 +4,12 @@ import { useEffect, useState } from 'react'
 import { ArrowUpDown } from 'lucide-react'
 import { Skeleton } from '@/components/ui/skeleton'
 import type { BiFilters, WidgetConfig, ConditionalRule, CalculatedField } from '../BiTypes'
-import type { BiMetric, BiQueryRow } from '@/lib/report-utm/bi-metadata'
-import { METRIC_META, DIMENSION_META, appendUtmFilters, utmFilterSignature, applyValueFilters } from '@/lib/report-utm/bi-metadata'
+import type { BiMetric, BiDimension, BiQueryRow } from '@/lib/report-utm/bi-metadata'
+import {
+    METRIC_META, DIMENSION_META, appendUtmFilters, utmFilterSignature, applyValueFilters,
+    appendFieldFilters, fieldFilterSignature, appendAdvancedFilter, advancedFilterSignature,
+    fieldMetricLabel, fieldMetricFormat, fieldDimLabel, isFieldMetric, parseFieldMetric,
+} from '@/lib/report-utm/bi-metadata'
 
 interface Props {
     title: string
@@ -46,16 +50,17 @@ export function TableWidget({ title, config, filters, calculatedFields = [], h =
     const showTotals = config.show_totals !== false // por defecto sí
     const conditional = config.conditional ?? []
 
-    // separa métricas base de campos calculados
+    // separa métricas base, campos calculados y métricas de campo (fieldagg:)
     const calcMap = new Map(calculatedFields.map(c => [c.name, c]))
     const baseMetrics = colKeys.filter(k => METRIC_META[k as BiMetric]) as BiMetric[]
+    const fieldMetricCols = colKeys.filter(isFieldMetric)
     const usedCalc = colKeys.filter(k => calcMap.has(k)).map(k => calcMap.get(k)!)
 
     function colLabel(key: string): string {
-        return METRIC_META[key as BiMetric]?.label ?? calcMap.get(key)?.name ?? key
+        return METRIC_META[key as BiMetric]?.label ?? fieldMetricLabel(key) ?? calcMap.get(key)?.name ?? key
     }
     function colFormat(key: string): ColFormat {
-        return (METRIC_META[key as BiMetric]?.format ?? calcMap.get(key)?.format ?? 'number') as ColFormat
+        return (METRIC_META[key as BiMetric]?.format ?? calcMap.get(key)?.format ?? fieldMetricFormat(key) ?? 'number') as ColFormat
     }
 
     useEffect(() => {
@@ -70,7 +75,7 @@ export function TableWidget({ title, config, filters, calculatedFields = [], h =
         }
 
         const params = new URLSearchParams({
-            metrics: baseMetrics.join(','),
+            metrics: [...baseMetrics, ...fieldMetricCols].join(','),
             dimension,
             limit: '100',
         })
@@ -78,6 +83,8 @@ export function TableWidget({ title, config, filters, calculatedFields = [], h =
         if (filters.date_from)  params.set('date_from', filters.date_from)
         if (filters.date_to)    params.set('date_to', filters.date_to)
         appendUtmFilters(params, filters)
+        appendFieldFilters(params, filters)
+        appendAdvancedFilter(params, filters)
         for (const c of usedCalc) params.set(`calc[${c.name}]`, c.expression)
 
         fetch(`/api/report-utm/bi/query?${params}`)
@@ -85,7 +92,7 @@ export function TableWidget({ title, config, filters, calculatedFields = [], h =
             .then(json => setRows(json.data ?? []))
             .catch(() => setError('Error al cargar'))
             .finally(() => setLoading(false))
-    }, [rawMetrics, dimension, filters.cliente_id, filters.date_from, filters.date_to, utmFilterSignature(filters)])
+    }, [rawMetrics, dimension, filters.cliente_id, filters.date_from, filters.date_to, utmFilterSignature(filters), fieldFilterSignature(filters), advancedFilterSignature(filters)])
 
     // Filtros por valor: oculta filas que no cumplan (ej. spend > 0)
     const filteredRows = applyValueFilters(rows, config.value_filters)
@@ -115,6 +122,13 @@ export function TableWidget({ title, config, filters, calculatedFields = [], h =
         if (colKeys.includes('conversion_rate')) t.conversion_rate = t.leads_count ? round2((t.sales_count / t.leads_count) * 100) : 0
         if (colKeys.includes('cpc'))  t.cpc  = t.clicks ? round2(t.spend / t.clicks) : 0
         if (colKeys.includes('cpm'))  t.cpm  = t.impressions ? round2((t.spend / t.impressions) * 1000) : 0
+        // Métricas de campo: solo suma y respuestas (count) son aditivas por fila.
+        for (const key of fieldMetricCols) {
+            const agg = parseFieldMetric(key)?.agg
+            if (agg === 'sum' || agg === 'count') {
+                t[key] = round2(filteredRows.reduce((s, r) => s + Number(r[key] ?? 0), 0))
+            }
+        }
         return t
     }
     const totals = showTotals ? computeTotals() : null
@@ -130,7 +144,7 @@ export function TableWidget({ title, config, filters, calculatedFields = [], h =
         return 'text-amber-600 dark:text-amber-400 font-semibold'
     }
 
-    const dimLabel = DIMENSION_META[dimension]?.label ?? dimension
+    const dimLabel = DIMENSION_META[dimension as BiDimension]?.label ?? fieldDimLabel(dimension) ?? dimension
 
     return (
         <div className="rounded-2xl border border-border bg-card overflow-hidden flex flex-col h-full">
