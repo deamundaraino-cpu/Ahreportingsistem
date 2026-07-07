@@ -65,7 +65,6 @@ export async function runBiQuery(params: BiQueryParams): Promise<BiQueryRow[]> {
     const needsSales = !isFieldDimQuery && !isAdsOnlyDim && requires(['sales_count', 'revenue', 'cpa', 'roas', 'conversion_rate'])
     const needsAds   = !isFieldDimQuery && requires([
         'spend', 'meta_spend', 'tiktok_spend', 'cpl', 'cpa', 'roas', 'clicks', 'impressions', 'cpc', 'cpm', 'frequency', 'ctr',
-        'leads_total',
         ...AD_JSONB_METRICS, ...AD_SCALAR_METRICS, ...AD_RATE_METRICS, 'hotmart_revenue', 'hotmart_sales',
     ])
     // Offline (día×cliente) y suscripciones (snapshot) son globales/por fecha,
@@ -671,9 +670,11 @@ function mergeResults(
         const row: BiQueryRow = { dimension_value: key === 'total' ? null : key }
 
         if (params.metrics.includes('leads_count'))     row.leads_count     = leads_count
-        // Leads (todos los canales): CRM (lead_events) + instant forms nativos de Meta (leads_form).
-        // Son conjuntos disjuntos (landing vs formulario nativo) → se suman sin doble conteo.
-        if (params.metrics.includes('leads_total'))     row.leads_total     = leads_count + Number(ad?.leads_form ?? 0)
+        // Leads (todos los canales) = conteo de-duplicado de lead_events, que YA abarca todos los
+        // canales (formularios web + Meta Lead Ads, ingeridos vía webhook/polling). NO se suma
+        // metricas_diarias.leads_form: es el conteo agregado que Meta reporta de esos MISMOS leads
+        // → sumarlo duplicaría. Equivale a leads_count.
+        if (params.metrics.includes('leads_total'))     row.leads_total     = leads_count
         if (params.metrics.includes('sales_count'))     row.sales_count     = sales_count
         if (params.metrics.includes('revenue'))         row.revenue         = revenue
         if (params.metrics.includes('spend'))           row.spend           = spend
@@ -727,7 +728,7 @@ function mergeResults(
         if (params.calculated?.length) {
             const baseValues: Record<string, number> = {
                 leads_count, sales_count, revenue, spend, meta_spend, tiktok_spend, clicks, impressions, reach,
-                leads_total: leads_count + Number(ad?.leads_form ?? 0),
+                leads_total: leads_count,
                 cpl: Number(row.cpl ?? 0),
                 cpa: Number(row.cpa ?? 0),
                 roas: Number(row.roas ?? 0),

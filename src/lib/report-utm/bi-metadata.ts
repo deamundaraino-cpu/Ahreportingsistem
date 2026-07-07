@@ -199,7 +199,9 @@ export interface BiPivotRow {
 
 export const METRIC_META: Record<BiMetric, { label: string; format: 'number' | 'currency' | 'percent' | 'ratio'; source: 'leads' | 'sales' | 'ads' | 'computed' }> = {
     leads_count:     { label: 'Leads',           format: 'number',   source: 'leads' },
-    leads_total:     { label: 'Leads (todos los canales)', format: 'number', source: 'computed' },
+    // Leads (todos los canales): conteo de-duplicado de lead_events, que ya abarca todos los canales
+    // (formularios web + Meta Lead Ads). Equivale a leads_count; NO suma el agregado de Meta.
+    leads_total:     { label: 'Leads (todos los canales)', format: 'number', source: 'leads' },
     sales_count:     { label: 'Ventas',          format: 'number',   source: 'sales' },
     revenue:         { label: 'Revenue',         format: 'currency', source: 'sales' },
     spend:           { label: 'Gasto total',     format: 'currency', source: 'ads' },

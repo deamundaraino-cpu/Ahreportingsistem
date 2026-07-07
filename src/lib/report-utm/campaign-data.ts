@@ -426,8 +426,9 @@ export async function runCampaignQuery(params: CampaignCrossParams): Promise<BiQ
             impressions: a.impressions,
             clicks: a.clicks,
             leads_count: a.leads,
-            // Leads (todos los canales): CRM emparejados + instant forms nativos de Meta de la campaña.
-            leads_total: a.leads + (a.extra.leads_form ?? 0),
+            // Leads (todos los canales) = leads reales del CRM cruzados a la campaña (ya incluyen los
+            // de Meta Lead Ads, ingeridos a lead_events). NO se suma leads_form (duplicaría).
+            leads_total: a.leads,
             sales_count: a.sales,
             revenue,
             cpl: a.leads > 0 && spend > 0 ? round2(spend / a.leads) : null,
