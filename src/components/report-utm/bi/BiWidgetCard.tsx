@@ -1,15 +1,18 @@
 'use client'
 
 import { useState } from 'react'
-import { Pencil, Trash2, GripVertical, Copy } from 'lucide-react'
+import { Pencil, Trash2, GripVertical, Copy, Filter } from 'lucide-react'
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import type { BiWidget, BiFilters, CalculatedField } from './BiTypes'
+import type { AdvancedFilter } from '@/lib/report-utm/bi-metadata'
+import { advancedFilterHasConditions, FILTERABLE_BASE_DIMS, FILTER_OPS, fieldDimLabel } from '@/lib/report-utm/bi-metadata'
 import { ScorecardWidget } from './widgets/ScorecardWidget'
 import { ChartWidget }     from './widgets/ChartWidget'
 import { TableWidget }     from './widgets/TableWidget'
 import { FunnelWidget }    from './widgets/FunnelWidget'
 import { SlicerWidget }    from './widgets/SlicerWidget'
+import { TextWidget }      from './widgets/TextWidget'
 
 interface Props {
     widget: BiWidget
@@ -37,10 +40,28 @@ const ROW_SPAN: Record<number, string> = {
     3: 'row-span-3',
 }
 
+const FILTER_OP_SHORT: Record<string, string> = Object.fromEntries(FILTER_OPS.map(o => [o.value, o.short]))
+const FILTER_FIELD_LABEL: Record<string, string> = Object.fromEntries(FILTERABLE_BASE_DIMS.map(o => [o.value, o.label]))
+
+/** Descripción compacta del filtro de un widget para el tooltip del badge. */
+function describeWidgetFilter(af: AdvancedFilter): string {
+    return (af.groups ?? [])
+        .map(g => (g.conditions ?? [])
+            .filter(c => c.field && c.value && c.value.trim())
+            .map(c => `${FILTER_FIELD_LABEL[c.field] ?? fieldDimLabel(c.field) ?? c.field} ${FILTER_OP_SHORT[c.op] ?? c.op} ${c.value}`)
+            .join(' O '))
+        .filter(s => s)
+        .map(s => `(${s})`)
+        .join(' Y ')
+}
+
 export function BiWidgetCard({ widget, filters, editMode, calculatedFields, onEdit, onDelete, onDuplicate, onDrill, onSetFilter, onSetDateRange }: Props) {
     const [confirming, setConfirming] = useState(false)
     const colSpan = COL_SPAN[widget.w ?? 2] ?? COL_SPAN[2]
     const rowSpan = (widget.h ?? 1) > 1 ? (ROW_SPAN[widget.h ?? 1] ?? '') : ''
+
+    const widgetFilter = widget.config?.advanced_filter
+    const hasWidgetFilter = advancedFilterHasConditions(widgetFilter)
 
     const {
         attributes,
@@ -64,6 +85,17 @@ export function BiWidgetCard({ widget, filters, editMode, calculatedFields, onEd
             style={style}
             className={`${colSpan} ${rowSpan} relative group ${isDragging ? 'ring-2 ring-emerald-500/50 rounded-2xl' : ''}`}
         >
+            {/* Indicador de filtro propio del widget (visible siempre) */}
+            {hasWidgetFilter && (
+                <div
+                    title={`Filtro del widget: ${describeWidgetFilter(widgetFilter!)}`}
+                    className="absolute top-2 left-2 z-10 flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 text-[9px] font-semibold shadow-sm pointer-events-auto"
+                >
+                    <Filter className="h-2.5 w-2.5" />
+                    Filtrado
+                </div>
+            )}
+
             {/* Edit controls overlay */}
             {editMode && (
                 <div className="absolute top-2 right-2 z-10 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -144,6 +176,9 @@ function WidgetRenderer({
             return <FunnelWidget title={widget.title} config={widget.config} filters={filters} />
         case 'slicer':
             return <SlicerWidget title={widget.title} config={widget.config} filters={filters} onSetFilter={onSetFilter} onSetDateRange={onSetDateRange} />
+        case 'heading':
+        case 'text':
+            return <TextWidget type={widget.type} title={widget.title} config={widget.config} />
         default:
             return (
                 <div className="rounded-2xl border border-border bg-muted p-5 text-xs text-muted-foreground">

@@ -1,7 +1,13 @@
 import { createAdminClient } from '@/utils/supabase/server'
-import type { BiQueryRow } from './bi-metadata'
-import { AD_JSONB_METRICS } from './bi-metadata'
-import { fetchAllRows, applyOneFilter } from './bi-query'
+import type { BiQueryRow, AdvancedFilter } from './bi-metadata'
+import {
+    AD_JSONB_METRICS, campaignNameFilterPredicate, hasCampaignFilter,
+    hasNonAttributableFilter, advancedFilterHasConditions,
+} from './bi-metadata'
+import {
+    fetchAllRows, applyDimFilters, evalAdvancedRow, collectAdvancedColumns,
+    leadFilterKey, salesFilterKey,
+} from './bi-query'
 
 function zeroAdMetrics(): Record<string, number> {
     const e: Record<string, number> = {}
@@ -294,6 +300,7 @@ export interface CampaignCrossParams {
     date_from?: string
     date_to?: string
     filters?: Record<string, string>
+    advancedFilter?: AdvancedFilter
     limit?: number
 }
 
@@ -330,23 +337,49 @@ export async function runCampaignQuery(params: CampaignCrossParams): Promise<BiQ
         if (!a) { a = { name, spend: 0, impressions: 0, clicks: 0, leads: 0, sales: 0, revenue: 0, methods: {}, extra: zeroAdMetrics() }; acc.set(key, a) }
         return a
     }
-    // Sembrar con todas las campañas conocidas (para que aparezcan aunque no tengan leads)
-    for (const c of idx.campaigns.values()) {
-        const a = ensure(c.key, c.name)
-        a.spend += c.spend; a.impressions += c.impressions; a.clicks += c.clicks
-        for (const k of AD_JSONB_METRICS) a.extra[k] += c.extra[k]
+    // ── Filtros del informe ────────────────────────────────────────────
+    // Leads/ventas se recortan por cualquier campo (planos + avanzado). El GASTO
+    // solo puede recortarse por NOMBRE de campaña; bajo un filtro no atribuible
+    // (país/formulario/campo/plataforma) el gasto se anula (spend=0, ratios null).
+    const nameMatches = campaignNameFilterPredicate(params.filters, params.advancedFilter)
+    const campaignFilterActive = hasCampaignFilter(params.filters, params.advancedFilter)
+    const nonAttrib = hasNonAttributableFilter(params.filters, params.advancedFilter)
+    const hasAdv = advancedFilterHasConditions(params.advancedFilter)
+
+    // Sembrar con las campañas conocidas (para que aparezcan aunque no tengan
+    // leads), saltando las que no pasan el filtro de nombre. Bajo un filtro no
+    // atribuible no se siembra gasto: solo aparecen campañas con leads/ventas
+    // que matchean, con gasto en 0.
+    if (!nonAttrib) {
+        for (const c of idx.campaigns.values()) {
+            if (!nameMatches(c.name)) continue
+            const a = ensure(c.key, c.name)
+            a.spend += c.spend; a.impressions += c.impressions; a.clicks += c.clicks
+            for (const k of AD_JSONB_METRICS) a.extra[k] += c.extra[k]
+        }
     }
     const UNMATCHED = '__none__'
 
+    // Columnas extra necesarias para evaluar el filtro avanzado en cada tabla.
+    // `id` es imprescindible para la paginación por keyset de fetchAllRows.
+    const advLead = collectAdvancedColumns(params.advancedFilter, 'leads')
+    const leadCols = new Set(['id', 'utm_id', 'utm_campaign', 'utm_content', 'utm_term', 'utm_source'])
+    for (const c of advLead.cols) leadCols.add(c)
+    if (advLead.needsRawFields) leadCols.add('raw_fields')
+    const advSale = collectAdvancedColumns(params.advancedFilter, 'sales')
+    const saleCols = new Set(['id', 'utm_id', 'utm_campaign', 'utm_content', 'utm_term', 'utm_source', 'amount', 'status'])
+    for (const c of advSale.cols) saleCols.add(c)
+
     // Leads (paginado completo para no toparse con el límite de PostgREST)
-    const leads = await fetchAllRows(() => applyFilters(
+    let leads = await fetchAllRows(() => applyDimFilters(
         supabase.schema('report_utm').from('lead_events')
-            .select('utm_id,utm_campaign,utm_content,utm_term,utm_source')
+            .select(Array.from(leadCols).join(','))
             .gte('created_at', dateFrom + 'T00:00:00')
             .lte('created_at', dateTo + 'T23:59:59')
             .eq('cliente_id', params.cliente_id),
-        params.filters,
+        params.filters, leadFilterKey,
     ))
+    if (hasAdv) leads = leads.filter(l => evalAdvancedRow(l, params.advancedFilter, 'leads'))
     for (const l of leads) {
         const m = matchToCampaign(l, idx, overrides)
         const key = m.key ?? UNMATCHED
@@ -356,15 +389,16 @@ export async function runCampaignQuery(params: CampaignCrossParams): Promise<BiQ
     }
 
     // Ventas (aprobadas, paginado completo)
-    const sales = await fetchAllRows(() => applyFilters(
+    let sales = await fetchAllRows(() => applyDimFilters(
         supabase.schema('report_utm').from('sales_events')
-            .select('utm_id,utm_campaign,utm_content,utm_term,utm_source,amount,status')
+            .select(Array.from(saleCols).join(','))
             .gte('created_at', dateFrom + 'T00:00:00')
             .lte('created_at', dateTo + 'T23:59:59')
             .eq('cliente_id', params.cliente_id)
             .eq('status', 'approved'),
-        params.filters,
+        params.filters, salesFilterKey,
     ))
+    if (hasAdv) sales = sales.filter(s => evalAdvancedRow(s, params.advancedFilter, 'sales'))
     for (const s of sales) {
         const m = matchToCampaign(s, idx, overrides)
         const key = m.key ?? UNMATCHED
@@ -373,8 +407,12 @@ export async function runCampaignQuery(params: CampaignCrossParams): Promise<BiQ
         a.revenue += num(s.amount)
     }
 
-    // Construir filas BiQueryRow
-    const rows: BiQueryRow[] = Array.from(acc.entries()).map(([key, a]) => {
+    // Construir filas BiQueryRow. Con filtro de campaña activo se descartan las
+    // filas cuyo nombre no matchea (incluye el cubo '(sin campaña)').
+    const accEntries = campaignFilterActive
+        ? Array.from(acc.entries()).filter(([, a]) => nameMatches(a.name))
+        : Array.from(acc.entries())
+    const rows: BiQueryRow[] = accEntries.map(([key, a]) => {
         const spend = round2(a.spend)
         const revenue = round2(a.revenue)
         const reach = a.extra.reach ?? 0
@@ -388,6 +426,8 @@ export async function runCampaignQuery(params: CampaignCrossParams): Promise<BiQ
             impressions: a.impressions,
             clicks: a.clicks,
             leads_count: a.leads,
+            // Leads (todos los canales): CRM emparejados + instant forms nativos de Meta de la campaña.
+            leads_total: a.leads + (a.extra.leads_form ?? 0),
             sales_count: a.sales,
             revenue,
             cpl: a.leads > 0 && spend > 0 ? round2(spend / a.leads) : null,
@@ -406,17 +446,6 @@ export async function runCampaignQuery(params: CampaignCrossParams): Promise<BiQ
 
     rows.sort((x, y) => Number(y.spend ?? 0) - Number(x.spend ?? 0))
     return params.limit ? rows.slice(0, params.limit) : rows
-}
-
-const VALID = new Set(['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'utm_id'])
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function applyFilters(q: any, filters?: Record<string, string>): any {
-    if (!filters) return q
-    for (const [k, raw] of Object.entries(filters)) {
-        if (!raw || !VALID.has(k)) continue
-        q = applyOneFilter(q, k, raw)
-    }
-    return q
 }
 
 function round2(n: number): number {
@@ -474,7 +503,7 @@ async function loadCrossContext(params: CampaignCrossParams): Promise<CrossConte
 
     const leads = await fetchAllRows(() =>
         supabase.schema('report_utm').from('lead_events')
-            .select('utm_id,utm_campaign,utm_content,utm_term,utm_source')
+            .select('id,utm_id,utm_campaign,utm_content,utm_term,utm_source')
             .gte('created_at', dateFrom + 'T00:00:00')
             .lte('created_at', dateTo + 'T23:59:59')
             .eq('cliente_id', params.cliente_id)

@@ -38,7 +38,7 @@ export async function GET(req: NextRequest) {
             let q = admin
                 .schema('report_utm')
                 .from('lead_events')
-                .select('raw_fields')
+                .select('id,raw_fields')
                 .gte('created_at', dateFrom + 'T00:00:00')
                 .lte('created_at', dateTo + 'T23:59:59')
                 .not('raw_fields', 'is', null)

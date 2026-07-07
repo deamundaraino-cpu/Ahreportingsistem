@@ -11,6 +11,7 @@ import { MetaCAPICard } from '@/components/report-utm/MetaCAPICard'
 import { MetaLeadsCard } from '@/components/report-utm/MetaLeadsCard'
 import { S2SIntegrationCard } from '@/components/report-utm/S2SIntegrationCard'
 import { OutboundWebhooksCard } from '@/components/report-utm/OutboundWebhooksCard'
+import { BiClienteBrandingCard } from '@/components/report-utm/BiClienteBrandingCard'
 import { createClient } from '@/utils/supabase/server'
 import { ArrowLeft, ShoppingBag, DollarSign, TrendingUp, ExternalLink } from 'lucide-react'
 
@@ -164,6 +165,13 @@ export default async function ClienteDetailPage({
                 />
                 <Stat label="Ticket promedio" value={`${aov.toFixed(2)}`} icon={TrendingUp} />
             </div>
+
+            {/* Branding de informes (logo + color para la vista pública del cliente) */}
+            <BiClienteBrandingCard
+                clienteId={cliente.id}
+                initialLogoUrl={typeof cliente.config?.logo_url === 'string' ? cliente.config.logo_url : undefined}
+                initialAccent={typeof cliente.config?.accent === 'string' ? cliente.config.accent : undefined}
+            />
 
             {/* Integrations */}
             <HotmartIntegrationCard

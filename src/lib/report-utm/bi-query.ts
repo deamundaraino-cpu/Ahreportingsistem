@@ -1,11 +1,20 @@
 import { createAdminClient } from '@/utils/supabase/server'
 import type { BiMetric, BiDimension, DateGrouping, BiQueryParams, BiQueryRow, BiPivotRow, FieldAgg, AdvancedFilter } from './bi-metadata'
 import {
-    evaluateExpression, parseFilterValue, AD_JSONB_METRICS,
+    evaluateExpression, parseFilterValue, AD_JSONB_METRICS, AD_SCALAR_METRICS, AD_RATE_METRICS,
+    OFFLINE_METRICS, SUBS_METRICS,
     isFieldDim, parseFieldDim, parseFieldMetric,
     extractFieldMetricAliases, parseFieldNumber,
     advancedFilterHasConditions, matchFilterCondition,
+    campaignNameFilterPredicate, hasCampaignFilter, hasNonAttributableFilter,
 } from './bi-metadata'
+
+// Dimensiones que SOLO existen en sales_events (no en lead_events). Al agrupar
+// por ellas, la query de leads se omite (no tienen esas columnas).
+const SALES_ONLY_DIMS = new Set(['product_name', 'transaction_type', 'customer_country'])
+// Dimensiones que SOLO desglosan gasto/métricas de campaña por nivel de anuncio
+// (del JSONB meta_ads/meta_adsets). Leads/ventas no cruzan a ese nivel.
+const ADS_ONLY_DIMS = new Set(['ad', 'adset'])
 
 // Re-export para compatibilidad con imports existentes que apuntaban acá.
 export type { BiMetric, BiDimension, DateGrouping, BiQueryParams, BiQueryRow, BiPivotRow } from './bi-metadata'
@@ -45,12 +54,25 @@ export async function runBiQuery(params: BiQueryParams): Promise<BiQueryRow[]> {
     const fieldMetrics = Array.from(fieldMetricReqs.values())
     const isFieldDimQuery = fieldDimKey !== null
 
-    const needsLeads = requires(['leads_count', 'cpl', 'conversion_rate']) || isFieldDimQuery || fieldMetrics.length > 0
+    const isSalesOnlyDim = SALES_ONLY_DIMS.has(params.dimension)
+    const isAdsOnlyDim   = ADS_ONLY_DIMS.has(params.dimension)
+    // Los leads no tienen columnas de producto/tipo/país ni desglose por anuncio →
+    // se omite la query de leads al agrupar por esas dimensiones.
+    const needsLeads = (requires(['leads_count', 'leads_total', 'cpl', 'conversion_rate']) || isFieldDimQuery || fieldMetrics.length > 0) && !isSalesOnlyDim && !isAdsOnlyDim
     // Las ventas y el gasto no se pueden desglosar por un campo de formulario
     // (sales_events / metricas_diarias no tienen raw_fields) → se omiten cuando
     // se agrupa por campo para no romper el select ni inventar una fila "(total)".
-    const needsSales = !isFieldDimQuery && requires(['sales_count', 'revenue', 'cpa', 'roas', 'conversion_rate'])
-    const needsAds   = !isFieldDimQuery && requires(['spend', 'meta_spend', 'tiktok_spend', 'cpl', 'cpa', 'roas', 'clicks', 'impressions', 'cpc', 'cpm', 'frequency', 'ctr', ...AD_JSONB_METRICS])
+    const needsSales = !isFieldDimQuery && !isAdsOnlyDim && requires(['sales_count', 'revenue', 'cpa', 'roas', 'conversion_rate'])
+    const needsAds   = !isFieldDimQuery && requires([
+        'spend', 'meta_spend', 'tiktok_spend', 'cpl', 'cpa', 'roas', 'clicks', 'impressions', 'cpc', 'cpm', 'frequency', 'ctr',
+        'leads_total',
+        ...AD_JSONB_METRICS, ...AD_SCALAR_METRICS, ...AD_RATE_METRICS, 'hotmart_revenue', 'hotmart_sales',
+    ])
+    // Offline (día×cliente) y suscripciones (snapshot) son globales/por fecha,
+    // no cruzan por dimensiones de lead/venta/anuncio.
+    const isBreakdownDim = isSalesOnlyDim || isAdsOnlyDim || isFieldDimQuery
+    const needsOffline = !isBreakdownDim && requires([...OFFLINE_METRICS])
+    const needsSubs    = !isBreakdownDim && requires([...SUBS_METRICS])
 
     const dateFrom = params.date_from ?? new Date(Date.now() - 30 * 86400_000).toISOString().slice(0, 10)
     const dateTo   = params.date_to   ?? new Date().toISOString().slice(0, 10)
@@ -76,8 +98,20 @@ export async function runBiQuery(params: BiQueryParams): Promise<BiQueryRow[]> {
         adsData = await queryAdsDirect(supabase, params, dateFrom, dateTo, lim)
     }
 
+    // ── OFFLINE query (conversiones_offline_diarias) ──────────────────
+    let offlineData: OfflineRow[] = []
+    if (needsOffline) {
+        offlineData = await queryOfflineDirect(params, dateFrom, dateTo)
+    }
+
+    // ── SUBS query (hotmart_subscriptions_snapshot, último snapshot) ──
+    let subsData: Record<string, number> | null = null
+    if (needsSubs) {
+        subsData = await querySubsLatest(params, dateFrom, dateTo)
+    }
+
     // ── Merge results ─────────────────────────────────────────────────
-    return mergeResults(params, leadsData, salesData, adsData, fieldMetrics)
+    return mergeResults(params, leadsData, salesData, adsData, fieldMetrics, offlineData, subsData)
 }
 
 // ── Campos de formulario: tipos de agregación ─────────────────────────
@@ -137,7 +171,7 @@ function advCellValue(row: Record<string, unknown>, field: string, table: AdvTab
     return row[field] !== null && row[field] !== undefined ? String(row[field]) : ''
 }
 
-function evalAdvancedRow(row: Record<string, unknown>, af: AdvancedFilter | undefined, table: AdvTable): boolean {
+export function evalAdvancedRow(row: Record<string, unknown>, af: AdvancedFilter | undefined, table: AdvTable): boolean {
     if (!af?.groups?.length) return true
     for (const g of af.groups) {
         const conds = (g.conditions ?? []).filter(c => c.field && c.value && c.value.trim())
@@ -155,7 +189,7 @@ function evalAdvancedRow(row: Record<string, unknown>, af: AdvancedFilter | unde
 }
 
 /** Columnas que hay que traer para poder evaluar el filtro avanzado en una tabla. */
-function collectAdvancedColumns(af: AdvancedFilter | undefined, table: AdvTable): { cols: string[]; needsRawFields: boolean } {
+export function collectAdvancedColumns(af: AdvancedFilter | undefined, table: AdvTable): { cols: string[]; needsRawFields: boolean } {
     const cols = new Set<string>()
     let needsRawFields = false
     for (const g of af?.groups ?? []) {
@@ -183,7 +217,7 @@ async function queryLeadsDirect(
     const applyBase = (q: any) => {
         q = q.gte('created_at', dateFrom + 'T00:00:00').lte('created_at', dateTo + 'T23:59:59')
         if (params.cliente_id) q = q.eq('cliente_id', params.cliente_id)
-        return applyDimFilters(q, params.filters)
+        return applyDimFilters(q, params.filters, leadFilterKey)
     }
 
     const fieldKeys = [...new Set(fieldMetrics.map(f => f.key))]
@@ -262,7 +296,7 @@ async function querySalesDirect(
             .lte('created_at', dateTo + 'T23:59:59')
             .eq('status', 'approved')
         if (params.cliente_id) q = q.eq('cliente_id', params.cliente_id)
-        return applyDimFilters(q, params.filters)
+        return applyDimFilters(q, params.filters, salesFilterKey)
     }
 
     // Traer TODAS las ventas aprobadas (paginado) para sumar revenue exacto.
@@ -296,6 +330,10 @@ interface AdRow {
 function newAdEntry(): Record<string, number> {
     const e: Record<string, number> = { spend: 0, meta_spend: 0, tiktok_spend: 0, clicks: 0, impressions: 0 }
     for (const k of AD_JSONB_METRICS) e[k] = 0
+    for (const k of AD_SCALAR_METRICS) e[k] = 0
+    // Acumuladores para promediar tasas GA4 ponderadas por sesiones.
+    e._ga_bounce_wsum = 0
+    e._ga_dur_wsum = 0
     return e
 }
 
@@ -310,9 +348,39 @@ async function queryAdsDirect(
     // metricas_diarias lives in the public schema. Se leen las columnas escalares
     // (gasto/clics/impresiones, fiables) + el JSONB meta_campaigns para sumar el
     // resto de métricas de campaña (alcance, video, compras, resultados…).
+    const adBreakdown = ADS_ONLY_DIMS.has(params.dimension)
+        ? (params.dimension === 'ad' ? 'meta_ads' : 'meta_adsets')
+        : null
+
+    // ── Aplicación de filtros al gasto ─────────────────────────────────
+    // metricas_diarias está preagregada por día×cliente, sin UTM ni campos; el
+    // único puente UTM→gasto es el NOMBRE de campaña (JSONB meta/tiktok_campaigns).
+    //   • Filtro NO atribuible (país/formulario/campo/plataforma) → el gasto no
+    //     puede recortarse → se devuelve vacío (mergeResults deja spend=0 y ratios
+    //     null; la UI muestra el aviso "gasto no atribuible a este filtro").
+    //   • Filtro de campaña activo → el gasto se deriva del JSONB por campaña,
+    //     conservando solo las campañas cuyo nombre pasa el filtro (conserva el
+    //     desglose por fecha/ad/adset). Las métricas escalares sin desglose por
+    //     campaña (GA4, Hotmart, etc.) no son atribuibles → quedan en 0.
+    //   • Otros filtros UTM (source/medium/content/term/id) sin mapeo limpio a
+    //     gasto por campaña → se deja el gasto a nivel cuenta (comportamiento actual).
+    if (hasNonAttributableFilter(params.filters, params.advancedFilter)) return []
+    if (hasCampaignFilter(params.filters, params.advancedFilter)) {
+        return queryAdsCampaignFiltered(
+            params, dateFrom, dateTo, lim, adBreakdown,
+            campaignNameFilterPredicate(params.filters, params.advancedFilter),
+        )
+    }
+
+    const adCols = [
+        'fecha', 'meta_spend', 'tiktok_spend', 'meta_clicks', 'tiktok_clicks',
+        'meta_impressions', 'tiktok_impressions',
+        ...AD_SCALAR_METRICS, ...AD_RATE_METRICS,
+        ...(adBreakdown ? [adBreakdown] : ['meta_campaigns']),
+    ]
     let q = (await (await import('@/utils/supabase/server')).createAdminClient())
         .from('metricas_diarias')
-        .select('fecha,meta_spend,tiktok_spend,meta_clicks,tiktok_clicks,meta_impressions,tiktok_impressions,meta_campaigns')
+        .select(adCols.join(','))
         .gte('fecha', dateFrom)
         .lte('fecha', dateTo)
         .limit(lim)
@@ -340,7 +408,30 @@ async function queryAdsDirect(
     const grouping = params.date_grouping ?? 'day'
     const map = new Map<string, Record<string, number>>()
 
-    for (const r of data as Record<string, unknown>[]) {
+    // ── Desglose por anuncio/conjunto: agrupar el JSONB por ad_name/adset_name ──
+    if (adBreakdown) {
+        const nameKey = adBreakdown === 'meta_ads' ? 'ad_name' : 'adset_name'
+        for (const r of data as unknown as Record<string, unknown>[]) {
+            const elems = (r[adBreakdown] as Record<string, unknown>[] | null) ?? []
+            for (const el of elems) {
+                const key = String(el[nameKey] ?? '').trim() || '(sin nombre)'
+                let entry = map.get(key)
+                if (!entry) { entry = newAdEntry(); map.set(key, entry) }
+                const sp = Number(el.spend ?? 0)
+                entry.meta_spend += sp
+                entry.spend      += sp
+                entry.clicks      += Number(el.clicks ?? 0)
+                entry.impressions += Number(el.impressions ?? 0)
+                for (const k of AD_JSONB_METRICS) entry[k] += Number(el[k] ?? 0)
+            }
+        }
+        return Array.from(map.entries())
+            .map(([dim, v]) => ({ dim, ...v } as AdRow))
+            .sort((a, b) => b.spend - a.spend)
+            .slice(0, lim)
+    }
+
+    for (const r of data as unknown as Record<string, unknown>[]) {
         let dim = 'total'
         if (params.dimension === 'date') {
             const fecha = String(r.fecha ?? '')
@@ -355,6 +446,12 @@ async function queryAdsDirect(
         entry.spend        += metaSpend + tiktokSpend
         entry.clicks      += Number(r.meta_clicks ?? 0) + Number(r.tiktok_clicks ?? 0)
         entry.impressions += Number(r.meta_impressions ?? 0) + Number(r.tiktok_impressions ?? 0)
+        // Métricas escalares aditivas (GA4 sesiones, TikTok conv., Hotmart ventas…)
+        for (const k of AD_SCALAR_METRICS) entry[k] += Number(r[k] ?? 0)
+        // Tasas GA4: promedio ponderado por sesiones (acumular numerador).
+        const gaSess = Number(r.ga_sessions ?? 0)
+        entry._ga_bounce_wsum += Number(r.ga_bounce_rate ?? 0) * gaSess
+        entry._ga_dur_wsum    += Number(r.ga_avg_session_duration ?? 0) * gaSess
         // Resto de métricas de campaña desde el JSONB meta_campaigns (TikTok no las trae)
         const camps = (r.meta_campaigns as Record<string, unknown>[] | null) ?? []
         for (const c of camps) {
@@ -365,6 +462,166 @@ async function queryAdsDirect(
     return Array.from(map.entries()).map(([dim, v]) => ({ dim, ...v } as AdRow))
 }
 
+/**
+ * Gasto recortado por NOMBRE de campaña. Deriva el gasto del JSONB por campaña
+ * (meta_campaigns / tiktok_campaigns) fila-día, conservando solo las campañas
+ * cuyo nombre pasa `nameMatches`, y reagregando por la dimensión pedida
+ * (total / date / ad / adset). Las métricas escalares sin desglose por campaña
+ * (GA4, Hotmart, TikTok conv.) no son atribuibles → quedan en 0.
+ */
+async function queryAdsCampaignFiltered(
+    params: BiQueryParams,
+    dateFrom: string,
+    dateTo: string,
+    lim: number,
+    adBreakdown: 'meta_ads' | 'meta_adsets' | null,
+    nameMatches: (name: string) => boolean,
+): Promise<AdRow[]> {
+    const db = await createAdminClient()
+
+    let publicId: string | null = null
+    if (params.cliente_id) {
+        publicId = await resolvePublicClienteId(params.cliente_id)
+        if (!publicId) return []
+    }
+
+    const cols = ['fecha', 'meta_campaigns', 'tiktok_campaigns', ...(adBreakdown ? [adBreakdown] : [])]
+    let q = db.from('metricas_diarias').select(cols.join(',')).gte('fecha', dateFrom).lte('fecha', dateTo).limit(lim)
+    if (publicId) q = q.eq('cliente_id', publicId)
+
+    const { data, error } = await q
+    if (error || !data) return []
+
+    const grouping = params.date_grouping ?? 'day'
+    const map = new Map<string, Record<string, number>>()
+
+    // ── Desglose por anuncio/conjunto: solo elementos de campañas que matchean ──
+    if (adBreakdown) {
+        const nameKey = adBreakdown === 'meta_ads' ? 'ad_name' : 'adset_name'
+        for (const r of data as unknown as Record<string, unknown>[]) {
+            // campaign_id de las campañas Meta cuyo nombre pasa el filtro.
+            const okCampIds = new Set<string>()
+            for (const c of (r.meta_campaigns as Record<string, unknown>[] | null) ?? []) {
+                if (nameMatches(String(c.name ?? '')) && c.campaign_id != null) okCampIds.add(String(c.campaign_id))
+            }
+            for (const el of (r[adBreakdown] as Record<string, unknown>[] | null) ?? []) {
+                const cid = el.campaign_id != null ? String(el.campaign_id) : null
+                if (!cid || !okCampIds.has(cid)) continue
+                const key = String(el[nameKey] ?? '').trim() || '(sin nombre)'
+                let entry = map.get(key)
+                if (!entry) { entry = newAdEntry(); map.set(key, entry) }
+                const sp = Number(el.spend ?? 0)
+                entry.meta_spend += sp
+                entry.spend      += sp
+                entry.clicks      += Number(el.clicks ?? 0)
+                entry.impressions += Number(el.impressions ?? 0)
+                for (const k of AD_JSONB_METRICS) entry[k] += Number(el[k] ?? 0)
+            }
+        }
+        return Array.from(map.entries())
+            .map(([dim, v]) => ({ dim, ...v } as AdRow))
+            .sort((a, b) => b.spend - a.spend)
+            .slice(0, lim)
+    }
+
+    for (const r of data as unknown as Record<string, unknown>[]) {
+        const dim = params.dimension === 'date' ? truncateDate(String(r.fecha ?? ''), grouping) : 'total'
+        let entry = map.get(dim)
+        if (!entry) { entry = newAdEntry(); map.set(dim, entry) }
+        for (const c of (r.meta_campaigns as Record<string, unknown>[] | null) ?? []) {
+            if (!nameMatches(String(c.name ?? ''))) continue
+            const sp = Number(c.spend ?? 0)
+            entry.meta_spend   += sp
+            entry.spend        += sp
+            entry.clicks      += Number(c.clicks ?? 0)
+            entry.impressions += Number(c.impressions ?? 0)
+            for (const k of AD_JSONB_METRICS) entry[k] += Number(c[k] ?? 0)
+        }
+        for (const c of (r.tiktok_campaigns as Record<string, unknown>[] | null) ?? []) {
+            if (!nameMatches(String(c.name ?? ''))) continue
+            const sp = Number(c.spend ?? 0)
+            entry.tiktok_spend += sp
+            entry.spend        += sp
+            entry.clicks      += Number(c.clicks ?? 0)
+            entry.impressions += Number(c.impressions ?? 0)
+        }
+    }
+
+    return Array.from(map.entries()).map(([dim, v]) => ({ dim, ...v } as AdRow))
+}
+
+// ── Offline (conversiones_offline_diarias) ────────────────────────────
+
+interface OfflineRow { dim: string | null; offline_leads: number; offline_ventas: number; offline_revenue: number; offline_total: number }
+
+/** Resuelve el public cliente_id enlazado a un cliente report_utm (o null). */
+async function resolvePublicClienteId(rtmClienteId: string): Promise<string | null> {
+    const adminSupa = await createAdminClient()
+    const { data } = await adminSupa
+        .schema('report_utm').from('clientes')
+        .select('public_cliente_id').eq('id', rtmClienteId).maybeSingle()
+    return data?.public_cliente_id ?? null
+}
+
+async function queryOfflineDirect(params: BiQueryParams, dateFrom: string, dateTo: string): Promise<OfflineRow[]> {
+    const db = await createAdminClient()
+    let q = db.from('conversiones_offline_diarias')
+        .select('fecha,tipo,total_cantidad,total_valor')
+        .gte('fecha', dateFrom).lte('fecha', dateTo)
+
+    if (params.cliente_id) {
+        const publicId = await resolvePublicClienteId(params.cliente_id)
+        if (!publicId) return []
+        q = q.eq('cliente_id', publicId)
+    }
+
+    const { data, error } = await q
+    if (error || !data) return []
+
+    const grouping = params.date_grouping ?? 'day'
+    const map = new Map<string, OfflineRow>()
+    for (const r of data as Record<string, unknown>[]) {
+        const dim = params.dimension === 'date' ? truncateDate(String(r.fecha ?? ''), grouping) : 'total'
+        let e = map.get(dim)
+        if (!e) { e = { dim, offline_leads: 0, offline_ventas: 0, offline_revenue: 0, offline_total: 0 }; map.set(dim, e) }
+        const qty = Number(r.total_cantidad ?? 0)
+        const val = Number(r.total_valor ?? 0)
+        if (r.tipo === 'lead')  e.offline_leads  += qty
+        if (r.tipo === 'venta') e.offline_ventas += qty
+        e.offline_revenue += val
+        e.offline_total   += qty
+    }
+    return Array.from(map.values())
+}
+
+// ── Suscripciones (último snapshot de hotmart_subscriptions_snapshot) ──
+
+/**
+ * Toma el snapshot MÁS RECIENTE (captured_date ≤ dateTo) del cliente. Es una
+ * foto puntual, no una serie temporal → solo aplica a nivel global ("(total)").
+ */
+async function querySubsLatest(params: BiQueryParams, _dateFrom: string, dateTo: string): Promise<Record<string, number> | null> {
+    if (!params.cliente_id) return null
+    const publicId = await resolvePublicClienteId(params.cliente_id)
+    if (!publicId) return null
+    const db = await createAdminClient()
+    const { data } = await db.from('hotmart_subscriptions_snapshot')
+        .select('active_count,delayed_count,canceled_count,total_count,active_recurring_value,captured_date')
+        .eq('cliente_id', publicId)
+        .lte('captured_date', dateTo)
+        .order('captured_date', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+    if (!data) return null
+    return {
+        subs_active:   Number(data.active_count ?? 0),
+        subs_delayed:  Number(data.delayed_count ?? 0),
+        subs_canceled: Number(data.canceled_count ?? 0),
+        subs_total:    Number(data.total_count ?? 0),
+        subs_mrr:      Number(data.active_recurring_value ?? 0),
+    }
+}
+
 // ── Merge ─────────────────────────────────────────────────────────────
 
 function mergeResults(
@@ -372,12 +629,16 @@ function mergeResults(
     leadsData: LeadAgg[],
     salesData: Array<{ dim: string | null; sales: number; revenue: number }>,
     adsData:   AdRow[],
-    fieldMetrics: FieldMetricReq[]
+    fieldMetrics: FieldMetricReq[],
+    offlineData: OfflineRow[] = [],
+    subsData: Record<string, number> | null = null
 ): BiQueryRow[] {
     const keys = new Set<string>()
     leadsData.forEach(r => keys.add(r.dim ?? 'total'))
     salesData.forEach(r => keys.add(r.dim ?? 'total'))
     adsData.forEach(r => keys.add(r.dim ?? 'total'))
+    offlineData.forEach(r => keys.add(r.dim ?? 'total'))
+    if (subsData) keys.add('total')   // snapshot: solo a nivel global
 
     if (keys.size === 0) {
         if (params.dimension === 'none') keys.add('total')
@@ -399,10 +660,20 @@ function mergeResults(
         const clicks      = ad?.clicks ?? 0
         const impressions = ad?.impressions ?? 0
         const reach       = Number(ad?.reach ?? 0)
+        // Derivadas GA4 / Hotmart
+        const gaSessions    = Number(ad?.ga_sessions ?? 0)
+        // ga_bounce_rate se guarda como fracción 0-1 → se emite en % (0-100).
+        const gaBounceRate  = gaSessions > 0 ? round2((Number(ad?._ga_bounce_wsum ?? 0) / gaSessions) * 100) : null
+        const gaAvgDuration = gaSessions > 0 ? round2(Number(ad?._ga_dur_wsum ?? 0) / gaSessions) : null
+        const hotmartRevenue = round2(Number(ad?.ventas_principal ?? 0) + Number(ad?.ventas_bump ?? 0) + Number(ad?.ventas_upsell ?? 0))
+        const hotmartSales   = Number(ad?.ventas_principal_count ?? 0) + Number(ad?.ventas_bump_count ?? 0) + Number(ad?.ventas_upsell_count ?? 0)
 
         const row: BiQueryRow = { dimension_value: key === 'total' ? null : key }
 
         if (params.metrics.includes('leads_count'))     row.leads_count     = leads_count
+        // Leads (todos los canales): CRM (lead_events) + instant forms nativos de Meta (leads_form).
+        // Son conjuntos disjuntos (landing vs formulario nativo) → se suman sin doble conteo.
+        if (params.metrics.includes('leads_total'))     row.leads_total     = leads_count + Number(ad?.leads_form ?? 0)
         if (params.metrics.includes('sales_count'))     row.sales_count     = sales_count
         if (params.metrics.includes('revenue'))         row.revenue         = revenue
         if (params.metrics.includes('spend'))           row.spend           = spend
@@ -422,6 +693,27 @@ function mergeResults(
         }
         if (params.metrics.includes('frequency')) row.frequency = reach > 0 ? round2(impressions / reach) : null
         if (params.metrics.includes('ctr'))       row.ctr       = impressions > 0 ? round2((clicks / impressions) * 100) : null
+        // Métricas escalares aditivas (GA4 sesiones, TikTok conv., Hotmart ventas…)
+        for (const k of AD_SCALAR_METRICS) {
+            if (params.metrics.includes(k as BiMetric)) row[k] = Number(ad?.[k] ?? 0)
+        }
+        // GA4 tasas (promedio ponderado) + convenientes Hotmart (computadas)
+        if (params.metrics.includes('ga_bounce_rate'))          row.ga_bounce_rate          = gaBounceRate
+        if (params.metrics.includes('ga_avg_session_duration')) row.ga_avg_session_duration = gaAvgDuration
+        if (params.metrics.includes('hotmart_revenue'))         row.hotmart_revenue         = hotmartRevenue
+        if (params.metrics.includes('hotmart_sales'))           row.hotmart_sales           = hotmartSales
+        // Conversiones offline
+        const off = offlineData.find(r => (r.dim ?? 'total') === key)
+        if (params.metrics.includes('offline_leads'))   row.offline_leads   = off?.offline_leads   ?? 0
+        if (params.metrics.includes('offline_ventas'))  row.offline_ventas  = off?.offline_ventas  ?? 0
+        if (params.metrics.includes('offline_revenue')) row.offline_revenue = round2(off?.offline_revenue ?? 0)
+        if (params.metrics.includes('offline_total'))   row.offline_total   = off?.offline_total   ?? 0
+        // Suscripciones (snapshot): solo en la fila global "(total)"
+        if (subsData && key === 'total') {
+            for (const k of SUBS_METRICS) {
+                if (params.metrics.includes(k)) row[k] = subsData[k] ?? 0
+            }
+        }
 
         // Métricas de campo de formulario (sum/avg/min/max/count de raw_fields).
         const fieldValues: Record<string, number> = {}
@@ -435,6 +727,7 @@ function mergeResults(
         if (params.calculated?.length) {
             const baseValues: Record<string, number> = {
                 leads_count, sales_count, revenue, spend, meta_spend, tiktok_spend, clicks, impressions, reach,
+                leads_total: leads_count + Number(ad?.leads_form ?? 0),
                 cpl: Number(row.cpl ?? 0),
                 cpa: Number(row.cpa ?? 0),
                 roas: Number(row.roas ?? 0),
@@ -446,6 +739,16 @@ function mergeResults(
                 ...fieldValues,   // aliases f_<agg>__<clave> disponibles en la expresión
             }
             for (const k of AD_JSONB_METRICS) baseValues[k] = Number(ad?.[k] ?? 0)
+            for (const k of AD_SCALAR_METRICS) baseValues[k] = Number(ad?.[k] ?? 0)
+            baseValues.ga_bounce_rate = gaBounceRate ?? 0
+            baseValues.ga_avg_session_duration = gaAvgDuration ?? 0
+            baseValues.hotmart_revenue = hotmartRevenue
+            baseValues.hotmart_sales = hotmartSales
+            baseValues.offline_leads   = off?.offline_leads   ?? 0
+            baseValues.offline_ventas  = off?.offline_ventas  ?? 0
+            baseValues.offline_revenue = round2(off?.offline_revenue ?? 0)
+            baseValues.offline_total   = off?.offline_total   ?? 0
+            if (subsData && key === 'total') for (const k of SUBS_METRICS) baseValues[k] = subsData[k] ?? 0
             for (const cf of params.calculated) {
                 row[cf.name] = evaluateExpression(cf.expression, baseValues)
             }
@@ -545,7 +848,7 @@ export async function runPivotQuery(
         q = q.gte('created_at', dateFrom + 'T00:00:00').lte('created_at', dateTo + 'T23:59:59')
         if (isSales) q = q.eq('status', 'approved')
         if (params.cliente_id) q = q.eq('cliente_id', params.cliente_id)
-        return applyDimFilters(q, params.filters)
+        return applyDimFilters(q, params.filters, isSales ? salesFilterKey : leadFilterKey)
     }
 
     // Traer TODAS las filas (paginado); el Top-N se aplica después sobre los grupos.
@@ -629,18 +932,45 @@ function round2(n: number): number {
     return Math.round(n * 100) / 100
 }
 
-const VALID_DIM_KEYS = new Set([
+export const VALID_DIM_KEYS = new Set([
     'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'utm_id',
     'ip_country', 'form_name', 'form_plugin', 'attribution_method', 'platform',
+    'product_name', 'transaction_type', 'customer_country',
 ])
 function isValidDimKey(key: string): boolean {
     return VALID_DIM_KEYS.has(key) || isFieldDim(key)
 }
 
+// Claves de filtro que EXISTEN como columna en cada tabla. Aplicar un filtro sobre
+// una columna inexistente rompe la query PostgREST, así que el filtrado por dimensión
+// debe ser consciente de la tabla (lead_events vs sales_events).
+const LEAD_FILTER_KEYS = new Set([
+    'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'utm_id',
+    'ip_country', 'form_name', 'form_plugin', 'attribution_method',
+])
+const SALES_FILTER_KEYS = new Set([
+    'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'utm_id',
+    'platform', 'product_name', 'transaction_type', 'customer_country',
+])
+/** ¿La clave de filtro aplica a lead_events? (incluye campos de formulario raw_fields). */
+export function leadFilterKey(key: string): boolean {
+    return LEAD_FILTER_KEYS.has(key) || isFieldDim(key)
+}
+/** ¿La clave de filtro aplica a sales_events? */
+export function salesFilterKey(key: string): boolean {
+    return SALES_FILTER_KEYS.has(key)
+}
+
 /**
  * Trae TODAS las filas de una query paginando (PostgREST limita ~1000 por
  * request). Evita el undercount de contar solo la primera página.
- * `buildQuery` debe devolver una query NUEVA en cada llamada.
+ * `buildQuery` debe devolver una query NUEVA en cada llamada, y su select DEBE
+ * incluir la columna `id` (uuid, PK).
+ *
+ * Paginación por KEYSET (cursor sobre `id`), no por OFFSET: `.range()` sin un
+ * ORDER BY estable devuelve órdenes distintos entre páginas → se saltan/duplican
+ * filas (peor aún con inserciones en vivo). El cursor `id > lastId` con orden por
+ * `id` es determinista e inmune al desplazamiento por inserciones concurrentes.
  */
 export async function fetchAllRows(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -649,11 +979,18 @@ export async function fetchAllRows(
     hardCap = 200000
 ): Promise<Record<string, unknown>[]> {
     const all: Record<string, unknown>[] = []
-    for (let offset = 0; offset < hardCap; offset += pageSize) {
-        const { data, error } = await buildQuery().range(offset, offset + pageSize - 1)
+    let lastId: string | null = null
+    while (all.length < hardCap) {
+        let q = buildQuery().order('id', { ascending: true }).limit(pageSize)
+        if (lastId !== null) q = q.gt('id', lastId)
+        const { data, error } = await q
         if (error || !data || data.length === 0) break
-        all.push(...(data as Record<string, unknown>[]))
-        if (data.length < pageSize) break
+        const rows = data as Array<Record<string, unknown>>
+        all.push(...rows)
+        const last = rows[rows.length - 1]?.id
+        if (last === undefined || last === null) break   // sin `id` en el select no se puede avanzar
+        lastId = String(last)
+        if (rows.length < pageSize) break
     }
     return all
 }
@@ -663,10 +1000,10 @@ export async function fetchAllRows(
  * si el valor trae comas (ej. "facebook,instagram") usa IN (...); si no, igualdad.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function applyDimFilters(q: any, filters?: Record<string, string>): any {
+export function applyDimFilters(q: any, filters?: Record<string, string>, isAllowed: (k: string) => boolean = isValidDimKey): any {
     if (!filters) return q
     for (const [k, raw] of Object.entries(filters)) {
-        if (!raw || !isValidDimKey(k)) continue
+        if (!raw || !isAllowed(k)) continue
         q = applyOneFilter(q, k, raw)
     }
     return q
@@ -727,12 +1064,12 @@ export async function runDistinctValues(params: {
             let q = supabase
                 .schema('report_utm')
                 .from('lead_events')
-                .select('raw_fields')
+                .select('id,raw_fields')
                 .gte('created_at', dateFrom + 'T00:00:00')
                 .lte('created_at', dateTo + 'T23:59:59')
                 .not('raw_fields', 'is', null)
             if (params.cliente_id) q = q.eq('cliente_id', params.cliente_id)
-            return applyDimFilters(q, params.filters)
+            return applyDimFilters(q, params.filters, leadFilterKey)
         })
         const set = new Set<string>()
         for (const r of rows) {
@@ -755,7 +1092,7 @@ export async function runDistinctValues(params: {
         .limit(params.limit ?? 5000)
 
     if (params.cliente_id) q = q.eq('cliente_id', params.cliente_id)
-    q = applyDimFilters(q, params.filters)
+    q = applyDimFilters(q, params.filters, params.source === 'sales' ? salesFilterKey : leadFilterKey)
 
     const { data, error } = await q
     if (error || !data) return []

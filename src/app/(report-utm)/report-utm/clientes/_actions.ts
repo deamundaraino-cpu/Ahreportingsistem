@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { reportUtmClient } from '@/lib/report-utm/client'
 import { createAdminClient } from '@/utils/supabase/server'
+import { checkWriteRole } from '@/lib/report-utm/auth'
 
 function slugify(input: string): string {
     return input
@@ -52,6 +53,40 @@ export async function updateClienteStatusAction(id: string, status: 'active' | '
     if (error) return { ok: false, error: error.message }
 
     revalidatePath('/report-utm/clientes')
+    revalidatePath(`/report-utm/clientes/${id}`)
+    return { ok: true }
+}
+
+/**
+ * Actualiza el branding del cliente (logo + color de acento) que usa la vista
+ * pública de los informes BI. Se guarda en el JSONB `config` (merge, para no
+ * pisar otras claves como `currency`).
+ */
+export async function updateClienteBrandingAction(
+    id: string,
+    branding: { logo_url?: string; accent?: string }
+) {
+    const { ok } = await checkWriteRole()
+    if (!ok) return { ok: false, error: 'No tienes permisos para editar el branding.' }
+
+    const supabase = await reportUtmClient()
+    const { data: current } = await supabase.from('clientes').select('config').eq('id', id).maybeSingle()
+    const config = (current?.config ?? {}) as Record<string, unknown>
+
+    const nextConfig: Record<string, unknown> = { ...config }
+    // Cadena vacía → borra la clave (permite quitar logo/acento).
+    if (branding.logo_url !== undefined) {
+        if (branding.logo_url.trim()) nextConfig.logo_url = branding.logo_url.trim()
+        else delete nextConfig.logo_url
+    }
+    if (branding.accent !== undefined) {
+        if (branding.accent.trim()) nextConfig.accent = branding.accent.trim()
+        else delete nextConfig.accent
+    }
+
+    const { error } = await supabase.from('clientes').update({ config: nextConfig }).eq('id', id)
+    if (error) return { ok: false, error: error.message }
+
     revalidatePath(`/report-utm/clientes/${id}`)
     return { ok: true }
 }

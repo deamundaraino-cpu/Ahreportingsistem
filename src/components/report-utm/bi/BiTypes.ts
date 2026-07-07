@@ -1,4 +1,4 @@
-import type { BiMetric, BiDimension, DateGrouping, ValueFilter } from '@/lib/report-utm/bi-metadata'
+import type { BiMetric, BiDimension, DateGrouping, ValueFilter, AdvancedFilter } from '@/lib/report-utm/bi-metadata'
 
 export type { ValueFilter } from '@/lib/report-utm/bi-metadata'
 
@@ -19,6 +19,10 @@ export type WidgetType =
     | 'multicard'
     | 'narrative'
     | 'decomposition'
+    // ── Bloques estructurales / presentacionales (sin fetch de datos) ──
+    | 'section'   // contenedor colapsable que agrupa widgets (config.children)
+    | 'heading'   // título divisor a lo ancho
+    | 'text'      // párrafo de texto libre / comentario para el cliente
 
 export type SlicerMode = 'dropdown' | 'list' | 'daterange'
 
@@ -41,6 +45,7 @@ export interface WidgetConfig {
     color?: string                   // color base del widget (hex)
     conditional?: ConditionalRule[]  // formato condicional en tablas
     value_filters?: ValueFilter[]    // ocultar filas que no cumplan condiciones numéricas
+    advanced_filter?: AdvancedFilter // filtro Y-de-O propio del widget (se combina en Y con el del informe)
     show_totals?: boolean            // fila de totales en tablas
     // Power BI extras
     slicer_mode?: SlicerMode         // slicer: tipo de control
@@ -48,6 +53,13 @@ export interface WidgetConfig {
     target?: number                  // KPI: meta/objetivo
     databars?: string[]              // tabla: columnas con barras en celda
     colorscale?: string[]            // tabla: columnas con escala de color
+    // ── Bloques estructurales / presentacionales ──
+    text?: string                    // text: párrafo libre (soporta \n, **negrita**, - viñetas)
+    heading_level?: 1 | 2 | 3        // heading: jerarquía del título
+    align?: 'left' | 'center'        // heading/text: alineación
+    collapsed?: boolean              // section: estado colapsado
+    columns?: number                 // section: columnas del grid interno (1-4, default 4)
+    accent?: string                  // section/heading: color de acento (hex)
 }
 
 export interface BiWidget {
@@ -57,6 +69,7 @@ export interface BiWidget {
     w?: number  // col span hint (1-4), default 2
     h?: number  // row span hint (1-3), default 1
     config: WidgetConfig
+    children?: BiWidget[]  // sólo para type 'section': widgets contenidos
 }
 
 export interface BiFilters {
@@ -74,6 +87,13 @@ export interface CalculatedField {
     format?: 'number' | 'currency' | 'percent' | 'ratio'
 }
 
+export interface BiSchedule {
+    enabled?: boolean
+    frequency?: 'weekly' | 'monthly'
+    channels?: { whatsapp?: boolean; email?: boolean }
+    emails?: string[]
+}
+
 export interface BiReport {
     id: string
     nombre: string
@@ -83,6 +103,7 @@ export interface BiReport {
     calculated_fields?: CalculatedField[]
     public_token?: string | null
     cliente_id?: string | null
+    schedule?: BiSchedule
     created_at?: string
     updated_at?: string
 }

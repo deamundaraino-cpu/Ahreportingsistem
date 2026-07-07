@@ -8,6 +8,7 @@ import type { BiMetric, BiDimension, BiQueryRow } from '@/lib/report-utm/bi-meta
 import {
     METRIC_META, DIMENSION_META, appendUtmFilters, utmFilterSignature, applyValueFilters,
     appendFieldFilters, fieldFilterSignature, appendAdvancedFilter, advancedFilterSignature,
+    appendDimFilters, dimFilterSignature, widgetAdvancedSignature,
     fieldMetricLabel, fieldMetricFormat, fieldDimLabel, isFieldMetric, parseFieldMetric,
 } from '@/lib/report-utm/bi-metadata'
 
@@ -84,7 +85,8 @@ export function TableWidget({ title, config, filters, calculatedFields = [], h =
         if (filters.date_to)    params.set('date_to', filters.date_to)
         appendUtmFilters(params, filters)
         appendFieldFilters(params, filters)
-        appendAdvancedFilter(params, filters)
+        appendDimFilters(params, filters)
+        appendAdvancedFilter(params, filters, config.advanced_filter)
         for (const c of usedCalc) params.set(`calc[${c.name}]`, c.expression)
 
         fetch(`/api/report-utm/bi/query?${params}`)
@@ -92,7 +94,7 @@ export function TableWidget({ title, config, filters, calculatedFields = [], h =
             .then(json => setRows(json.data ?? []))
             .catch(() => setError('Error al cargar'))
             .finally(() => setLoading(false))
-    }, [rawMetrics, dimension, filters.cliente_id, filters.date_from, filters.date_to, utmFilterSignature(filters), fieldFilterSignature(filters), advancedFilterSignature(filters)])
+    }, [rawMetrics, dimension, filters.cliente_id, filters.date_from, filters.date_to, utmFilterSignature(filters), fieldFilterSignature(filters), dimFilterSignature(filters), advancedFilterSignature(filters), widgetAdvancedSignature(config.advanced_filter)])
 
     // Filtros por valor: oculta filas que no cumplan (ej. spend > 0)
     const filteredRows = applyValueFilters(rows, config.value_filters)

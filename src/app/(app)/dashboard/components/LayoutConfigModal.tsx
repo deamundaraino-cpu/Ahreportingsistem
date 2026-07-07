@@ -1199,11 +1199,12 @@ export function CampaignFilterPicker({
                             onFocus={() => setShowSuggestions(true)}
                             onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
                             placeholder="Buscar campaña..."
+                            title={kwSearch || undefined}
                             className="h-6 text-xs bg-background border-border text-foreground/90 w-40"
                         />
                     </PopoverAnchor>
                     <PopoverContent
-                        className="p-0 bg-card border-border w-56 max-h-48 overflow-y-auto custom-scrollbar"
+                        className="p-0 bg-card border-border w-[min(24rem,90vw)] max-h-48 overflow-y-auto custom-scrollbar"
                         style={{ zIndex: 9999 }}
                         align="start"
                         side="bottom"
@@ -1221,7 +1222,8 @@ export function CampaignFilterPicker({
                                     onChange({ type: 'keyword', operator: currentOp, value: name })
                                     setShowSuggestions(false)
                                 }}
-                                className="w-full text-left px-2 py-1.5 text-xs text-foreground/90 hover:bg-accent transition truncate block"
+                                title={name}
+                                className="w-full text-left px-2 py-1.5 text-xs text-foreground/90 hover:bg-accent transition block break-words"
                             >
                                 {name}
                             </button>

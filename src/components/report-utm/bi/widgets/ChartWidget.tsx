@@ -17,6 +17,7 @@ import type { BiMetric, BiDimension, BiQueryRow, BiPivotRow } from '@/lib/report
 import {
     METRIC_META, DIMENSION_META, appendUtmFilters, utmFilterSignature, applyValueFilters,
     appendFieldFilters, fieldFilterSignature, appendAdvancedFilter, advancedFilterSignature,
+    appendDimFilters, dimFilterSignature, widgetAdvancedSignature,
     fieldMetricLabel, fieldMetricFormat, fieldDimLabel, isFieldMetric,
 } from '@/lib/report-utm/bi-metadata'
 
@@ -127,7 +128,8 @@ export function ChartWidget({ title, type, config, filters, calculatedFields = [
         if (filters.date_to)    params.set('date_to', filters.date_to)
         appendUtmFilters(params, filters)
         appendFieldFilters(params, filters)
-        appendAdvancedFilter(params, filters)
+        appendDimFilters(params, filters)
+        appendAdvancedFilter(params, filters, config.advanced_filter)
         if (calcField) params.set(`calc[${calcField.name}]`, calcField.expression)
 
         fetch(`/api/report-utm/bi/query?${params}`)
@@ -138,7 +140,7 @@ export function ChartWidget({ title, type, config, filters, calculatedFields = [
             })
             .catch(() => setError('Error al cargar'))
             .finally(() => setLoading(false))
-    }, [metric, calcField?.expression, dimension, dimension2, usePivot, grouping, limit, sort, filters.cliente_id, filters.date_from, filters.date_to, utmFilterSignature(filters), fieldFilterSignature(filters), advancedFilterSignature(filters)])
+    }, [metric, calcField?.expression, dimension, dimension2, usePivot, grouping, limit, sort, filters.cliente_id, filters.date_from, filters.date_to, utmFilterSignature(filters), fieldFilterSignature(filters), dimFilterSignature(filters), advancedFilterSignature(filters), widgetAdvancedSignature(config.advanced_filter)])
 
     const dimLabel = DIMENSION_META[dimension]?.label ?? fieldDimLabel(dimension) ?? dimension
     const metLabel = METRIC_META[metric as BiMetric]?.label ?? fieldMetricLabel(metric) ?? calcField?.name ?? metric

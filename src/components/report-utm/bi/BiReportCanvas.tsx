@@ -1,8 +1,10 @@
 'use client'
 
 import { useState, useCallback } from 'react'
-import { Plus, Save, Pencil, Check, X, FileDown, Share2, Calculator } from 'lucide-react'
+import { Plus, Save, Pencil, Check, X, FileDown, Share2, Calculator, Clock, Info } from 'lucide-react'
 import { BiShareModal } from './BiShareModal'
+import { BiScheduleModal } from './BiScheduleModal'
+import type { BiSchedule } from './BiTypes'
 import { BiCalcFieldsModal } from './BiCalcFieldsModal'
 import { HelpTip } from './HelpTip'
 import type { CalculatedField } from './BiTypes'
@@ -10,13 +12,18 @@ import type { AdvancedFilter } from '@/lib/report-utm/bi-metadata'
 import {
     isFieldDim, fieldDimLabel,
     ADVANCED_FILTER_KEY, parseAdvancedFilter, serializeAdvancedFilter, advancedFilterHasConditions,
+    hasNonAttributableFilter,
 } from '@/lib/report-utm/bi-metadata'
 import {
     DndContext,
-    closestCenter,
+    DragOverlay,
+    closestCorners,
     PointerSensor,
     useSensor,
     useSensors,
+    useDroppable,
+    type DragStartEvent,
+    type DragOverEvent,
     type DragEndEvent,
 } from '@dnd-kit/core'
 import {
@@ -26,9 +33,68 @@ import {
 } from '@dnd-kit/sortable'
 import type { BiWidget, BiFilters, BiReport } from './BiTypes'
 import { BiWidgetCard }   from './BiWidgetCard'
+import { BiSectionContainer, CONTAINER_PREFIX } from './BiSectionContainer'
 import { BiWidgetEditor } from './BiWidgetEditor'
 import { BiGlobalFilters } from './BiGlobalFilters'
 import { exportReportPdf } from './exportPdf'
+
+// ── Helpers de árbol de 2 niveles (raíz + secciones) ──────────────────
+// El layout es un array plano de bloques; un bloque 'section' contiene
+// widgets en `children`. Un "contenedor" es la raíz (ROOT) o una sección.
+const ROOT = '__root__'
+
+/** Contenedor que aloja el id dado (widget o sección). */
+function findContainerId(layout: BiWidget[], id: string): string | null {
+    if (layout.some(w => w.id === id)) return ROOT
+    for (const w of layout) {
+        if (w.type === 'section' && (w.children ?? []).some(c => c.id === id)) return w.id
+    }
+    return null
+}
+
+/** Un `over.id` puede ser un droppable de contenedor o un item. */
+function resolveOverContainer(layout: BiWidget[], overId: string): string | null {
+    if (overId === `${CONTAINER_PREFIX}${ROOT}`) return ROOT
+    if (overId.startsWith(CONTAINER_PREFIX)) return overId.slice(CONTAINER_PREFIX.length)
+    return findContainerId(layout, overId)
+}
+
+function itemsOf(layout: BiWidget[], containerId: string): BiWidget[] {
+    if (containerId === ROOT) return layout
+    return layout.find(w => w.id === containerId)?.children ?? []
+}
+
+function withItems(layout: BiWidget[], containerId: string, items: BiWidget[]): BiWidget[] {
+    if (containerId === ROOT) return items
+    return layout.map(w => w.id === containerId ? { ...w, children: items } : w)
+}
+
+/** Devuelve el bloque con ese id, esté en la raíz o dentro de una sección. */
+function findWidget(layout: BiWidget[], id: string): BiWidget | undefined {
+    const top = layout.find(w => w.id === id)
+    if (top) return top
+    for (const w of layout) {
+        if (w.type === 'section') {
+            const child = (w.children ?? []).find(c => c.id === id)
+            if (child) return child
+        }
+    }
+    return undefined
+}
+
+/** Grid raíz: también es zona droppable (para sacar widgets de una sección). */
+function RootDroppable({ children }: { children: React.ReactNode }) {
+    const { setNodeRef } = useDroppable({ id: `${CONTAINER_PREFIX}${ROOT}` })
+    return (
+        <div
+            ref={setNodeRef}
+            id="bi-canvas-grid"
+            className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 auto-rows-[minmax(0,auto)]"
+        >
+            {children}
+        </div>
+    )
+}
 
 interface Props {
     report: BiReport
@@ -75,54 +141,135 @@ export function BiReportCanvas({ report: initialReport, readonly }: Props) {
     const [editMode,   setEditMode]   = useState(false)
     const [editorOpen, setEditorOpen] = useState(false)
     const [editingWidget, setEditingWidget] = useState<BiWidget | null>(null)
+    // Contenedor destino al crear un widget nuevo: ROOT o el id de una sección.
+    const [addTarget, setAddTarget] = useState<string>(ROOT)
+    // Bloque que se está arrastrando (para el DragOverlay).
+    const [activeId, setActiveId] = useState<string | null>(null)
     const [saving, setSaving] = useState(false)
     const [saved,  setSaved]  = useState(false)
     const [dirty,  setDirty]  = useState(false)
     const [exporting, setExporting] = useState(false)
     const [shareOpen, setShareOpen] = useState(false)
+    const [scheduleOpen, setScheduleOpen] = useState(false)
     const [calcOpen, setCalcOpen]   = useState(false)
+    // Fuerza expandir todas las secciones (para capturar el PDF completo).
+    const [forceExpandAll, setForceExpandAll] = useState(false)
 
     const sensors = useSensors(
         useSensor(PointerSensor, { activationConstraint: { distance: 5 } })
     )
 
+    // Guarda un widget: si existe (en raíz o en una sección) lo reemplaza donde
+    // esté; si es nuevo, lo inserta en el contenedor destino (addTarget).
     const handleSaveWidget = useCallback((w: BiWidget) => {
         setReport(prev => {
-            const exists = prev.layout.find(x => x.id === w.id)
-            const layout = exists
-                ? prev.layout.map(x => x.id === w.id ? w : x)
-                : [...prev.layout, w]
+            const container = findContainerId(prev.layout, w.id)
+            let layout: BiWidget[]
+            if (container) {
+                // Reemplazo in-place preservando children en secciones editadas.
+                layout = withItems(prev.layout, container, itemsOf(prev.layout, container).map(x => x.id === w.id ? w : x))
+            } else {
+                // Nuevo: al contenedor destino (una sección va siempre a la raíz).
+                const target = w.type === 'section' ? ROOT : addTarget
+                layout = withItems(prev.layout, target, [...itemsOf(prev.layout, target), w])
+            }
             return { ...prev, layout }
         })
         setDirty(true)
         setEditorOpen(false)
         setEditingWidget(null)
-    }, [])
+        setAddTarget(ROOT)
+    }, [addTarget])
 
     const handleDeleteWidget = useCallback((id: string) => {
-        setReport(prev => ({ ...prev, layout: prev.layout.filter(w => w.id !== id) }))
+        setReport(prev => {
+            const container = findContainerId(prev.layout, id)
+            if (!container) return prev
+            return { ...prev, layout: withItems(prev.layout, container, itemsOf(prev.layout, container).filter(w => w.id !== id)) }
+        })
         setDirty(true)
     }, [])
 
     const handleDuplicateWidget = useCallback((w: BiWidget) => {
         setReport(prev => {
-            const idx = prev.layout.findIndex(x => x.id === w.id)
-            const copy: BiWidget = { ...w, id: genId(), title: `${w.title} (copia)` }
-            const layout = [...prev.layout]
-            layout.splice(idx + 1, 0, copy)
-            return { ...prev, layout }
+            const container = findContainerId(prev.layout, w.id)
+            if (!container) return prev
+            const items = itemsOf(prev.layout, container)
+            const idx = items.findIndex(x => x.id === w.id)
+            const copy: BiWidget = {
+                ...w,
+                id: genId(),
+                title: `${w.title} (copia)`,
+                children: w.children?.map(c => ({ ...c, id: genId() })),
+            }
+            const next = [...items]
+            next.splice(idx + 1, 0, copy)
+            return { ...prev, layout: withItems(prev.layout, container, next) }
         })
         setDirty(true)
     }, [])
 
+    // Colapsar/expandir una sección (persistente).
+    const handleToggleCollapse = useCallback((id: string) => {
+        setReport(prev => ({
+            ...prev,
+            layout: prev.layout.map(w =>
+                w.id === id && w.type === 'section'
+                    ? { ...w, config: { ...w.config, collapsed: !w.config.collapsed } }
+                    : w
+            ),
+        }))
+        setDirty(true)
+    }, [])
+
+    // Abrir el editor apuntando a un contenedor destino (raíz o sección).
+    const handleAddWidget = useCallback((target: string) => {
+        setAddTarget(target)
+        setEditingWidget(null)
+        setEditorOpen(true)
+    }, [])
+
+    const handleDragStart = useCallback((event: DragStartEvent) => {
+        setActiveId(String(event.active.id))
+    }, [])
+
+    // Mueve un widget entre contenedores (sección↔sección, sección↔raíz) en vivo.
+    const handleDragOver = useCallback((event: DragOverEvent) => {
+        const { active, over } = event
+        if (!over) return
+        const activeId = String(active.id)
+        const overId = String(over.id)
+        setReport(prev => {
+            const from = findContainerId(prev.layout, activeId)
+            const to = resolveOverContainer(prev.layout, overId)
+            if (!from || !to || from === to) return prev
+            const moving = itemsOf(prev.layout, from).find(w => w.id === activeId)
+            if (!moving) return prev
+            // No se permiten secciones anidadas: una sección sólo vive en la raíz.
+            if (moving.type === 'section' && to !== ROOT) return prev
+            let layout = withItems(prev.layout, from, itemsOf(prev.layout, from).filter(w => w.id !== activeId))
+            const overItems = itemsOf(layout, to)
+            const overIdx = overItems.findIndex(w => w.id === overId)
+            const insertIdx = overIdx >= 0 ? overIdx : overItems.length
+            layout = withItems(layout, to, [...overItems.slice(0, insertIdx), moving, ...overItems.slice(insertIdx)])
+            return { ...prev, layout }
+        })
+    }, [])
+
+    // Reordena dentro del mismo contenedor (el cruce ya lo resolvió onDragOver).
     const handleDragEnd = useCallback((event: DragEndEvent) => {
+        setActiveId(null)
         const { active, over } = event
         if (!over || active.id === over.id) return
         setReport(prev => {
-            const oldIndex = prev.layout.findIndex(w => w.id === active.id)
-            const newIndex = prev.layout.findIndex(w => w.id === over.id)
+            const container = findContainerId(prev.layout, String(active.id))
+            const overContainer = resolveOverContainer(prev.layout, String(over.id))
+            if (!container || container !== overContainer) return prev
+            const items = itemsOf(prev.layout, container)
+            const oldIndex = items.findIndex(w => w.id === active.id)
+            const newIndex = items.findIndex(w => w.id === over.id)
             if (oldIndex < 0 || newIndex < 0) return prev
-            return { ...prev, layout: arrayMove(prev.layout, oldIndex, newIndex) }
+            return { ...prev, layout: withItems(prev.layout, container, arrayMove(items, oldIndex, newIndex)) }
         })
         setDirty(true)
     }, [])
@@ -176,9 +323,17 @@ export function BiReportCanvas({ report: initialReport, readonly }: Props) {
 
     async function handleExportPdf() {
         setExporting(true)
+        // Expande todas las secciones para que el PDF capture su contenido.
+        const hadCollapsed = report.layout.some(w => w.type === 'section' && w.config.collapsed)
+        if (hadCollapsed) {
+            setForceExpandAll(true)
+            // Espera dos frames a que el DOM refleje las secciones expandidas.
+            await new Promise<void>(r => requestAnimationFrame(() => requestAnimationFrame(() => r())))
+        }
         try {
             await exportReportPdf('bi-canvas-grid', report.nombre)
         } finally {
+            setForceExpandAll(false)
             setExporting(false)
         }
     }
@@ -220,9 +375,13 @@ export function BiReportCanvas({ report: initialReport, readonly }: Props) {
     }
 
     const activeDrills = Object.entries(filters).filter(
-        ([k, v]) => v && (k.startsWith('utm_') || k === 'ip_country' || k === 'form_plugin' || k === 'attribution_method' || isFieldDim(k))
+        ([k, v]) => v && (k.startsWith('utm_') || k === 'ip_country' || k === 'form_name' || k === 'form_plugin' || k === 'attribution_method' || k === 'platform' || isFieldDim(k))
     )
     const drillLabel = (k: string) => fieldDimLabel(k) ?? k.replace('utm_', '')
+
+    // El gasto (metricas_diarias) no se puede atribuir a filtros de país/formulario/
+    // campo/plataforma → bajo esos filtros el gasto y sus ratios se muestran en 0.
+    const spendNotAttributable = hasNonAttributableFilter(filters, advancedFilter)
 
     return (
         <div className="space-y-4">
@@ -259,13 +418,21 @@ export function BiReportCanvas({ report: initialReport, readonly }: Props) {
                             <Share2 className="h-3.5 w-3.5" />
                             Compartir
                         </button>
+                        <button
+                            onClick={() => setScheduleOpen(true)}
+                            title="Programar envío automático"
+                            className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium bg-muted text-foreground hover:bg-accent transition-colors relative"
+                        >
+                            <Clock className="h-3.5 w-3.5" />
+                            Programar
+                            {report.schedule?.enabled && (
+                                <span className="absolute -top-1 -right-1 h-2.5 w-2.5 rounded-full bg-emerald-400 border-2 border-card" />
+                            )}
+                        </button>
                         {editMode ? (
                             <>
                                 <button
-                                    onClick={() => {
-                                        setEditorOpen(true)
-                                        setEditingWidget(null)
-                                    }}
+                                    onClick={() => handleAddWidget(ROOT)}
                                     className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium bg-muted text-foreground hover:bg-accent transition-colors"
                                 >
                                     <Plus className="h-3.5 w-3.5" />
@@ -355,6 +522,18 @@ export function BiReportCanvas({ report: initialReport, readonly }: Props) {
                 </div>
             )}
 
+            {/* Aviso: gasto no atribuible al filtro activo */}
+            {spendNotAttributable && (
+                <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-700 dark:text-amber-300">
+                    <Info className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                    <span>
+                        El gasto de anuncios no puede atribuirse a filtros de país, formulario o campo del lead,
+                        por lo que el gasto y sus métricas derivadas (CPL, CPA, ROAS) se muestran en 0 mientras
+                        este filtro esté activo. Los leads y ventas sí quedan filtrados.
+                    </span>
+                </div>
+            )}
+
             {/* Canvas grid */}
             {report.layout.length === 0 ? (
                 <div className="rounded-2xl border border-dashed border-border bg-muted/20 p-16 text-center">
@@ -362,7 +541,7 @@ export function BiReportCanvas({ report: initialReport, readonly }: Props) {
                     <p className="text-xs text-muted-foreground mb-4">Activa el modo edición y agrega widgets.</p>
                     {!readonly && (
                         <button
-                            onClick={() => { setEditMode(true); setEditorOpen(true) }}
+                            onClick={() => { setEditMode(true); handleAddWidget(ROOT) }}
                             className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium text-white nav-active-emerald"
                         >
                             <Plus className="h-3.5 w-3.5" />
@@ -371,26 +550,62 @@ export function BiReportCanvas({ report: initialReport, readonly }: Props) {
                     )}
                 </div>
             ) : (
-                <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+                <DndContext
+                    sensors={sensors}
+                    collisionDetection={closestCorners}
+                    onDragStart={handleDragStart}
+                    onDragOver={handleDragOver}
+                    onDragEnd={handleDragEnd}
+                    onDragCancel={() => setActiveId(null)}
+                >
                     <SortableContext items={report.layout.map(w => w.id)} strategy={rectSortingStrategy}>
-                        <div id="bi-canvas-grid" className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 auto-rows-[minmax(0,auto)]">
-                            {report.layout.map(widget => (
-                                <BiWidgetCard
-                                    key={widget.id}
-                                    widget={widget}
-                                    filters={widgetFilters}
-                                    editMode={editMode}
-                                    calculatedFields={report.calculated_fields ?? []}
-                                    onEdit={w => { setEditingWidget(w); setEditorOpen(true) }}
-                                    onDelete={handleDeleteWidget}
-                                    onDuplicate={handleDuplicateWidget}
-                                    onDrill={handleDrill}
-                                    onSetFilter={handleSetFilter}
-                                    onSetDateRange={handleSetDateRange}
-                                />
-                            ))}
-                        </div>
+                        <RootDroppable>
+                            {report.layout.map(block =>
+                                block.type === 'section' ? (
+                                    <BiSectionContainer
+                                        key={block.id}
+                                        section={block}
+                                        filters={widgetFilters}
+                                        editMode={editMode}
+                                        forceExpand={forceExpandAll}
+                                        calculatedFields={report.calculated_fields ?? []}
+                                        onEditSection={s => { setEditingWidget(s); setEditorOpen(true) }}
+                                        onDeleteSection={handleDeleteWidget}
+                                        onDuplicateSection={handleDuplicateWidget}
+                                        onToggleCollapse={handleToggleCollapse}
+                                        onAddWidget={handleAddWidget}
+                                        onEditWidget={w => { setEditingWidget(w); setEditorOpen(true) }}
+                                        onDeleteWidget={handleDeleteWidget}
+                                        onDuplicateWidget={handleDuplicateWidget}
+                                        onDrill={handleDrill}
+                                        onSetFilter={handleSetFilter}
+                                        onSetDateRange={handleSetDateRange}
+                                    />
+                                ) : (
+                                    <BiWidgetCard
+                                        key={block.id}
+                                        widget={block}
+                                        filters={widgetFilters}
+                                        editMode={editMode}
+                                        calculatedFields={report.calculated_fields ?? []}
+                                        onEdit={w => { setEditingWidget(w); setEditorOpen(true) }}
+                                        onDelete={handleDeleteWidget}
+                                        onDuplicate={handleDuplicateWidget}
+                                        onDrill={handleDrill}
+                                        onSetFilter={handleSetFilter}
+                                        onSetDateRange={handleSetDateRange}
+                                    />
+                                )
+                            )}
+                        </RootDroppable>
                     </SortableContext>
+                    <DragOverlay>
+                        {activeId ? (
+                            <div className="rounded-2xl border border-emerald-500/50 bg-card px-4 py-3 shadow-xl text-sm font-medium text-foreground">
+                                {findWidget(report.layout, activeId)?.title || 'Bloque'}
+                            </div>
+                        ) : null}
+                    </DragOverlay>
                 </DndContext>
             )}
 
@@ -402,8 +617,9 @@ export function BiReportCanvas({ report: initialReport, readonly }: Props) {
                     clienteId={filters.cliente_id}
                     dateFrom={filters.date_from}
                     dateTo={filters.date_to}
+                    allowSection={addTarget === ROOT}
                     onSave={handleSaveWidget}
-                    onClose={() => { setEditorOpen(false); setEditingWidget(null) }}
+                    onClose={() => { setEditorOpen(false); setEditingWidget(null); setAddTarget(ROOT) }}
                 />
             )}
 
@@ -413,6 +629,16 @@ export function BiReportCanvas({ report: initialReport, readonly }: Props) {
                     reportId={report.id}
                     initialToken={report.public_token ?? null}
                     onClose={() => setShareOpen(false)}
+                />
+            )}
+
+            {/* Schedule modal */}
+            {scheduleOpen && (
+                <BiScheduleModal
+                    reportId={report.id}
+                    initial={report.schedule}
+                    onSaved={(schedule: BiSchedule) => setReport(prev => ({ ...prev, schedule }))}
+                    onClose={() => setScheduleOpen(false)}
                 />
             )}
 

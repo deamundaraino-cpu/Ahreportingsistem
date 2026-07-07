@@ -28,6 +28,7 @@ export default async function ReportPage({ params }: Params) {
         calculated_fields: Array.isArray(data.calculated_fields) ? data.calculated_fields : [],
         public_token: data.public_token ?? null,
         cliente_id:  data.cliente_id,
+        schedule:    typeof data.schedule === 'object' && data.schedule ? data.schedule : undefined,
         created_at:  data.created_at,
         updated_at:  data.updated_at,
     }

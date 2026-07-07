@@ -79,7 +79,7 @@ export async function GET(req: NextRequest) {
             if (!cliente_id) {
                 return NextResponse.json({ error: 'El cruce por campaña requiere seleccionar un cliente.' }, { status: 400 })
             }
-            const data = await runCampaignQuery({ cliente_id, date_from, date_to, filters, limit })
+            const data = await runCampaignQuery({ cliente_id, date_from, date_to, filters, advancedFilter, limit })
             return NextResponse.json({ data })
         }
 

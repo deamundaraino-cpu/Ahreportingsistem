@@ -3,12 +3,14 @@
 import { useState, useEffect } from 'react'
 import { X, Plus, Search, AlertTriangle } from 'lucide-react'
 import type { BiWidget, WidgetType, WidgetConfig, CalculatedField, ConditionalRule, ValueFilter } from './BiTypes'
-import type { BiMetric, BiDimension, ValueOp, FieldAgg, FormFieldMeta } from '@/lib/report-utm/bi-metadata'
+import type { BiMetric, BiDimension, ValueOp, FieldAgg, FormFieldMeta, AdvancedFilter } from '@/lib/report-utm/bi-metadata'
 import {
-    METRIC_META, DIMENSION_META, VALUE_OPS, FIELD_AGGS,
+    METRIC_META, DIMENSION_META, VALUE_OPS, FIELD_AGGS, FILTERABLE_BASE_DIMS,
     makeFieldDim, makeFieldMetric, humanizeFieldKey, fieldDimLabel, fieldMetricLabel,
+    advancedFilterHasConditions,
 } from '@/lib/report-utm/bi-metadata'
 import { HelpTip } from './HelpTip'
+import { BiAdvancedFilterBuilder } from './BiAdvancedFilterBuilder'
 
 interface Props {
     widget?: BiWidget | null
@@ -17,6 +19,8 @@ interface Props {
     clienteId?: string
     dateFrom?: string
     dateTo?: string
+    /** Permite crear una sección (false al agregar dentro de otra sección). */
+    allowSection?: boolean
     onSave: (widget: BiWidget) => void
     onClose: () => void
 }
@@ -38,6 +42,13 @@ const WIDGET_TYPES: { value: WidgetType; label: string; desc: string }[] = [
     { value: 'slicer',    label: 'Slicer',    desc: 'Filtro interactivo' },
 ]
 
+// Bloques de organización (sin datos): agrupar y comentar el informe.
+const STRUCTURAL_TYPES: { value: WidgetType; label: string; desc: string }[] = [
+    { value: 'section', label: 'Sección',  desc: 'Grupo colapsable' },
+    { value: 'heading', label: 'Título',   desc: 'Encabezado divisor' },
+    { value: 'text',    label: 'Texto',    desc: 'Comentario / nota' },
+]
+
 const ALL_METRICS = Object.entries(METRIC_META).map(([k, v]) => ({ value: k as BiMetric, label: v.label }))
 const ALL_DIMS    = Object.entries(DIMENSION_META).map(([k, v]) => ({ value: k as BiDimension, label: v.label }))
 
@@ -47,9 +58,15 @@ function genId(): string {
     return Math.random().toString(36).slice(2, 10)
 }
 
-export function BiWidgetEditor({ widget, calculatedFields = [], clienteId, dateFrom, dateTo, onSave, onClose }: Props) {
+export function BiWidgetEditor({ widget, calculatedFields = [], clienteId, dateFrom, dateTo, allowSection = true, onSave, onClose }: Props) {
     const [type,   setType]   = useState<WidgetType>(widget?.type ?? 'scorecard')
     const [title,  setTitle]  = useState(widget?.title ?? '')
+    // Config de bloques estructurales / presentacionales.
+    const [text,        setText]        = useState(widget?.config?.text ?? '')
+    const [headingLevel, setHeadingLevel] = useState<1 | 2 | 3>(widget?.config?.heading_level ?? 2)
+    const [align,       setAlign]       = useState<'left' | 'center'>(widget?.config?.align ?? 'left')
+    const [columns,     setColumns]     = useState(widget?.config?.columns ?? 4)
+    const [accent,      setAccent]      = useState(widget?.config?.accent ?? '')
     const [metric, setMetric] = useState<string>(String(widget?.config?.metric ?? 'leads_count'))
     const [dim,    setDim]    = useState<string>(widget?.config?.dimension ?? 'utm_source')
     const [dim2,   setDim2]   = useState<string>(widget?.config?.dimension2 ?? 'none')
@@ -64,6 +81,7 @@ export function BiWidgetEditor({ widget, calculatedFields = [], clienteId, dateF
     const [showTotals, setShowTotals] = useState(widget?.config?.show_totals !== false)
     const [conditional, setConditional] = useState<ConditionalRule[]>(widget?.config?.conditional ?? [])
     const [valueFilters, setValueFilters] = useState<ValueFilter[]>(widget?.config?.value_filters ?? [])
+    const [advancedFilter, setAdvancedFilter] = useState<AdvancedFilter>(widget?.config?.advanced_filter ?? { groups: [] })
     const [slicerMode, setSlicerMode] = useState<'dropdown' | 'list' | 'daterange'>(widget?.config?.slicer_mode ?? 'dropdown')
     const [metricSearch, setMetricSearch] = useState('')
 
@@ -83,6 +101,7 @@ export function BiWidgetEditor({ widget, calculatedFields = [], clienteId, dateF
 
     const isChart = ['line', 'area', 'bar', 'combo', 'pie', 'scatter'].includes(type)
     const supportsDim2 = ['bar', 'combo', 'area', 'line'].includes(type)
+    const isStructural = type === 'section' || type === 'heading' || type === 'text'
 
     // Opciones derivadas de los campos de formulario descubiertos.
     const fieldDimOptions = formFields.map(f => ({ value: makeFieldDim(f.key), label: humanizeFieldKey(f.label) }))
@@ -94,6 +113,9 @@ export function BiWidgetEditor({ widget, calculatedFields = [], clienteId, dateF
     )
     // Dimensiones base + de campo (para los selectores de dimensión y slicer).
     const dimOptions: { value: string; label: string }[] = [...ALL_DIMS, ...fieldDimOptions]
+    // Campos filtrables (para el constructor de filtro del widget): dimensiones
+    // base de filtro (UTMs, país, formulario…) + campos de formulario del cliente.
+    const filterFieldOptions: { value: string; label: string }[] = [...FILTERABLE_BASE_DIMS, ...fieldDimOptions]
 
     // Etiquetas que resuelven también tokens de campo.
     const resolveMetricLabel = (k: string) =>
@@ -141,7 +163,7 @@ export function BiWidgetEditor({ widget, calculatedFields = [], clienteId, dateF
     ).filter(Boolean)
 
     useEffect(() => {
-        if (!title) {
+        if (!title && !isStructural) {
             const m = resolveMetricLabel(String(metric))
             const d = resolveDimLabel(dim)
             setTitle(type === 'funnel' ? 'Funnel de Conversión' : type === 'scorecard' ? m : `${m} por ${d}`)
@@ -150,6 +172,21 @@ export function BiWidgetEditor({ widget, calculatedFields = [], clienteId, dateF
     }, [type, metric, dim])
 
     function handleSave() {
+        const id = widget?.id ?? genId()
+
+        // Bloques estructurales / presentacionales: sin métrica ni dimensión.
+        if (isStructural) {
+            if (type === 'text') {
+                onSave({ id, type, title: title.trim(), w: colSpan, h: rowSpan, config: { text, align } })
+            } else if (type === 'heading') {
+                onSave({ id, type, title: title.trim() || 'Título', w: colSpan, h: rowSpan, config: { heading_level: headingLevel, align, accent: accent || undefined } })
+            } else {
+                // section: preserva los widgets contenidos al editar.
+                onSave({ id, type, title: title.trim() || 'Sección', w: 4, h: 1, config: { columns, accent: accent || undefined, collapsed: widget?.config?.collapsed ?? false }, children: widget?.children ?? [] })
+            }
+            return
+        }
+
         if (!title.trim()) return
         const config: WidgetConfig = {}
         if (type === 'slicer') {
@@ -173,8 +210,12 @@ export function BiWidgetEditor({ widget, calculatedFields = [], clienteId, dateF
                 if (valueFilters.length) config.value_filters = valueFilters
             }
         }
+        // Filtro propio del widget (Y de O): aplica a todos los widgets de datos.
+        if (type !== 'slicer' && advancedFilterHasConditions(advancedFilter)) {
+            config.advanced_filter = advancedFilter
+        }
         onSave({
-            id:    widget?.id ?? genId(),
+            id,
             type,
             title: title.trim(),
             w:     colSpan,
@@ -220,19 +261,132 @@ export function BiWidgetEditor({ widget, calculatedFields = [], clienteId, dateF
                                 </button>
                             ))}
                         </div>
+                        {/* Bloques de organización */}
+                        <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mt-3 mb-2">Organización</p>
+                        <div className="grid grid-cols-3 gap-2">
+                            {STRUCTURAL_TYPES.filter(t => t.value !== 'section' || allowSection).map(t => (
+                                <button
+                                    key={t.value}
+                                    onClick={() => setType(t.value)}
+                                    className={`p-2.5 rounded-xl border text-left transition-all text-xs ${
+                                        type === t.value
+                                            ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 font-medium'
+                                            : 'border-border bg-muted/30 text-muted-foreground hover:border-border hover:bg-accent'
+                                    }`}
+                                >
+                                    <div className="font-semibold">{t.label}</div>
+                                    <div className="text-[10px] opacity-70 mt-0.5 leading-tight">{t.desc}</div>
+                                </button>
+                            ))}
+                        </div>
                     </div>
 
                     {/* Title */}
                     <div>
-                        <label className="block text-xs font-medium text-muted-foreground mb-1">Título</label>
+                        <label className="block text-xs font-medium text-muted-foreground mb-1">
+                            {type === 'text' ? 'Título (opcional)' : type === 'section' ? 'Nombre de la sección' : 'Título'}
+                        </label>
                         <input
                             type="text"
                             value={title}
                             onChange={e => setTitle(e.target.value)}
-                            placeholder="Nombre del widget"
+                            placeholder={type === 'section' ? 'Ej. Resultados de Meta Ads' : type === 'heading' ? 'Ej. Rendimiento del mes' : 'Nombre del widget'}
                             className="w-full px-3 py-2 text-sm rounded-lg bg-muted border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
                         />
                     </div>
+
+                    {/* Config de bloques estructurales */}
+                    {type === 'text' && (
+                        <div>
+                            <label className="block text-xs font-medium text-muted-foreground mb-1">Texto</label>
+                            <textarea
+                                value={text}
+                                onChange={e => setText(e.target.value)}
+                                rows={5}
+                                placeholder={'Escribe tu comentario para el cliente…\n\nSoporta **negrita**, saltos de línea y\n- viñetas'}
+                                className="w-full px-3 py-2 text-sm rounded-lg bg-muted border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500/40 resize-y"
+                            />
+                            <p className="text-[10px] text-muted-foreground mt-1">Formato: <span className="font-mono">**negrita**</span>, línea nueva = párrafo, <span className="font-mono">- </span> = viñeta.</p>
+                        </div>
+                    )}
+                    {type === 'heading' && (
+                        <div>
+                            <label className="block text-xs font-medium text-muted-foreground mb-1">Nivel del título</label>
+                            <select
+                                value={headingLevel}
+                                onChange={e => setHeadingLevel(Number(e.target.value) as 1 | 2 | 3)}
+                                className="w-full px-3 py-2 text-sm rounded-lg bg-muted border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
+                            >
+                                <option value={1}>H1 · Grande (con acento)</option>
+                                <option value={2}>H2 · Mediano (con línea)</option>
+                                <option value={3}>H3 · Pequeño</option>
+                            </select>
+                        </div>
+                    )}
+                    {type === 'section' && (
+                        <div>
+                            <label className="flex items-center gap-1 text-xs font-medium text-muted-foreground mb-1">
+                                Columnas internas
+                                <HelpTip text="Cuántas columnas usa la grilla dentro de la sección. 4 = igual que el informe; menos columnas = widgets más anchos." />
+                            </label>
+                            <div className="flex gap-1">
+                                {[1, 2, 3, 4].map(n => (
+                                    <button
+                                        key={n}
+                                        onClick={() => setColumns(n)}
+                                        className={`flex-1 py-1.5 rounded-lg text-xs font-medium border transition-all ${
+                                            columns === n
+                                                ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+                                                : 'border-border bg-muted/30 text-muted-foreground hover:bg-accent'
+                                        }`}
+                                    >
+                                        {n}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+                    {(type === 'text' || type === 'heading') && (
+                        <div>
+                            <label className="block text-xs font-medium text-muted-foreground mb-2">Alineación</label>
+                            <div className="flex gap-1">
+                                {(['left', 'center'] as const).map(a => (
+                                    <button
+                                        key={a}
+                                        onClick={() => setAlign(a)}
+                                        className={`flex-1 py-1.5 rounded-lg text-xs font-medium border transition-all ${
+                                            align === a
+                                                ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+                                                : 'border-border bg-muted/30 text-muted-foreground hover:bg-accent'
+                                        }`}
+                                    >
+                                        {a === 'left' ? 'Izquierda' : 'Centro'}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+                    {(type === 'section' || type === 'heading') && (
+                        <div>
+                            <label className="block text-xs font-medium text-muted-foreground mb-2">Color de acento</label>
+                            <div className="flex gap-2 flex-wrap items-center">
+                                <button
+                                    onClick={() => setAccent('')}
+                                    className={`h-6 px-2 rounded-full text-[10px] border transition-all ${accent === '' ? 'border-foreground ring-2 ring-offset-2 ring-offset-card ring-foreground' : 'border-border text-muted-foreground'}`}
+                                >
+                                    Sin color
+                                </button>
+                                {COLOR_OPTIONS.map(c => (
+                                    <button
+                                        key={c}
+                                        onClick={() => setAccent(c)}
+                                        style={{ background: c }}
+                                        className={`h-6 w-6 rounded-full transition-transform ${accent === c ? 'ring-2 ring-offset-2 ring-offset-card ring-foreground scale-110' : ''}`}
+                                    />
+                                ))}
+                            </div>
+                        </div>
+                    )}
 
                     {/* Slicer config */}
                     {type === 'slicer' && (
@@ -272,8 +426,8 @@ export function BiWidgetEditor({ widget, calculatedFields = [], clienteId, dateF
                         </>
                     )}
 
-                    {/* Metric + Dimension (not for funnel/slicer) */}
-                    {type !== 'funnel' && type !== 'slicer' && (
+                    {/* Metric + Dimension (not for funnel/slicer/estructurales) */}
+                    {!isStructural && type !== 'funnel' && type !== 'slicer' && (
                         <>
                             <div>
                                 <label className="flex items-center gap-1 text-xs font-medium text-muted-foreground mb-1">
@@ -567,7 +721,28 @@ export function BiWidgetEditor({ widget, calculatedFields = [], clienteId, dateF
                         </>
                     )}
 
-                    {/* Tamaño */}
+                    {/* Filtros del widget (Y de O): filtran SOLO este widget, en Y con los globales */}
+                    {!isStructural && type !== 'slicer' && (
+                        <div className="rounded-xl border border-border p-3 space-y-2">
+                            <p className="flex items-center gap-1 text-[11px] font-medium text-foreground">
+                                Filtros del widget
+                                <HelpTip text="Filtra SOLO este widget por variables (UTMs, país, formulario, campos…). Dentro de un grupo las condiciones se unen con O; los grupos entre sí con Y. Se combina (Y) con los filtros globales del informe. Ej: País contiene Colombia." />
+                            </p>
+                            {!clienteId && (
+                                <p className="text-[10px] text-muted-foreground">
+                                    Selecciona un cliente en los filtros globales para ver los campos de formulario.
+                                </p>
+                            )}
+                            <BiAdvancedFilterBuilder
+                                value={advancedFilter}
+                                onChange={setAdvancedFilter}
+                                fieldOptions={filterFieldOptions}
+                            />
+                        </div>
+                    )}
+
+                    {/* Tamaño (las secciones son siempre a lo ancho) */}
+                    {type !== 'section' && (
                     <div className="grid grid-cols-2 gap-3">
                         <div>
                             <label className="flex items-center gap-1 text-xs font-medium text-muted-foreground mb-2">
@@ -609,6 +784,7 @@ export function BiWidgetEditor({ widget, calculatedFields = [], clienteId, dateF
                             </div>
                         </div>
                     </div>
+                    )}
                 </div>
 
                 {/* Footer */}
@@ -618,7 +794,7 @@ export function BiWidgetEditor({ widget, calculatedFields = [], clienteId, dateF
                     </button>
                     <button
                         onClick={handleSave}
-                        disabled={!title.trim() || (type === 'table' && tableCols.length === 0)}
+                        disabled={(!isStructural && !title.trim()) || (type === 'table' && tableCols.length === 0)}
                         className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-medium text-white nav-active-emerald disabled:opacity-50"
                     >
                         <Plus className="h-3.5 w-3.5" />

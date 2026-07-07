@@ -30,7 +30,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
 
     const { reportId } = await params
     const body = await req.json()
-    const allowed = ['nombre', 'descripcion', 'layout', 'filters', 'cliente_id', 'calculated_fields']
+    const allowed = ['nombre', 'descripcion', 'layout', 'filters', 'cliente_id', 'calculated_fields', 'schedule']
     const patch: Record<string, unknown> = {}
     for (const k of allowed) if (k in body) patch[k] = body[k]
 

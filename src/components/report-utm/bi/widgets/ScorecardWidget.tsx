@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { TrendingUp, TrendingDown, Minus, Loader2 } from 'lucide-react'
 import type { BiFilters, WidgetConfig, CalculatedField } from '../BiTypes'
 import type { BiMetric } from '@/lib/report-utm/bi-metadata'
-import { METRIC_META, appendUtmFilters, utmFilterSignature, appendFieldFilters, fieldFilterSignature, appendAdvancedFilter, advancedFilterSignature, fieldMetricLabel, fieldMetricFormat } from '@/lib/report-utm/bi-metadata'
+import { METRIC_META, appendUtmFilters, utmFilterSignature, appendFieldFilters, fieldFilterSignature, appendDimFilters, dimFilterSignature, appendAdvancedFilter, advancedFilterSignature, widgetAdvancedSignature, fieldMetricLabel, fieldMetricFormat } from '@/lib/report-utm/bi-metadata'
 
 interface Props {
     title: string
@@ -51,7 +51,8 @@ export function ScorecardWidget({ title, config, filters, calculatedFields = [] 
         if (filters.date_to)    params.set('date_to', filters.date_to)
         appendUtmFilters(params, filters)
         appendFieldFilters(params, filters)
-        appendAdvancedFilter(params, filters)
+        appendDimFilters(params, filters)
+        appendAdvancedFilter(params, filters, config.advanced_filter)
         if (calcField) params.set(`calc[${calcField.name}]`, calcField.expression)
 
         fetch(`/api/report-utm/bi/query?${params}`)
@@ -70,7 +71,7 @@ export function ScorecardWidget({ title, config, filters, calculatedFields = [] 
             })
             .catch(() => setError('Error al cargar'))
             .finally(() => setLoading(false))
-    }, [metric, calcField?.expression, compare, filters.cliente_id, filters.date_from, filters.date_to, utmFilterSignature(filters), fieldFilterSignature(filters), advancedFilterSignature(filters)])
+    }, [metric, calcField?.expression, compare, filters.cliente_id, filters.date_from, filters.date_to, utmFilterSignature(filters), fieldFilterSignature(filters), dimFilterSignature(filters), advancedFilterSignature(filters), widgetAdvancedSignature(config.advanced_filter)])
 
     const delta = compare && prev !== null && prev !== 0 && value !== null
         ? ((value - prev) / prev) * 100
