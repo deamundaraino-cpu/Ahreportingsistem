@@ -45,7 +45,7 @@ export const AVAILABLE_METRICS = [
     // ── Meta · Compras y Carrito ──────────────────────────────────────────────
     { id: 'meta_purchases',                        label: 'Meta: Compras' },
     { id: 'meta_cpp',                              label: 'Meta: Costo por Compra (CPP)' },
-    { id: 'meta_roas',                             label: 'Meta: ROAS' },
+    { id: 'meta_roas',                             label: 'Meta: ROAS (solo inversión Meta)' },
     { id: 'meta_adds_to_cart',                     label: 'Meta: Añadir al carrito' },
     { id: 'meta_cost_per_add_to_cart',             label: 'Meta: Costo por Add to Cart' },
     { id: 'meta_initiates_checkout',               label: 'Meta: Inicio de pago (Checkout)' },
@@ -106,7 +106,8 @@ export const AVAILABLE_METRICS = [
     { id: 'ventas_upsell_count',     label: 'Ventas: # Compras Upsell' },
     { id: 'total_facturacion_bruta', label: 'Ventas: Facturación Bruta Total' },
     { id: 'total_facturacion_neta',  label: 'Ventas: Facturación Neta Total' },
-    { id: 'total_roas',              label: 'Ventas: ROAS Total' },
+    { id: 'total_spend',             label: 'Ventas: Inversión Total (Meta + TikTok)' },
+    { id: 'total_roas',              label: 'Ventas: ROAS Total (Meta + TikTok)' },
     { id: 'total_roi',               label: 'Ventas: ROI Total' },
     { id: 'total_dinero_bolsa',      label: 'Ventas: Dinero en Bolsa Total' },
     { id: 'total_costo_compra',      label: 'Ventas: Costo/Compra Total' },

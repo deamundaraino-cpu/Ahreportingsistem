@@ -1,0 +1,76 @@
+name: Sync fallback (cola)
+
+# Red de seguridad para la cola `sync_jobs`.
+#
+# El ejecutor principal es `sync-worker/` en el VPS. Este workflow existe para
+# dos situaciones:
+#   1. Aún no se ha desplegado el VPS — así la sincronización ya funciona.
+#   2. El VPS está caído — la cola se sigue drenando, más lento pero sin huecos.
+#
+# No duplica trabajo: `claim_sync_job` usa FOR UPDATE SKIP LOCKED, así que si el
+# VPS está vivo simplemente no encuentra jobs libres y termina en segundos.
+#
+# Requiere el secret CRON_SECRET en el repositorio (ya configurado).
+
+env:
+  APP_URL: https://reportes.adshouse.cloud
+
+on:
+  schedule:
+    # Cada 30 min, desplazado a :07 y :37 a propósito: el planificador de GitHub
+    # es best-effort y se congestiona en las horas en punto, donde los retrasos
+    # (y los saltos de ejecución) son mucho más frecuentes.
+    #
+    # Vercel Hobby solo permite 2 crons; GitHub Actions no tiene ese límite y en
+    # repos públicos los minutos son ilimitados y gratuitos.
+    - cron: '7,37 * * * *'
+  workflow_dispatch:
+    inputs:
+      plan:
+        description: 'Plan a encolar antes de drenar (vacío = solo drenar)'
+        required: false
+        type: choice
+        options: ['', 'diario', 'intradia', 'cierre_mes']
+        default: ''
+
+jobs:
+  drain-queue:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Encolar plan (solo en disparo manual)
+        if: github.event_name == 'workflow_dispatch' && inputs.plan != ''
+        run: |
+          curl -sS -X POST \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "${{ env.APP_URL }}/api/worker/enqueue?plan=${{ inputs.plan }}" \
+            -w '\nHTTP %{http_code}\n'
+
+      - name: Drenar la cola
+        run: |
+          # Tres pasadas: cada invocación procesa ~40s de trabajo antes de que
+          # Vercel corte la función, así que encadenarlas avanza más por ciclo.
+          for i in 1 2 3; do
+            echo "── Pasada $i ──"
+            response=$(curl -sS -w "\n%{http_code}" -X POST \
+              -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+              "${{ env.APP_URL }}/api/worker/run-jobs")
+
+            status=$(echo "$response" | tail -n1)
+            body=$(echo "$response" | sed '$d')
+            echo "HTTP $status"
+            echo "$body"
+
+            if [ "$status" != "200" ]; then
+              echo "❌ run-jobs devolvió $status"
+              exit 1
+            fi
+
+            # Si no quedó nada por hacer, no gastamos las pasadas restantes.
+            claimed=$(echo "$body" | python3 -c "import json,sys; print(json.load(sys.stdin).get('claimed',0))" 2>/dev/null || echo 0)
+            if [ "$claimed" = "0" ]; then
+              echo "Cola vacía — nada más que procesar."
+              break
+            fi
+          done

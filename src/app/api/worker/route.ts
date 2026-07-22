@@ -7,8 +7,15 @@ import { notifyUsers } from '@/lib/notifications/notify'
 import { colombiaToday, colombiaYesterday } from '@/lib/date-utils'
 import { metaFetch, tiktokFetch, hotmartFetch, ga4Run, setRetryDeadline } from '@/lib/rate-limit'
 import { evaluateAlertRules } from '@/lib/notifications/rules-engine'
+import { getUsdRate, preloadUsdRates } from '@/lib/fx'
 
-export const maxDuration = 300 // 5 minutos — necesario para sincronizar rangos amplios
+// Vercel Hobby corta las funciones a 60s: pedir 300 no las alarga, solo hacía que
+// los presupuestos internos (270s) nunca dispararan y la función muriera a mitad
+// del upsert. Los rangos amplios van por la cola `sync_jobs` (worker self-hosted).
+export const maxDuration = 60
+
+/** Margen de seguridad dentro del límite de 60s: al agotarse se persiste lo hecho. */
+const WORKER_BUDGET_MS = 45_000
 
 /**
  * Memoiza por clave con valor Promise; si la promesa falla, limpia la entrada
@@ -78,6 +85,18 @@ const META_ACTION_FAMILIES: Record<string, string[]> = {
 /** action_types conocidos (para reportar los que Meta envía y no mapeamos). */
 const KNOWN_ACTION_TYPES = new Set(Object.values(META_ACTION_FAMILIES).flat())
 
+/**
+ * Ventana de atribución explícita para /insights.
+ *
+ * Sin este parámetro Meta aplica la ventana por defecto de CADA cuenta, así que
+ * dos clientes con configuraciones distintas producían conversiones no
+ * comparables y el ROAS cambiaba si alguien tocaba los ajustes en Business
+ * Manager. Fijarla aquí hace que el número signifique lo mismo para todos.
+ *
+ * 7d_click + 1d_view es el estándar de Meta desde iOS 14.
+ */
+const META_ATTRIBUTION_WINDOWS = JSON.stringify(['7d_click', '1d_view'])
+
 /** Recolecta action_types no mapeados de toda la corrida, para diagnosticar. */
 const unmappedActionTypes = new Set<string>()
 
@@ -126,8 +145,10 @@ export async function GET(request: Request) {
     }
 
     // Presupuesto de tiempo para reintentos: no reintentar pasado este momento
-    // (maxDuration=300s; dejamos margen para upserts y respuesta final).
-    setRetryDeadline(Date.now() + 270_000)
+    // (maxDuration=60s en Hobby; dejamos margen para upserts y respuesta final).
+    const runStartedAt = Date.now()
+    setRetryDeadline(runStartedAt + 50_000)
+    const budgetExhausted = () => Date.now() - runStartedAt > WORKER_BUDGET_MS
 
     const { searchParams } = new URL(request.url)
     const singleDate = searchParams.get('date')
@@ -135,6 +156,10 @@ export async function GET(request: Request) {
     const startDateStr = singleDate || searchParams.get('start') || colombiaYesterday()
     const endDateStr = singleDate || searchParams.get('end') || startDateStr
     const specificClientId = searchParams.get('client_id')
+    // `force` ignora la ventana de refresco y re-descarga todo el rango; lo usa el
+    // cierre de mes para recoger la reatribución tardía de Meta antes de congelar.
+    const forceRefresh = searchParams.get('force') === '1' || searchParams.get('force') === 'true'
+    const refreshDaysOverride = Number(searchParams.get('refresh_days')) || null
 
     let query = adminSupabase.from('clientes').select('*')
     if (specificClientId) {
@@ -150,20 +175,27 @@ export async function GET(request: Request) {
     // corrida, no por cliente). Se emite UNA notificación agregada al final.
     const inconsistencyAlerts: { cliente: string; platform: string; fecha: string; reason: string }[] = []
 
+    /** Clientes cuyo rango quedó a medias por agotarse el presupuesto de 60s. */
+    const partialClientes: string[] = []
+    /** Fecha más temprana sin procesar: el runner de la cola reanuda desde aquí. */
+    let resumeFrom: string | null = null
+
     const debugLogs: string[] = []
     const log = (msg: string) => {
         console.log(msg)
         debugLogs.push(msg)
     }
 
-    const datesToSync: string[] = []
+    // Fechas del rango pedido, antes de filtrar por períodos congelados de cada
+    // cliente (ese filtro es por-cliente y se aplica más abajo).
+    const allDatesToSync: string[] = []
     try {
         let currentDate = parseISO(startDateStr)
         const endDate = parseISO(endDateStr)
         const MAX_DAYS = 365
         let dayCount = 0
         while ((isBefore(currentDate, endDate) || currentDate.getTime() === endDate.getTime()) && dayCount < MAX_DAYS) {
-            datesToSync.push(format(currentDate, 'yyyy-MM-dd'))
+            allDatesToSync.push(format(currentDate, 'yyyy-MM-dd'))
             currentDate = addDays(currentDate, 1)
             dayCount++
         }
@@ -176,21 +208,41 @@ export async function GET(request: Request) {
     // luego ensucian los informes. Se recorta contra HOY en hora Colombia, igual
     // criterio que el resto del worker.
     const todayStr = colombiaToday()
-    const skippedFuture = datesToSync.filter(d => d > todayStr).length
+    const skippedFuture = allDatesToSync.filter(d => d > todayStr).length
     if (skippedFuture > 0) {
-        const pastDates = datesToSync.filter(d => d <= todayStr)
-        datesToSync.length = 0
-        datesToSync.push(...pastDates)
+        const pastDates = allDatesToSync.filter(d => d <= todayStr)
+        allDatesToSync.length = 0
+        allDatesToSync.push(...pastDates)
         log(`[worker] Se omiten ${skippedFuture} fecha(s) futura(s) (> ${todayStr}): las APIs no tienen datos y solo crearían filas vacías.`)
     }
-    if (datesToSync.length === 0) {
+    if (allDatesToSync.length === 0) {
         return NextResponse.json({ error: 'El rango pedido no incluye ninguna fecha pasada o de hoy.' }, { status: 400 })
     }
+
+    // ─── Períodos congelados ────────────────────────────────────────────────
+    // Un mes cerrado ya se entregó al cliente en un informe: no puede cambiar
+    // porque Meta reatribuya o porque una API falle. Las fechas de esos meses se
+    // excluyen del sync (reabrir = borrar la fila en periodos_cerrados).
+    const { data: cerradosRows } = await adminSupabase
+        .from('periodos_cerrados')
+        .select('cliente_id, periodo')
+    const periodosCerrados = new Set<string>(
+        (cerradosRows || []).map((r: any) => `${r.cliente_id}|${String(r.periodo).slice(0, 7)}`)
+    )
 
     // Procesar todos los clientes en paralelo — reduce tiempo total de N×T a T (el cliente más lento)
     await Promise.all(clientes.map(async (cliente: any) => {
         const config = cliente.config_api as any
         if (!config) return
+
+        const datesToSync = allDatesToSync.filter(d => !periodosCerrados.has(`${cliente.id}|${d.slice(0, 7)}`))
+        if (datesToSync.length === 0) {
+            log(`[Cliente ${cliente.nombre}] Todas las fechas del rango pertenecen a meses congelados — nada que sincronizar.`)
+            return
+        }
+        if (datesToSync.length < allDatesToSync.length) {
+            log(`[Cliente ${cliente.nombre}] ${allDatesToSync.length - datesToSync.length} fecha(s) omitidas por pertenecer a un mes congelado.`)
+        }
 
         const platformLogs = { meta: 'Saltado', tiktok: 'Saltado', hotmart: 'Saltado', ga4: 'Saltado' }
 
@@ -282,6 +334,12 @@ export async function GET(request: Request) {
                 log(`[Cliente ${cliente.nombre}] No tiene hotmart_basic ni hotmart_client_id/secret definidos.`)
             }
         }
+
+        // ¿El cliente TIENE Hotmart conectado? Distingue "sin configurar" (escribir
+        // ceros es correcto) de "configurado pero la auth falló" (hay que preservar).
+        const hotmartConfigured = config.hotmart_auth_mode === 'hotconnect'
+            ? !!(config.hotmart_access_token || config.hotmart_refresh_token)
+            : !!(config.hotmart_basic || (config.hotmart_client_id && config.hotmart_client_secret))
 
         // ─── Cargar funnels Hotmart configurados por pestaña ────────────────────
         // Cada cliente_tab puede tener hotmart_funnel = { enabled, principal_names[], bump_names[], upsell_names[], payment_page_url, upsell_page_url }
@@ -633,6 +691,7 @@ export async function GET(request: Request) {
                 url.searchParams.append('time_range', JSON.stringify({ since: startDate, until: endDate }))
                 url.searchParams.append('time_increment', '1')
                 url.searchParams.append('fields', 'campaign_id,campaign_name,spend,impressions,clicks,inline_link_clicks,reach,frequency,cpc,cpm,ctr,actions,conversions,video_thruplay_watched_actions,video_p3_watched_actions')
+                url.searchParams.append('action_attribution_windows', META_ATTRIBUTION_WINDOWS)
                 url.searchParams.append('level', 'campaign')
                 url.searchParams.append('limit', '500')
 
@@ -819,6 +878,7 @@ export async function GET(request: Request) {
                 levelUrl.searchParams.append('time_range', JSON.stringify({ since: startDate, until: endDate }))
                 levelUrl.searchParams.append('time_increment', '1')
                 levelUrl.searchParams.append('fields', `${extraIds}campaign_id,campaign_name,spend,impressions,clicks,inline_link_clicks,reach,frequency,cpc,cpm,ctr,actions,conversions,video_thruplay_watched_actions,video_p3_watched_actions`)
+                levelUrl.searchParams.append('action_attribution_windows', META_ATTRIBUTION_WINDOWS)
                 levelUrl.searchParams.append('level', level)
                 levelUrl.searchParams.append('limit', '500')
 
@@ -966,6 +1026,7 @@ export async function GET(request: Request) {
                 formUrl.searchParams.append('time_range', JSON.stringify({ since: startDate, until: endDate }))
                 formUrl.searchParams.append('time_increment', '1')
                 formUrl.searchParams.append('fields', 'leadgen_form_id,spend,impressions,clicks,actions')
+                formUrl.searchParams.append('action_attribution_windows', META_ATTRIBUTION_WINDOWS)
                 formUrl.searchParams.append('breakdowns', 'leadgen_form_id')
                 formUrl.searchParams.append('level', 'ad')
                 formUrl.searchParams.append('limit', '500')
@@ -1381,6 +1442,12 @@ export async function GET(request: Request) {
             // Desglose JSON
             by_tab: Record<string, FunnelBreakdown>
             extras: Array<{ product_name: string; count: number; gross: number; net: number }>
+            /** false = la API falló o se agotó el tope de páginas → NO pisar la BD con ceros. */
+            apiSuccess: boolean
+            /** # de importes que no se pudieron convertir a USD (moneda sin tasa). */
+            unconverted_count: number
+            /** Monedas distintas de USD vistas en el día (diagnóstico). */
+            monedas: string[]
         }
         function emptyFunnelBreakdown(): FunnelBreakdown {
             return {
@@ -1400,6 +1467,9 @@ export async function GET(request: Request) {
                 affiliate_net: 0, affiliate_count: 0, coproducer_net: 0,
                 by_tab: {},
                 extras: [],
+                apiSuccess: true,
+                unconverted_count: 0,
+                monedas: [],
             }
             // Inicializar breakdown por cada funnel configurado
             for (const f of hotmartFunnels) {
@@ -1408,6 +1478,9 @@ export async function GET(request: Request) {
 
             if (!hotmartAccessToken) {
                 log(`[Hotmart] Sin accessToken generado.`)
+                // Configurado pero sin token = fallo de auth, no "sin Hotmart":
+                // devolver ceros pisaría las ventas ya guardadas.
+                if (hotmartConfigured) record.apiSuccess = false
                 return record
             }
             try {
@@ -1420,7 +1493,20 @@ export async function GET(request: Request) {
                 // transaction_id → { gross_value, currency }
                 const txInfo = new Map<string, { gross: number; currency: string }>()
 
+                // Tope de seguridad: sin él, un next_page_token que Hotmart devuelva
+                // repetido (o nunca nulo) deja el loop girando hasta matar la función.
+                const MAX_SALES_PAGES = 60 // 60 × 100 = 6.000 transacciones/día
+                let salesPages = 0
+                const seenSalesTokens = new Set<string>()
+
                 while (hasNext) {
+                    if (salesPages >= MAX_SALES_PAGES) {
+                        log(`[Hotmart] ${targetDate} Tope de ${MAX_SALES_PAGES} páginas en history — datos incompletos, se preservan los previos.`)
+                        record.apiSuccess = false
+                        platformLogs.hotmart = 'Error paginación'
+                        break
+                    }
+                    salesPages++
                     const url = new URL('https://developers.hotmart.com/payments/api/v1/sales/history')
                     url.searchParams.append('start_date', dayStart.toString())
                     url.searchParams.append('end_date', dayEnd.toString())
@@ -1437,6 +1523,8 @@ export async function GET(request: Request) {
                     if (data.error || data.message) {
                         log(`[Hotmart] ${targetDate} API Error on History: ${JSON.stringify(data)}`)
                         hasNext = false
+                        // Sin esto el día se guardaba en cero como si no hubiera ventas.
+                        record.apiSuccess = false
                         platformLogs.hotmart = 'Error API'
                         break
                     }
@@ -1452,10 +1540,19 @@ export async function GET(request: Request) {
                         })
                     }
                     pageToken = data.page_info?.next_page_token
+                    if (pageToken && seenSalesTokens.has(pageToken)) {
+                        log(`[Hotmart] ${targetDate} next_page_token repetido en history — se corta la paginación.`)
+                        record.apiSuccess = false
+                        break
+                    }
+                    if (pageToken) seenSalesTokens.add(pageToken)
                     hasNext = !!pageToken
                 }
 
-                // PASO 2: Comisiones exactas (USD) de transacciones validadas + clasificar por funnel
+                // PASO 2: Comisiones de transacciones validadas + clasificar por funnel.
+                // Se descargan TODAS las páginas primero porque la conversión de moneda
+                // necesita conocer el conjunto de divisas antes de resolver las tasas
+                // (una sola llamada a la API de FX en lugar de una por transacción).
                 pageToken = ""
                 hasNext = true
                 let totalItemsProcessed = 0
@@ -1463,7 +1560,19 @@ export async function GET(request: Request) {
                 // Acumulador temporal de extras: productName → {count, gross, net}
                 const extrasMap = new Map<string, { count: number; gross: number; net: number }>()
 
+                const MAX_COMMISSION_PAGES = 60
+                let commissionPages = 0
+                const seenCommissionTokens = new Set<string>()
+                const commissionItems: any[] = []
+
                 while (hasNext) {
+                    if (commissionPages >= MAX_COMMISSION_PAGES) {
+                        log(`[Hotmart] ${targetDate} Tope de ${MAX_COMMISSION_PAGES} páginas en commissions — datos incompletos, se preservan los previos.`)
+                        record.apiSuccess = false
+                        platformLogs.hotmart = 'Error paginación'
+                        break
+                    }
+                    commissionPages++
                     const url2 = new URL('https://developers.hotmart.com/payments/api/v1/sales/commissions')
                     url2.searchParams.append('start_date', dayStart.toString())
                     url2.searchParams.append('end_date', dayEnd.toString())
@@ -1475,85 +1584,144 @@ export async function GET(request: Request) {
                     })
                     const data2 = await res2.json()
 
-                    if (data2.items) {
-                        data2.items.forEach((item: any) => {
-                            const tx = item.transaction
-                            if (!txInfo.has(tx)) return
-                            totalItemsProcessed++
-                            record.ventas_count++
+                    // El loop de comisiones no validaba errores: una respuesta de error
+                    // se leía como "sin items" y el día quedaba en cero.
+                    if (data2.error || data2.message) {
+                        log(`[Hotmart] ${targetDate} API Error on Commissions: ${JSON.stringify(data2)}`)
+                        record.apiSuccess = false
+                        platformLogs.hotmart = 'Error API'
+                        break
+                    }
 
-                            let netUSD = 0
-                            let hadAffiliate = false
-                            if (item.commissions && Array.isArray(item.commissions)) {
-                                item.commissions.forEach((c: any) => {
-                                    if (c.commission?.currency_code !== 'USD') return
-                                    const val = Number(c.commission.value) || 0
-                                    if (c.source === 'PRODUCER') {
-                                        netUSD += val
-                                    } else if (c.source === 'AFFILIATE') {
-                                        record.affiliate_net += val
-                                        hadAffiliate = true
-                                    } else if (c.source === 'COPRODUCER') {
-                                        record.coproducer_net += val
-                                    }
-                                })
+                    if (Array.isArray(data2.items)) commissionItems.push(...data2.items)
+
+                    pageToken = data2.page_info?.next_page_token
+                    if (pageToken && seenCommissionTokens.has(pageToken)) {
+                        log(`[Hotmart] ${targetDate} next_page_token repetido en commissions — se corta la paginación.`)
+                        record.apiSuccess = false
+                        break
+                    }
+                    if (pageToken) seenCommissionTokens.add(pageToken)
+                    hasNext = !!pageToken
+                }
+
+                // ─── Tasas de cambio del día ───────────────────────────────
+                // Antes solo se sumaban los importes en USD y el resto entraba
+                // como 0: un cliente que vendía en COP/BRL veía ROAS 0.
+                const monedasVistas = new Set<string>()
+                for (const info of txInfo.values()) {
+                    if (info.currency) monedasVistas.add(info.currency.toUpperCase())
+                }
+                for (const item of commissionItems) {
+                    for (const c of (Array.isArray(item?.commissions) ? item.commissions : [])) {
+                        const cur = c?.commission?.currency_code
+                        if (cur) monedasVistas.add(String(cur).toUpperCase())
+                    }
+                }
+                record.monedas = Array.from(monedasVistas)
+                const noUsd = record.monedas.filter(m => m !== 'USD')
+                const rateMap = new Map<string, number>([['USD', 1]])
+                if (noUsd.length > 0) {
+                    await preloadUsdRates(adminSupabase, noUsd, targetDate)
+                    for (const m of noUsd) {
+                        const { rate } = await getUsdRate(adminSupabase, m, targetDate)
+                        if (rate) rateMap.set(m, rate)
+                    }
+                    log(`[Hotmart] ${targetDate} Monedas: ${record.monedas.join(', ')} — tasas resueltas: ${[...rateMap.keys()].join(', ')}`)
+                }
+                /** Convierte a USD; null = sin tasa (se cuenta, nunca se suma como 0). */
+                const toUsd = (value: number, currency: string): number | null => {
+                    const cur = String(currency || '').toUpperCase()
+                    if (!cur) return null
+                    const rate = rateMap.get(cur)
+                    if (!rate) return null
+                    return value * rate
+                }
+
+                commissionItems.forEach((item: any) => {
+                    const tx = item.transaction
+                    if (!txInfo.has(tx)) return
+                    totalItemsProcessed++
+                    record.ventas_count++
+
+                    let netUSD = 0
+                    let hadAffiliate = false
+                    if (item.commissions && Array.isArray(item.commissions)) {
+                        item.commissions.forEach((c: any) => {
+                            const raw = Number(c?.commission?.value) || 0
+                            const val = toUsd(raw, c?.commission?.currency_code)
+                            if (val === null) {
+                                if (raw !== 0) record.unconverted_count++
+                                return
                             }
-                            if (hadAffiliate) record.affiliate_count++
-
-                            const prodName = String(item.product?.name || '').trim()
-                            const txMeta = txInfo.get(tx)!
-                            const grossVal = txMeta.currency === 'USD' ? txMeta.gross : 0
-
-                            // Buscar a qué funnel pertenece este producto y en qué rol
-                            let matched = false
-                            for (const f of hotmartFunnels) {
-                                if (matchesAny(prodName, f.principal_patterns)) {
-                                    // Bruto: si hay precio configurado, usar precio × 1; si no, caer al valor de la API (solo USD)
-                                    const principalGross = f.principal_price_usd ?? grossVal
-                                    record.by_tab[f.tab_id].principal.count++
-                                    record.by_tab[f.tab_id].principal.net   += netUSD
-                                    record.by_tab[f.tab_id].principal.gross += principalGross
-                                    record.principal       += netUSD
-                                    record.principal_count += 1
-                                    record.principal_bruto += principalGross
-                                    matched = true
-                                    break
-                                }
-                                if (matchesAny(prodName, f.bump_patterns)) {
-                                    record.by_tab[f.tab_id].bump.count++
-                                    record.by_tab[f.tab_id].bump.net   += netUSD
-                                    record.by_tab[f.tab_id].bump.gross += grossVal
-                                    record.bump       += netUSD
-                                    record.bump_count += 1
-                                    record.bump_bruto += grossVal
-                                    matched = true
-                                    break
-                                }
-                                if (matchesAny(prodName, f.upsell_patterns)) {
-                                    record.by_tab[f.tab_id].upsell.count++
-                                    record.by_tab[f.tab_id].upsell.net   += netUSD
-                                    record.by_tab[f.tab_id].upsell.gross += grossVal
-                                    record.upsell        += netUSD
-                                    record.upsell_count  += 1
-                                    record.upsell_bruto  += grossVal
-                                    matched = true
-                                    break
-                                }
-                            }
-
-                            if (!matched) {
-                                // Producto extra → acumular en extras
-                                const key = prodName || '(Sin nombre)'
-                                const cur = extrasMap.get(key) || { count: 0, gross: 0, net: 0 }
-                                cur.count += 1
-                                cur.net   += netUSD
-                                cur.gross += grossVal
-                                extrasMap.set(key, cur)
+                            if (c.source === 'PRODUCER') {
+                                netUSD += val
+                            } else if (c.source === 'AFFILIATE') {
+                                record.affiliate_net += val
+                                hadAffiliate = true
+                            } else if (c.source === 'COPRODUCER') {
+                                record.coproducer_net += val
                             }
                         })
                     }
-                    pageToken = data2.page_info?.next_page_token
-                    hasNext = !!pageToken
+                    if (hadAffiliate) record.affiliate_count++
+
+                    const prodName = String(item.product?.name || '').trim()
+                    const txMeta = txInfo.get(tx)!
+                    const grossConverted = toUsd(txMeta.gross, txMeta.currency)
+                    if (grossConverted === null && txMeta.gross !== 0) record.unconverted_count++
+                    const grossVal = grossConverted ?? 0
+
+                    // Buscar a qué funnel pertenece este producto y en qué rol
+                    let matched = false
+                    for (const f of hotmartFunnels) {
+                        if (matchesAny(prodName, f.principal_patterns)) {
+                            // Bruto: si hay precio configurado, usar precio × 1; si no, el valor convertido de la API
+                            const principalGross = f.principal_price_usd ?? grossVal
+                            record.by_tab[f.tab_id].principal.count++
+                            record.by_tab[f.tab_id].principal.net   += netUSD
+                            record.by_tab[f.tab_id].principal.gross += principalGross
+                            record.principal       += netUSD
+                            record.principal_count += 1
+                            record.principal_bruto += principalGross
+                            matched = true
+                            break
+                        }
+                        if (matchesAny(prodName, f.bump_patterns)) {
+                            record.by_tab[f.tab_id].bump.count++
+                            record.by_tab[f.tab_id].bump.net   += netUSD
+                            record.by_tab[f.tab_id].bump.gross += grossVal
+                            record.bump       += netUSD
+                            record.bump_count += 1
+                            record.bump_bruto += grossVal
+                            matched = true
+                            break
+                        }
+                        if (matchesAny(prodName, f.upsell_patterns)) {
+                            record.by_tab[f.tab_id].upsell.count++
+                            record.by_tab[f.tab_id].upsell.net   += netUSD
+                            record.by_tab[f.tab_id].upsell.gross += grossVal
+                            record.upsell        += netUSD
+                            record.upsell_count  += 1
+                            record.upsell_bruto  += grossVal
+                            matched = true
+                            break
+                        }
+                    }
+
+                    if (!matched) {
+                        // Producto extra → acumular en extras
+                        const key = prodName || '(Sin nombre)'
+                        const cur = extrasMap.get(key) || { count: 0, gross: 0, net: 0 }
+                        cur.count += 1
+                        cur.net   += netUSD
+                        cur.gross += grossVal
+                        extrasMap.set(key, cur)
+                    }
+                })
+
+                if (record.unconverted_count > 0) {
+                    log(`[Hotmart] ${targetDate} ${record.unconverted_count} importe(s) sin tasa de cambio (monedas: ${record.monedas.join(', ')}) — quedaron fuera del total.`)
                 }
 
                 // Volcar extras del map al array final
@@ -1562,9 +1730,12 @@ export async function GET(request: Request) {
                 }
 
                 log(`[Hotmart] ${targetDate} Procesados ${totalItemsProcessed} reg. Funnels: ${hotmartFunnels.length}, Extras: ${record.extras.length}, Principal USD: ${record.principal.toFixed(2)}, Bruto: ${record.principal_bruto.toFixed(2)}`)
-                platformLogs.hotmart = 'Conectado OK'
+                if (record.apiSuccess) platformLogs.hotmart = 'Conectado OK'
             } catch (e: any) {
                 log(`[Hotmart] Catch Error: ${e.message}`)
+                // Sin esto, una excepción a mitad de la paginación devolvía un record
+                // parcial en ceros que se upserteaba sobre las ventas reales.
+                record.apiSuccess = false
                 platformLogs.hotmart = 'Error'
             }
             return record
@@ -1578,9 +1749,13 @@ export async function GET(request: Request) {
             avgSessionDuration: number
             // Por tab_id: { payment_page_views, upsell_page_views, landing_sessions }
             funnel_pages: Record<string, { payment_page_views: number; upsell_page_views: number; landing_sessions: number }>
+            /** false = GA4 falló → NO pisar la BD con ceros. */
+            apiSuccess: boolean
+            /** false = el cliente no tiene GA4 conectado (ceros son correctos). */
+            configured: boolean
         }
         async function fetchGA4(targetDate: string): Promise<GARecord> {
-            const record: GARecord = { sessions: 0, bounceRate: 0, avgSessionDuration: 0, funnel_pages: {} }
+            const record: GARecord = { sessions: 0, bounceRate: 0, avgSessionDuration: 0, funnel_pages: {}, apiSuccess: true, configured: false }
             // Necesita una propiedad. La autenticación puede venir de:
             //  1) OAuth de agencia (preferido) — solo hace falta ga_property_id
             //  2) Service account legacy por cliente (ga_client_email + ga_private_key)
@@ -1590,6 +1765,7 @@ export async function GET(request: Request) {
                 platformLogs.ga4 = 'Sin configurar'
                 return record
             }
+            record.configured = true
 
             try {
                 const { BetaAnalyticsDataClient } = await import('@google-analytics/data')
@@ -1699,6 +1875,9 @@ export async function GET(request: Request) {
                 platformLogs.ga4 = 'Conectado OK'
             } catch (e: any) {
                 log(`[GA4] Error: ${e.message}`)
+                // Antes el record en ceros se upserteaba igual y borraba las sesiones
+                // ya guardadas para esa fecha.
+                record.apiSuccess = false
                 platformLogs.ga4 = 'Error'
             }
 
@@ -1709,7 +1888,7 @@ export async function GET(request: Request) {
         // plataforma (para detectar inconsistencias: cero nuevo vs. valor previo > 0) ───
         const { data: existingHashRows } = await adminSupabase
             .from('metricas_diarias')
-            .select('fecha, sync_hash, meta_spend, tiktok_spend, meta_campaigns, tiktok_campaigns')
+            .select('fecha, sync_hash, meta_spend, tiktok_spend, meta_campaigns, tiktok_campaigns, ventas_principal, ventas_bump, ventas_upsell, ventas_principal_count, ga_sessions, source_synced_at')
             .eq('cliente_id', cliente.id)
             .in('fecha', datesToSync)
         const existingHashMap = new Map<string, string>(
@@ -1721,20 +1900,26 @@ export async function GET(request: Request) {
         )
         const hasMetaData = (r: any) => Number(r?.meta_spend) > 0 || (Array.isArray(r?.meta_campaigns) && r.meta_campaigns.length > 0)
         const hasTikTokData = (r: any) => Number(r?.tiktok_spend) > 0 || (Array.isArray(r?.tiktok_campaigns) && r.tiktok_campaigns.length > 0)
+        const hasHotmartData = (r: any) => Number(r?.ventas_principal) > 0 || Number(r?.ventas_bump) > 0
+            || Number(r?.ventas_upsell) > 0 || Number(r?.ventas_principal_count) > 0
+        const hasGa4Data = (r: any) => Number(r?.ga_sessions) > 0
 
         // ─── Ventana de refresco: NO re-descargar fechas ya guardadas ───
         // Las plataformas reajustan los datos recientes, así que los últimos N días
         // siempre se re-piden; las fechas más antiguas que YA tienen datos en BD se
         // saltan (no se llama a la API). datesToSync está ordenado viejo→nuevo y las
         // fechas ISO (YYYY-MM-DD) comparan cronológicamente como strings.
-        const META_REFRESH_DAYS = 7    // Meta reajusta atribución ~7 días
-        const TIKTOK_REFRESH_DAYS = 3  // TikTok reajusta ~pocos días
+        // `refresh_days` permite ampliarlos (el cierre de mes pide 35 para recoger
+        // la reatribución tardía de Meta, que llega hasta 28 días después).
+        const META_REFRESH_DAYS = refreshDaysOverride ?? 7    // Meta reajusta atribución ~7 días
+        const TIKTOK_REFRESH_DAYS = refreshDaysOverride ?? 3  // TikTok reajusta ~pocos días
         const metaConfigured = (Array.isArray(config.meta_accounts) && config.meta_accounts.length > 0) || (!!config.meta_token && !!config.meta_account_id)
         const tiktokConfigured = (Array.isArray(config.tiktok_accounts) && config.tiktok_accounts.length > 0) || (!!config.tiktok_access_token && !!config.tiktok_advertiser_id)
 
         // Primera fecha (más antigua) que cae en la ventana o que aún no tiene datos en BD.
         // null = todas las fechas viejas ya están descargadas y fuera de ventana → no se pide nada.
         const effectiveStart = (refreshDays: number, hasData: (r: any) => boolean): string | null => {
+            if (forceRefresh) return datesToSync[0] ?? null
             for (const d of datesToSync) {
                 const ageDays = differenceInDays(new Date(), parseISO(d))
                 if (ageDays <= refreshDays || !hasData(existingRowMap.get(d))) return d
@@ -1747,9 +1932,12 @@ export async function GET(request: Request) {
         // Una sola llamada por nivel/cuenta para TODO el rango efectivo (en vez de 1/día).
         const emptyRangeMeta = { byDate: new Map<string, any>(), apiSuccess: true, configured: metaConfigured }
         const emptyRangeTikTok = { byDate: new Map<string, any>(), apiSuccess: true, configured: tiktokConfigured }
+        // Última fecha efectiva del cliente (puede ser anterior a endDateStr si el
+        // final del rango cae en un mes congelado).
+        const rangeEndStr = datesToSync[datesToSync.length - 1]
         const [metaResult, tiktokResult] = await Promise.all([
-            metaStart ? fetchMetaRange(metaStart, endDateStr) : Promise.resolve(emptyRangeMeta),
-            tiktokStart ? fetchTikTokRange(tiktokStart, endDateStr) : Promise.resolve(emptyRangeTikTok),
+            metaStart ? fetchMetaRange(metaStart, rangeEndStr) : Promise.resolve(emptyRangeMeta),
+            tiktokStart ? fetchTikTokRange(tiktokStart, rangeEndStr) : Promise.resolve(emptyRangeTikTok),
         ])
         const metaByDate = metaResult.byDate as Map<string, any>
         const tiktokByDate = tiktokResult.byDate as Map<string, any>
@@ -1764,8 +1952,21 @@ export async function GET(request: Request) {
         const totalAccounts = Math.max(1, (metaConfigured ? 1 : 0) + (tiktokConfigured ? 1 : 0))
         const CHUNK_SIZE = Math.max(4, Math.min(15, Math.floor(45 / totalAccounts)));
         const upsertPayloads: any[] = [];
+        /** Fechas sin cambios de datos, pero que sí se re-verificaron en esta corrida. */
+        const freshnessOnlyDates: string[] = [];
+        let budgetCut = false;
+        /** Primera fecha NO procesada al cortar por presupuesto (para reanudar). */
+        let resumeFromDate: string | null = null;
 
         for (let i = 0; i < datesToSync.length; i += CHUNK_SIZE) {
+            // Presupuesto: al agotarse se persiste lo acumulado y se corta limpio.
+            // Antes la función simplemente moría a los 60s y se perdía el chunk entero.
+            if (budgetExhausted()) {
+                budgetCut = true
+                resumeFromDate = datesToSync[i]
+                log(`[Batch] Presupuesto de tiempo agotado — se persisten ${upsertPayloads.length} fecha(s) y se corta en ${resumeFromDate}`)
+                break
+            }
             const chunk = datesToSync.slice(i, i + CHUNK_SIZE);
             log(`[Batch] Procesando chunk de fechas en paralelo: ${chunk.join(', ')}`);
 
@@ -1811,11 +2012,34 @@ export async function GET(request: Request) {
                 const metaInconsistent = metaFetched && hasAnyMetaConfig && !metaApiFailed && metaRecord.spend === 0 && hasMetaData(prevRow)
                 const metaFailed = !metaFetched || metaApiFailed || metaInconsistent
 
+                // ─── Misma red de seguridad para Hotmart y GA4 ───
+                // Estas dos plataformas escribían SIEMPRE: un error transitorio (token
+                // vencido, 500 de Hotmart, cuota de GA4) metía ceros encima de ventas y
+                // sesiones ya buenas, y el sync_hash cambiaba, así que ni se saltaba.
+                const hotmartApiFailed = hotmartConfigured && !hotmartRecord.apiSuccess
+                const hotmartInconsistent = hotmartConfigured && !hotmartApiFailed
+                    && hotmartRecord.ventas_count === 0 && hasHotmartData(prevRow)
+                const hotmartFailed = hotmartApiFailed || hotmartInconsistent
+
+                const ga4ApiFailed = gaRecord.configured && !gaRecord.apiSuccess
+                const ga4Inconsistent = gaRecord.configured && !ga4ApiFailed
+                    && gaRecord.sessions === 0 && hasGa4Data(prevRow)
+                const ga4Failed = ga4ApiFailed || ga4Inconsistent
+
                 if ((metaApiFailed || metaInconsistent) && hasMetaData(prevRow)) {
                     inconsistencyAlerts.push({ cliente: cliente.nombre, platform: 'Meta', fecha: targetDate, reason: metaApiFailed ? 'api_disconnected' : 'zero_vs_previous' })
                 }
                 if ((tiktokApiFailed || tiktokInconsistent) && hasTikTokData(prevRow)) {
                     inconsistencyAlerts.push({ cliente: cliente.nombre, platform: 'TikTok', fecha: targetDate, reason: tiktokApiFailed ? 'api_disconnected' : 'zero_vs_previous' })
+                }
+                if ((hotmartApiFailed || hotmartInconsistent) && hasHotmartData(prevRow)) {
+                    inconsistencyAlerts.push({ cliente: cliente.nombre, platform: 'Hotmart', fecha: targetDate, reason: hotmartApiFailed ? 'api_disconnected' : 'zero_vs_previous' })
+                }
+                if ((ga4ApiFailed || ga4Inconsistent) && hasGa4Data(prevRow)) {
+                    inconsistencyAlerts.push({ cliente: cliente.nombre, platform: 'GA4', fecha: targetDate, reason: ga4ApiFailed ? 'api_disconnected' : 'zero_vs_previous' })
+                }
+                if (hotmartRecord.unconverted_count > 0) {
+                    inconsistencyAlerts.push({ cliente: cliente.nombre, platform: 'Hotmart', fecha: targetDate, reason: `sin_tasa_cambio:${hotmartRecord.monedas.join('/')}` })
                 }
 
                 // Guard: skip empty responses for dates older than 2 days
@@ -1857,6 +2081,10 @@ export async function GET(request: Request) {
                 const payloadHash = computeSyncHash(hashPayload)
                 if (existingHashMap.get(targetDate) === payloadHash) {
                     log(`[DB] Saltando ${targetDate} — sync_hash sin cambios`)
+                    // El dato no cambió, pero SÍ se verificó ahora: sin esto el
+                    // indicador de frescura mostraría la fecha del último cambio,
+                    // no la de la última comprobación.
+                    freshnessOnlyDates.push(targetDate)
                     results.push({ cliente_id: cliente.id, date: targetDate, status: 'skipped_hash', platform_status: { ...platformLogs } } as any)
                     continue
                 }
@@ -1867,6 +2095,24 @@ export async function GET(request: Request) {
                 if (tiktokFailed && tiktokFetched) {
                     log(`[TikTok] ${targetDate} ${tiktokApiFailed ? 'API falló' : 'devolvió cero con datos previos'} — se omiten campos TikTok del upsert para preservar datos existentes`)
                 }
+                if (hotmartFailed) {
+                    log(`[Hotmart] ${targetDate} ${hotmartApiFailed ? 'API falló' : 'devolvió cero con datos previos'} — se omiten campos Hotmart del upsert para preservar datos existentes`)
+                }
+                if (ga4Failed) {
+                    log(`[GA4] ${targetDate} ${ga4ApiFailed ? 'API falló' : 'devolvió cero con datos previos'} — se omiten campos GA4 del upsert para preservar datos existentes`)
+                }
+
+                // Marca de frescura por fuente: solo se actualiza la clave de las
+                // plataformas que SÍ trajeron datos buenos en esta corrida.
+                const nowIso = new Date().toISOString()
+                const prevSourceSynced = (prevRow?.source_synced_at && typeof prevRow.source_synced_at === 'object')
+                    ? prevRow.source_synced_at as Record<string, string>
+                    : {}
+                const sourceSyncedAt: Record<string, string> = { ...prevSourceSynced }
+                if (!metaFailed) sourceSyncedAt.meta = nowIso
+                if (!tiktokFailed) sourceSyncedAt.tiktok = nowIso
+                if (!hotmartFailed) sourceSyncedAt.hotmart = nowIso
+                if (!ga4Failed) sourceSyncedAt.ga4 = nowIso
 
                 upsertPayloads.push({
                     cliente_id: cliente.id,
@@ -1894,23 +2140,36 @@ export async function GET(request: Request) {
                         tiktok_ads:      tiktokRecord.tiktok_ads,
                         tiktok_adgroups: tiktokRecord.tiktok_adgroups,
                     }),
-                    // Hotmart totales globales (suma de funnels + extras)
-                    ventas_principal: hotmartRecord.principal,
-                    ventas_bump: hotmartRecord.bump,
-                    ventas_upsell: hotmartRecord.upsell,
-                    ventas_principal_count: hotmartRecord.principal_count,
-                    ventas_bump_count: hotmartRecord.bump_count,
-                    ventas_upsell_count: hotmartRecord.upsell_count,
-                    ventas_principal_bruto: hotmartRecord.principal_bruto,
-                    ventas_bump_bruto: hotmartRecord.bump_bruto,
-                    ventas_upsell_bruto: hotmartRecord.upsell_bruto,
-                    // Pagos iniciados ahora viene de GA4 (suma de payment_page_views por funnel)
-                    hotmart_pagos_iniciados: totalPagosIniciados,
-                    // Desglose granular por funnel
-                    hotmart_funnel_data: funnelDataPayload,
-                    ga_sessions: gaRecord.sessions,
-                    ga_bounce_rate: gaRecord.bounceRate,
-                    ga_avg_session_duration: gaRecord.avgSessionDuration
+                    // Hotmart totales globales (suma de funnels + extras).
+                    // Se omiten si la API falló: preservar la venta real vale más que
+                    // reflejar un cero transitorio.
+                    ...(!hotmartFailed && {
+                        ventas_principal: hotmartRecord.principal,
+                        ventas_bump: hotmartRecord.bump,
+                        ventas_upsell: hotmartRecord.upsell,
+                        ventas_principal_count: hotmartRecord.principal_count,
+                        ventas_bump_count: hotmartRecord.bump_count,
+                        ventas_upsell_count: hotmartRecord.upsell_count,
+                        ventas_principal_bruto: hotmartRecord.principal_bruto,
+                        ventas_bump_bruto: hotmartRecord.bump_bruto,
+                        ventas_upsell_bruto: hotmartRecord.upsell_bruto,
+                    }),
+                    // Pagos iniciados sale de GA4 (suma de payment_page_views por funnel).
+                    ...(!ga4Failed && {
+                        hotmart_pagos_iniciados: totalPagosIniciados,
+                        ga_sessions: gaRecord.sessions,
+                        ga_bounce_rate: gaRecord.bounceRate,
+                        ga_avg_session_duration: gaRecord.avgSessionDuration,
+                    }),
+                    // El desglose por funnel MEZCLA ventas (Hotmart) y páginas (GA4):
+                    // si cualquiera de los dos falló, un dato viejo coherente es mejor
+                    // que uno nuevo a medias.
+                    ...(!hotmartFailed && !ga4Failed && {
+                        hotmart_funnel_data: funnelDataPayload,
+                    }),
+                    synced_at: nowIso,
+                    source_synced_at: sourceSyncedAt,
+                    is_partial: targetDate === todayStr,
                 });
 
                 results.push({
@@ -1935,6 +2194,23 @@ export async function GET(request: Request) {
             } else {
                 log(`[DB] ✓ Mass Upsert exitoso. ${upsertPayloads.length} filas actualizadas/insertadas procesadas rapidísimo.`);
                 results.forEach((r: any) => { if (r.cliente_id === cliente.id) r.status = 'ok' });
+            }
+        }
+
+        // Fechas verificadas cuyo contenido no cambió: solo se refresca la marca de
+        // frescura, en una sola query (no reescriben datos).
+        if (freshnessOnlyDates.length > 0) {
+            await adminSupabase
+                .from('metricas_diarias')
+                .update({ synced_at: new Date().toISOString() })
+                .eq('cliente_id', cliente.id)
+                .in('fecha', freshnessOnlyDates)
+        }
+
+        if (budgetCut) {
+            partialClientes.push(cliente.nombre)
+            if (resumeFromDate && (!resumeFrom || resumeFromDate < resumeFrom)) {
+                resumeFrom = resumeFromDate
             }
         }
     }))
@@ -1998,5 +2274,13 @@ export async function GET(request: Request) {
         log(`[Alerts Engine] ❌ Error running rules engine: ${err}`)
     }
 
-    return NextResponse.json({ message: 'Sync complete', results, debugLogs, alerts: { evaluated: alertsEvaluated, triggered: alertsTriggered } })
+    return NextResponse.json({
+        message: partialClientes.length > 0 ? 'Sync parcial (presupuesto de tiempo agotado)' : 'Sync complete',
+        partial: partialClientes.length > 0,
+        partialClientes,
+        resumeFrom,
+        results,
+        debugLogs,
+        alerts: { evaluated: alertsEvaluated, triggered: alertsTriggered },
+    })
 }

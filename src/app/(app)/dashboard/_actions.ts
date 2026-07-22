@@ -9,6 +9,17 @@ import { format, addDays } from 'date-fns';
 import { headers } from 'next/headers';
 import { after } from 'next/server';
 
+/** Días por debajo de los cuales el sync se ejecuta al momento en vez de encolarse. */
+const SYNC_DIRECTO_MAX_DIAS = 7;
+
+/**
+ * Lanza la sincronización de un cliente para un rango.
+ *
+ * Rangos cortos van directos al worker (el usuario ve el resultado al instante).
+ * Los largos se encolan en `sync_jobs`: Hotmart y GA4 se consultan día a día, así
+ * que un rango de meses no cabe en los 60s de una función de Vercel — antes la
+ * petición simplemente moría y el usuario no se enteraba de que faltaban datos.
+ */
 export async function triggerWorkerSync(clientId: string, from: string, to: string) {
   if (!clientId || !from || !to) {
     return { ok: false, error: 'Parámetros inválidos', platform_status: null };
@@ -25,8 +36,56 @@ export async function triggerWorkerSync(clientId: string, from: string, to: stri
   if (!host) {
     return { ok: false, error: 'No se pudo determinar el host', platform_status: null };
   }
+  const base = `${proto}://${host}`;
 
-  const url = `${proto}://${host}/api/worker?start=${encodeURIComponent(from)}&end=${encodeURIComponent(to)}&client_id=${encodeURIComponent(clientId)}`;
+  const dias = Math.floor(
+    (new Date(`${to}T00:00:00Z`).getTime() - new Date(`${from}T00:00:00Z`).getTime()) / 86_400_000
+  ) + 1;
+
+  // ─── Rango largo: a la cola ───
+  if (!Number.isFinite(dias) || dias > SYNC_DIRECTO_MAX_DIAS) {
+    try {
+      const res = await fetch(`${base}/api/worker/enqueue`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${secret}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tipo: 'metricas',
+          cliente_id: clientId,
+          start: from,
+          end: to,
+          prioridad: 1,
+          triggered_by: 'dashboard',
+        }),
+        cache: 'no-store',
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        return { ok: false, error: data?.error || `HTTP ${res.status}`, platform_status: null };
+      }
+
+      // Empujón inmediato al ejecutor de respaldo para no esperar al poll del VPS.
+      after(async () => {
+        await fetch(`${base}/api/worker/run-jobs`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${secret}` },
+          cache: 'no-store',
+        }).catch((e) => console.error('[sync] run-jobs push failed', e));
+      });
+
+      return {
+        ok: true,
+        queued: true,
+        jobs: data?.encolados ?? 0,
+        platform_status: null,
+        message: `${data?.encolados ?? 0} tarea(s) en cola — el sync continúa en segundo plano.`,
+      };
+    } catch (err: any) {
+      return { ok: false, error: err?.message || 'Error de red', platform_status: null };
+    }
+  }
+
+  // ─── Rango corto: directo ───
+  const url = `${base}/api/worker?start=${encodeURIComponent(from)}&end=${encodeURIComponent(to)}&client_id=${encodeURIComponent(clientId)}`;
 
   try {
     const res = await fetch(url, {
@@ -38,10 +97,46 @@ export async function triggerWorkerSync(clientId: string, from: string, to: stri
       return { ok: false, error: data?.error || `HTTP ${res.status}`, platform_status: null };
     }
     const firstResult = Array.isArray(data?.results) ? data.results[0] : null;
-    return { ok: true, platform_status: firstResult?.platform_status ?? null };
+    return {
+      ok: true,
+      queued: false,
+      partial: !!data?.partial,
+      platform_status: firstResult?.platform_status ?? null,
+      message: data?.partial ? 'Sincronización parcial: el resto continúa en segundo plano.' : undefined,
+    };
   } catch (err: any) {
     return { ok: false, error: err?.message || 'Error de red', platform_status: null };
   }
+}
+
+/** Estado de la cola para un cliente — alimenta el indicador de progreso del dashboard. */
+export async function getSyncJobsStatus(clienteId: string) {
+  const supabase = await createAdminClient();
+  const { data, error } = await supabase
+    .from('sync_jobs')
+    .select('id, tipo, fecha_inicio, fecha_fin, estado, intentos, last_error, updated_at')
+    .eq('cliente_id', clienteId)
+    .in('estado', ['pending', 'running', 'error'])
+    .order('created_at', { ascending: true })
+    .limit(50);
+
+  if (error) return { data: null, error: error.message };
+  return { data, error: null };
+}
+
+/** Frescura de los datos de un cliente: última verificación global y por fuente. */
+export async function getDataFreshness(clienteId: string) {
+  const supabase = await createAdminClient();
+  const { data, error } = await supabase
+    .from('metricas_diarias')
+    .select('fecha, synced_at, source_synced_at, is_partial')
+    .eq('cliente_id', clienteId)
+    .order('synced_at', { ascending: false, nullsFirst: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) return { data: null, error: error.message };
+  return { data, error: null };
 }
 
 export async function getLeadsDiarios(clientId: string) {

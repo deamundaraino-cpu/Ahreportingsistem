@@ -60,11 +60,11 @@ export function limit<T>(platform: Platform, fn: () => Promise<T>): Promise<T> {
 }
 
 // ─── Guarda de presupuesto de tiempo ─────────────────────────────────────────
-// El worker fija maxDuration=300s. Para no consumir todo el presupuesto en
-// reintentos, dejamos de reintentar pasado el deadline (se devuelve el último
-// resultado/lanza el último error tal cual).
+// En Vercel Hobby la función se corta a 60s (el worker self-hosted no tiene tope).
+// Para no consumir todo el presupuesto en reintentos, dejamos de reintentar pasado
+// el deadline (se devuelve el último resultado/lanza el último error tal cual).
 let retryDeadlineMs = Infinity
-/** Llamar al inicio de la corrida: setRetryDeadline(Date.now() + 270_000). */
+/** Llamar al inicio de la corrida: setRetryDeadline(Date.now() + 50_000) en Vercel. */
 export function setRetryDeadline(absoluteMs: number) {
     retryDeadlineMs = absoluteMs
 }

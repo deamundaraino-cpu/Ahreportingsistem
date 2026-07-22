@@ -14,7 +14,8 @@ import { deliverReport, type DeliverReportResult } from '@/lib/report-utm/report
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
-export const maxDuration = 300
+// Vercel Hobby corta a 60s: pedir más no alarga nada, solo desalinea los presupuestos internos.
+export const maxDuration = 60
 
 interface Schedule {
     enabled?: boolean

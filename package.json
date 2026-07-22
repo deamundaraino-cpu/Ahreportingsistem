@@ -11,7 +11,7 @@
     "type-check": "tsc --noEmit",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "test": "echo 'Tests not yet implemented'",
+    "test": "npx tsx scripts/verify-sync-fixes.ts",
     "validate": "npm run type-check && npm run lint && npm run format:check"
   },
   "dependencies": {

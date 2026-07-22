@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "esModuleInterop": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "outDir": "dist",
+    // rootDir apunta al repo para poder compilar `src/lib/sync/*` de la app sin
+    // duplicarlo aquí: la lógica de la cola vive en un solo sitio.
+    "rootDir": "..",
+    "types": ["node"]
+  },
+  "include": [
+    "src/**/*.ts",
+    "../src/lib/sync/queue.ts",
+    "../src/lib/sync/runner.ts"
+  ]
+}

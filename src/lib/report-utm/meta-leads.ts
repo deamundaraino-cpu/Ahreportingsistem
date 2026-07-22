@@ -625,7 +625,9 @@ export async function syncMetaLeadsForCliente(
     let maxSeen = cursor ?? 0
     let formCount = 0
     const startedAt = Date.now()
-    const BUDGET_MS = 240_000 // margen frente al maxDuration de 300s del cron
+    // Margen frente al maxDuration de 60s del plan Hobby. El cursor se persiste al
+    // cortar, así que el backfill continúa en la siguiente corrida sin perder nada.
+    const BUDGET_MS = Number(process.env.META_LEADS_BUDGET_MS) || 40_000
 
     try {
         // Resolver los formularios/Páginas del cliente. En corridas incrementales

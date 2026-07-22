@@ -197,12 +197,19 @@ const MACRO_MAP: Record<string, string> = {
     total_cpl:            'meta_spend / (meta_leads + offline_leads)',
 
     // ── Panel General: macros derivadas usando totales globales ─────────
+    //
+    // OJO con el denominador: las métricas `total_*` usan `total_spend`
+    // (Meta + TikTok), no solo `meta_spend`. Antes `total_roas` era idéntica a
+    // `meta_roas`, así que un cliente que invertía en las dos plataformas veía un
+    // "ROAS total" inflado: el numerador incluía ventas traídas por TikTok, pero
+    // el denominador ignoraba lo que costó TikTok.
+    total_spend:                'meta_spend + tiktok_spend',
     total_facturacion_neta:     'ventas_principal + ventas_bump + ventas_upsell',
     total_facturacion_bruta:    'ventas_principal_bruto',
-    total_roas:                 '(ventas_principal + ventas_bump + ventas_upsell) / meta_spend',
-    total_roi:                  '((ventas_principal + ventas_bump + ventas_upsell) - meta_spend) / meta_spend',
-    total_dinero_bolsa:         '(ventas_principal + ventas_bump + ventas_upsell) - meta_spend',
-    total_costo_compra:         'meta_spend / ventas_principal_count',
+    total_roas:                 '(ventas_principal + ventas_bump + ventas_upsell) / (meta_spend + tiktok_spend)',
+    total_roi:                  '((ventas_principal + ventas_bump + ventas_upsell) - (meta_spend + tiktok_spend)) / (meta_spend + tiktok_spend)',
+    total_dinero_bolsa:         '(ventas_principal + ventas_bump + ventas_upsell) - (meta_spend + tiktok_spend)',
+    total_costo_compra:         '(meta_spend + tiktok_spend) / ventas_principal_count',
 }
 
 // ── Semantic Aliases ─────────────────────────────────────────────────────────

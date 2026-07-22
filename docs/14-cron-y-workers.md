@@ -1,8 +1,28 @@
 # 14 · Cron jobs y workers
 
-Las sincronizaciones y tareas de mantenimiento corren como **tareas programadas**. Hay dos orquestadores: **Vercel Cron** (definido en `vercel.json`) y una **GitHub Action** (`.github/workflows/budget-check.yml`).
+## El problema que resuelve esta arquitectura
 
-## Autenticación de los workers
+La app corre en **Vercel plan Hobby**, que impone dos límites duros:
+
+- **60 segundos** por invocación de función
+- **2 crons diarios** por proyecto
+
+`vercel.json` llegó a declarar 9 crons y varias rutas pedían `maxDuration = 300`.
+Eso no alarga nada: la función se corta igual a los 60s, pero los presupuestos
+internos (270s, 250s, 240s) nunca disparaban, así que en lugar de terminar
+ordenadamente el proceso moría a mitad del upsert. Sincronizar Meta + TikTok +
+Hotmart + GA4 para todos los clientes no cabe en 60s — Hotmart y GA4 se consultan
+**día a día**, así que un rango de un mes son cientos de peticiones.
+
+La solución tiene tres piezas:
+
+1. **Cola en Postgres** (`public.sync_jobs`) — el trabajo se trocea en unidades
+   reanudables con cursor persistido.
+2. **Worker self-hosted** (`sync-worker/`) — proceso permanente en el VPS, sin
+   límite de tiempo, que drena la cola y ejecuta el scheduler.
+3. **Endpoints de respaldo en Vercel** — por si el VPS está caído.
+
+## Autenticación
 
 Todos los endpoints de cron/worker exigen:
 
@@ -10,99 +30,168 @@ Todos los endpoints de cron/worker exigen:
 Authorization: Bearer $CRON_SECRET
 ```
 
-La verificación está en `src/lib/cron-auth.ts` (`authenticateCron`), con comparación de **tiempo constante** para evitar timing attacks.
+El mismo secreto va configurado en Vercel y en el `.env` del `sync-worker`.
 
 ## Zona horaria
 
-La operación es en **Colombia (`America/Bogota` = UTC−5 fijo, sin horario de verano)**. Vercel Cron **solo acepta UTC**, así que los horarios en `vercel.json` están en UTC pero se diseñaron alrededor de horas Colombia (UTC+5h). El cálculo de fechas de calendario ("ayer"/"hoy") en el código usa los helpers `colombiaToday()` / `colombiaYesterday()` de `src/lib/date-utils.ts`, para que el día sea correcto sin importar a qué hora se dispare el cron. El límite diario de Hotmart ya se calcula con offset `-05:00` en `/api/worker`.
+La operación es en **Colombia (`America/Bogota` = UTC−5 fijo, sin horario de
+verano)**. Vercel Cron solo acepta UTC; el scheduler del `sync-worker` sí acepta
+zona horaria directamente (`TZ_OPERACION`). El cálculo de fechas de calendario
+usa `colombiaToday()` / `colombiaYesterday()` de `src/lib/date-utils.ts`, y los
+presets del dashboard hacen lo mismo — antes usaban la hora del navegador, así
+que un usuario fuera de UTC−5 pedía días que en Colombia aún no existían.
 
-## Vercel Cron (`vercel.json`)
+## Componentes
 
-Horario diario, secuenciado: **refrescar tokens → sync principal → agregaciones → imports → digest**.
+| Componente | Dónde corre | Qué hace |
+|---|---|---|
+| `sync-worker/` | VPS | Scheduler + drena la cola continuamente. **Ejecutor principal.** |
+| `POST /api/worker/enqueue` | Vercel | Crea los jobs (planner). No ejecuta nada. |
+| `POST /api/worker/run-jobs` | Vercel | Drena la cola en tandas de ~40s. **Ejecutor de respaldo.** |
+| `GET /api/worker` | Vercel | Sincroniza métricas de un rango. Lo invoca el runner. |
+| Webhooks `report_utm` | Vercel | Ingesta en tiempo real de ventas (Hotmart, Shopify, Cartpanda). |
 
-```jsonc
-{
-  "crons": [
-    { "path": "/api/cron/refresh-meta-tokens",              "schedule": "0 7 * * *" },   // 02:00 🇨🇴  · 07:00 UTC
-    { "path": "/api/cron/refresh-hotmart-tokens",           "schedule": "0 7 * * *" },   // 02:00 🇨🇴  · 07:00 UTC
-    { "path": "/api/worker",                                "schedule": "0 10 * * *" },  // 05:00 🇨🇴  · 10:00 UTC
-    { "path": "/api/cron/report-utm/aggregate",             "schedule": "0 11 * * *" },  // 06:00 🇨🇴  · 11:00 UTC
-    { "path": "/api/worker/google-sheets",                  "schedule": "30 11 * * *" }, // 06:30 🇨🇴  · 11:30 UTC
-    { "path": "/api/worker/google-sheets-conversiones",     "schedule": "0 12 * * *" },  // 07:00 🇨🇴  · 12:00 UTC
-    { "path": "/api/cron/whatsapp-digest",                  "schedule": "0 13 * * *" }   // 08:00 🇨🇴  · 13:00 UTC
-  ]
-}
-```
+## Crons de Vercel (los 2 permitidos)
 
-> `vercel.json` es JSON puro (sin comentarios); las anotaciones de hora de arriba son solo para esta doc. Asegúrate de que `CRON_SECRET` esté disponible y que los crons estén habilitados en el plan de Vercel.
+| Path | Schedule (UTC) | Hora 🇨🇴 | Para qué |
+|---|---|---|---|
+| `/api/cron/refresh-meta-tokens` | `0 7 * * *` | 02:00 | Renovar tokens antes de que caduquen |
+| `/api/worker/run-jobs` | `0 10 * * *` | 05:00 | Red de seguridad: drena la cola si el VPS no responde |
 
-**Por qué este orden:** los tokens se refrescan a las 02:00 🇨🇴 para que estén vigentes cuando corre el sync principal a las 05:00 🇨🇴 (≈5 h después del cierre del día anterior, dando margen a que Meta/TikTok consoliden los datos de "ayer"). Las agregaciones e imports corren después, y el digest de WhatsApp al final (08:00 🇨🇴), cuando ya hay datos consolidados y la gente está despierta para recibirlo.
+Todo lo demás lo programa el scheduler del `sync-worker`.
+
+## Horarios del sync-worker (hora Colombia)
+
+| Hora | Plan | Encola |
+|---|---|---|
+| 05:00 | `diario` | Métricas de ayer y hoy (todos los clientes) + Sheets + Meta Leads + agregación UTM |
+| 14:00 | `diario` | Segunda pasada: recoge las correcciones de atribución del día |
+| día 7, 03:00 | `cierre_mes` | Re-descarga forzada del mes anterior (ventana de 35 días) y congelado |
+
+Además hace *poll* de la cola cada 15s, que es lo que hace que el botón
+"Sincronizar" del dashboard responda en segundos.
+
+## Cómo funciona la cola
+
+`claim_sync_job()` usa `FOR UPDATE SKIP LOCKED`: si el VPS y Vercel intentan
+tomar un job a la vez, el segundo salta al siguiente en lugar de duplicar el
+trabajo. Es el mutex que faltaba entre el sync manual y el cron.
+
+Si un ejecutor muere (deploy, OOM, corte de los 60s), el **lease** del job vence
+y vuelve a la cola. Como el cursor está persistido y los upserts son
+idempotentes, solo se repite la unidad en curso.
+
+Estados: `pending` → `running` → `done` | `error`. Un fallo con intentos
+restantes vuelve a `pending`; al agotar `max_intentos` queda en `error` y genera
+notificación.
+
+Tipos de job: `metricas`, `sheets_leads`, `sheets_conversiones`, `meta_leads`,
+`utm_aggregate`, `cierre_mes`.
 
 ## Workers
 
-### `/api/worker` — sincronizador principal (05:00 🇨🇴 / 10:00 UTC)
-El más importante. Para cada cliente y cada día del rango:
-1. **Meta Ads**: insights a nivel campaña/anuncio/conjunto, formularios de leads, demografía; calcula conversiones custom y enriquece con targeting.
+### `/api/worker` — sincronizador de métricas
+Para cada cliente y cada día del rango:
+1. **Meta Ads**: insights a nivel campaña/anuncio/conjunto, formularios de leads,
+   demografía. Ventana de atribución fija en `7d_click` + `1d_view` para que el
+   número signifique lo mismo en todas las cuentas.
 2. **TikTok Ads**: reportes a nivel campaña/anuncio/grupo.
-3. **Hotmart**: ventas (APPROVED/COMPLETE) + comisiones; clasifica por embudo según patrones del tab.
+3. **Hotmart**: ventas (APPROVED/COMPLETE) + comisiones, **convertidas a USD**
+   con las tasas de `fx_rates`. Antes solo se sumaba lo facturado en USD y el
+   resto entraba como 0.
 4. **GA4**: sesiones y eventos (si está configurado).
-5. `upsert` en `metricas_diarias` con totales + desgloses JSONB.
+5. `upsert` en `metricas_diarias`.
 
-Params: `date` | (`start` + `end`) | `client_id`. Sin params, sincroniza **"ayer" en hora Colombia** (`colombiaYesterday()`). `maxDuration` = 300s. Usa `SUPABASE_SERVICE_ROLE_KEY` (omite RLS). Devuelve un resumen por cliente con estado de cada plataforma.
+Params: `date` | (`start` + `end`) | `client_id` | `force=1` | `refresh_days=N`.
+Sin params sincroniza "ayer" en hora Colombia.
 
-### `/api/worker/google-sheets` — leads (06:30 🇨🇴 / 11:30 UTC)
-Importa leads desde las Google Sheets de cada cliente y upserta `leads` y `leads_diarios`. Param `client_id` opcional. Detalle en [doc 08](./08-integraciones.md).
+**Red de seguridad**: si una API falla o devuelve cero donde la BD ya tenía
+datos, los campos de esa fuente se **omiten** del upsert en lugar de escribir
+ceros. Aplica a las cuatro fuentes (antes solo a Meta y TikTok, así que un fallo
+de Hotmart o GA4 borraba ventas y sesiones reales).
 
-### `/api/worker/google-sheets-conversiones` — conversiones offline (07:00 🇨🇴 / 12:00 UTC)
-Sincroniza conversiones offline (leads/ventas manuales) desde las Google Sheets del cliente hacia `conversiones_offline` y `conversiones_offline_diarias` (full-replace por cliente). Soporta múltiples sheets por cliente. Param `client_id` opcional. Config en `clientes.config_api.google_sheets_conversiones`.
+### `/api/worker/google-sheets` — leads
+Importa leads desde las Google Sheets de cada cliente hacia `leads` y
+`leads_diarios`.
 
-### `/api/worker/backfill-campaign-ids` — utilidad puntual
-Rellena `campaign_id` faltantes en métricas históricas. Params: `client_id` (req.), `days` (def. 90, máx. 365). Delega en `/api/worker`.
+### `/api/worker/google-sheets-conversiones` — conversiones offline
+Sincroniza conversiones offline hacia `conversiones_offline` y
+`conversiones_offline_diarias`. Usa `sync_batch_id`: se inserta el lote nuevo y
+solo al completarse se borra el anterior, de modo que un fallo a mitad deja los
+datos viejos intactos.
 
-### `/api/cron/refresh-meta-tokens` — renovación de tokens Meta (02:00 🇨🇴 / 07:00 UTC)
-Renueva los tokens de Meta que expiran en < 10 días (grant `fb_exchange_token`, usando `META_APP_ID`/`META_APP_SECRET`). Marca `meta_connection_status = expired` si falla. Devuelve `{ ok, refreshed, failed, total, results[] }`.
+### `/api/cron/refresh-meta-tokens` / `refresh-hotmart-tokens`
+Renuevan tokens antes de que caduquen (Meta < 10 días, Hotmart < 30 min).
 
-### `/api/cron/refresh-hotmart-tokens` — renovación de tokens Hotmart (02:00 🇨🇴 / 07:00 UTC)
-Renueva los tokens de Hotmart (HotConnect) que expiran en < 30 min. Los tokens duran ~6 h. Corre antes del sync principal para que estén vigentes cuando `/api/worker` consulte la API de Hotmart.
+### `/api/cron/report-utm/aggregate`
+Reagrega `report_utm.sales_events` en `hourly_metrics`. Recalcula el rango
+horario completo afectado: antes seleccionaba por `received_at` pero borraba por
+hora de venta, así que las ventas antiguas desaparecían y los conteos podían
+**bajar** en cada corrida.
 
-### `/api/cron/report-utm/aggregate` — agregación UTM (06:00 🇨🇴 / 11:00 UTC)
-Reagrega `report_utm.sales_events` en `hourly_metrics`. Params: `hours` (def. 24, máx. 720), `cliente_id`. Devuelve `{ ok, window_hours, rows_written, completed_at }`. Ver [doc 12](./12-modulo-report-utm.md).
+### `/api/cron/cierre-mes`
+Congela un mes: copia las filas a `metricas_snapshots` y pone el candado en
+`periodos_cerrados`.
 
-### `/api/cron/whatsapp-digest` — resumen diario WhatsApp (08:00 🇨🇴 / 13:00 UTC)
-Para cada cliente con datos en `metricas_diarias` de **"ayer" en hora Colombia** (`colombiaYesterday()`), arma un resumen corto (inversión, clicks, pagos, ventas, ROAS) y lo envía vía `sendWhatsAppNotification(type='metrics_summary')`. Corre al final del pipeline, cuando los datos ya están consolidados.
+## Sync manual desde el dashboard
 
-## GitHub Action — chequeo de presupuesto
+- **≤ 7 días** → ejecución directa, el usuario ve el resultado al momento.
+- **> 7 días** → se encola troceado en unidades de 14 días. El botón muestra
+  "En cola" y el trabajo continúa en segundo plano.
 
-`.github/workflows/budget-check.yml`. Corre **cada 4 horas** (`0 */4 * * *`) y también permite disparo manual (`workflow_dispatch`). Llama a:
+## Períodos congelados
 
-```
-GET https://reportes.adshouse.cloud/api/cron/budget-check
-Authorization: Bearer ${{ secrets.CRON_SECRET }}
-```
+El día 7 de cada mes se cierra el mes anterior: re-descarga forzada con
+`refresh_days=35` (para recoger la reatribución tardía de Meta), copia de las
+filas a `metricas_snapshots` y candado en `periodos_cerrados`. A partir de ahí el
+worker **omite** esas fechas: un informe ya entregado no cambia.
 
-Verifica el estado HTTP, parsea la respuesta y reporta cuántos tabs se revisaron y qué alertas se enviaron. Las alertas de presupuesto aparecen en el `/dashboard` (`getActiveAlerts`).
+Reabrir un período: borrar su fila en `periodos_cerrados` (el snapshot queda como
+respaldo).
 
-> El endpoint `/api/cron/budget-check` es invocado por esta Action y referenciado indirectamente, pero su `route.ts` no figura en el árbol de archivos listado del repo. Verifica su presencia en tu instancia desplegada.
+## Frescura de los datos
 
-## Tabla resumen
+`metricas_diarias` guarda:
 
-| Tarea | Orquestador | Hora 🇨🇴 | UTC | Auth |
-|-------|-------------|---------|-----|------|
-| Refrescar tokens Meta | Vercel Cron | 02:00 | 07:00 | CRON_SECRET |
-| Refrescar tokens Hotmart | Vercel Cron | 02:00 | 07:00 | CRON_SECRET |
-| Sync principal (Meta/TikTok/Hotmart/GA4) | Vercel Cron | 05:00 | 10:00 | CRON_SECRET |
-| Agregación Report-UTM | Vercel Cron | 06:00 | 11:00 | CRON_SECRET |
-| Importar leads (Google Sheets) | Vercel Cron | 06:30 | 11:30 | CRON_SECRET |
-| Conversiones offline (Google Sheets) | Vercel Cron | 07:00 | 12:00 | CRON_SECRET |
-| Digest WhatsApp | Vercel Cron | 08:00 | 13:00 | CRON_SECRET |
-| Chequeo de presupuesto | GitHub Actions | cada 4 h | cada 4 h | CRON_SECRET |
-| Backfill campaign IDs | manual | — | — | CRON_SECRET |
+- `synced_at` — última verificación (cambiara el dato o no)
+- `source_synced_at` — última verificación **exitosa por fuente**; si Meta
+  funcionó pero Hotmart falló, solo avanza la clave `meta`
+- `is_partial` — la fecha es hoy, el día no ha cerrado y las cifras cambiarán
 
-## Disparo manual
+## Observabilidad
 
-Cualquier worker puede invocarse manualmente (útil para backfills o pruebas):
+`sync_runs` guarda una fila por unidad ejecutada: duración, filas escritas,
+estado por fuente y los `debugLogs` truncados. Antes esos logs solo viajaban en
+la respuesta HTTP del cron, que nadie leía.
 
 ```bash
-curl -H "Authorization: Bearer $CRON_SECRET" \
-  "https://reportes.adshouse.cloud/api/worker?start=2026-05-01&end=2026-05-31&client_id=<uuid>"
+curl -H "Authorization: Bearer $CRON_SECRET" https://reportes.adshouse.cloud/api/worker/run-jobs
+curl http://vps:8080/status
 ```
+
+## Operaciones frecuentes
+
+```bash
+# Forzar el plan del día
+curl -X POST -H "Authorization: Bearer $CRON_SECRET" \
+  "https://reportes.adshouse.cloud/api/worker/enqueue?plan=diario"
+
+# Re-sincronizar un rango concreto de un cliente
+curl -X POST -H "Authorization: Bearer $CRON_SECRET" -H "Content-Type: application/json" \
+  -d '{"tipo":"metricas","cliente_id":"<uuid>","start":"2026-06-01","end":"2026-06-30"}' \
+  "https://reportes.adshouse.cloud/api/worker/enqueue"
+
+# Cerrar un mes a mano
+curl -X POST -H "Authorization: Bearer $CRON_SECRET" \
+  "https://reportes.adshouse.cloud/api/cron/cierre-mes?start=2026-06-01&end=2026-06-30"
+
+# Sync directo de un rango corto (sin pasar por la cola)
+curl -H "Authorization: Bearer $CRON_SECRET" \
+  "https://reportes.adshouse.cloud/api/worker?start=2026-05-01&end=2026-05-03&client_id=<uuid>"
+```
+
+## Si algún día se pasa a Vercel Pro
+
+Con Pro (funciones de 300s y crons ilimitados) se puede subir `maxDuration` y
+apoyarse más en `run-jobs`, pero la cola sigue siendo útil: es lo que da el
+mutex, la reanudación y el historial. No hace falta deshacer nada.

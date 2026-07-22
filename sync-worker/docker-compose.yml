@@ -1,0 +1,18 @@
+# Ejecutar desde la raíz del repo:
+#   docker compose -f sync-worker/docker-compose.yml up -d --build
+
+services:
+  sync-worker:
+    build:
+      context: ..
+      dockerfile: sync-worker/Dockerfile
+    container_name: sync-worker
+    restart: always
+    env_file: .env
+    ports:
+      - "8080:8080"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto'
 import { GoogleSpreadsheet } from 'google-spreadsheet'
 import { JWT, OAuth2Client } from 'google-auth-library'
 import { hasAgencyGoogleConnection, getAgencyAccessToken } from './google-auth'
@@ -365,7 +366,13 @@ export async function listGoogleSheets(): Promise<DriveSheet[]> {
 }
 
 /**
- * Full-replace por cliente.
+ * Reemplazo completo por cliente, en orden seguro.
+ *
+ * Antes se borraba TODO y después se insertaba: si el insert fallaba a mitad
+ * (timeout, error de red, hoja mal formada), el cliente se quedaba sin ninguna
+ * conversión hasta el siguiente sync manual. Ahora se inserta primero con un
+ * `sync_batch_id` nuevo y solo al terminar se borran las filas de lotes
+ * anteriores — un fallo deja los datos viejos intactos.
  */
 export async function saveConversionesToDb(
   supabase: any,
@@ -373,18 +380,21 @@ export async function saveConversionesToDb(
   rows: ConversionRow[],
   aggregates: ConversionDiaria[]
 ): Promise<{ rowsProcessed: number; daysProcessed: number }> {
-  await supabase.from('conversiones_offline').delete().eq('cliente_id', clienteId)
-  await supabase.from('conversiones_offline_diarias').delete().eq('cliente_id', clienteId)
+  const batchId = randomUUID()
 
   if (rows.length > 0) {
     const toInsert = rows.map(r => ({
       cliente_id: clienteId, fecha: r.fecha, tipo: r.tipo,
       cantidad: r.cantidad, valor: r.valor, fuente: r.fuente, notas: r.notas,
-      custom_fields: r.custom_fields,
+      custom_fields: r.custom_fields, sync_batch_id: batchId,
     }))
     for (let i = 0; i < toInsert.length; i += 500) {
       const { error } = await supabase.from('conversiones_offline').insert(toInsert.slice(i, i + 500))
-      if (error) throw new Error(`Error insertando conversiones: ${error.message}`)
+      if (error) {
+        // Limpiar el lote a medias para no dejar duplicados junto a los datos viejos.
+        await supabase.from('conversiones_offline').delete().eq('sync_batch_id', batchId)
+        throw new Error(`Error insertando conversiones: ${error.message}`)
+      }
     }
   }
 
@@ -392,13 +402,23 @@ export async function saveConversionesToDb(
     const toInsert = aggregates.map(a => ({
       cliente_id: clienteId, fecha: a.fecha, tipo: a.tipo, fuente: a.fuente,
       total_cantidad: a.total_cantidad, total_valor: a.total_valor,
-      custom_fields: a.custom_fields,
+      custom_fields: a.custom_fields, sync_batch_id: batchId,
     }))
     for (let i = 0; i < toInsert.length; i += 500) {
       const { error } = await supabase.from('conversiones_offline_diarias').insert(toInsert.slice(i, i + 500))
-      if (error) throw new Error(`Error insertando agregados: ${error.message}`)
+      if (error) {
+        await supabase.from('conversiones_offline').delete().eq('sync_batch_id', batchId)
+        await supabase.from('conversiones_offline_diarias').delete().eq('sync_batch_id', batchId)
+        throw new Error(`Error insertando agregados: ${error.message}`)
+      }
     }
   }
+
+  // El lote nuevo está completo: recién ahora se retira el anterior.
+  await supabase.from('conversiones_offline')
+    .delete().eq('cliente_id', clienteId).neq('sync_batch_id', batchId)
+  await supabase.from('conversiones_offline_diarias')
+    .delete().eq('cliente_id', clienteId).neq('sync_batch_id', batchId)
 
   return { rowsProcessed: rows.length, daysProcessed: aggregates.length }
 }

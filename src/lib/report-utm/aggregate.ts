@@ -2,13 +2,19 @@ import { createAdminClient } from '@/utils/supabase/server'
 
 /**
  * Re-agrega `report_utm.hourly_metrics` desde `report_utm.sales_events`
- * para una ventana de tiempo. Usa upsert: borra el bucket previo de cada
- * (cliente_id, hour, utm_source, utm_campaign) y reescribe.
+ * para una ventana de tiempo.
  *
  * Estrategia:
- *   1. Borrar buckets afectados por la ventana.
- *   2. Recalcular agregaciones desde sales_events.
- *   3. Insert masivo.
+ *   1. Detectar qué HORAS quedan afectadas por los eventos recibidos en la ventana.
+ *   2. Releer TODOS los eventos cuya hora-bucket cae en esas horas (no solo los de
+ *      la ventana).
+ *   3. Borrar esas horas y reinsertar el agregado completo.
+ *
+ * El paso 2 es la corrección clave. Antes se seleccionaba por `received_at` pero
+ * se agrupaba por `sale_timestamp`, y luego se borraba el rango horario ENTERO:
+ * una venta antigua que llegó por webhook hace días quedaba dentro del rango
+ * borrado pero fuera de la ventana consultada, así que desaparecía del agregado.
+ * Los conteos e ingresos de esas horas DISMINUÍAN en cada corrida.
  */
 export async function aggregateHourlyMetrics(args: {
     sinceISO: string // ej: hace 24h
@@ -42,7 +48,40 @@ export async function aggregateHourlyMetrics(args: {
         utm_source: string | null
         utm_campaign: string | null
     }
-    const list = (events ?? []) as Event[]
+    const windowEvents = (events ?? []) as Event[]
+    if (windowEvents.length === 0) return { ok: true, rowsWritten: 0 }
+
+    // 1b) Horas afectadas por cliente (según la hora-bucket, no la de recepción).
+    const affectedRanges = new Map<string, { cliente_id: string; minHour: string; maxHour: string }>()
+    for (const e of windowEvents) {
+        const hour = truncateToHour(e.sale_timestamp ?? e.received_at)
+        const r = affectedRanges.get(e.cliente_id)
+        if (!r) {
+            affectedRanges.set(e.cliente_id, { cliente_id: e.cliente_id, minHour: hour, maxHour: hour })
+        } else {
+            if (hour < r.minHour) r.minHour = hour
+            if (hour > r.maxHour) r.maxHour = hour
+        }
+    }
+
+    // 1c) Releer TODOS los eventos cuya hora-bucket cae en las horas afectadas.
+    // Sin esto, las ventas que llegaron en corridas anteriores desaparecen al
+    // borrarse el rango horario.
+    const list: Event[] = []
+    for (const r of affectedRanges.values()) {
+        // El bucket `maxHour` cubre hasta maxHour+59:59 → cota superior exclusiva.
+        const rangeEnd = new Date(new Date(r.maxHour).getTime() + 3600_000).toISOString()
+        const { data: full, error: fullError } = await db
+            .from('sales_events')
+            .select('cliente_id, sale_timestamp, received_at, amount, status, utm_source, utm_campaign')
+            .eq('cliente_id', r.cliente_id)
+            .or(
+                `and(sale_timestamp.gte.${r.minHour},sale_timestamp.lt.${rangeEnd}),` +
+                `and(sale_timestamp.is.null,received_at.gte.${r.minHour},received_at.lt.${rangeEnd})`
+            )
+        if (fullError) return { ok: false, error: `reread failed: ${fullError.message}` }
+        list.push(...((full ?? []) as Event[]))
+    }
 
     // 2) Agrupar por (cliente_id, hour, utm_source, utm_campaign)
     type Bucket = {
@@ -57,7 +96,6 @@ export async function aggregateHourlyMetrics(args: {
     }
 
     const buckets = new Map<string, Bucket>()
-    const affectedRanges = new Map<string, { cliente_id: string; minHour: string; maxHour: string }>()
 
     for (const e of list) {
         const ts = e.sale_timestamp ?? e.received_at
@@ -90,22 +128,13 @@ export async function aggregateHourlyMetrics(args: {
             b.refunds_count += 1
             b.refunds_amount += amount
         }
-
-        // tracking de rango afectado por cliente
-        const r = affectedRanges.get(e.cliente_id)
-        if (!r) {
-            affectedRanges.set(e.cliente_id, { cliente_id: e.cliente_id, minHour: hour, maxHour: hour })
-        } else {
-            if (hour < r.minHour) r.minHour = hour
-            if (hour > r.maxHour) r.maxHour = hour
-        }
     }
 
     if (buckets.size === 0) {
         return { ok: true, rowsWritten: 0 }
     }
 
-    // 3) Borrar buckets en rango por cliente para evitar duplicados
+    // 3) Borrar los buckets de las horas afectadas (ya recalculados por completo)
     for (const r of affectedRanges.values()) {
         const { error: delError } = await db
             .from('hourly_metrics')

@@ -10,37 +10,49 @@ import {
 import { es } from 'date-fns/locale'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { Loader2, RefreshCcw, CheckCircle2, AlertCircle, ChevronDown, CalendarDays } from 'lucide-react'
+import { Loader2, RefreshCcw, CheckCircle2, AlertCircle, ChevronDown, CalendarDays, Clock } from 'lucide-react'
 import { triggerWorkerSync } from '../_actions'
 
 const fmt = (d: Date) => format(d, 'yyyy-MM-dd')
 const fmtDisplay = (d: Date) => format(d, 'd MMM yyyy', { locale: es })
 
+/**
+ * "Hoy" en hora Colombia, no en la del navegador.
+ *
+ * Los presets usaban `new Date()` del cliente: un usuario en España veía "Hoy"
+ * apuntando a una fecha que en Colombia todavía no existe, el worker no la había
+ * sincronizado (nunca sincroniza el futuro) y el dashboard salía vacío. La
+ * operación entera —crons, cortes de día, `is_partial`— trabaja en UTC-5, así
+ * que los presets deben hacer lo mismo.
+ */
+const COLOMBIA_OFFSET_MS = 5 * 60 * 60 * 1000
+const hoyColombia = () => new Date(Date.now() - COLOMBIA_OFFSET_MS)
+
 type Preset = { id: string; label: string; getRange: () => { from: string; to: string } }
 
 const PRESETS: Preset[] = [
-    { id: 'today', label: 'Hoy', getRange: () => { const t = new Date(); return { from: fmt(t), to: fmt(t) } } },
-    { id: 'yesterday', label: 'Ayer', getRange: () => { const y = subDays(new Date(), 1); return { from: fmt(y), to: fmt(y) } } },
-    { id: 'today_yesterday', label: 'Hoy y ayer', getRange: () => ({ from: fmt(subDays(new Date(), 1)), to: fmt(new Date()) }) },
-    { id: 'last7', label: 'Últimos 7 días', getRange: () => ({ from: fmt(subDays(new Date(), 6)), to: fmt(new Date()) }) },
-    { id: 'last14', label: 'Últimos 14 días', getRange: () => ({ from: fmt(subDays(new Date(), 13)), to: fmt(new Date()) }) },
-    { id: 'last28', label: 'Últimos 28 días', getRange: () => ({ from: fmt(subDays(new Date(), 27)), to: fmt(new Date()) }) },
-    { id: 'last30', label: 'Últimos 30 días', getRange: () => ({ from: fmt(subDays(new Date(), 29)), to: fmt(new Date()) }) },
-    { id: 'this_week', label: 'Esta semana', getRange: () => ({ from: fmt(startOfWeek(new Date(), { weekStartsOn: 1 })), to: fmt(new Date()) }) },
+    { id: 'today', label: 'Hoy', getRange: () => { const t = hoyColombia(); return { from: fmt(t), to: fmt(t) } } },
+    { id: 'yesterday', label: 'Ayer', getRange: () => { const y = subDays(hoyColombia(), 1); return { from: fmt(y), to: fmt(y) } } },
+    { id: 'today_yesterday', label: 'Hoy y ayer', getRange: () => ({ from: fmt(subDays(hoyColombia(), 1)), to: fmt(hoyColombia()) }) },
+    { id: 'last7', label: 'Últimos 7 días', getRange: () => ({ from: fmt(subDays(hoyColombia(), 6)), to: fmt(hoyColombia()) }) },
+    { id: 'last14', label: 'Últimos 14 días', getRange: () => ({ from: fmt(subDays(hoyColombia(), 13)), to: fmt(hoyColombia()) }) },
+    { id: 'last28', label: 'Últimos 28 días', getRange: () => ({ from: fmt(subDays(hoyColombia(), 27)), to: fmt(hoyColombia()) }) },
+    { id: 'last30', label: 'Últimos 30 días', getRange: () => ({ from: fmt(subDays(hoyColombia(), 29)), to: fmt(hoyColombia()) }) },
+    { id: 'this_week', label: 'Esta semana', getRange: () => ({ from: fmt(startOfWeek(hoyColombia(), { weekStartsOn: 1 })), to: fmt(hoyColombia()) }) },
     {
         id: 'last_week', label: 'La semana pasada', getRange: () => {
-            const ref = subWeeks(new Date(), 1)
+            const ref = subWeeks(hoyColombia(), 1)
             return { from: fmt(startOfWeek(ref, { weekStartsOn: 1 })), to: fmt(endOfWeek(ref, { weekStartsOn: 1 })) }
         }
     },
-    { id: 'this_month', label: 'Este mes', getRange: () => ({ from: fmt(startOfMonth(new Date())), to: fmt(new Date()) }) },
+    { id: 'this_month', label: 'Este mes', getRange: () => ({ from: fmt(startOfMonth(hoyColombia())), to: fmt(hoyColombia()) }) },
     {
         id: 'last_month', label: 'El mes pasado', getRange: () => {
-            const ref = subMonths(new Date(), 1)
+            const ref = subMonths(hoyColombia(), 1)
             return { from: fmt(startOfMonth(ref)), to: fmt(endOfMonth(ref)) }
         }
     },
-    { id: 'all', label: 'Máximo', getRange: () => ({ from: 'all', to: fmt(new Date()) }) },
+    { id: 'all', label: 'Máximo', getRange: () => ({ from: 'all', to: fmt(hoyColombia()) }) },
 ]
 
 function getActivePreset(from: string, to: string): string {
@@ -58,11 +70,12 @@ export function DateRangeSelector({ basePath = '/dashboard', isPublic = false }:
     const clientId = params.clientId as string | undefined
     const token = params.token as string | undefined
 
-    const fromParam = searchParams.get('from') || fmt(subDays(new Date(), 29))
-    const toParam = searchParams.get('to') || fmt(new Date())
+    const fromParam = searchParams.get('from') || fmt(subDays(hoyColombia(), 29))
+    const toParam = searchParams.get('to') || fmt(hoyColombia())
 
-    const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'success' | 'error'>('idle')
+    const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'success' | 'error' | 'queued'>('idle')
     const [syncLogs, setSyncLogs] = useState<{ meta?: string; hotmart?: string; ga4?: string }>({})
+    const [syncMessage, setSyncMessage] = useState<string | null>(null)
 
     const [open, setOpen] = useState(false)
     const [showCustom, setShowCustom] = useState(false)
@@ -72,7 +85,7 @@ export function DateRangeSelector({ basePath = '/dashboard', isPublic = false }:
     const activePresetId = getActivePreset(fromParam, toParam)
     const activeLabel = PRESETS.find(p => p.id === activePresetId)?.label ?? 'Personalizado'
     const buttonLabel = activePresetId === 'all'
-        ? `Máximo: ${fmtDisplay(subYears(new Date(), 3))} – ${fmtDisplay(new Date())}`
+        ? `Máximo: ${fmtDisplay(subYears(hoyColombia(), 3))} – ${fmtDisplay(hoyColombia())}`
         : `${activeLabel}: ${fmtDisplay(parseISO(fromParam))} – ${fmtDisplay(parseISO(toParam))}`
 
     const navigate = (from: string, to: string) => {
@@ -110,18 +123,27 @@ export function DateRangeSelector({ basePath = '/dashboard', isPublic = false }:
         if (!clientId || isPublic) return
         setSyncStatus('syncing')
         setSyncLogs({})
+        setSyncMessage(null)
         try {
-            const syncFrom = fromParam === 'all' ? fmt(subDays(new Date(), 365)) : fromParam
+            const syncFrom = fromParam === 'all' ? fmt(subDays(hoyColombia(), 365)) : fromParam
             const result = await triggerWorkerSync(clientId, syncFrom, toParam)
             if (!result.ok) throw new Error(result.error || 'Failed to sync')
+            setSyncMessage(result.message ?? null)
+            if (result.queued) {
+                // Rango largo: quedó en cola. El aviso dura más porque el trabajo
+                // sigue en segundo plano y el usuario debe saber que no terminó aún.
+                setSyncStatus('queued')
+                setTimeout(() => { setSyncStatus('idle'); setSyncMessage(null) }, 12000)
+                return
+            }
             setSyncLogs(result.platform_status ?? { meta: 'Sincronizado', hotmart: 'Sincronizado', ga4: 'Sincronizado' })
             setSyncStatus('success')
             router.refresh()
-            setTimeout(() => setSyncStatus('idle'), 5000)
+            setTimeout(() => { setSyncStatus('idle'); setSyncMessage(null) }, 5000)
         } catch (err) {
             console.error('Error sincronizando', err)
             setSyncStatus('error')
-            setTimeout(() => setSyncStatus('idle'), 5000)
+            setTimeout(() => { setSyncStatus('idle'); setSyncMessage(null) }, 5000)
         }
     }
 
@@ -223,13 +245,21 @@ export function DateRangeSelector({ basePath = '/dashboard', isPublic = false }:
                     `}
                 >
                     {syncStatus === 'syncing' && <Loader2 className="h-4 w-4 animate-spin text-blue-600 dark:text-blue-400" />}
+                    {syncStatus === 'queued' && <Clock className="h-4 w-4 text-amber-500" />}
                     {syncStatus === 'success' && <CheckCircle2 className="h-4 w-4" />}
                     {syncStatus === 'error' && <AlertCircle className="h-4 w-4" />}
                     {syncStatus === 'idle' && <RefreshCcw className="h-4 w-4 text-blue-600 dark:text-blue-400" />}
                     {syncStatus === 'syncing' ? 'Sincronizando...' :
-                        syncStatus === 'success' ? '¡Actualizado!' :
-                            syncStatus === 'error' ? 'Error. Reintentar' : 'Sincronizar Datos'}
+                        syncStatus === 'queued' ? 'En cola...' :
+                            syncStatus === 'success' ? '¡Actualizado!' :
+                                syncStatus === 'error' ? 'Error. Reintentar' : 'Sincronizar Datos'}
                 </Button>
+
+                {syncStatus === 'queued' && syncMessage && (
+                    <div className="mt-1 text-[10px] text-amber-600 dark:text-amber-400 text-right max-w-[240px]">
+                        {syncMessage}
+                    </div>
+                )}
 
                 {syncStatus === 'success' && syncLogs && (
                     <div className="flex gap-2 mt-1 text-[10px] font-mono justify-end w-full">
