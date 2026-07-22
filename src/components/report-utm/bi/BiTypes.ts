@@ -48,8 +48,19 @@ export interface ConditionalRule {
     color: 'green' | 'red' | 'amber'
 }
 
+/** Clave interna con la que viaja el resultado de la fórmula de un widget. */
+export const WIDGET_FORMULA_KEY = '__formula'
+
 export interface WidgetConfig {
     metric?: BiMetric | string       // comma-separated for multi-metric widgets; incluye tokens fieldagg:
+    // ── Fórmula propia del widget ──
+    // Alternativa a `metric`: una expresión que cruza métricas de distintas
+    // fuentes (ej. "meta_spend / ga_sessions" = costo por visita). Cuando está
+    // definida manda sobre `metric`. Es local al widget: para reutilizar una
+    // fórmula en varios widgets están los campos calculados del informe.
+    formula?: string
+    formula_format?: 'number' | 'currency' | 'percent' | 'ratio'
+    formula_decimals?: number
     dimension?: BiDimension | string // incluye tokens field:<clave> (campos de formulario)
     dimension2?: BiDimension | string // dimensión secundaria (stacked / combo)
     date_grouping?: DateGrouping

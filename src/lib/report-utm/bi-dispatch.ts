@@ -89,7 +89,10 @@ export async function dispatchBiQuery(p: ParsedBiQuery): Promise<DispatchResult>
         return { data }
     }
 
-    if (!p.metrics.length) {
+    // Un widget de FÓRMULA no pide métricas: pide una expresión (calc[...]) que el
+    // motor resuelve leyendo los identificadores que referencia. Exigir `metrics`
+    // aquí lo rechazaba con un 400 que el widget mostraba como un simple 0.
+    if (!p.metrics.length && !p.calculated.length) {
         return { error: 'metrics is required', status: 400 }
     }
 

@@ -13,6 +13,7 @@ import {
     XAxis, YAxis, Tooltip, CartesianGrid,
 } from 'recharts'
 import type { BiFilters, WidgetConfig, WidgetType, CalculatedField } from '../BiTypes'
+import { WIDGET_FORMULA_KEY } from '../BiTypes'
 import type { BiMetric, BiDimension, BiQueryRow, BiPivotRow } from '@/lib/report-utm/bi-metadata'
 import {
     METRIC_META, DIMENSION_META, appendUtmFilters, utmFilterSignature, applyValueFilters,
@@ -92,7 +93,9 @@ export function ChartWidget({ title, type, config, filters, calculatedFields = [
     const [loading, setLoading] = useState(true)
     const [error, setError]     = useState<string | null>(null)
 
-    const metric    = String(config.metric ?? 'leads_count')
+    // Fórmula propia del widget: manda sobre `metric` y viaja bajo una clave fija.
+    const formula   = config.formula?.trim()
+    const metric    = formula ? WIDGET_FORMULA_KEY : String(config.metric ?? 'leads_count')
     const dimension = (config.dimension as BiDimension) ?? 'utm_source'
     const dimension2 = config.dimension2 && config.dimension2 !== 'none' ? config.dimension2 : undefined
     const grouping  = config.date_grouping ?? 'day'
@@ -103,13 +106,15 @@ export function ChartWidget({ title, type, config, filters, calculatedFields = [
     // El metric puede ser una métrica base o un campo calculado. El pivot
     // (dimensión secundaria) no soporta calc, así que se usa la ruta estándar.
     const calcField = calculatedFields.find(c => c.name === metric)
-    const format: ColFormat = (calcField?.format ?? METRIC_META[metric as BiMetric]?.format ?? fieldMetricFormat(metric) ?? 'number') as ColFormat
+    const format: ColFormat = formula
+        ? (config.formula_format ?? 'number')
+        : ((calcField?.format ?? METRIC_META[metric as BiMetric]?.format ?? fieldMetricFormat(metric) ?? 'number') as ColFormat)
     // El pivot (dimensión secundaria) agrupa filas de lead_events/sales_events:
     // solo sabe contar filas o sumar `amount`. Por eso no aplica a campos
     // calculados, ni a métricas de campo, ni a métricas de gasto/campaña/GA4
     // (con esas devolvería un conteo de filas disfrazado). En esos casos se
     // ignora la dimensión secundaria y se usa la ruta estándar.
-    const usePivot  = !calcField && !isFieldMetric(metric) && supportsPivot(metric) && !!dimension2
+    const usePivot  = !formula && !calcField && !isFieldMetric(metric) && supportsPivot(metric) && !!dimension2
         && (type === 'bar' || type === 'combo' || type === 'area' || type === 'line')
 
     useEffect(() => {
@@ -124,12 +129,15 @@ export function ChartWidget({ title, type, config, filters, calculatedFields = [
         }
 
         const params = new URLSearchParams({
-            metrics: metric,
+            // Con fórmula no se piden métricas: el motor deduce qué traer leyendo
+            // los identificadores de la expresión.
+            metrics: formula ? '' : metric,
             dimension,
             date_grouping: grouping,
             limit: String(limit),
             sort,
         })
+        if (formula) params.set(`calc[${WIDGET_FORMULA_KEY}]`, formula)
         if (usePivot && dimension2) { params.set('type', 'pivot'); params.set('dimension2', dimension2) }
         if (filters.cliente_id) params.set('cliente_id', filters.cliente_id)
         if (filters.date_from)  params.set('date_from', filters.date_from)
@@ -148,10 +156,10 @@ export function ChartWidget({ title, type, config, filters, calculatedFields = [
             })
             .catch(() => setError('Error al cargar'))
             .finally(() => setLoading(false))
-    }, [queryBase, metric, calcField?.expression, dimension, dimension2, usePivot, grouping, limit, sort, filters.cliente_id, filters.date_from, filters.date_to, utmFilterSignature(filters), fieldFilterSignature(filters), dimFilterSignature(filters), advancedFilterSignature(filters), widgetAdvancedSignature(withCampaignFilter(config.advanced_filter, config.campaign_filter))])
+    }, [queryBase, metric, formula, calcField?.expression, dimension, dimension2, usePivot, grouping, limit, sort, filters.cliente_id, filters.date_from, filters.date_to, utmFilterSignature(filters), fieldFilterSignature(filters), dimFilterSignature(filters), advancedFilterSignature(filters), widgetAdvancedSignature(withCampaignFilter(config.advanced_filter, config.campaign_filter))])
 
     const dimLabel = DIMENSION_META[dimension]?.label ?? fieldDimLabel(dimension) ?? dimension
-    const metLabel = METRIC_META[metric as BiMetric]?.label ?? fieldMetricLabel(metric) ?? calcField?.name ?? metric
+    const metLabel = formula ? formula : (METRIC_META[metric as BiMetric]?.label ?? fieldMetricLabel(metric) ?? calcField?.name ?? metric)
 
     const chartData = applyValueFilters(rows, config.value_filters).map(r => ({
         name:  r.dimension_value ?? 'Total',

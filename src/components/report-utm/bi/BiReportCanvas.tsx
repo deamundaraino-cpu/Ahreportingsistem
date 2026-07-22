@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useCallback } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { Plus, Save, Pencil, Check, X, FileDown, Share2, Calculator, Clock, Info, LayoutTemplate, Zap } from 'lucide-react'
 import { BiShareModal } from './BiShareModal'
 import { BiScheduleModal } from './BiScheduleModal'
@@ -12,7 +12,7 @@ import type { AdvancedFilter } from '@/lib/report-utm/bi-metadata'
 import {
     isFieldDim, fieldDimLabel,
     ADVANCED_FILTER_KEY, parseAdvancedFilter, serializeAdvancedFilter, advancedFilterHasConditions,
-    hasNonAttributableFilter,
+    hasNonAttributableFilter, parseFilterValue, matchFilterCondition,
 } from '@/lib/report-utm/bi-metadata'
 import {
     DndContext,
@@ -441,6 +441,35 @@ export function BiReportCanvas({ report: initialReport, readonly, lockedDates, p
     // campo/plataforma → bajo esos filtros el gasto y sus ratios se muestran en 0.
     const spendNotAttributable = hasNonAttributableFilter(filters, advancedFilter)
 
+    // Un filtro de campaña que no coincide con ninguna deja TODO el informe en 0
+    // (el gasto se recorta por nombre de campaña). Pasaba en silencio: se veía un
+    // informe entero de ceros sin pista de por qué. Se comprueba contra las
+    // campañas reales del cliente y se avisa.
+    const campaignFilter = filters.utm_campaign?.trim()
+    const [knownCampaigns, setKnownCampaigns] = useState<string[] | null>(null)
+    useEffect(() => {
+        if (!campaignFilter || !filters.cliente_id) { setKnownCampaigns(null); return }
+        const params = new URLSearchParams({
+            type: 'distinct', dimension: 'utm_campaign', cliente_id: filters.cliente_id,
+        })
+        if (filters.date_from) params.set('date_from', filters.date_from)
+        if (filters.date_to)   params.set('date_to', filters.date_to)
+        let cancelled = false
+        fetch(`${publicToken ? publicQueryBase(publicToken) : DEFAULT_BI_QUERY_BASE}?${params}`)
+            .then(r => r.json())
+            .then(json => { if (!cancelled) setKnownCampaigns(Array.isArray(json.data) ? json.data : null) })
+            .catch(() => { if (!cancelled) setKnownCampaigns(null) })
+        return () => { cancelled = true }
+    }, [campaignFilter, filters.cliente_id, filters.date_from, filters.date_to, publicToken])
+
+    const campaignFilterMatchesNothing = (() => {
+        if (!campaignFilter || !knownCampaigns?.length) return false
+        const { op, value } = parseFilterValue(campaignFilter)
+        const v = value.trim().toLowerCase()
+        if (!v) return false
+        return !knownCampaigns.some(c => matchFilterCondition(c, op, v))
+    })()
+
     return (
         <BiQueryProvider base={publicToken ? publicQueryBase(publicToken) : DEFAULT_BI_QUERY_BASE}>
         <div className="space-y-4">
@@ -622,6 +651,18 @@ export function BiReportCanvas({ report: initialReport, readonly, lockedDates, p
             )}
 
             {/* Aviso: gasto no atribuible al filtro activo */}
+            {/* Filtro de campaña que no matchea nada: causa silenciosa de un informe en 0 */}
+            {campaignFilterMatchesNothing && (
+                <div className="flex items-start gap-2 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-[11px] text-red-700 dark:text-red-300">
+                    <Info className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                    <span>
+                        El filtro de campaña <strong>“{campaignFilter}”</strong> no coincide con ninguna campaña
+                        de este cliente en el período, por eso todo el informe muestra 0. Quita el filtro en el chip
+                        de arriba{!readonly && ' (o cámbialo desde los filtros del informe)'} para ver los datos.
+                    </span>
+                </div>
+            )}
+
             {spendNotAttributable && (
                 <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-700 dark:text-amber-300">
                     <Info className="h-3.5 w-3.5 mt-0.5 shrink-0" />

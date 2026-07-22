@@ -8,8 +8,9 @@ import {
     METRIC_META, DIMENSION_META, VALUE_OPS, FIELD_AGGS, FILTERABLE_BASE_DIMS, FILTER_OPS,
     makeFieldDim, makeFieldMetric, humanizeFieldKey, fieldDimLabel, fieldMetricLabel,
     advancedFilterHasConditions, supportsPivot, PIVOT_METRICS,
-    FUNNEL_STAGE_METRICS, DEFAULT_FUNNEL_STAGES,
+    FUNNEL_STAGE_METRICS, DEFAULT_FUNNEL_STAGES, evaluateExpression,
 } from '@/lib/report-utm/bi-metadata'
+import { BiFormulaInput } from './BiFormulaInput'
 import { HelpTip } from './HelpTip'
 import { BiAdvancedFilterBuilder } from './BiAdvancedFilterBuilder'
 
@@ -107,6 +108,15 @@ export function BiWidgetEditor({ widget, calculatedFields = [], clienteId, dateF
     const [thYellowOp, setThYellowOp] = useState<'gte' | 'lte'>(widget?.config?.threshold?.yellowOp ?? 'gte')
     const [thYellow, setThYellow]     = useState<string>(String(widget?.config?.threshold?.yellow ?? ''))
     const [target, setTarget]         = useState<string>(String(widget?.config?.target ?? ''))
+    // Fórmula propia del widget (alternativa a elegir una métrica del catálogo).
+    const [useFormula, setUseFormula] = useState(!!widget?.config?.formula)
+    const [formula, setFormula] = useState(widget?.config?.formula ?? '')
+    const [formulaFormat, setFormulaFormat] = useState<'number' | 'currency' | 'percent' | 'ratio'>(
+        widget?.config?.formula_format ?? 'number'
+    )
+    const [formulaDecimals, setFormulaDecimals] = useState<string>(
+        widget?.config?.formula_decimals === undefined ? '' : String(widget.config.formula_decimals)
+    )
     // Filtro rápido por nombre de campaña (se traduce a una condición utm_campaign).
     const [campaignOp, setCampaignOp]       = useState<FilterOp>(widget?.config?.campaign_filter?.op ?? 'contains')
     const [campaignValue, setCampaignValue] = useState(widget?.config?.campaign_filter?.value ?? '')
@@ -163,6 +173,28 @@ export function BiWidgetEditor({ widget, calculatedFields = [], clienteId, dateF
     const hasNoData = (m: string) =>
         !!availability && m in availability && availability[m] === false
 
+    /**
+     * ¿El filtro de campaña no coincide con ninguna campaña del cliente? Es la
+     * causa silenciosa de widgets en 0: el gasto se recorta por nombre de campaña,
+     * así que un texto que no matchea deja gasto y leads a cero sin explicación.
+     */
+    const campaignFilterMatchesNothing = (() => {
+        const v = campaignValue.trim().toLowerCase()
+        if (!v || campaignOptions.length === 0) return false
+        return !campaignOptions.some(c => {
+            const name = c.toLowerCase()
+            switch (campaignOp) {
+                case 'eq':        return name === v
+                case 'neq':       return name !== v
+                case 'contains':  return name.includes(v)
+                case 'ncontains': return !name.includes(v)
+                case 'starts':    return name.startsWith(v)
+                case 'ends':      return name.endsWith(v)
+                default:          return false
+            }
+        })
+    })()
+
     const isChart = ['line', 'area', 'bar', 'combo', 'pie', 'scatter'].includes(type)
     // El apilado (dimensión secundaria) agrupa filas de leads/ventas: solo puede
     // contar filas o sumar importes. Con gasto, alcance o GA4 devolvería un conteo
@@ -195,6 +227,9 @@ export function BiWidgetEditor({ widget, calculatedFields = [], clienteId, dateF
     // pueden usar en tablas, scorecards y gráficas (no en funnel/slicer).
     const calcAsMetrics = calculatedFields.map(c => ({ value: c.name, label: `∑ ${c.name}` }))
     const allowCalc = type === 'table' || type === 'scorecard' || isChart
+    // La fórmula libre sustituye a UNA métrica, así que no aplica a la tabla
+    // (multi-columna: ahí se usan los campos calculados del informe).
+    const allowFormula = type === 'scorecard' || isChart
     // Las métricas de campo (sum/avg/… de raw_fields) se usan igual que las calc.
     const metricOptions = (allowCalc
         ? [...ALL_METRICS, ...calcAsMetrics, ...fieldMetricOptions]
@@ -270,6 +305,13 @@ export function BiWidgetEditor({ widget, calculatedFields = [], clienteId, dateF
         } else {
             // Tablas: lista de columnas. Otros widgets: una sola métrica.
             config.metric = type === 'table' ? tableCols.join(',') : tableCols[0] ?? 'leads_count'
+            // Fórmula del widget: manda sobre la métrica elegida.
+            if (allowFormula && useFormula && formula.trim()) {
+                config.formula = formula.trim()
+                config.formula_format = formulaFormat
+                const d = formulaDecimals.trim()
+                if (d !== '') config.formula_decimals = Math.max(0, Math.min(4, Number(d) || 0))
+            }
             if (type !== 'scorecard') {
                 config.dimension = dim
                 if (dim === 'date') config.date_grouping = grouping
@@ -583,10 +625,72 @@ export function BiWidgetEditor({ widget, calculatedFields = [], clienteId, dateF
                     {!isStructural && type !== 'funnel' && type !== 'slicer' && (
                         <>
                             <div>
-                                <label className="flex items-center gap-1 text-xs font-medium text-muted-foreground mb-1">
-                                    Métrica
-                                    <HelpTip text="El valor que se mide. Ej: Leads (cantidad), Revenue (ingresos), CPL (costo por lead), ROAS (retorno sobre inversión). Los campos con ∑ son tus campos calculados." />
-                                </label>
+                                <div className="flex items-center justify-between mb-1">
+                                    <label className="flex items-center gap-1 text-xs font-medium text-muted-foreground">
+                                        {useFormula && allowFormula ? 'Fórmula' : 'Métrica'}
+                                        <HelpTip text="Métrica = un valor del catálogo (Leads, Gasto, ROAS…). Fórmula = tú la construyes cruzando métricas con + - * / y paréntesis, ej. 'meta_spend / ga_sessions' = costo por visita. Los campos con ∑ son campos calculados del informe." />
+                                    </label>
+                                    {allowFormula && (
+                                        <div className="flex rounded-lg border border-border overflow-hidden">
+                                            {([false, true] as const).map(f => (
+                                                <button
+                                                    key={String(f)}
+                                                    onClick={() => setUseFormula(f)}
+                                                    className={`px-2 py-1 text-[10px] font-medium transition-colors ${
+                                                        useFormula === f
+                                                            ? 'bg-emerald-500 text-white'
+                                                            : 'bg-muted text-muted-foreground hover:bg-accent'
+                                                    }`}
+                                                >
+                                                    {f ? 'Fórmula' : 'Métrica'}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+
+                                {/* Fórmula libre: cruza métricas de cualquier fuente */}
+                                {allowFormula && useFormula && (
+                                    <div className="space-y-2">
+                                        <BiFormulaInput
+                                            value={formula}
+                                            onChange={setFormula}
+                                            formFields={formFields}
+                                        />
+                                        <div className="grid grid-cols-2 gap-2">
+                                            <div>
+                                                <label className="block text-[10px] font-medium text-muted-foreground mb-1">Formato</label>
+                                                <select
+                                                    value={formulaFormat}
+                                                    onChange={e => setFormulaFormat(e.target.value as typeof formulaFormat)}
+                                                    className="w-full px-2.5 py-1.5 text-xs rounded-lg bg-muted border border-border text-foreground"
+                                                >
+                                                    <option value="number">Número</option>
+                                                    <option value="currency">Moneda</option>
+                                                    <option value="percent">Porcentaje</option>
+                                                    <option value="ratio">Ratio (x)</option>
+                                                </select>
+                                            </div>
+                                            <div>
+                                                <label className="block text-[10px] font-medium text-muted-foreground mb-1">Decimales</label>
+                                                <input
+                                                    type="number" min={0} max={4} value={formulaDecimals}
+                                                    onChange={e => setFormulaDecimals(e.target.value)}
+                                                    placeholder="auto"
+                                                    className="w-full px-2.5 py-1.5 text-xs rounded-lg bg-muted border border-border text-foreground"
+                                                />
+                                            </div>
+                                        </div>
+                                        {formula.trim() && evaluateExpression(formula, {}) === null && (
+                                            <p className="text-[10px] text-red-500">
+                                                Expresión inválida: solo se admiten métricas, números y + − × ÷ ( ).
+                                            </p>
+                                        )}
+                                    </div>
+                                )}
+
+                                {!(allowFormula && useFormula) && (
+                                <>{/* Selector de métrica del catálogo */}
                                 {/* Buscador de campos */}
                                 <div className="relative mb-1.5">
                                     <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
@@ -653,6 +757,8 @@ export function BiWidgetEditor({ widget, calculatedFields = [], clienteId, dateF
                                             seleccionado: el widget mostrará 0. Puedes dejarlo configurado si esperas que la fuente empiece a alimentarse.
                                         </p>
                                     </div>
+                                )}
+                                </>
                                 )}
                             </div>
 
@@ -1005,6 +1111,15 @@ export function BiWidgetEditor({ widget, calculatedFields = [], clienteId, dateF
                                 <p className="text-[10px] text-muted-foreground">
                                     Selecciona un cliente para ver la lista de campañas.
                                 </p>
+                            )}
+                            {campaignFilterMatchesNothing && (
+                                <div className="flex items-start gap-2 rounded-lg border border-amber-300/60 dark:border-amber-500/30 bg-amber-50/60 dark:bg-amber-500/10 px-3 py-2">
+                                    <AlertTriangle className="h-3.5 w-3.5 text-amber-500 shrink-0 mt-0.5" />
+                                    <p className="text-[11px] text-amber-700 dark:text-amber-300 leading-snug">
+                                        Ninguna campaña de este cliente cumple la condición, así que el widget
+                                        mostrará <strong>0</strong> en gasto y leads. Revisa el texto o elige una de la lista.
+                                    </p>
+                                </div>
                             )}
                         </div>
                     )}

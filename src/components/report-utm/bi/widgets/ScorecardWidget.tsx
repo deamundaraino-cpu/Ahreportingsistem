@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { TrendingUp, TrendingDown, Minus, Loader2, Target } from 'lucide-react'
 import type { BiFilters, WidgetConfig, CalculatedField, ScorecardThreshold } from '../BiTypes'
+import { WIDGET_FORMULA_KEY } from '../BiTypes'
 import type { BiMetric, ClienteGoals, GoalStatus } from '@/lib/report-utm/bi-metadata'
 import { METRIC_META, appendUtmFilters, utmFilterSignature, appendFieldFilters, fieldFilterSignature, appendDimFilters, dimFilterSignature, appendAdvancedFilter, advancedFilterSignature, widgetAdvancedSignature, withCampaignFilter, fieldMetricLabel, fieldMetricFormat, metricGlossary, isLowerBetter, evaluateGoal } from '@/lib/report-utm/bi-metadata'
 import { fetchClienteGoals } from '@/lib/report-utm/client-goals'
@@ -44,19 +45,29 @@ export function ScorecardWidget({ title, config, filters, calculatedFields = [] 
     const [error, setError]   = useState<string | null>(null)
     const [goals, setGoals]   = useState<ClienteGoals | null>(null)
 
-    const metric  = String(config.metric ?? 'leads_count')
     const compare = !!config.compare_period
+    // Fórmula propia del widget: manda sobre `metric` y viaja bajo una clave fija.
+    const formula = config.formula?.trim()
+    const metric  = formula ? WIDGET_FORMULA_KEY : String(config.metric ?? 'leads_count')
 
     // El metric puede ser una métrica base, un campo calculado o una métrica de campo.
     const calcField = calculatedFields.find(c => c.name === metric)
-    const format: ValFormat = (calcField?.format ?? METRIC_META[metric as BiMetric]?.format ?? fieldMetricFormat(metric) ?? 'number') as ValFormat
-    const label = METRIC_META[metric as BiMetric]?.label ?? fieldMetricLabel(metric) ?? calcField?.name ?? metric
+    const format: ValFormat = formula
+        ? (config.formula_format ?? 'number')
+        : ((calcField?.format ?? METRIC_META[metric as BiMetric]?.format ?? fieldMetricFormat(metric) ?? 'number') as ValFormat)
+    const decimals = formula ? config.formula_decimals : calcField?.decimals
+    const label = formula
+        ? formula
+        : (METRIC_META[metric as BiMetric]?.label ?? fieldMetricLabel(metric) ?? calcField?.name ?? metric)
 
     useEffect(() => {
         setLoading(true)
         setError(null)
 
-        const params = new URLSearchParams({ metrics: metric, dimension: 'none' })
+        // Con fórmula no se piden métricas: el motor deduce qué traer leyendo los
+        // identificadores de la expresión.
+        const params = new URLSearchParams({ metrics: formula ? '' : metric, dimension: 'none' })
+        if (formula) params.set(`calc[${WIDGET_FORMULA_KEY}]`, formula)
         if (compare) params.set('type', 'compare')
         if (filters.cliente_id) params.set('cliente_id', filters.cliente_id)
         if (filters.date_from)  params.set('date_from', filters.date_from)
@@ -83,7 +94,7 @@ export function ScorecardWidget({ title, config, filters, calculatedFields = [] 
             })
             .catch(() => setError('Error al cargar'))
             .finally(() => setLoading(false))
-    }, [queryBase, metric, calcField?.expression, compare, filters.cliente_id, filters.date_from, filters.date_to, utmFilterSignature(filters), fieldFilterSignature(filters), dimFilterSignature(filters), advancedFilterSignature(filters), widgetAdvancedSignature(withCampaignFilter(config.advanced_filter, config.campaign_filter))])
+    }, [queryBase, metric, formula, calcField?.expression, compare, filters.cliente_id, filters.date_from, filters.date_to, utmFilterSignature(filters), fieldFilterSignature(filters), dimFilterSignature(filters), advancedFilterSignature(filters), widgetAdvancedSignature(withCampaignFilter(config.advanced_filter, config.campaign_filter))])
 
     // Metas del cliente para el semáforo (una sola petición por cliente).
     const clienteId = filters.cliente_id
@@ -142,7 +153,7 @@ export function ScorecardWidget({ title, config, filters, calculatedFields = [] 
                             className="text-3xl font-bold font-mono tabular-nums leading-none text-foreground"
                             style={thresholdStatus ? { color: GOAL_COLOR[thresholdStatus] } : undefined}
                         >
-                            {value !== null ? formatVal(value, format, calcField?.decimals) : "—"}
+                            {value !== null ? formatVal(value, format, decimals) : "—"}
                         </p>
                     </div>
                     {progressPct !== null && (
