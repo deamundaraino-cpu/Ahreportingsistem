@@ -135,7 +135,7 @@ export function BiCalcFieldsModal({ fields: initial, clienteId, dateFrom, dateTo
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
             <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
-            <div className="relative z-10 w-full max-w-lg rounded-2xl border border-border bg-card shadow-2xl overflow-hidden">
+            <div className="relative z-10 w-full max-w-3xl mx-4 rounded-2xl border border-border bg-card shadow-2xl overflow-hidden">
                 <div className="flex items-center justify-between px-5 py-4 border-b border-border">
                     <div className="flex items-center gap-2">
                         <Calculator className="h-4 w-4 text-emerald-500" />
@@ -147,11 +147,29 @@ export function BiCalcFieldsModal({ fields: initial, clienteId, dateFrom, dateTo
                     </button>
                 </div>
 
-                <div className="p-5 space-y-4 max-h-[70vh] overflow-y-auto">
+                <div className="p-5 max-h-[80vh] overflow-y-auto">
+                    {/* Cómo se usan: sin esto no es evidente dónde aparecen luego. */}
+                    <div className="mb-4 rounded-xl border border-emerald-500/30 bg-emerald-500/5 px-4 py-3">
+                        <p className="text-[11px] text-emerald-700 dark:text-emerald-300 leading-relaxed">
+                            <strong>Cómo usarlos:</strong> un campo calculado es una métrica tuya, guardada en este
+                            informe. Al crearlo aparece como <strong>∑ nombre</strong> en el selector de métrica de
+                            cualquier widget (scorecard, gráfica o columna de tabla). Se recalcula solo con los filtros
+                            y el rango de fechas que tenga el informe.
+                        </p>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-5 items-start">
                     {/* Lista existente */}
-                    {fields.length > 0 && (
-                        <div className="space-y-2">
-                            {fields.map(f => (
+                    <div className="space-y-2">
+                        <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                            Tus campos ({fields.length})
+                        </p>
+                        {fields.length === 0 ? (
+                            <p className="text-[11px] text-muted-foreground rounded-lg border border-dashed border-border px-3 py-4 text-center">
+                                Aún no has creado ninguno. Crea el primero con el formulario de la derecha.
+                            </p>
+                        ) : (
+                            fields.map(f => (
                                 <div
                                     key={f.id}
                                     className={`flex items-center justify-between gap-2 px-3 py-2 rounded-lg border transition-colors ${
@@ -185,9 +203,9 @@ export function BiCalcFieldsModal({ fields: initial, clienteId, dateFrom, dateTo
                                         </button>
                                     </div>
                                 </div>
-                            ))}
-                        </div>
-                    )}
+                            ))
+                        )}
+                    </div>
 
                     {/* Alta / edición */}
                     <div className={`rounded-xl border p-4 space-y-3 ${editingId ? 'border-emerald-500/50' : 'border-dashed border-border'}`}>
@@ -262,6 +280,7 @@ export function BiCalcFieldsModal({ fields: initial, clienteId, dateFrom, dateTo
                                 </button>
                             </div>
                         </div>
+                    </div>
                     </div>
                 </div>
 

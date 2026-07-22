@@ -132,6 +132,19 @@ function genId(): string {
     return Math.random().toString(36).slice(2, 10)
 }
 
+/**
+ * Claves de `filters` que son filtros de dimensión del informe (los que se ven
+ * como chips "Filtrando por"). Se distinguen de las claves de contexto
+ * (cliente_id, fechas, __adv) porque son las únicas que se persisten —y se
+ * borran— al guardar el informe.
+ */
+function isDimensionFilterKey(k: string): boolean {
+    return k.startsWith('utm_')
+        || k === 'ip_country' || k === 'form_name' || k === 'form_plugin'
+        || k === 'attribution_method' || k === 'platform'
+        || isFieldDim(k)
+}
+
 export function BiReportCanvas({ report: initialReport, readonly, lockedDates, publicToken }: Props) {
     const [report, setReport] = useState<BiReport>(initialReport)
     const [filters, setFilters] = useState<BiFilters>(() => {
@@ -154,6 +167,9 @@ export function BiReportCanvas({ report: initialReport, readonly, lockedDates, p
     )
     const [savingAdv, setSavingAdv] = useState(false)
     const [advSaved, setAdvSaved]   = useState(false)
+    // Guardado de los filtros de dimensión (chips) sin pasar por modo edición.
+    const [savingFilters, setSavingFilters] = useState(false)
+    const [filtersSaved, setFiltersSaved]   = useState(false)
     const [editMode,   setEditMode]   = useState(false)
     const [editorOpen, setEditorOpen] = useState(false)
     const [editingWidget, setEditingWidget] = useState<BiWidget | null>(null)
@@ -311,6 +327,8 @@ export function BiReportCanvas({ report: initialReport, readonly, lockedDates, p
             else next[dimension] = value
             return next
         })
+        // Poner/quitar un filtro es un cambio guardable del informe.
+        setDirty(true)
     }, [])
 
     // Slicer: setea (o limpia) un filtro de dimensión sobre todo el reporte
@@ -321,6 +339,7 @@ export function BiReportCanvas({ report: initialReport, readonly, lockedDates, p
             else next[dimension] = value
             return next
         })
+        setDirty(true)
     }, [])
 
     // Slicer de rango: actualiza fechas globales
@@ -334,14 +353,38 @@ export function BiReportCanvas({ report: initialReport, readonly, lockedDates, p
         setDirty(true)
     }, [])
 
+    /**
+     * Filtros a persistir: se conservan las claves de contexto guardadas
+     * (fechas, cliente, __adv) y se reemplazan POR COMPLETO los filtros de
+     * dimensión por los que están activos ahora. Así, quitar un chip y guardar
+     * lo elimina de verdad del informe, y volver a ponerlo y guardar lo fija
+     * otra vez.
+     */
+    function filtersToPersist(): BiFilters {
+        const next: BiFilters = {}
+        for (const [k, v] of Object.entries(report.filters ?? {})) {
+            if (!isDimensionFilterKey(k) && v !== undefined) next[k] = v
+        }
+        for (const [k, v] of Object.entries(filters)) {
+            if (isDimensionFilterKey(k) && v !== undefined && v !== '') next[k] = v
+        }
+        return next
+    }
+
     async function handleSaveReport() {
         setSaving(true)
         try {
+            const nextFilters = filtersToPersist()
             await fetch(`/api/report-utm/bi/reports/${report.id}`, {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ layout: report.layout, cliente_id: report.cliente_id ?? null }),
+                body: JSON.stringify({
+                    layout: report.layout,
+                    cliente_id: report.cliente_id ?? null,
+                    filters: nextFilters,
+                }),
             })
+            setReport(prev => ({ ...prev, filters: nextFilters }))
             setSaved(true)
             setDirty(false)
             setTimeout(() => setSaved(false), 2000)
@@ -410,7 +453,9 @@ export function BiReportCanvas({ report: initialReport, readonly, lockedDates, p
     async function handleSaveAdvancedFilter() {
         setSavingAdv(true)
         try {
-            const nextFilters = { ...(report.filters ?? {}), [ADVANCED_FILTER_KEY]: serializeAdvancedFilter(advancedFilter) }
+            // Igual que al guardar el informe: los chips de dimensión activos son
+            // la verdad, así que "Guardar filtros" también consolida sus bajas.
+            const nextFilters = { ...filtersToPersist(), [ADVANCED_FILTER_KEY]: serializeAdvancedFilter(advancedFilter) }
             setReport(prev => ({ ...prev, filters: nextFilters }))
             await fetch(`/api/report-utm/bi/reports/${report.id}`, {
                 method: 'PATCH',
@@ -432,10 +477,35 @@ export function BiReportCanvas({ report: initialReport, readonly, lockedDates, p
             : undefined,
     }
 
-    const activeDrills = Object.entries(filters).filter(
-        ([k, v]) => v && (k.startsWith('utm_') || k === 'ip_country' || k === 'form_name' || k === 'form_plugin' || k === 'attribution_method' || k === 'platform' || isFieldDim(k))
-    )
+    const activeDrills = Object.entries(filters).filter(([k, v]) => v && isDimensionFilterKey(k))
     const drillLabel = (k: string) => fieldDimLabel(k) ?? k.replace('utm_', '')
+
+    // ¿Los filtros de dimensión activos difieren de los guardados en el informe?
+    // Si difieren, se ofrece consolidarlos (o consolidar su baja) sin tener que
+    // entrar en modo edición.
+    const dimsKey = (f: BiFilters) => JSON.stringify(
+        Object.entries(f)
+            .filter(([k, v]) => isDimensionFilterKey(k) && v !== undefined && v !== '')
+            .sort(([a], [b]) => a.localeCompare(b))
+    )
+    const filtersDirty = dimsKey(filters) !== dimsKey(report.filters ?? {})
+
+    async function handleSaveFilters() {
+        setSavingFilters(true)
+        try {
+            const nextFilters = filtersToPersist()
+            await fetch(`/api/report-utm/bi/reports/${report.id}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ filters: nextFilters }),
+            })
+            setReport(prev => ({ ...prev, filters: nextFilters }))
+            setFiltersSaved(true)
+            setTimeout(() => setFiltersSaved(false), 2000)
+        } finally {
+            setSavingFilters(false)
+        }
+    }
 
     // El gasto (metricas_diarias) no se puede atribuir a filtros de país/formulario/
     // campo/plataforma → bajo esos filtros el gasto y sus ratios se muestran en 0.
@@ -631,12 +701,14 @@ export function BiReportCanvas({ report: initialReport, readonly, lockedDates, p
             />
 
             {/* Drill-down chips */}
-            {activeDrills.length > 0 && (
+            {(activeDrills.length > 0 || (filtersDirty && !readonly)) && (
                 <div className="flex items-center gap-2 flex-wrap">
-                    <span className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                        Filtrando por:
-                        <HelpTip text="Haz clic en una barra o porción de un gráfico para filtrar todo el informe por ese valor (drill-down). Haz clic de nuevo en el chip para quitar el filtro." />
-                    </span>
+                    {activeDrills.length > 0 && (
+                        <span className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                            Filtrando por:
+                            <HelpTip text="Haz clic en una barra o porción de un gráfico para filtrar todo el informe por ese valor (drill-down). Haz clic de nuevo en el chip para quitar el filtro. Con «Guardar filtros» el informe recuerda exactamente los chips que estén puestos en ese momento." />
+                        </span>
+                    )}
                     {activeDrills.map(([k, v]) => (
                         <button
                             key={k}
@@ -647,6 +719,18 @@ export function BiReportCanvas({ report: initialReport, readonly, lockedDates, p
                             <X className="h-3 w-3" />
                         </button>
                     ))}
+                    {/* Consolidar altas y bajas de chips en el informe guardado */}
+                    {filtersDirty && !readonly && (
+                        <button
+                            onClick={handleSaveFilters}
+                            disabled={savingFilters}
+                            title="Deja el informe guardado con exactamente estos filtros (los que quitaste no volverán a aparecer)"
+                            className="flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-medium bg-amber-500/15 text-amber-700 dark:text-amber-300 hover:bg-amber-500/25 transition-colors disabled:opacity-50"
+                        >
+                            {filtersSaved ? <Check className="h-3 w-3" /> : <Save className="h-3 w-3" />}
+                            {savingFilters ? 'Guardando…' : filtersSaved ? 'Guardado' : 'Guardar filtros'}
+                        </button>
+                    )}
                 </div>
             )}
 
@@ -658,7 +742,7 @@ export function BiReportCanvas({ report: initialReport, readonly, lockedDates, p
                     <span>
                         El filtro de campaña <strong>“{campaignFilter}”</strong> no coincide con ninguna campaña
                         de este cliente en el período, por eso todo el informe muestra 0. Quita el filtro en el chip
-                        de arriba{!readonly && ' (o cámbialo desde los filtros del informe)'} para ver los datos.
+                        de arriba{!readonly && ' y pulsa «Guardar filtros» para que no vuelva a aparecer al recargar'} para ver los datos.
                     </span>
                 </div>
             )}

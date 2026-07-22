@@ -362,7 +362,7 @@ export function BiWidgetEditor({ widget, calculatedFields = [], clienteId, dateF
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
             <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
-            <div className="relative z-10 w-full max-w-md rounded-2xl border border-border bg-card shadow-2xl overflow-hidden">
+            <div className="relative z-10 w-full max-w-3xl mx-4 rounded-2xl border border-border bg-card shadow-2xl overflow-hidden">
                 {/* Header */}
                 <div className="flex items-center justify-between px-5 py-4 border-b border-border">
                     <p className="text-sm font-semibold text-foreground">
@@ -373,14 +373,16 @@ export function BiWidgetEditor({ widget, calculatedFields = [], clienteId, dateF
                     </button>
                 </div>
 
-                <div className="p-5 space-y-4 max-h-[70vh] overflow-y-auto">
+                {/* Dos columnas en pantallas anchas: la configuración de datos a la
+                    izquierda y filtros/tamaño a la derecha, para no scrollear tanto. */}
+                <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-x-5 gap-y-4 items-start max-h-[80vh] overflow-y-auto">
                     {/* Widget type */}
-                    <div>
+                    <div className="md:col-span-2">
                         <label className="flex items-center gap-1 text-xs font-medium text-muted-foreground mb-2">
                             Tipo de widget
                             <HelpTip text="Scorecard = un número (KPI). Línea/Área = tendencia en el tiempo. Barras = comparar valores. Combo = barras apiladas. Donut = proporción. Dispersión = correlación. Tabla = detalle con columnas. Embudo = conversión etapa por etapa." />
                         </label>
-                        <div className="grid grid-cols-3 gap-2">
+                        <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
                             {WIDGET_TYPES.map(t => (
                                 <button
                                     key={t.value}
@@ -398,7 +400,7 @@ export function BiWidgetEditor({ widget, calculatedFields = [], clienteId, dateF
                         </div>
                         {/* Bloques de organización */}
                         <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mt-3 mb-2">Organización</p>
-                        <div className="grid grid-cols-3 gap-2">
+                        <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
                             {STRUCTURAL_TYPES.filter(t => t.value !== 'section' || allowSection).map(t => (
                                 <button
                                     key={t.value}
@@ -417,7 +419,7 @@ export function BiWidgetEditor({ widget, calculatedFields = [], clienteId, dateF
                     </div>
 
                     {/* Title */}
-                    <div>
+                    <div className="md:col-span-2">
                         <label className="block text-xs font-medium text-muted-foreground mb-1">
                             {type === 'text' ? 'Título (opcional)' : type === 'section' ? 'Nombre de la sección' : 'Título'}
                         </label>
@@ -1146,7 +1148,7 @@ export function BiWidgetEditor({ widget, calculatedFields = [], clienteId, dateF
 
                     {/* Tamaño (las secciones son siempre a lo ancho) */}
                     {type !== 'section' && (
-                    <div className="grid grid-cols-2 gap-3">
+                    <div className="md:col-span-2 grid grid-cols-2 gap-3">
                         <div>
                             <label className="flex items-center gap-1 text-xs font-medium text-muted-foreground mb-2">
                                 Ancho

@@ -77,6 +77,9 @@ const MONTH_RANGE = PRESETS.find(p => p.key === 'month')!.range()
 
 const FILTER_OP_SHORT: Record<string, string> = Object.fromEntries(FILTER_OPS.map(o => [o.value, o.short]))
 
+/** Claves que gestiona esta barra directamente (no son "filtros fijos"). */
+const MANAGED_KEYS = new Set(['cliente_id', 'date_from', 'date_to', 'days', ADVANCED_FILTER_KEY])
+
 /** Condición con al menos campo + valor. */
 function validCond(c: FilterCondition): boolean {
     return !!(c.field && c.value && c.value.trim())
@@ -97,12 +100,13 @@ export function BiGlobalFilters({
 
     // Claves de filtro que gestiona esta barra; el resto (ej. utm_campaign de un
     // informe anclado a una campaña) se conserva tal cual entre cambios.
-    const [pinnedFilters] = useState<BiFilters>(() => {
-        const managed = new Set(['cliente_id', 'date_from', 'date_to', 'days', ADVANCED_FILTER_KEY])
-        return Object.fromEntries(
-            Object.entries(initialFilters).filter(([k, v]) => !managed.has(k) && v !== undefined)
-        ) as BiFilters
-    })
+    //
+    // Se recalcula en cada render a partir del prop: si se congelara al montar,
+    // un filtro que el usuario quita desde el chip volvería a colarse en el
+    // siguiente "Aplicar" (o cambio de fecha/cliente) y sería imposible sacarlo.
+    const pinnedFilters = Object.fromEntries(
+        Object.entries(initialFilters).filter(([k, v]) => !MANAGED_KEYS.has(k) && v !== undefined && v !== '')
+    ) as BiFilters
     const pinnedCampaign = typeof pinnedFilters.utm_campaign === 'string' ? pinnedFilters.utm_campaign : ''
 
     const condCount = (advancedFilter.groups ?? []).reduce((n, g) => n + (g.conditions ?? []).filter(validCond).length, 0)
@@ -148,6 +152,13 @@ export function BiGlobalFilters({
             date_from:  dateFrom,
             date_to:    dateTo,
         }
+    }
+
+    /** Quita un filtro fijo (chip). Se consolida al guardar el informe. */
+    function removePinned(key: string) {
+        const next = buildFilters()
+        delete next[key]
+        onChange(next)
     }
 
     function applyPreset(p: Preset) {
@@ -205,6 +216,15 @@ export function BiGlobalFilters({
                     <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 text-[10px] font-medium">
                         <Lock className="h-2.5 w-2.5" />
                         Campaña: {pinnedCampaign}
+                        {!readonly && (
+                            <button
+                                onClick={() => removePinned('utm_campaign')}
+                                title="Quitar el filtro de campaña (guarda el informe para que no vuelva)"
+                                className="ml-0.5 hover:text-red-500"
+                            >
+                                <X className="h-2.5 w-2.5" />
+                            </button>
+                        )}
                     </span>
                 )}
                 <div className="flex-1" />
