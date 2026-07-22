@@ -830,3 +830,125 @@ export function hasNonAttributableFilter(
         )
     )
 }
+
+// ============================================================
+// Comprensión para el cliente: glosario, metas y semáforos.
+// ============================================================
+
+/**
+ * Explicación en lenguaje simple de cada métrica, pensada para el cliente final
+ * (no para el trafficker). Se muestra como tooltip junto al título del widget.
+ */
+export const METRIC_GLOSSARY: Record<string, string> = {
+    leads_count:   'Personas que dejaron sus datos en un formulario durante el período.',
+    leads_total:   'Total de personas que dejaron sus datos, sumando formularios web y formularios de Meta.',
+    sales_count:   'Cantidad de ventas registradas en el período.',
+    revenue:       'Dinero total facturado por las ventas del período.',
+    spend:         'Dinero invertido en publicidad (Meta + TikTok) durante el período.',
+    meta_spend:    'Dinero invertido en anuncios de Meta (Facebook e Instagram).',
+    tiktok_spend:  'Dinero invertido en anuncios de TikTok.',
+    cpl:           'Costo por Lead: cuánto cuesta, en promedio, conseguir un contacto. Cuanto MÁS BAJO, mejor.',
+    cpa:           'Costo por Adquisición: cuánto cuesta, en promedio, conseguir una venta. Cuanto MÁS BAJO, mejor.',
+    roas:          'Retorno de la inversión publicitaria: por cada $1 invertido, cuántos $ se facturaron. Cuanto MÁS ALTO, mejor. Un ROAS de 3x significa que se facturó el triple de lo invertido.',
+    conversion_rate: 'Porcentaje de leads que terminaron comprando.',
+    clicks:        'Veces que alguien hizo clic en un anuncio.',
+    impressions:   'Veces que se mostró un anuncio (una misma persona puede verlo varias veces).',
+    reach:         'Personas distintas que vieron los anuncios.',
+    frequency:     'Cuántas veces vio el anuncio, en promedio, cada persona. Si sube mucho, el público se está saturando.',
+    ctr:           'Porcentaje de personas que hicieron clic tras ver el anuncio. Mide qué tan atractivo es el anuncio.',
+    cpc:           'Costo por clic: cuánto se paga, en promedio, por cada clic.',
+    cpm:           'Costo por cada mil impresiones del anuncio.',
+    link_clicks:   'Clics que llevaron a la página de destino.',
+    landing_page_views: 'Veces que la página de destino se cargó por completo tras un clic.',
+    ga_sessions:   'Visitas al sitio web medidas por Google Analytics.',
+    ga_bounce_rate: 'Porcentaje de visitas que se fueron sin interactuar con el sitio. Cuanto MÁS BAJO, mejor.',
+}
+
+/** Texto del glosario para una métrica, si existe. */
+export function metricGlossary(metric: string): string | undefined {
+    return METRIC_GLOSSARY[metric]
+}
+
+/** Métricas donde un valor MENOR es mejor (costos y tasas de abandono). */
+export const LOWER_IS_BETTER = new Set([
+    'cpl', 'cpa', 'cpc', 'cpm', 'spend', 'meta_spend', 'tiktok_spend',
+    'ga_bounce_rate', 'frequency',
+])
+
+/** ¿Para esta métrica, bajar es mejorar? */
+export function isLowerBetter(metric: string): boolean {
+    return LOWER_IS_BETTER.has(metric)
+}
+
+/** Metas por cliente (report_utm.clientes.config.goals). */
+export interface ClienteGoals {
+    /** CPL objetivo: no superar. */
+    cpl_max?: number
+    /** CPA objetivo: no superar. */
+    cpa_max?: number
+    /** ROAS mínimo aceptable. */
+    roas_min?: number
+    /** Leads esperados en el período. */
+    leads_target?: number
+    /** Presupuesto del período: no superar. */
+    budget?: number
+}
+
+/** Métrica → clave de meta y sentido de la comparación. */
+const GOAL_BY_METRIC: Record<string, { key: keyof ClienteGoals; mustNotExceed: boolean }> = {
+    cpl:         { key: 'cpl_max',      mustNotExceed: true },
+    cpa:         { key: 'cpa_max',      mustNotExceed: true },
+    roas:        { key: 'roas_min',     mustNotExceed: false },
+    leads_count: { key: 'leads_target', mustNotExceed: false },
+    leads_total: { key: 'leads_target', mustNotExceed: false },
+    spend:       { key: 'budget',       mustNotExceed: true },
+    meta_spend:  { key: 'budget',       mustNotExceed: true },
+}
+
+export type GoalStatus = 'good' | 'warn' | 'bad'
+
+export interface GoalEvaluation {
+    status: GoalStatus
+    /** Valor objetivo con el que se comparó. */
+    target: number
+    /** true si la meta es un techo (no superar), false si es un piso (alcanzar). */
+    mustNotExceed: boolean
+}
+
+/** Margen de tolerancia antes de marcar en rojo (±15%). */
+const GOAL_TOLERANCE = 0.15
+
+/**
+ * Compara el valor de una métrica contra la meta del cliente.
+ * Devuelve null si la métrica no tiene meta asociada o la meta no está definida.
+ */
+export function evaluateGoal(
+    metric: string,
+    value: number,
+    goals?: ClienteGoals | null,
+): GoalEvaluation | null {
+    if (!goals) return null
+    const rule = GOAL_BY_METRIC[metric]
+    if (!rule) return null
+    const target = goals[rule.key]
+    if (typeof target !== 'number' || !Number.isFinite(target) || target <= 0) return null
+
+    let status: GoalStatus
+    if (rule.mustNotExceed) {
+        // Techo: cumplir es quedar por debajo.
+        if (value <= target) status = 'good'
+        else if (value <= target * (1 + GOAL_TOLERANCE)) status = 'warn'
+        else status = 'bad'
+    } else {
+        // Piso: cumplir es alcanzar o superar.
+        if (value >= target) status = 'good'
+        else if (value >= target * (1 - GOAL_TOLERANCE)) status = 'warn'
+        else status = 'bad'
+    }
+    return { status, target, mustNotExceed: rule.mustNotExceed }
+}
+
+/** ¿Esta métrica puede compararse contra alguna meta del cliente? */
+export function metricHasGoal(metric: string, goals?: ClienteGoals | null): boolean {
+    return evaluateGoal(metric, 0, goals) !== null || (!!GOAL_BY_METRIC[metric] && !!goals)
+}

@@ -1141,9 +1141,49 @@ export async function getMirrorDashboardData(token: string, from?: string, to?: 
   };
 }
 
-export async function savePublicTabConfig(clienteId: string, tabIds: string[]) {
+/** Personalización del link público de un cliente (logo, acento, textos). */
+export interface PublicBranding {
+  logo_url?: string;
+  accent?: string;
+  title?: string;
+  welcome_text?: string;
+}
+
+/**
+ * Guarda la configuración del link público, preservando lo que no se toca.
+ * Todo vive en `clientes.layout_publico` (JSONB), que ya se usaba para las
+ * pestañas visibles — así no hace falta una columna nueva.
+ */
+export async function savePublicConfig(
+  clienteId: string,
+  patch: { tabIds?: string[]; branding?: PublicBranding }
+) {
   const supabase = await createAdminClient();
-  const payload = tabIds.length > 0 ? { type: 'tab_mirror', tab_ids: tabIds } : null;
+
+  const { data: current } = await supabase
+    .from('clientes')
+    .select('layout_publico')
+    .eq('id', clienteId)
+    .maybeSingle();
+
+  const existing = (current?.layout_publico ?? {}) as {
+    tab_ids?: string[];
+    branding?: PublicBranding;
+  };
+  const tabIds = patch.tabIds ?? (Array.isArray(existing.tab_ids) ? existing.tab_ids : []);
+  const branding: PublicBranding = { ...(existing.branding ?? {}), ...(patch.branding ?? {}) };
+
+  // Se limpian los strings vacíos para no persistir ruido.
+  for (const k of Object.keys(branding) as (keyof PublicBranding)[]) {
+    if (!branding[k]) delete branding[k];
+  }
+
+  const hasBranding = Object.keys(branding).length > 0;
+  const payload =
+    tabIds.length > 0 || hasBranding
+      ? { type: 'tab_mirror', tab_ids: tabIds, ...(hasBranding ? { branding } : {}) }
+      : null;
+
   const { error } = await supabase
     .from('clientes')
     .update({ layout_publico: payload })
@@ -1151,6 +1191,11 @@ export async function savePublicTabConfig(clienteId: string, tabIds: string[]) {
   if (error) return { error: error.message };
   revalidatePath(`/dashboard/${clienteId}`);
   return { success: true };
+}
+
+/** Compat: guarda solo las pestañas visibles, conservando el branding. */
+export async function savePublicTabConfig(clienteId: string, tabIds: string[]) {
+  return savePublicConfig(clienteId, { tabIds });
 }
 
 export async function getOrCreatePublicToken(id: string, type: 'client' | 'tab') {

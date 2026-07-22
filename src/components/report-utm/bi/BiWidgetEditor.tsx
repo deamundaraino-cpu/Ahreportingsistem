@@ -47,6 +47,7 @@ const STRUCTURAL_TYPES: { value: WidgetType; label: string; desc: string }[] = [
     { value: 'section', label: 'Sección',  desc: 'Grupo colapsable' },
     { value: 'heading', label: 'Título',   desc: 'Encabezado divisor' },
     { value: 'text',    label: 'Texto',    desc: 'Comentario / nota' },
+    { value: 'summary', label: 'Resumen',  desc: 'Resumen ejecutivo automático' },
 ]
 
 const ALL_METRICS = Object.entries(METRIC_META).map(([k, v]) => ({ value: k as BiMetric, label: v.label }))
@@ -101,7 +102,7 @@ export function BiWidgetEditor({ widget, calculatedFields = [], clienteId, dateF
 
     const isChart = ['line', 'area', 'bar', 'combo', 'pie', 'scatter'].includes(type)
     const supportsDim2 = ['bar', 'combo', 'area', 'line'].includes(type)
-    const isStructural = type === 'section' || type === 'heading' || type === 'text'
+    const isStructural = type === 'section' || type === 'heading' || type === 'text' || type === 'summary'
 
     // Opciones derivadas de los campos de formulario descubiertos.
     const fieldDimOptions = formFields.map(f => ({ value: makeFieldDim(f.key), label: humanizeFieldKey(f.label) }))
@@ -178,6 +179,9 @@ export function BiWidgetEditor({ widget, calculatedFields = [], clienteId, dateF
         if (isStructural) {
             if (type === 'text') {
                 onSave({ id, type, title: title.trim(), w: colSpan, h: rowSpan, config: { text, align } })
+            } else if (type === 'summary') {
+                // `text` vacío = resumen automático; con texto = redacción manual.
+                onSave({ id, type, title: title.trim() || 'Resumen del período', w: colSpan, h: rowSpan, config: { text: text.trim() || undefined, accent: accent || undefined } })
             } else if (type === 'heading') {
                 onSave({ id, type, title: title.trim() || 'Título', w: colSpan, h: rowSpan, config: { heading_level: headingLevel, align, accent: accent || undefined } })
             } else {
@@ -309,6 +313,24 @@ export function BiWidgetEditor({ widget, calculatedFields = [], clienteId, dateF
                             <p className="text-[10px] text-muted-foreground mt-1">Formato: <span className="font-mono">**negrita**</span>, línea nueva = párrafo, <span className="font-mono">- </span> = viñeta.</p>
                         </div>
                     )}
+                    {type === 'summary' && (
+                        <div>
+                            <label className="block text-xs font-medium text-muted-foreground mb-1">
+                                Texto del resumen <span className="text-muted-foreground/50">(opcional)</span>
+                            </label>
+                            <textarea
+                                value={text}
+                                onChange={e => setText(e.target.value)}
+                                rows={5}
+                                placeholder={'Déjalo vacío para generar el resumen automáticamente\ncon los datos del período (inversión, leads, CPL,\nventas, ROAS y comparación vs. el período anterior).'}
+                                className="w-full px-3 py-2 text-sm rounded-lg bg-muted border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500/40 resize-y"
+                            />
+                            <p className="text-[10px] text-muted-foreground mt-1">
+                                Si escribes algo aquí, ese texto reemplaza al resumen automático — útil para
+                                ajustar la lectura antes de enviar el informe al cliente.
+                            </p>
+                        </div>
+                    )}
                     {type === 'heading' && (
                         <div>
                             <label className="block text-xs font-medium text-muted-foreground mb-1">Nivel del título</label>
@@ -366,7 +388,7 @@ export function BiWidgetEditor({ widget, calculatedFields = [], clienteId, dateF
                             </div>
                         </div>
                     )}
-                    {(type === 'section' || type === 'heading') && (
+                    {(type === 'section' || type === 'heading' || type === 'summary') && (
                         <div>
                             <label className="block text-xs font-medium text-muted-foreground mb-2">Color de acento</label>
                             <div className="flex gap-2 flex-wrap items-center">

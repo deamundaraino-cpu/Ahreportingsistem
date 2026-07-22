@@ -23,6 +23,7 @@ export type WidgetType =
     | 'section'   // contenedor colapsable que agrupa widgets (config.children)
     | 'heading'   // título divisor a lo ancho
     | 'text'      // párrafo de texto libre / comentario para el cliente
+    | 'summary'   // resumen ejecutivo en lenguaje simple (auto o config.text)
 
 export type SlicerMode = 'dropdown' | 'list' | 'daterange'
 
@@ -89,9 +90,28 @@ export interface CalculatedField {
 
 export interface BiSchedule {
     enabled?: boolean
-    frequency?: 'weekly' | 'monthly'
+    frequency?: 'weekly' | 'biweekly' | 'monthly'
+    /** weekly: 0 = domingo … 6 = sábado (default 1 = lunes). */
+    day_of_week?: number
+    /** monthly: día 1-28 (default 1). biweekly usa siempre los días 1 y 16. */
+    day_of_month?: number
+    /** Hora de envío 0-23 en horario de Colombia (default 8). */
+    hour?: number
     channels?: { whatsapp?: boolean; email?: boolean }
     emails?: string[]
+}
+
+/** Una entrega registrada en el historial (public.bi_report_deliveries). */
+export interface BiDelivery {
+    id: string
+    report_id: string
+    period_type: 'weekly' | 'biweekly' | 'monthly'
+    period_label: string
+    date_from: string
+    date_to: string
+    delivery_token: string
+    sent_at: string
+    sent_to?: Record<string, unknown>
 }
 
 export interface BiReport {

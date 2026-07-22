@@ -34,7 +34,7 @@
     },
     {
       "path": "/api/cron/bi-report-digest",
-      "schedule": "0 14 * * *"
+      "schedule": "0 * * * *"
     }
   ]
 }

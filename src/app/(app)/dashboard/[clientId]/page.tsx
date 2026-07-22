@@ -64,6 +64,7 @@ export default async function DashboardPage(props: {
                             clienteId={clientId}
                             tabs={dashboardData?.tabs || []}
                             initialTabIds={dashboardData?.layoutPublico?.type === 'tab_mirror' ? (dashboardData.layoutPublico.tab_ids ?? []) : []}
+                            initialBranding={dashboardData?.layoutPublico?.branding ?? {}}
                         />
                     </div>
                     <p className="text-sm text-muted-foreground font-medium">Embudo de Ventas V2</p>

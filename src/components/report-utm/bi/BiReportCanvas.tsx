@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useCallback } from 'react'
-import { Plus, Save, Pencil, Check, X, FileDown, Share2, Calculator, Clock, Info } from 'lucide-react'
+import { Plus, Save, Pencil, Check, X, FileDown, Share2, Calculator, Clock, Info, LayoutTemplate } from 'lucide-react'
 import { BiShareModal } from './BiShareModal'
 import { BiScheduleModal } from './BiScheduleModal'
 import type { BiSchedule } from './BiTypes'
@@ -99,6 +99,12 @@ function RootDroppable({ children }: { children: React.ReactNode }) {
 interface Props {
     report: BiReport
     readonly?: boolean
+    /**
+     * Rango de fechas congelado (link de una entrega del historial). Fija los
+     * filtros de fecha al período entregado y bloquea el selector, de modo que
+     * "Semana 2 de Julio 2026" siempre muestre lo mismo.
+     */
+    lockedDates?: { from: string; to: string }
 }
 
 // Fecha de calendario LOCAL (mismo criterio que el preset "Este mes" de los filtros)
@@ -118,7 +124,7 @@ function genId(): string {
     return Math.random().toString(36).slice(2, 10)
 }
 
-export function BiReportCanvas({ report: initialReport, readonly }: Props) {
+export function BiReportCanvas({ report: initialReport, readonly, lockedDates }: Props) {
     const [report, setReport] = useState<BiReport>(initialReport)
     const [filters, setFilters] = useState<BiFilters>(() => {
         // El filtro avanzado guardado vive bajo la clave reservada __adv; se
@@ -130,6 +136,8 @@ export function BiReportCanvas({ report: initialReport, readonly }: Props) {
             date_to:   isoLocal(new Date()),
             ...base,
             ...(initialReport.cliente_id ? { cliente_id: initialReport.cliente_id } : {}),
+            // El período de una entrega manda sobre los filtros guardados.
+            ...(lockedDates ? { date_from: lockedDates.from, date_to: lockedDates.to } : {}),
         }
     })
     // Filtro avanzado (Y de O), inicializado desde lo persistido en el informe.
@@ -152,6 +160,8 @@ export function BiReportCanvas({ report: initialReport, readonly }: Props) {
     const [shareOpen, setShareOpen] = useState(false)
     const [scheduleOpen, setScheduleOpen] = useState(false)
     const [calcOpen, setCalcOpen]   = useState(false)
+    const [savingTemplate, setSavingTemplate] = useState(false)
+    const [templateSaved, setTemplateSaved]   = useState(false)
     // Fuerza expandir todas las secciones (para capturar el PDF completo).
     const [forceExpandAll, setForceExpandAll] = useState(false)
 
@@ -321,6 +331,35 @@ export function BiReportCanvas({ report: initialReport, readonly }: Props) {
         }
     }
 
+    /** Convierte este informe en una plantilla reutilizable (sin cliente ni fechas). */
+    async function handleSaveAsTemplate() {
+        const nombre = window.prompt('Nombre de la plantilla:', `${report.nombre} (plantilla)`)
+        if (!nombre?.trim()) return
+        setSavingTemplate(true)
+        try {
+            const res = await fetch('/api/report-utm/bi/reports', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    nombre: nombre.trim(),
+                    descripcion: report.descripcion ?? null,
+                    source_report_id: report.id,
+                    is_template: true,
+                    cliente_id: null,
+                }),
+            })
+            if (!res.ok) {
+                const json = await res.json().catch(() => ({}))
+                window.alert(json?.error ?? 'No se pudo crear la plantilla.')
+                return
+            }
+            setTemplateSaved(true)
+            setTimeout(() => setTemplateSaved(false), 2500)
+        } finally {
+            setSavingTemplate(false)
+        }
+    }
+
     async function handleExportPdf() {
         setExporting(true)
         // Expande todas las secciones para que el PDF capture su contenido.
@@ -447,6 +486,15 @@ export function BiReportCanvas({ report: initialReport, readonly }: Props) {
                                     Campos
                                 </button>
                                 <button
+                                    onClick={handleSaveAsTemplate}
+                                    disabled={savingTemplate}
+                                    title="Guardar este informe como plantilla reutilizable"
+                                    className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium bg-muted text-foreground hover:bg-accent transition-colors disabled:opacity-50"
+                                >
+                                    {templateSaved ? <Check className="h-3.5 w-3.5 text-emerald-500" /> : <LayoutTemplate className="h-3.5 w-3.5" />}
+                                    {savingTemplate ? 'Creando…' : templateSaved ? 'Plantilla creada' : 'Plantilla'}
+                                </button>
+                                <button
                                     onClick={handleSaveReport}
                                     disabled={saving}
                                     className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium text-white nav-active-emerald relative"
@@ -492,6 +540,7 @@ export function BiReportCanvas({ report: initialReport, readonly }: Props) {
             <BiGlobalFilters
                 initialFilters={filters}
                 onChange={(f) => setFilters(f)}
+                datesLocked={!!lockedDates}
                 clienteLocked={readonly || (!editMode && !!report.cliente_id)}
                 onClienteChange={editMode ? handleAssignCliente : undefined}
                 advancedFilter={advancedFilter}

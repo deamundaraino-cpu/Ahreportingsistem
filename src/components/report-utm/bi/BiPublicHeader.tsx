@@ -11,9 +11,11 @@ interface Props {
     clienteName?: string
     clienteLogo?: string
     reportName: string
+    /** Período de la entrega. Ej. "Semana 2 de Julio 2026". */
+    periodLabel?: string
 }
 
-export function BiPublicHeader({ agencyLogo, agencyName = 'Ad House Reporting', accent, clienteName, clienteLogo, reportName }: Props) {
+export function BiPublicHeader({ agencyLogo, agencyName = 'Ad House Reporting', accent, clienteName, clienteLogo, reportName, periodLabel }: Props) {
     const [exporting, setExporting] = useState(false)
     const brand = accent || '#10b981'
 
@@ -39,6 +41,14 @@ export function BiPublicHeader({ agencyLogo, agencyName = 'Ad House Reporting', 
                         <img src={agencyLogo} alt={agencyName} className="h-8 w-auto max-w-[160px] object-contain" />
                     ) : (
                         <span className="text-sm font-bold tracking-tight text-foreground">{agencyName}</span>
+                    )}
+                    {periodLabel && (
+                        <span
+                            className="px-2.5 py-1 rounded-full text-[11px] font-semibold"
+                            style={{ backgroundColor: `${brand}1f`, color: brand }}
+                        >
+                            {periodLabel}
+                        </span>
                     )}
                 </div>
 

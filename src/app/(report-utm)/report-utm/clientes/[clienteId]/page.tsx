@@ -12,6 +12,8 @@ import { MetaLeadsCard } from '@/components/report-utm/MetaLeadsCard'
 import { S2SIntegrationCard } from '@/components/report-utm/S2SIntegrationCard'
 import { OutboundWebhooksCard } from '@/components/report-utm/OutboundWebhooksCard'
 import { BiClienteBrandingCard } from '@/components/report-utm/BiClienteBrandingCard'
+import { BiClienteGoalsCard } from '@/components/report-utm/BiClienteGoalsCard'
+import type { ClienteGoals } from '@/lib/report-utm/bi-metadata'
 import { createClient } from '@/utils/supabase/server'
 import { ArrowLeft, ShoppingBag, DollarSign, TrendingUp, ExternalLink } from 'lucide-react'
 
@@ -171,6 +173,12 @@ export default async function ClienteDetailPage({
                 clienteId={cliente.id}
                 initialLogoUrl={typeof cliente.config?.logo_url === 'string' ? cliente.config.logo_url : undefined}
                 initialAccent={typeof cliente.config?.accent === 'string' ? cliente.config.accent : undefined}
+            />
+
+            {/* Metas del cliente (semáforos de los scorecards en los informes) */}
+            <BiClienteGoalsCard
+                clienteId={cliente.id}
+                initialGoals={(cliente.config?.goals ?? {}) as ClienteGoals}
             />
 
             {/* Integrations */}

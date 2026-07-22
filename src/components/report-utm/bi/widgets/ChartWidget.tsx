@@ -18,8 +18,9 @@ import {
     METRIC_META, DIMENSION_META, appendUtmFilters, utmFilterSignature, applyValueFilters,
     appendFieldFilters, fieldFilterSignature, appendAdvancedFilter, advancedFilterSignature,
     appendDimFilters, dimFilterSignature, widgetAdvancedSignature,
-    fieldMetricLabel, fieldMetricFormat, fieldDimLabel, isFieldMetric,
+    fieldMetricLabel, fieldMetricFormat, fieldDimLabel, isFieldMetric, metricGlossary,
 } from '@/lib/report-utm/bi-metadata'
+import { HelpTip } from '../HelpTip'
 
 const COLORS = [
     '#10b981', '#06b6d4', '#8b5cf6', '#f59e0b',
@@ -157,7 +158,12 @@ export function ChartWidget({ title, type, config, filters, calculatedFields = [
     return (
         <div className="rounded-2xl border border-border bg-card p-5 flex flex-col gap-4 h-full">
             <div className="flex items-center justify-between">
-                <p className="text-sm font-semibold text-foreground">{title}</p>
+                <p className="flex items-center gap-1 text-sm font-semibold text-foreground">
+                    {title}
+                    {metricGlossary(String(config.metric ?? '')) && (
+                        <HelpTip text={metricGlossary(String(config.metric ?? '')) as string} size={12} />
+                    )}
+                </p>
                 <span className="text-[10px] text-muted-foreground font-mono">
                     {dimLabel}{dimension2 ? ` × ${DIMENSION_META[dimension2 as BiDimension]?.label ?? fieldDimLabel(dimension2) ?? dimension2}` : ''} · {metLabel}
                 </span>

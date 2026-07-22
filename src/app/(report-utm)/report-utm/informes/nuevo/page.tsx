@@ -6,6 +6,7 @@ import { ArrowLeft, Plus, Loader2 } from 'lucide-react'
 import Link from 'next/link'
 
 interface Cliente { id: string; nombre: string }
+interface Plantilla { id: string; nombre: string; cliente_id?: string | null }
 
 export default function NuevoInformePage() {
     const router = useRouter()
@@ -13,6 +14,9 @@ export default function NuevoInformePage() {
     const [desc, setDesc]       = useState('')
     const [clienteId, setClienteId] = useState('')
     const [clientes, setClientes]   = useState<Cliente[]>([])
+    const [templateId, setTemplateId] = useState('')
+    const [templates, setTemplates]   = useState<Plantilla[]>([])
+    const [campaign, setCampaign]     = useState('')
     const [saving, setSaving]   = useState(false)
     const [error, setError]     = useState<string | null>(null)
 
@@ -20,6 +24,11 @@ export default function NuevoInformePage() {
         fetch('/api/report-utm/clientes')
             .then(r => r.json())
             .then(j => setClientes(j.data ?? []))
+            .catch(() => {})
+        // Plantillas disponibles = informes sin cliente fijo (del sistema o propias).
+        fetch('/api/report-utm/bi/reports')
+            .then(r => r.json())
+            .then(j => setTemplates((j.data ?? []).filter((r: Plantilla) => !r.cliente_id)))
             .catch(() => {})
     }, [])
 
@@ -31,7 +40,15 @@ export default function NuevoInformePage() {
             const res = await fetch('/api/report-utm/bi/reports', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ nombre: nombre.trim(), descripcion: desc.trim() || null, cliente_id: clienteId || null }),
+                body: JSON.stringify({
+                    nombre: nombre.trim(),
+                    descripcion: desc.trim() || null,
+                    cliente_id: clienteId || null,
+                    source_report_id: templateId || undefined,
+                    // Campaña anclada: se guarda como filtro fijo del informe y se
+                    // aplica tanto a los leads como al cruce de gasto por campaña.
+                    ...(campaign.trim() ? { filters: { utm_campaign: campaign.trim() } } : {}),
+                }),
             })
             const json = await res.json()
             if (!res.ok) throw new Error(json.error ?? 'Error al crear')
@@ -88,6 +105,37 @@ export default function NuevoInformePage() {
                     </select>
                     <p className="text-[10px] text-muted-foreground mt-1">
                         Si eliges un cliente, el informe quedará fijo a ese cliente (no se podrá cambiar al verlo).
+                    </p>
+                </div>
+                <div>
+                    <label className="block text-xs font-medium text-muted-foreground mb-1">
+                        Campaña <span className="text-muted-foreground/50">(opcional)</span>
+                    </label>
+                    <input
+                        type="text"
+                        value={campaign}
+                        onChange={e => setCampaign(e.target.value)}
+                        placeholder="ej. Lanzamiento Verano"
+                        className="w-full px-3 py-2.5 text-sm rounded-xl bg-muted border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
+                    />
+                    <p className="text-[10px] text-muted-foreground mt-1">
+                        Ancla el informe a una campaña (filtra leads, ventas y gasto por ese nombre de campaña).
+                    </p>
+                </div>
+                <div>
+                    <label className="block text-xs font-medium text-muted-foreground mb-1">
+                        Partir de una plantilla <span className="text-muted-foreground/50">(opcional)</span>
+                    </label>
+                    <select
+                        value={templateId}
+                        onChange={e => setTemplateId(e.target.value)}
+                        className="w-full px-3 py-2.5 text-sm rounded-xl bg-muted border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
+                    >
+                        <option value="">Informe en blanco</option>
+                        {templates.map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}
+                    </select>
+                    <p className="text-[10px] text-muted-foreground mt-1">
+                        Copia los widgets y campos calculados de la plantilla; el cliente y las fechas son los de este informe.
                     </p>
                 </div>
                 <div>

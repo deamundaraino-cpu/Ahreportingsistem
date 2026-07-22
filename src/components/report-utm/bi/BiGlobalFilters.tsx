@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react'
 import { Filter, RefreshCw, SlidersHorizontal, ChevronDown, X, Lock, Plus, Save, Check } from 'lucide-react'
 import type { BiFilters } from './BiTypes'
 import type { AdvancedFilter, FilterCondition, FilterOp, FormFieldMeta } from '@/lib/report-utm/bi-metadata'
-import { FILTER_OPS, FILTERABLE_BASE_DIMS, makeFieldDim, humanizeFieldKey } from '@/lib/report-utm/bi-metadata'
+import { FILTER_OPS, FILTERABLE_BASE_DIMS, makeFieldDim, humanizeFieldKey, ADVANCED_FILTER_KEY } from '@/lib/report-utm/bi-metadata'
 import { HelpTip } from './HelpTip'
 
 interface Cliente {
@@ -27,6 +27,8 @@ interface Props {
     advancedSaved?: boolean
     /** Vista de solo lectura (link público): muestra el filtro sin editarlo. */
     readonly?: boolean
+    /** Rango de fechas congelado (link de una entrega): oculta presets y bloquea el rango. */
+    datesLocked?: boolean
 }
 
 function toISODate(d: Date): string {
@@ -83,6 +85,7 @@ function validCond(c: FilterCondition): boolean {
 export function BiGlobalFilters({
     initialFilters, onChange, clienteLocked, onClienteChange,
     advancedFilter, onAdvancedChange, onAdvancedSave, savingAdvanced, advancedSaved, readonly,
+    datesLocked,
 }: Props) {
     const [clientes, setClientes] = useState<Cliente[]>([])
     const [clienteId, setClienteId] = useState(initialFilters.cliente_id ?? '')
@@ -91,6 +94,16 @@ export function BiGlobalFilters({
     const [activePreset, setActivePreset] = useState<string | null>(
         () => detectPreset(initialFilters.date_from ?? MONTH_RANGE.from, initialFilters.date_to ?? MONTH_RANGE.to)
     )
+
+    // Claves de filtro que gestiona esta barra; el resto (ej. utm_campaign de un
+    // informe anclado a una campaña) se conserva tal cual entre cambios.
+    const [pinnedFilters] = useState<BiFilters>(() => {
+        const managed = new Set(['cliente_id', 'date_from', 'date_to', 'days', ADVANCED_FILTER_KEY])
+        return Object.fromEntries(
+            Object.entries(initialFilters).filter(([k, v]) => !managed.has(k) && v !== undefined)
+        ) as BiFilters
+    })
+    const pinnedCampaign = typeof pinnedFilters.utm_campaign === 'string' ? pinnedFilters.utm_campaign : ''
 
     const condCount = (advancedFilter.groups ?? []).reduce((n, g) => n + (g.conditions ?? []).filter(validCond).length, 0)
     const [showFilters, setShowFilters] = useState(() => condCount > 0)
@@ -123,6 +136,9 @@ export function BiGlobalFilters({
 
     function buildFilters(): BiFilters {
         return {
+            // Filtros fijos del informe (ej. la campaña anclada): se conservan al
+            // cambiar cliente/fechas, si no se perderían en cada interacción.
+            ...pinnedFilters,
             cliente_id: clienteId || undefined,
             date_from:  dateFrom,
             date_to:    dateTo,
@@ -180,9 +196,15 @@ export function BiGlobalFilters({
                 <Filter className="h-4 w-4 text-muted-foreground" />
                 <span className="text-xs font-medium text-muted-foreground">Filtros globales</span>
                 <HelpTip text="Estos filtros afectan a TODOS los widgets del informe a la vez. Elige cliente y rango de fechas, o usa los atajos Hoy/Ayer/Este mes/7d/14d/30d/90d. Pulsa Aplicar para refrescar." />
+                {pinnedCampaign && (
+                    <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 text-[10px] font-medium">
+                        <Lock className="h-2.5 w-2.5" />
+                        Campaña: {pinnedCampaign}
+                    </span>
+                )}
                 <div className="flex-1" />
                 <div className="flex flex-wrap gap-1 justify-end">
-                    {PRESETS.map(p => (
+                    {!datesLocked && PRESETS.map(p => (
                         <button
                             key={p.key}
                             onClick={() => applyPreset(p)}
@@ -232,37 +254,51 @@ export function BiGlobalFilters({
                 </div>
 
                 <div>
-                    <label className="block text-[10px] font-medium text-muted-foreground mb-1">Desde</label>
-                    <input
-                        type="date"
-                        value={dateFrom}
-                        max={dateTo || undefined}
-                        onChange={e => {
-                            const val = e.target.value
-                            if (!val) return
-                            setDateFrom(val)
-                            setActivePreset(null)
-                            onChange({ ...buildFilters(), date_from: val })
-                        }}
-                        className="w-full px-3 py-2 text-xs rounded-lg bg-muted border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
-                    />
+                    <label className="flex items-center gap-1 text-[10px] font-medium text-muted-foreground mb-1">
+                        Desde
+                        {datesLocked && <Lock className="h-2.5 w-2.5 text-emerald-500" />}
+                    </label>
+                    {datesLocked ? (
+                        <div className="w-full px-3 py-2 text-xs rounded-lg bg-muted/60 border border-border text-foreground cursor-not-allowed">{dateFrom}</div>
+                    ) : (
+                        <input
+                            type="date"
+                            value={dateFrom}
+                            max={dateTo || undefined}
+                            onChange={e => {
+                                const val = e.target.value
+                                if (!val) return
+                                setDateFrom(val)
+                                setActivePreset(null)
+                                onChange({ ...buildFilters(), date_from: val })
+                            }}
+                            className="w-full px-3 py-2 text-xs rounded-lg bg-muted border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
+                        />
+                    )}
                 </div>
 
                 <div>
-                    <label className="block text-[10px] font-medium text-muted-foreground mb-1">Hasta</label>
-                    <input
-                        type="date"
-                        value={dateTo}
-                        min={dateFrom || undefined}
-                        onChange={e => {
-                            const val = e.target.value
-                            if (!val) return
-                            setDateTo(val)
-                            setActivePreset(null)
-                            onChange({ ...buildFilters(), date_to: val })
-                        }}
-                        className="w-full px-3 py-2 text-xs rounded-lg bg-muted border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
-                    />
+                    <label className="flex items-center gap-1 text-[10px] font-medium text-muted-foreground mb-1">
+                        Hasta
+                        {datesLocked && <Lock className="h-2.5 w-2.5 text-emerald-500" />}
+                    </label>
+                    {datesLocked ? (
+                        <div className="w-full px-3 py-2 text-xs rounded-lg bg-muted/60 border border-border text-foreground cursor-not-allowed">{dateTo}</div>
+                    ) : (
+                        <input
+                            type="date"
+                            value={dateTo}
+                            min={dateFrom || undefined}
+                            onChange={e => {
+                                const val = e.target.value
+                                if (!val) return
+                                setDateTo(val)
+                                setActivePreset(null)
+                                onChange({ ...buildFilters(), date_to: val })
+                            }}
+                            className="w-full px-3 py-2 text-xs rounded-lg bg-muted border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
+                        />
+                    )}
                 </div>
 
                 <div className="flex items-end">

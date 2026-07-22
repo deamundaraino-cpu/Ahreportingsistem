@@ -13,6 +13,7 @@ import { TableWidget }     from './widgets/TableWidget'
 import { FunnelWidget }    from './widgets/FunnelWidget'
 import { SlicerWidget }    from './widgets/SlicerWidget'
 import { TextWidget }      from './widgets/TextWidget'
+import { SummaryWidget }   from './widgets/SummaryWidget'
 
 interface Props {
     widget: BiWidget
@@ -179,6 +180,8 @@ function WidgetRenderer({
         case 'heading':
         case 'text':
             return <TextWidget type={widget.type} title={widget.title} config={widget.config} />
+        case 'summary':
+            return <SummaryWidget title={widget.title} config={widget.config} filters={filters} />
         default:
             return (
                 <div className="rounded-2xl border border-border bg-muted p-5 text-xs text-muted-foreground">

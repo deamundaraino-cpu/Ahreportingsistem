@@ -11,7 +11,7 @@ import {
     DialogTitle,
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
-import { getOrCreatePublicToken, savePublicTabConfig } from '../_actions'
+import { getOrCreatePublicToken, savePublicConfig, type PublicBranding } from '../_actions'
 
 interface Tab {
     id: string
@@ -19,14 +19,28 @@ interface Tab {
     keyword_meta: string
 }
 
+// Paleta de acentos disponible para el link público del cliente.
+const ACCENTS = [
+    { hex: '#3b82f6', name: 'Azul' },
+    { hex: '#10b981', name: 'Esmeralda' },
+    { hex: '#8b5cf6', name: 'Violeta' },
+    { hex: '#f59e0b', name: 'Ámbar' },
+    { hex: '#ef4444', name: 'Rojo' },
+    { hex: '#ec4899', name: 'Rosa' },
+    { hex: '#14b8a6', name: 'Teal' },
+    { hex: '#64748b', name: 'Gris' },
+]
+
 export function PublicLinkButton({
     clienteId,
     tabs,
     initialTabIds = [],
+    initialBranding = {},
 }: {
     clienteId: string
     tabs: Tab[]
     initialTabIds?: string[]
+    initialBranding?: PublicBranding
 }) {
     const [open, setOpen] = useState(false)
     const [loading, setLoading] = useState(false)
@@ -35,6 +49,11 @@ export function PublicLinkButton({
     const [selectedTabIds, setSelectedTabIds] = useState<string[]>(initialTabIds)
     const [saving, setSaving] = useState(false)
     const [saved, setSaved] = useState(false)
+    // Apariencia del link público
+    const [logoUrl, setLogoUrl]     = useState(initialBranding.logo_url ?? '')
+    const [accent, setAccent]       = useState(initialBranding.accent ?? '')
+    const [title, setTitle]         = useState(initialBranding.title ?? '')
+    const [welcome, setWelcome]     = useState(initialBranding.welcome_text ?? '')
 
     const handleOpen = async () => {
         setOpen(true)
@@ -63,7 +82,15 @@ export function PublicLinkButton({
 
     const handleSave = async () => {
         setSaving(true)
-        await savePublicTabConfig(clienteId, selectedTabIds)
+        await savePublicConfig(clienteId, {
+            tabIds: selectedTabIds,
+            branding: {
+                logo_url: logoUrl.trim(),
+                accent: accent.trim(),
+                title: title.trim(),
+                welcome_text: welcome.trim(),
+            },
+        })
         setSaving(false)
         setSaved(true)
     }
@@ -83,7 +110,7 @@ export function PublicLinkButton({
             </Button>
 
             <Dialog open={open} onOpenChange={setOpen}>
-                <DialogContent className="bg-background border-border text-foreground sm:max-w-md">
+                <DialogContent className="bg-background border-border text-foreground sm:max-w-md max-h-[85vh] overflow-y-auto">
                     <DialogHeader>
                         <DialogTitle>Link Público</DialogTitle>
                         <DialogDescription className="text-muted-foreground">
@@ -162,6 +189,69 @@ export function PublicLinkButton({
                                     : `${selectedTabIds.length} pestaña${selectedTabIds.length > 1 ? 's' : ''} seleccionada${selectedTabIds.length > 1 ? 's' : ''}`}
                             </p>
                         )}
+                    </div>
+
+                    {/* Apariencia del link público */}
+                    <div className="border-t border-border pt-4">
+                        <p className="text-xs text-muted-foreground mb-3 font-medium">Apariencia para este cliente:</p>
+
+                        <div className="space-y-3">
+                            <div>
+                                <label className="block text-[10px] font-medium text-muted-foreground mb-1">Logo del cliente (URL)</label>
+                                <Input
+                                    value={logoUrl}
+                                    onChange={e => { setLogoUrl(e.target.value); setSaved(false) }}
+                                    placeholder="https://…/logo.png"
+                                    className="bg-card border-border h-9 text-xs"
+                                />
+                            </div>
+
+                            <div>
+                                <label className="block text-[10px] font-medium text-muted-foreground mb-1">Color de acento</label>
+                                <div className="flex flex-wrap gap-1.5">
+                                    {ACCENTS.map(a => (
+                                        <button
+                                            key={a.hex}
+                                            title={a.name}
+                                            onClick={() => { setAccent(a.hex); setSaved(false) }}
+                                            className={`h-7 w-7 rounded-full border-2 transition-all ${
+                                                accent === a.hex ? 'border-foreground scale-110' : 'border-transparent'
+                                            }`}
+                                            style={{ backgroundColor: a.hex }}
+                                        />
+                                    ))}
+                                    {accent && (
+                                        <button
+                                            onClick={() => { setAccent(''); setSaved(false) }}
+                                            className="h-7 px-2 rounded-full border border-border text-[10px] text-muted-foreground hover:text-foreground"
+                                        >
+                                            Quitar
+                                        </button>
+                                    )}
+                                </div>
+                            </div>
+
+                            <div>
+                                <label className="block text-[10px] font-medium text-muted-foreground mb-1">Título del encabezado</label>
+                                <Input
+                                    value={title}
+                                    onChange={e => { setTitle(e.target.value); setSaved(false) }}
+                                    placeholder="ej. Reporte de Resultados"
+                                    className="bg-card border-border h-9 text-xs"
+                                />
+                            </div>
+
+                            <div>
+                                <label className="block text-[10px] font-medium text-muted-foreground mb-1">Mensaje de bienvenida</label>
+                                <textarea
+                                    value={welcome}
+                                    onChange={e => { setWelcome(e.target.value); setSaved(false) }}
+                                    placeholder="Texto que verá el cliente arriba del reporte…"
+                                    rows={3}
+                                    className="w-full px-3 py-2 text-xs rounded-md bg-card border border-border text-foreground resize-none focus:outline-none focus:ring-2 focus:ring-indigo-500/40"
+                                />
+                            </div>
+                        </div>
                     </div>
 
                     <div className="flex justify-end gap-2 pt-2 border-t border-border">

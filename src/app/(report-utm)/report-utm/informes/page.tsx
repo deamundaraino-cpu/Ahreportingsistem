@@ -26,6 +26,8 @@ export default async function InformesPage() {
     const isTpl = (r: { is_template?: boolean; cliente_id?: string | null }) => r.is_template ?? !r.cliente_id
     const templates = (reports ?? []).filter(isTpl)
     const custom    = (reports ?? []).filter((r) => !isTpl(r))
+    // Las plantillas sin autor son las del sistema: no se pueden eliminar.
+    const isSystemTpl = (r: { created_by?: string | null }) => !r.created_by
 
     return (
         <div className="space-y-8">
@@ -55,15 +57,15 @@ export default async function InformesPage() {
             <section>
                 <div className="flex items-center gap-2 mb-4">
                     <LayoutTemplate className="h-4 w-4 text-muted-foreground" />
-                    <h2 className="text-sm font-semibold text-foreground">Plantillas del sistema</h2>
-                    <HelpTip text="Informes prearmados listos para usar (Rendimiento por Fuente, Tendencia de Leads, ROAS por Campaña, Funnel). Ábrelos para verlos o duplica sus widgets en tus propios informes." />
+                    <h2 className="text-sm font-semibold text-foreground">Plantillas</h2>
+                    <HelpTip text="Informes prearmados listos para usar. Las del sistema no se pueden borrar; las que creas tú desde un informe (botón 'Plantilla' en modo edición) sí. Al crear un informe puedes partir de cualquiera de ellas." />
                     <span className="px-1.5 py-0.5 rounded-md bg-muted text-[10px] font-mono text-muted-foreground">
                         {templates.length}
                     </span>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
                     {templates.map((r) => (
-                        <ReportCard key={r.id} report={r} isTemplate />
+                        <ReportCard key={r.id} report={r} isTemplate showActions={!isSystemTpl(r)} />
                     ))}
                 </div>
             </section>
