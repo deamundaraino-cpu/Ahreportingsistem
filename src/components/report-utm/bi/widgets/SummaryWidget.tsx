@@ -6,8 +6,9 @@ import type { BiFilters, WidgetConfig } from '../BiTypes'
 import {
     appendUtmFilters, utmFilterSignature, appendFieldFilters, fieldFilterSignature,
     appendDimFilters, dimFilterSignature, appendAdvancedFilter, advancedFilterSignature,
-    widgetAdvancedSignature, isLowerBetter,
+    widgetAdvancedSignature, withCampaignFilter, isLowerBetter,
 } from '@/lib/report-utm/bi-metadata'
+import { useBiQueryBase } from '../BiQueryContext'
 
 interface Props {
     title: string
@@ -87,6 +88,7 @@ export function buildSummarySentences(cur: Totals, prev: Totals): string[] {
  * enviar el informe al cliente.
  */
 export function SummaryWidget({ title, config, filters }: Props) {
+    const queryBase = useBiQueryBase()
     // Texto manual: no se consulta nada (y no hay estado de carga).
     const manual = config.text?.trim()
 
@@ -100,7 +102,7 @@ export function SummaryWidget({ title, config, filters }: Props) {
     const fieldSig = fieldFilterSignature(filters)
     const dimSig   = dimFilterSignature(filters)
     const advSig   = advancedFilterSignature(filters)
-    const wAdvSig  = widgetAdvancedSignature(config.advanced_filter)
+    const wAdvSig  = widgetAdvancedSignature(withCampaignFilter(config.advanced_filter, config.campaign_filter))
 
     useEffect(() => {
         if (manual) return
@@ -118,9 +120,9 @@ export function SummaryWidget({ title, config, filters }: Props) {
         appendUtmFilters(params, filters)
         appendFieldFilters(params, filters)
         appendDimFilters(params, filters)
-        appendAdvancedFilter(params, filters, config.advanced_filter)
+        appendAdvancedFilter(params, filters, withCampaignFilter(config.advanced_filter, config.campaign_filter))
 
-        fetch(`/api/report-utm/bi/query?${params}`)
+        fetch(`${queryBase}?${params}`)
             .then(r => r.json())
             .then(json => {
                 const cur  = (json.data?.current?.[0] ?? {}) as Totals
@@ -130,7 +132,7 @@ export function SummaryWidget({ title, config, filters }: Props) {
             .catch(() => setError('Error al cargar'))
             .finally(() => setLoading(false))
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [manual, filters.cliente_id, filters.date_from, filters.date_to, utmSig, fieldSig, dimSig, advSig, wAdvSig])
+    }, [queryBase, manual, filters.cliente_id, filters.date_from, filters.date_to, utmSig, fieldSig, dimSig, advSig, wAdvSig])
 
     const accent = config.accent || '#10b981'
 

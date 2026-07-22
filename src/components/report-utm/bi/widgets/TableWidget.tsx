@@ -8,9 +8,11 @@ import type { BiMetric, BiDimension, BiQueryRow } from '@/lib/report-utm/bi-meta
 import {
     METRIC_META, DIMENSION_META, appendUtmFilters, utmFilterSignature, applyValueFilters,
     appendFieldFilters, fieldFilterSignature, appendAdvancedFilter, advancedFilterSignature,
-    appendDimFilters, dimFilterSignature, widgetAdvancedSignature,
+    appendDimFilters, dimFilterSignature, widgetAdvancedSignature, withCampaignFilter,
     fieldMetricLabel, fieldMetricFormat, fieldDimLabel, isFieldMetric, parseFieldMetric,
+    isAdditiveMetric,
 } from '@/lib/report-utm/bi-metadata'
+import { useBiQueryBase } from '../BiQueryContext'
 
 interface Props {
     title: string
@@ -26,8 +28,16 @@ const TABLE_MAX_H: Record<number, number> = { 1: 320, 2: 540, 3: 760 }
 
 type ColFormat = 'number' | 'currency' | 'percent' | 'ratio'
 
-function fmtVal(value: number | null | undefined, format: ColFormat): string {
+/** `decimals` (campos calculados) fija los decimales y desactiva el abreviado k/M. */
+function fmtVal(value: number | null | undefined, format: ColFormat, decimals?: number): string {
     if (value === null || value === undefined) return '—'
+    if (decimals !== undefined) {
+        const n = value.toLocaleString('es-AR', { minimumFractionDigits: decimals, maximumFractionDigits: decimals })
+        if (format === 'currency') return `$${n}`
+        if (format === 'percent')  return `${n}%`
+        if (format === 'ratio')    return `${n}x`
+        return n
+    }
     if (format === 'currency') return `$${value.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
     if (format === 'percent')  return `${value.toFixed(1)}%`
     if (format === 'ratio')    return `${value.toFixed(2)}x`
@@ -36,18 +46,18 @@ function fmtVal(value: number | null | undefined, format: ColFormat): string {
     return Math.round(value).toLocaleString('es-AR')
 }
 
-const ADDITIVE = new Set(['leads_count', 'sales_count', 'revenue', 'spend', 'clicks', 'impressions'])
-
 export function TableWidget({ title, config, filters, calculatedFields = [], h = 1 }: Props) {
+    const queryBase = useBiQueryBase()
     const [rows, setRows]     = useState<BiQueryRow[]>([])
     const [loading, setLoading] = useState(true)
     const [error, setError]   = useState<string | null>(null)
     const [sortKey, setSortKey] = useState<string | null>(null)
-    const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
+    const [sortDir, setSortDir] = useState<'asc' | 'desc'>(config.sort === 'asc' ? 'asc' : 'desc')
 
     const rawMetrics = config.metric ?? 'leads_count'
     const colKeys = rawMetrics.split(',').map(s => s.trim()).filter(Boolean)
     const dimension = config.dimension ?? 'utm_source'
+    const rowLimit = config.limit ?? 100
     const showTotals = config.show_totals !== false // por defecto sí
     const conditional = config.conditional ?? []
 
@@ -78,7 +88,8 @@ export function TableWidget({ title, config, filters, calculatedFields = [], h =
         const params = new URLSearchParams({
             metrics: [...baseMetrics, ...fieldMetricCols].join(','),
             dimension,
-            limit: '100',
+            limit: String(rowLimit),
+            sort: config.sort === 'asc' ? 'asc' : 'desc',
         })
         if (filters.cliente_id) params.set('cliente_id', filters.cliente_id)
         if (filters.date_from)  params.set('date_from', filters.date_from)
@@ -86,15 +97,15 @@ export function TableWidget({ title, config, filters, calculatedFields = [], h =
         appendUtmFilters(params, filters)
         appendFieldFilters(params, filters)
         appendDimFilters(params, filters)
-        appendAdvancedFilter(params, filters, config.advanced_filter)
+        appendAdvancedFilter(params, filters, withCampaignFilter(config.advanced_filter, config.campaign_filter))
         for (const c of usedCalc) params.set(`calc[${c.name}]`, c.expression)
 
-        fetch(`/api/report-utm/bi/query?${params}`)
+        fetch(`${queryBase}?${params}`)
             .then(r => r.json())
-            .then(json => setRows(json.data ?? []))
+            .then(json => setRows(Array.isArray(json.data) ? json.data : []))
             .catch(() => setError('Error al cargar'))
             .finally(() => setLoading(false))
-    }, [rawMetrics, dimension, filters.cliente_id, filters.date_from, filters.date_to, utmFilterSignature(filters), fieldFilterSignature(filters), dimFilterSignature(filters), advancedFilterSignature(filters), widgetAdvancedSignature(config.advanced_filter)])
+    }, [queryBase, rawMetrics, dimension, rowLimit, config.sort, filters.cliente_id, filters.date_from, filters.date_to, utmFilterSignature(filters), fieldFilterSignature(filters), dimFilterSignature(filters), advancedFilterSignature(filters), widgetAdvancedSignature(withCampaignFilter(config.advanced_filter, config.campaign_filter))])
 
     // Filtros por valor: oculta filas que no cumplan (ej. spend > 0)
     const filteredRows = applyValueFilters(rows, config.value_filters)
@@ -114,16 +125,38 @@ export function TableWidget({ title, config, filters, calculatedFields = [], h =
     // Totales: suma aditivas; ratios se recalculan sobre los totales base.
     function computeTotals(): Record<string, number> {
         const t: Record<string, number> = {}
+        const sumOf = (key: string) => filteredRows.reduce((s, r) => s + Number(r[key] ?? 0), 0)
         for (const m of baseMetrics) {
-            if (ADDITIVE.has(m)) t[m] = filteredRows.reduce((s, r) => s + Number(r[m] ?? 0), 0)
+            if (isAdditiveMetric(m)) t[m] = round2(sumOf(m))
         }
+        // Bases de los ratios: puede que no sean columnas visibles de la tabla
+        // (una tabla de solo CPL igual necesita gasto y leads para el total).
+        const base = (key: string) => (key in t ? t[key] : sumOf(key))
+        const spend = base('spend')
+        const leads = base('leads_count')
+        const sales = base('sales_count')
+        const revenue = base('revenue')
+        const clicks = base('clicks')
+        const impressions = base('impressions')
+
         // ratios derivados
-        if (colKeys.includes('cpl'))  t.cpl  = t.leads_count ? round2(t.spend / t.leads_count) : 0
-        if (colKeys.includes('cpa'))  t.cpa  = t.sales_count ? round2(t.spend / t.sales_count) : 0
-        if (colKeys.includes('roas')) t.roas = t.spend ? round2(t.revenue / t.spend) : 0
-        if (colKeys.includes('conversion_rate')) t.conversion_rate = t.leads_count ? round2((t.sales_count / t.leads_count) * 100) : 0
-        if (colKeys.includes('cpc'))  t.cpc  = t.clicks ? round2(t.spend / t.clicks) : 0
-        if (colKeys.includes('cpm'))  t.cpm  = t.impressions ? round2((t.spend / t.impressions) * 1000) : 0
+        if (colKeys.includes('cpl'))  t.cpl  = leads ? round2(spend / leads) : 0
+        if (colKeys.includes('cpa'))  t.cpa  = sales ? round2(spend / sales) : 0
+        if (colKeys.includes('roas')) t.roas = spend ? round2(revenue / spend) : 0
+        if (colKeys.includes('conversion_rate')) t.conversion_rate = leads ? round2((sales / leads) * 100) : 0
+        if (colKeys.includes('cpc'))  t.cpc  = clicks ? round2(spend / clicks) : 0
+        if (colKeys.includes('cpm'))  t.cpm  = impressions ? round2((spend / impressions) * 1000) : 0
+        if (colKeys.includes('ctr'))  t.ctr  = impressions ? round2((clicks / impressions) * 100) : 0
+        // Variantes Hotmart: mismos ratios sobre la facturación agregada.
+        if (colKeys.includes('hotmart_roas') || colKeys.includes('hotmart_cpa') || colKeys.includes('hotmart_roi')) {
+            const hRevenue = base('hotmart_revenue')
+            const hSales = base('hotmart_sales')
+            if (colKeys.includes('hotmart_roas')) t.hotmart_roas = spend ? round2(hRevenue / spend) : 0
+            if (colKeys.includes('hotmart_cpa'))  t.hotmart_cpa  = hSales ? round2(spend / hSales) : 0
+            if (colKeys.includes('hotmart_roi'))  t.hotmart_roi  = spend ? round2(((hRevenue - spend) / spend) * 100) : 0
+        }
+        // La frecuencia necesita alcance, que NO es sumable entre filas (personas
+        // únicas se contarían dos veces) → se deja sin total en la fila Total.
         // Métricas de campo: solo suma y respuestas (count) son aditivas por fila.
         for (const key of fieldMetricCols) {
             const agg = parseFieldMetric(key)?.agg
@@ -198,7 +231,7 @@ export function TableWidget({ title, config, filters, calculatedFields = [], h =
                                         const v = row[key] as number | null | undefined
                                         return (
                                             <td key={key} className={`px-5 py-2.5 text-right text-xs font-mono tabular-nums text-foreground/90 ${cellColor(key, v)}`}>
-                                                {fmtVal(v, colFormat(key))}
+                                                {fmtVal(v, colFormat(key), calcMap.get(key)?.decimals)}
                                             </td>
                                         )
                                     })}
@@ -211,7 +244,7 @@ export function TableWidget({ title, config, filters, calculatedFields = [], h =
                                     <td className="px-5 py-2.5 text-foreground">Total</td>
                                     {colKeys.map(key => (
                                         <td key={key} className="px-5 py-2.5 text-right font-mono tabular-nums text-foreground">
-                                            {key in totals ? fmtVal(totals[key], colFormat(key)) : '—'}
+                                            {key in totals ? fmtVal(totals[key], colFormat(key), calcMap.get(key)?.decimals) : '—'}
                                         </td>
                                     ))}
                                 </tr>

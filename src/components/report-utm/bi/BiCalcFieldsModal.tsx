@@ -1,15 +1,16 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { X, Plus, Trash2, Calculator } from 'lucide-react'
+import { X, Plus, Trash2, Calculator, Pencil, Copy, Check } from 'lucide-react'
 import type { CalculatedField } from './BiTypes'
 import type { FormFieldMeta } from '@/lib/report-utm/bi-metadata'
-import { METRIC_META, evaluateExpression, fieldMetricAlias, humanizeFieldKey } from '@/lib/report-utm/bi-metadata'
+import { evaluateExpression } from '@/lib/report-utm/bi-metadata'
+import { BiFormulaInput } from './BiFormulaInput'
 import { HelpTip } from './HelpTip'
 
 interface Props {
     fields: CalculatedField[]
-    /** Cliente vigente (para ofrecer sus campos de formulario numéricos). */
+    /** Cliente vigente (para ofrecer sus campos de formulario y la vista previa real). */
     clienteId?: string
     dateFrom?: string
     dateTo?: string
@@ -17,24 +18,34 @@ interface Props {
     onClose: () => void
 }
 
+type CalcFormat = 'number' | 'currency' | 'percent' | 'ratio'
+
 function genId(): string {
     return Math.random().toString(36).slice(2, 10)
 }
 
-const BASE_METRICS = Object.keys(METRIC_META)
-
-// Valores de ejemplo para previsualizar la fórmula
+// Valores de respaldo para previsualizar cuando no hay cliente seleccionado.
 const SAMPLE: Record<string, number> = {
     leads_count: 100, sales_count: 12, revenue: 3600, spend: 900,
     clicks: 800, impressions: 40000, cpl: 9, cpa: 75, roas: 4, conversion_rate: 12, cpc: 1.12, cpm: 22.5,
+}
+
+const FORMAT_LABEL: Record<CalcFormat, string> = {
+    number: 'Número', currency: 'Moneda', percent: 'Porcentaje', ratio: 'Ratio (x)',
 }
 
 export function BiCalcFieldsModal({ fields: initial, clienteId, dateFrom, dateTo, onSave, onClose }: Props) {
     const [fields, setFields] = useState<CalculatedField[]>(initial)
     const [name, setName] = useState('')
     const [expr, setExpr] = useState('')
-    const [fmt, setFmt]   = useState<'number' | 'currency' | 'percent' | 'ratio'>('number')
+    const [fmt, setFmt]   = useState<CalcFormat>('number')
+    const [decimals, setDecimals] = useState<string>('')
+    /** id del campo que se está editando; null = alta de uno nuevo. */
+    const [editingId, setEditingId] = useState<string | null>(null)
     const [formFields, setFormFields] = useState<FormFieldMeta[]>([])
+    // Vista previa con datos reales del cliente/rango.
+    const [realPreview, setRealPreview] = useState<number | null>(null)
+    const [previewing, setPreviewing] = useState(false)
 
     useEffect(() => {
         if (!clienteId) { setFormFields([]); return }
@@ -49,26 +60,76 @@ export function BiCalcFieldsModal({ fields: initial, clienteId, dateFrom, dateTo
         return () => { cancelled = true }
     }, [clienteId, dateFrom, dateTo])
 
-    // Alias de métricas de campo numéricas usables dentro de las expresiones.
-    const fieldAliases = formFields
-        .filter(f => f.type === 'number')
-        .flatMap(f => ([
-            { alias: fieldMetricAlias('sum', f.key), desc: `Suma de ${humanizeFieldKey(f.label)}` },
-            { alias: fieldMetricAlias('avg', f.key), desc: `Promedio de ${humanizeFieldKey(f.label)}` },
-        ]))
+    // Previsualización con los datos REALES del cliente y rango (debounced), en
+    // vez de números de ejemplo: así se ve si la fórmula da un valor plausible.
+    const sampleValue = expr ? evaluateExpression(expr, SAMPLE) : null
+    useEffect(() => {
+        if (!clienteId || !expr.trim() || sampleValue === null) { setRealPreview(null); return }
+        let cancelled = false
+        setPreviewing(true)
+        const t = setTimeout(() => {
+            const params = new URLSearchParams({ metrics: '', dimension: 'none', cliente_id: clienteId })
+            if (dateFrom) params.set('date_from', dateFrom)
+            if (dateTo)   params.set('date_to', dateTo)
+            params.set('calc[__preview]', expr.trim())
+            fetch(`/api/report-utm/bi/query?${params}`)
+                .then(r => r.json())
+                .then(json => {
+                    if (cancelled) return
+                    const row = Array.isArray(json.data) ? json.data[0] : null
+                    const v = row?.__preview
+                    setRealPreview(typeof v === 'number' ? v : null)
+                })
+                .catch(() => { if (!cancelled) setRealPreview(null) })
+                .finally(() => { if (!cancelled) setPreviewing(false) })
+        }, 400)
+        return () => { cancelled = true; clearTimeout(t) }
+    }, [expr, clienteId, dateFrom, dateTo, sampleValue])
 
-    const preview = expr ? evaluateExpression(expr, SAMPLE) : null
     const validName = /^[a-z_][a-z0-9_]*$/i.test(name)
-    const canAdd = validName && expr.trim() && preview !== null && !fields.some(f => f.name === name)
+    // Al editar, el propio campo no cuenta como nombre duplicado.
+    const nameTaken = fields.some(f => f.name === name && f.id !== editingId)
+    const canSubmit = validName && !nameTaken && expr.trim() && sampleValue !== null
 
-    function add() {
-        if (!canAdd) return
-        setFields(prev => [...prev, { id: genId(), name: name.trim(), expression: expr.trim(), format: fmt }])
-        setName(''); setExpr(''); setFmt('number')
+    function resetForm() {
+        setName(''); setExpr(''); setFmt('number'); setDecimals(''); setEditingId(null)
+    }
+
+    function submit() {
+        if (!canSubmit) return
+        const dec = decimals.trim() === '' ? undefined : Math.max(0, Math.min(4, Number(decimals) || 0))
+        const next: CalculatedField = {
+            id: editingId ?? genId(),
+            name: name.trim(),
+            expression: expr.trim(),
+            format: fmt,
+            ...(dec !== undefined ? { decimals: dec } : {}),
+        }
+        setFields(prev => editingId
+            ? prev.map(f => (f.id === editingId ? next : f))
+            : [...prev, next])
+        resetForm()
+    }
+
+    function startEdit(f: CalculatedField) {
+        setEditingId(f.id)
+        setName(f.name)
+        setExpr(f.expression)
+        setFmt((f.format ?? 'number') as CalcFormat)
+        setDecimals(f.decimals === undefined ? '' : String(f.decimals))
+    }
+
+    function duplicate(f: CalculatedField) {
+        // Nombre libre: _copia, _copia_2, … (el nombre es el identificador).
+        let candidate = `${f.name}_copia`
+        let n = 2
+        while (fields.some(x => x.name === candidate)) candidate = `${f.name}_copia_${n++}`
+        setFields(prev => [...prev, { ...f, id: genId(), name: candidate }])
     }
 
     function remove(id: string) {
         setFields(prev => prev.filter(f => f.id !== id))
+        if (editingId === id) resetForm()
     }
 
     return (
@@ -79,7 +140,7 @@ export function BiCalcFieldsModal({ fields: initial, clienteId, dateFrom, dateTo
                     <div className="flex items-center gap-2">
                         <Calculator className="h-4 w-4 text-emerald-500" />
                         <p className="text-sm font-semibold text-foreground">Campos calculados</p>
-                        <HelpTip text="Crea tus propias métricas combinando las existentes con + - * / y paréntesis. Ej: 'revenue / sales_count' = ticket promedio. Luego las usas como columnas en las tablas (aparecen con ∑)." />
+                        <HelpTip text="Crea tus propias métricas combinando las existentes con + - * / y paréntesis. Ej: 'revenue / sales_count' = ticket promedio. Usa el botón Métrica para insertarlas sin escribirlas de memoria. Luego las eliges como métrica en cualquier widget (aparecen con ∑)." />
                     </div>
                     <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-accent text-muted-foreground transition-colors">
                         <X className="h-4 w-4" />
@@ -91,24 +152,56 @@ export function BiCalcFieldsModal({ fields: initial, clienteId, dateFrom, dateTo
                     {fields.length > 0 && (
                         <div className="space-y-2">
                             {fields.map(f => (
-                                <div key={f.id} className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg bg-muted/40 border border-border">
+                                <div
+                                    key={f.id}
+                                    className={`flex items-center justify-between gap-2 px-3 py-2 rounded-lg border transition-colors ${
+                                        editingId === f.id
+                                            ? 'bg-emerald-50 dark:bg-emerald-500/10 border-emerald-500/50'
+                                            : 'bg-muted/40 border-border'
+                                    }`}
+                                >
                                     <div className="min-w-0">
-                                        <p className="text-xs font-semibold text-foreground truncate">{f.name}</p>
+                                        <p className="text-xs font-semibold text-foreground truncate">
+                                            {f.name}
+                                            <span className="ml-1.5 font-normal text-[10px] text-muted-foreground">
+                                                {FORMAT_LABEL[(f.format ?? 'number') as CalcFormat]}
+                                                {f.decimals !== undefined ? ` · ${f.decimals} dec` : ''}
+                                            </span>
+                                        </p>
                                         <p className="text-[10px] font-mono text-muted-foreground truncate">{f.expression}</p>
                                     </div>
-                                    <button onClick={() => remove(f.id)} className="p-1 rounded text-muted-foreground hover:text-red-500 transition-colors">
-                                        <Trash2 className="h-3.5 w-3.5" />
-                                    </button>
+                                    <div className="flex items-center gap-0.5 shrink-0">
+                                        <button onClick={() => startEdit(f)} title="Editar"
+                                            className="p-1 rounded text-muted-foreground hover:text-emerald-600 transition-colors">
+                                            <Pencil className="h-3.5 w-3.5" />
+                                        </button>
+                                        <button onClick={() => duplicate(f)} title="Duplicar"
+                                            className="p-1 rounded text-muted-foreground hover:text-foreground transition-colors">
+                                            <Copy className="h-3.5 w-3.5" />
+                                        </button>
+                                        <button onClick={() => remove(f.id)} title="Eliminar"
+                                            className="p-1 rounded text-muted-foreground hover:text-red-500 transition-colors">
+                                            <Trash2 className="h-3.5 w-3.5" />
+                                        </button>
+                                    </div>
                                 </div>
                             ))}
                         </div>
                     )}
 
-                    {/* Nuevo campo */}
-                    <div className="rounded-xl border border-dashed border-border p-4 space-y-3">
-                        <div className="grid grid-cols-2 gap-2">
+                    {/* Alta / edición */}
+                    <div className={`rounded-xl border p-4 space-y-3 ${editingId ? 'border-emerald-500/50' : 'border-dashed border-border'}`}>
+                        {editingId && (
+                            <div className="flex items-center justify-between">
+                                <p className="text-[11px] font-medium text-emerald-600 dark:text-emerald-400">Editando campo</p>
+                                <button onClick={resetForm} className="text-[10px] text-muted-foreground hover:text-foreground">
+                                    Cancelar edición
+                                </button>
+                            </div>
+                        )}
+                        <div className="grid grid-cols-3 gap-2">
                             <div>
-                                <label className="block text-[10px] font-medium text-muted-foreground mb-1">Nombre (sin espacios)</label>
+                                <label className="block text-[10px] font-medium text-muted-foreground mb-1">Nombre</label>
                                 <input
                                     type="text" value={name} onChange={e => setName(e.target.value)}
                                     placeholder="ticket_promedio"
@@ -118,54 +211,57 @@ export function BiCalcFieldsModal({ fields: initial, clienteId, dateFrom, dateTo
                             <div>
                                 <label className="block text-[10px] font-medium text-muted-foreground mb-1">Formato</label>
                                 <select
-                                    value={fmt} onChange={e => setFmt(e.target.value as typeof fmt)}
+                                    value={fmt} onChange={e => setFmt(e.target.value as CalcFormat)}
                                     className="w-full px-2.5 py-1.5 text-xs rounded-lg bg-muted border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
                                 >
-                                    <option value="number">Número</option>
-                                    <option value="currency">Moneda</option>
-                                    <option value="percent">Porcentaje</option>
-                                    <option value="ratio">Ratio (x)</option>
+                                    {(Object.keys(FORMAT_LABEL) as CalcFormat[]).map(k => (
+                                        <option key={k} value={k}>{FORMAT_LABEL[k]}</option>
+                                    ))}
                                 </select>
                             </div>
+                            <div>
+                                <label className="block text-[10px] font-medium text-muted-foreground mb-1">Decimales</label>
+                                <input
+                                    type="number" min={0} max={4} value={decimals}
+                                    onChange={e => setDecimals(e.target.value)}
+                                    placeholder="auto"
+                                    className="w-full px-2.5 py-1.5 text-xs rounded-lg bg-muted border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
+                                />
+                            </div>
                         </div>
+                        {!validName && name && (
+                            <p className="text-[10px] text-red-500">El nombre solo admite letras, números y guion bajo, y no puede empezar por número.</p>
+                        )}
+                        {nameTaken && (
+                            <p className="text-[10px] text-red-500">Ya existe un campo con ese nombre.</p>
+                        )}
                         <div>
                             <label className="block text-[10px] font-medium text-muted-foreground mb-1">Expresión</label>
-                            <input
-                                type="text" value={expr} onChange={e => setExpr(e.target.value)}
-                                placeholder="revenue / sales_count"
-                                className="w-full px-2.5 py-1.5 text-xs font-mono rounded-lg bg-muted border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
-                            />
-                            <div className="flex items-center justify-between mt-1.5">
-                                <p className="text-[10px] text-muted-foreground">
-                                    Previsualización: {preview !== null ? <span className="font-mono text-emerald-600 dark:text-emerald-400">{preview}</span> : <span className="text-red-500">expresión inválida</span>}
+                            <BiFormulaInput value={expr} onChange={setExpr} formFields={formFields} />
+                            <div className="flex items-center justify-between mt-1.5 gap-2">
+                                <p className="text-[10px] text-muted-foreground min-w-0 truncate">
+                                    {sampleValue === null && expr
+                                        ? <span className="text-red-500">Expresión inválida</span>
+                                        : clienteId
+                                            ? previewing
+                                                ? 'Calculando…'
+                                                : realPreview !== null
+                                                    ? <>En este período: <span className="font-mono text-emerald-600 dark:text-emerald-400">{realPreview}</span></>
+                                                    : expr ? 'Sin datos en el período' : ''
+                                            : expr
+                                                ? <>Ejemplo: <span className="font-mono text-emerald-600 dark:text-emerald-400">{sampleValue}</span></>
+                                                : ''}
                                 </p>
                                 <button
-                                    onClick={add}
-                                    disabled={!canAdd}
-                                    className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-medium text-white nav-active-emerald disabled:opacity-40"
+                                    onClick={submit}
+                                    disabled={!canSubmit}
+                                    className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-medium text-white nav-active-emerald disabled:opacity-40 shrink-0"
                                 >
-                                    <Plus className="h-3 w-3" />
-                                    Agregar
+                                    {editingId ? <Check className="h-3 w-3" /> : <Plus className="h-3 w-3" />}
+                                    {editingId ? 'Guardar cambios' : 'Agregar'}
                                 </button>
                             </div>
                         </div>
-                        <details className="text-[10px] text-muted-foreground">
-                            <summary className="cursor-pointer hover:text-foreground">Métricas disponibles</summary>
-                            <p className="mt-1 font-mono leading-relaxed">{BASE_METRICS.join(', ')}</p>
-                            {fieldAliases.length > 0 && (
-                                <div className="mt-2">
-                                    <p className="text-[10px] font-semibold text-foreground/70 not-italic mb-0.5">Campos del formulario (numéricos)</p>
-                                    <ul className="space-y-0.5">
-                                        {fieldAliases.map(fa => (
-                                            <li key={fa.alias} className="flex items-baseline gap-1.5">
-                                                <code className="font-mono text-emerald-600 dark:text-emerald-400">{fa.alias}</code>
-                                                <span className="opacity-70">— {fa.desc}</span>
-                                            </li>
-                                        ))}
-                                    </ul>
-                                </div>
-                            )}
-                        </details>
                     </div>
                 </div>
 

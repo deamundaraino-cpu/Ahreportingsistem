@@ -108,6 +108,7 @@ export default async function PublicBiDeliveryPage({ params }: Params) {
                 <BiReportCanvas
                     report={report}
                     readonly
+                    publicToken={token}
                     lockedDates={{ from: delivery.date_from, to: delivery.date_to }}
                 />
 

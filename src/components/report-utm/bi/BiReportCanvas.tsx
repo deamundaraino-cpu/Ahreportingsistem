@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useCallback } from 'react'
-import { Plus, Save, Pencil, Check, X, FileDown, Share2, Calculator, Clock, Info, LayoutTemplate } from 'lucide-react'
+import { Plus, Save, Pencil, Check, X, FileDown, Share2, Calculator, Clock, Info, LayoutTemplate, Zap } from 'lucide-react'
 import { BiShareModal } from './BiShareModal'
 import { BiScheduleModal } from './BiScheduleModal'
 import type { BiSchedule } from './BiTypes'
@@ -36,6 +36,8 @@ import { BiWidgetCard }   from './BiWidgetCard'
 import { BiSectionContainer, CONTAINER_PREFIX } from './BiSectionContainer'
 import { BiWidgetEditor } from './BiWidgetEditor'
 import { BiGlobalFilters } from './BiGlobalFilters'
+import { BiQueryProvider, publicQueryBase, DEFAULT_BI_QUERY_BASE } from './BiQueryContext'
+import { QUICK_WIDGETS, buildQuickWidget } from './BiQuickWidgets'
 import { exportReportPdf } from './exportPdf'
 
 // ── Helpers de árbol de 2 niveles (raíz + secciones) ──────────────────
@@ -105,6 +107,12 @@ interface Props {
      * "Semana 2 de Julio 2026" siempre muestre lo mismo.
      */
     lockedDates?: { from: string; to: string }
+    /**
+     * Token del link público (informe compartido o entrega). Cuando viene, los
+     * widgets consultan el endpoint público —que valida por token— en vez del
+     * autenticado, que devolvería 401 a un cliente sin sesión.
+     */
+    publicToken?: string
 }
 
 // Fecha de calendario LOCAL (mismo criterio que el preset "Este mes" de los filtros)
@@ -124,7 +132,7 @@ function genId(): string {
     return Math.random().toString(36).slice(2, 10)
 }
 
-export function BiReportCanvas({ report: initialReport, readonly, lockedDates }: Props) {
+export function BiReportCanvas({ report: initialReport, readonly, lockedDates, publicToken }: Props) {
     const [report, setReport] = useState<BiReport>(initialReport)
     const [filters, setFilters] = useState<BiFilters>(() => {
         // El filtro avanzado guardado vive bajo la clave reservada __adv; se
@@ -164,6 +172,8 @@ export function BiReportCanvas({ report: initialReport, readonly, lockedDates }:
     const [templateSaved, setTemplateSaved]   = useState(false)
     // Fuerza expandir todas las secciones (para capturar el PDF completo).
     const [forceExpandAll, setForceExpandAll] = useState(false)
+    // Menú de scorecards preconfigurados ("Rápida").
+    const [quickOpen, setQuickOpen] = useState(false)
 
     const sensors = useSensors(
         useSensor(PointerSensor, { activationConstraint: { distance: 5 } })
@@ -237,6 +247,15 @@ export function BiReportCanvas({ report: initialReport, readonly, lockedDates }:
         setAddTarget(target)
         setEditingWidget(null)
         setEditorOpen(true)
+    }, [])
+
+    /** Inserta en la raíz un scorecard ya configurado desde los presets rápidos. */
+    const handleAddQuick = useCallback((presetIndex: number) => {
+        const preset = QUICK_WIDGETS[presetIndex]
+        if (!preset) return
+        setReport(prev => ({ ...prev, layout: [...prev.layout, buildQuickWidget(preset, genId())] }))
+        setDirty(true)
+        setQuickOpen(false)
     }, [])
 
     const handleDragStart = useCallback((event: DragStartEvent) => {
@@ -423,6 +442,7 @@ export function BiReportCanvas({ report: initialReport, readonly, lockedDates }:
     const spendNotAttributable = hasNonAttributableFilter(filters, advancedFilter)
 
     return (
+        <BiQueryProvider base={publicToken ? publicQueryBase(publicToken) : DEFAULT_BI_QUERY_BASE}>
         <div className="space-y-4">
             {/* Header */}
             <div className="flex items-center justify-between gap-4 flex-wrap">
@@ -477,6 +497,36 @@ export function BiReportCanvas({ report: initialReport, readonly, lockedDates }:
                                     <Plus className="h-3.5 w-3.5" />
                                     Widget
                                 </button>
+                                {/* Scorecards preconfigurados: los KPIs de siempre en un clic */}
+                                <div className="relative">
+                                    <button
+                                        onClick={() => setQuickOpen(o => !o)}
+                                        title="Agregar un KPI preconfigurado"
+                                        className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium bg-muted text-foreground hover:bg-accent transition-colors"
+                                    >
+                                        <Zap className="h-3.5 w-3.5" />
+                                        Rápida
+                                    </button>
+                                    {quickOpen && (
+                                        <>
+                                            <div className="fixed inset-0 z-10" onClick={() => setQuickOpen(false)} />
+                                            <div className="absolute right-0 z-20 mt-1 w-52 rounded-xl border border-border bg-card shadow-xl overflow-hidden py-1">
+                                                <p className="px-3 py-1.5 text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">
+                                                    Agregar KPI
+                                                </p>
+                                                {QUICK_WIDGETS.map((p, i) => (
+                                                    <button
+                                                        key={p.metric}
+                                                        onClick={() => handleAddQuick(i)}
+                                                        className="w-full px-3 py-1.5 text-left text-[11px] text-foreground hover:bg-accent transition-colors"
+                                                    >
+                                                        {p.label}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        </>
+                                    )}
+                                </div>
                                 <button
                                     onClick={() => setCalcOpen(true)}
                                     title="Campos calculados"
@@ -703,5 +753,6 @@ export function BiReportCanvas({ report: initialReport, readonly, lockedDates }:
                 />
             )}
         </div>
+        </BiQueryProvider>
     )
 }

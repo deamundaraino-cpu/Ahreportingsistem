@@ -65,7 +65,7 @@ export default async function PublicBiReportPage({ params }: Params) {
                     clienteLogo={clienteConfig.logo_url}
                     reportName={report.nombre}
                 />
-                <BiReportCanvas report={report} readonly />
+                <BiReportCanvas report={report} readonly publicToken={token} />
                 <p className="mt-8 text-center text-[10px] text-muted-foreground">
                     Vista de solo lectura · {cliente?.nombre ? `${cliente.nombre} · ` : ''}Ad House Reporting
                 </p>

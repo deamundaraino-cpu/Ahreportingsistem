@@ -6,7 +6,6 @@
 
 export type BiMetric =
     | 'leads_count'
-    | 'leads_total'
     | 'sales_count'
     | 'revenue'
     | 'spend'
@@ -61,6 +60,9 @@ export type BiMetric =
     | 'hotmart_pagos_iniciados'
     | 'hotmart_revenue'
     | 'hotmart_sales'
+    | 'hotmart_roas'
+    | 'hotmart_cpa'
+    | 'hotmart_roi'
     | 'ventas_principal'
     | 'ventas_bump'
     | 'ventas_upsell'
@@ -109,8 +111,19 @@ export const AD_SCALAR_METRICS = [
     'ga_sessions', 'tiktok_conversions', 'hotmart_pagos_iniciados',
     'ventas_principal', 'ventas_bump', 'ventas_upsell',
     'ventas_principal_count', 'ventas_bump_count', 'ventas_upsell_count',
-    'ventas_cerradas',
     'ventas_principal_bruto', 'ventas_bump_bruto', 'ventas_upsell_bruto',
+] as const
+
+/**
+ * Métricas que viven dentro del JSONB `metricas_diarias.metricas_manuales`
+ * (entrada manual del dashboard), no en una columna propia.
+ *
+ * `ventas_cerradas` TIENE columna en la tabla, pero el worker nunca la escribe:
+ * el número real que carga el equipo queda en `metricas_manuales.VENTAS_CERRADAS`.
+ * Leerla de la columna devolvía siempre 0 en los informes.
+ */
+export const MANUAL_JSONB_METRICS = [
+    { metric: 'ventas_cerradas', jsonKey: 'VENTAS_CERRADAS' },
 ] as const
 
 /**
@@ -127,6 +140,56 @@ export const SUBS_METRICS = ['subs_active', 'subs_delayed', 'subs_canceled', 'su
 
 /** Dimensiones que SOLO desglosan gasto/métricas de campaña (nivel anuncio/conjunto). */
 export const ADS_ONLY_DIMS = ['ad', 'adset'] as const
+
+/**
+ * Métricas ADITIVAS: sumar sus valores fila a fila da un total correcto, así que
+ * la tabla puede calcular la fila "Total". Se excluyen ratios/promedios (CPL,
+ * ROAS, CTR… se recalculan sobre los totales base) y `reach`, que es un conteo
+ * de personas ÚNICAS: sumar el alcance de varias campañas cuenta dos veces a
+ * quien vio ambas.
+ */
+export const ADDITIVE_METRICS: ReadonlySet<string> = new Set<string>([
+    'leads_count', 'sales_count', 'revenue',
+    'spend', 'meta_spend', 'tiktok_spend', 'clicks', 'impressions',
+    ...AD_JSONB_METRICS.filter(m => m !== 'reach'),
+    ...AD_SCALAR_METRICS,
+    ...MANUAL_JSONB_METRICS.map(m => m.metric),
+    ...OFFLINE_METRICS,
+    'hotmart_revenue', 'hotmart_sales',
+])
+
+/** ¿La fila "Total" de una tabla puede sumar esta métrica directamente? */
+export function isAdditiveMetric(metric: string): boolean {
+    return ADDITIVE_METRICS.has(metric)
+}
+
+/**
+ * Métricas válidas como ETAPA de un embudo: deben ser conteos aditivos y estar
+ * ordenadas de mayor a menor a lo largo del funnel. Se excluyen importes y
+ * ratios (un embudo de "$" o de "%" no tiene sentido).
+ */
+export const FUNNEL_STAGE_METRICS = [
+    'impressions', 'reach', 'clicks', 'link_clicks', 'landing_page_views',
+    'video_views', 'video_thruplay', 'leads_count', 'leads_form',
+    'complete_registration', 'view_content', 'adds_to_cart',
+    'initiates_checkout', 'purchases', 'sales_count',
+] as const
+
+/** Etapas por defecto del embudo cuando el widget no configura ninguna. */
+export const DEFAULT_FUNNEL_STAGES: BiMetric[] = ['impressions', 'clicks', 'leads_count', 'sales_count']
+
+/**
+ * Métricas soportadas por el pivot (dimensión secundaria). El pivot agrupa filas
+ * de lead_events/sales_events, así que solo puede contar filas o sumar `amount`:
+ * cualquier otra métrica (gasto, campaña, GA4…) daría un conteo de filas sin
+ * sentido. El editor y el endpoint restringen `dimension2` a estas.
+ */
+export const PIVOT_METRICS: BiMetric[] = ['leads_count', 'sales_count', 'revenue']
+
+/** ¿Esta métrica se puede usar con una dimensión secundaria (gráfica apilada)? */
+export function supportsPivot(metric: string): boolean {
+    return (PIVOT_METRICS as string[]).includes(metric)
+}
 
 export type BiDimension =
     | 'none'
@@ -198,10 +261,10 @@ export interface BiPivotRow {
 }
 
 export const METRIC_META: Record<BiMetric, { label: string; format: 'number' | 'currency' | 'percent' | 'ratio'; source: 'leads' | 'sales' | 'ads' | 'computed' }> = {
+    // Conteo de-duplicado de lead_events, que ya abarca TODOS los canales
+    // (formularios web + Meta Lead Ads). La antigua 'leads_total' era un duplicado
+    // exacto de esta métrica y se eliminó del catálogo (ver migración 045).
     leads_count:     { label: 'Leads',           format: 'number',   source: 'leads' },
-    // Leads (todos los canales): conteo de-duplicado de lead_events, que ya abarca todos los canales
-    // (formularios web + Meta Lead Ads). Equivale a leads_count; NO suma el agregado de Meta.
-    leads_total:     { label: 'Leads (todos los canales)', format: 'number', source: 'leads' },
     sales_count:     { label: 'Ventas',          format: 'number',   source: 'sales' },
     revenue:         { label: 'Revenue',         format: 'currency', source: 'sales' },
     spend:           { label: 'Gasto total',     format: 'currency', source: 'ads' },
@@ -256,6 +319,12 @@ export const METRIC_META: Record<BiMetric, { label: string; format: 'number' | '
     hotmart_pagos_iniciados:{ label: 'Pagos iniciados (Hotmart)', format: 'number',   source: 'ads' },
     hotmart_revenue:        { label: 'Facturación Hotmart (neto)', format: 'currency', source: 'computed' },
     hotmart_sales:          { label: 'Ventas Hotmart (total)',  format: 'number',   source: 'computed' },
+    // Retorno calculado sobre la facturación agregada de Hotmart, no sobre
+    // sales_events (ventas por webhook). Sirve para clientes que venden por
+    // Hotmart sin webhook configurado, donde roas/cpa/revenue darían 0.
+    hotmart_roas:           { label: 'ROAS (Hotmart)',          format: 'ratio',    source: 'computed' },
+    hotmart_cpa:            { label: 'CPA (Hotmart)',           format: 'currency', source: 'computed' },
+    hotmart_roi:            { label: 'ROI % (Hotmart)',         format: 'percent',  source: 'computed' },
     ventas_principal:       { label: 'Ventas principal (neto)', format: 'currency', source: 'ads' },
     ventas_bump:            { label: 'Ventas bump (neto)',      format: 'currency', source: 'ads' },
     ventas_upsell:          { label: 'Ventas upsell (neto)',    format: 'currency', source: 'ads' },
@@ -722,6 +791,35 @@ export function appendAdvancedFilter(
     }
 }
 
+/** Filtro de campaña simple de un widget: operador + texto. */
+export interface CampaignFilterSpec {
+    op: FilterOp
+    value: string
+}
+
+/**
+ * Fusiona el filtro de campaña simple de un widget dentro de su filtro avanzado,
+ * como un grupo Y adicional sobre `utm_campaign`.
+ *
+ * Es puro azúcar de UI: el motor ya sabe recortar el gasto por nombre de campaña
+ * (`campaignNameFilterPredicate` + `queryAdsCampaignFiltered`) cuando ve una
+ * condición sobre utm_campaign, así que expresarlo así hace que gasto Y leads
+ * queden filtrados sin tocar el motor. No muta el filtro guardado.
+ */
+export function withCampaignFilter(
+    af: AdvancedFilter | undefined | null,
+    campaign: CampaignFilterSpec | undefined | null
+): AdvancedFilter | undefined {
+    const value = campaign?.value?.trim()
+    if (!value) return af ?? undefined
+    return {
+        groups: [
+            ...(af?.groups ?? []),
+            { conditions: [{ field: 'utm_campaign', op: campaign!.op, value }] },
+        ],
+    }
+}
+
 /** Firma estable del filtro avanzado del informe, para deps de useEffect. */
 export function advancedFilterSignature(filters: Record<string, string | undefined>): string {
     return String(filters[ADVANCED_FILTER_KEY] ?? '')
@@ -840,8 +938,7 @@ export function hasNonAttributableFilter(
  * (no para el trafficker). Se muestra como tooltip junto al título del widget.
  */
 export const METRIC_GLOSSARY: Record<string, string> = {
-    leads_count:   'Personas que dejaron sus datos en un formulario durante el período.',
-    leads_total:   'Total de personas que dejaron sus datos, sumando formularios web y formularios de Meta.',
+    leads_count:   'Personas que dejaron sus datos durante el período, sumando formularios web y formularios de Meta.',
     sales_count:   'Cantidad de ventas registradas en el período.',
     revenue:       'Dinero total facturado por las ventas del período.',
     spend:         'Dinero invertido en publicidad (Meta + TikTok) durante el período.',
@@ -862,6 +959,11 @@ export const METRIC_GLOSSARY: Record<string, string> = {
     landing_page_views: 'Veces que la página de destino se cargó por completo tras un clic.',
     ga_sessions:   'Visitas al sitio web medidas por Google Analytics.',
     ga_bounce_rate: 'Porcentaje de visitas que se fueron sin interactuar con el sitio. Cuanto MÁS BAJO, mejor.',
+    hotmart_revenue: 'Dinero facturado en Hotmart en el período (neto de comisiones).',
+    hotmart_sales:   'Cantidad de ventas de Hotmart en el período (principal + bump + upsell).',
+    hotmart_roas:    'Retorno de la inversión usando la facturación de Hotmart: por cada $1 invertido en anuncios, cuántos $ se facturaron. Cuanto MÁS ALTO, mejor. Se calcula sobre el total del período, sin atribuir a una campaña concreta.',
+    hotmart_cpa:     'Cuánto costó, en promedio, cada venta de Hotmart. Cuanto MÁS BAJO, mejor. Se calcula sobre el total del período, sin atribuir a una campaña concreta.',
+    hotmart_roi:     'Ganancia sobre la inversión publicitaria: (facturación Hotmart − inversión) ÷ inversión. Un 100% significa que se recuperó el doble de lo invertido. Cuanto MÁS ALTO, mejor.',
 }
 
 /** Texto del glosario para una métrica, si existe. */
@@ -872,7 +974,7 @@ export function metricGlossary(metric: string): string | undefined {
 /** Métricas donde un valor MENOR es mejor (costos y tasas de abandono). */
 export const LOWER_IS_BETTER = new Set([
     'cpl', 'cpa', 'cpc', 'cpm', 'spend', 'meta_spend', 'tiktok_spend',
-    'ga_bounce_rate', 'frequency',
+    'ga_bounce_rate', 'frequency', 'hotmart_cpa',
 ])
 
 /** ¿Para esta métrica, bajar es mejorar? */
@@ -899,8 +1001,10 @@ const GOAL_BY_METRIC: Record<string, { key: keyof ClienteGoals; mustNotExceed: b
     cpl:         { key: 'cpl_max',      mustNotExceed: true },
     cpa:         { key: 'cpa_max',      mustNotExceed: true },
     roas:        { key: 'roas_min',     mustNotExceed: false },
+    // Las variantes Hotmart miden lo mismo con otra fuente → misma meta.
+    hotmart_cpa: { key: 'cpa_max',      mustNotExceed: true },
+    hotmart_roas:{ key: 'roas_min',     mustNotExceed: false },
     leads_count: { key: 'leads_target', mustNotExceed: false },
-    leads_total: { key: 'leads_target', mustNotExceed: false },
     spend:       { key: 'budget',       mustNotExceed: true },
     meta_spend:  { key: 'budget',       mustNotExceed: true },
 }

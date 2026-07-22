@@ -111,7 +111,9 @@ export function BiGlobalFilters({
     // Campos de formulario del cliente → opciones extra del constructor.
     const [formFields, setFormFields] = useState<FormFieldMeta[]>([])
     useEffect(() => {
-        if (!clienteId) { setFormFields([]); return }
+        // En la vista pública el visitante no tiene sesión: este endpoint daría 401
+        // y además el constructor de filtros no se puede editar, así que no se pide.
+        if (readonly || !clienteId) { setFormFields([]); return }
         const params = new URLSearchParams({ cliente_id: clienteId, date_from: dateFrom, date_to: dateTo })
         let cancelled = false
         fetch(`/api/report-utm/bi/form-fields?${params}`)
@@ -119,7 +121,7 @@ export function BiGlobalFilters({
             .then(json => { if (!cancelled) setFormFields(json.data ?? []) })
             .catch(() => { if (!cancelled) setFormFields([]) })
         return () => { cancelled = true }
-    }, [clienteId, dateFrom, dateTo])
+    }, [readonly, clienteId, dateFrom, dateTo])
 
     const fieldOptions: { value: string; label: string }[] = [
         ...FILTERABLE_BASE_DIMS,
@@ -128,11 +130,14 @@ export function BiGlobalFilters({
     const labelOf = (field: string) => fieldOptions.find(o => o.value === field)?.label ?? field
 
     useEffect(() => {
+        // Igual que form-fields: sin sesión da 401, y en la vista pública el
+        // selector de cliente está bloqueado (el informe ya trae el suyo).
+        if (readonly) return
         fetch('/api/report-utm/clientes')
             .then(r => r.json())
             .then(json => setClientes(json.data ?? []))
             .catch(() => {})
-    }, [])
+    }, [readonly])
 
     function buildFilters(): BiFilters {
         return {

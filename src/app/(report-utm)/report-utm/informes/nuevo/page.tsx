@@ -6,7 +6,7 @@ import { ArrowLeft, Plus, Loader2 } from 'lucide-react'
 import Link from 'next/link'
 
 interface Cliente { id: string; nombre: string }
-interface Plantilla { id: string; nombre: string; cliente_id?: string | null }
+interface Plantilla { id: string; nombre: string; cliente_id?: string | null; is_template?: boolean | null }
 
 export default function NuevoInformePage() {
     const router = useRouter()
@@ -25,10 +25,11 @@ export default function NuevoInformePage() {
             .then(r => r.json())
             .then(j => setClientes(j.data ?? []))
             .catch(() => {})
-        // Plantillas disponibles = informes sin cliente fijo (del sistema o propias).
+        // Plantillas = las marcadas con is_template (migración 035). El fallback al
+        // heurístico "sin cliente" cubre informes anteriores a esa migración.
         fetch('/api/report-utm/bi/reports')
             .then(r => r.json())
-            .then(j => setTemplates((j.data ?? []).filter((r: Plantilla) => !r.cliente_id)))
+            .then(j => setTemplates((j.data ?? []).filter((r: Plantilla) => r.is_template ?? !r.cliente_id)))
             .catch(() => {})
     }, [])
 

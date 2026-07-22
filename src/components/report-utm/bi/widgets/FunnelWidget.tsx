@@ -3,7 +3,8 @@
 import { useEffect, useState } from 'react'
 import { Loader2, ArrowDown } from 'lucide-react'
 import type { BiFilters, WidgetConfig } from '../BiTypes'
-import { appendUtmFilters, utmFilterSignature, appendFieldFilters, fieldFilterSignature, appendDimFilters, dimFilterSignature, appendAdvancedFilter, advancedFilterSignature, widgetAdvancedSignature } from '@/lib/report-utm/bi-metadata'
+import { appendUtmFilters, utmFilterSignature, appendFieldFilters, fieldFilterSignature, appendDimFilters, dimFilterSignature, appendAdvancedFilter, advancedFilterSignature, widgetAdvancedSignature, withCampaignFilter } from '@/lib/report-utm/bi-metadata'
+import { useBiQueryBase } from '../BiQueryContext'
 
 interface Props {
     title: string
@@ -23,37 +24,47 @@ function fmtN(n: number): string {
     return n.toLocaleString('es-AR')
 }
 
-const STAGE_COLORS: Record<string, string> = {
-    impressions: 'bg-blue-500/20 border-blue-500/40 text-blue-600 dark:text-blue-400',
-    clicks:      'bg-cyan-500/20 border-cyan-500/40 text-cyan-600 dark:text-cyan-400',
-    leads:       'bg-emerald-500/20 border-emerald-500/40 text-emerald-600 dark:text-emerald-400',
-    sales:       'bg-violet-500/20 border-violet-500/40 text-violet-600 dark:text-violet-400',
-}
+// Paleta por POSICIÓN en el embudo (no por nombre de etapa): las etapas ahora son
+// configurables, así que un color fijo por métrica dejaría sin color a la mayoría.
+const STAGE_PALETTE = [
+    'bg-blue-500/20 border-blue-500/40 text-blue-600 dark:text-blue-400',
+    'bg-cyan-500/20 border-cyan-500/40 text-cyan-600 dark:text-cyan-400',
+    'bg-teal-500/20 border-teal-500/40 text-teal-600 dark:text-teal-400',
+    'bg-emerald-500/20 border-emerald-500/40 text-emerald-600 dark:text-emerald-400',
+    'bg-amber-500/20 border-amber-500/40 text-amber-600 dark:text-amber-400',
+    'bg-violet-500/20 border-violet-500/40 text-violet-600 dark:text-violet-400',
+]
 
 export function FunnelWidget({ title, config, filters }: Props) {
+    const queryBase = useBiQueryBase()
     const [stages, setStages] = useState<FunnelStage[]>([])
     const [loading, setLoading] = useState(true)
     const [error, setError]   = useState<string | null>(null)
+
+    // Etapas configuradas en el widget (el servidor las valida y, si no hay,
+    // cae al embudo por defecto impresiones → clics → leads → ventas).
+    const stageMetrics = Array.isArray(config.metrics) ? config.metrics.join(',') : ''
 
     useEffect(() => {
         setLoading(true)
         setError(null)
 
         const params = new URLSearchParams({ type: 'funnel' })
+        if (stageMetrics) params.set('metrics', stageMetrics)
         if (filters.cliente_id) params.set('cliente_id', filters.cliente_id)
         if (filters.date_from)  params.set('date_from', filters.date_from)
         if (filters.date_to)    params.set('date_to', filters.date_to)
         appendUtmFilters(params, filters)
         appendFieldFilters(params, filters)
         appendDimFilters(params, filters)
-        appendAdvancedFilter(params, filters, config.advanced_filter)
+        appendAdvancedFilter(params, filters, withCampaignFilter(config.advanced_filter, config.campaign_filter))
 
-        fetch(`/api/report-utm/bi/query?${params}`)
+        fetch(`${queryBase}?${params}`)
             .then(r => r.json())
             .then(json => setStages(json.data ?? []))
             .catch(() => setError('Error al cargar'))
             .finally(() => setLoading(false))
-    }, [filters.cliente_id, filters.date_from, filters.date_to, utmFilterSignature(filters), fieldFilterSignature(filters), dimFilterSignature(filters), advancedFilterSignature(filters), widgetAdvancedSignature(config.advanced_filter)])
+    }, [queryBase, stageMetrics, filters.cliente_id, filters.date_from, filters.date_to, utmFilterSignature(filters), fieldFilterSignature(filters), dimFilterSignature(filters), advancedFilterSignature(filters), widgetAdvancedSignature(withCampaignFilter(config.advanced_filter, config.campaign_filter))])
 
     const maxVal = stages.length > 0 ? Math.max(...stages.map(s => s.value), 1) : 1
 
@@ -87,7 +98,7 @@ export function FunnelWidget({ title, config, filters }: Props) {
                                         )}
                                     </div>
                                 )}
-                                <div className={`rounded-xl border p-3 ${STAGE_COLORS[s.stage] ?? 'bg-muted border-border text-foreground'}`}>
+                                <div className={`rounded-xl border p-3 ${STAGE_PALETTE[i % STAGE_PALETTE.length]}`}>
                                     <div className="flex items-center justify-between mb-2">
                                         <span className="text-xs font-semibold uppercase tracking-wider">{s.label}</span>
                                         <span className="text-lg font-bold font-mono tabular-nums">{fmtN(s.value)}</span>

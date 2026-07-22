@@ -2,12 +2,13 @@
 
 import { useState, useEffect } from 'react'
 import { X, Plus, Search, AlertTriangle } from 'lucide-react'
-import type { BiWidget, WidgetType, WidgetConfig, CalculatedField, ConditionalRule, ValueFilter } from './BiTypes'
-import type { BiMetric, BiDimension, ValueOp, FieldAgg, FormFieldMeta, AdvancedFilter } from '@/lib/report-utm/bi-metadata'
+import type { BiWidget, WidgetType, WidgetConfig, CalculatedField, ConditionalRule, ValueFilter, ScorecardVariant } from './BiTypes'
+import type { BiMetric, BiDimension, ValueOp, FieldAgg, FormFieldMeta, AdvancedFilter, FilterOp } from '@/lib/report-utm/bi-metadata'
 import {
-    METRIC_META, DIMENSION_META, VALUE_OPS, FIELD_AGGS, FILTERABLE_BASE_DIMS,
+    METRIC_META, DIMENSION_META, VALUE_OPS, FIELD_AGGS, FILTERABLE_BASE_DIMS, FILTER_OPS,
     makeFieldDim, makeFieldMetric, humanizeFieldKey, fieldDimLabel, fieldMetricLabel,
-    advancedFilterHasConditions,
+    advancedFilterHasConditions, supportsPivot, PIVOT_METRICS,
+    FUNNEL_STAGE_METRICS, DEFAULT_FUNNEL_STAGES,
 } from '@/lib/report-utm/bi-metadata'
 import { HelpTip } from './HelpTip'
 import { BiAdvancedFilterBuilder } from './BiAdvancedFilterBuilder'
@@ -50,6 +51,12 @@ const STRUCTURAL_TYPES: { value: WidgetType; label: string; desc: string }[] = [
     { value: 'summary', label: 'Resumen',  desc: 'Resumen ejecutivo automático' },
 ]
 
+const SCORECARD_VARIANTS: { value: ScorecardVariant; label: string }[] = [
+    { value: 'default',   label: 'Estándar' },
+    { value: 'threshold', label: 'Semáforo' },
+    { value: 'progress',  label: 'Progreso' },
+]
+
 const ALL_METRICS = Object.entries(METRIC_META).map(([k, v]) => ({ value: k as BiMetric, label: v.label }))
 const ALL_DIMS    = Object.entries(DIMENSION_META).map(([k, v]) => ({ value: k as BiDimension, label: v.label }))
 
@@ -85,6 +92,25 @@ export function BiWidgetEditor({ widget, calculatedFields = [], clienteId, dateF
     const [advancedFilter, setAdvancedFilter] = useState<AdvancedFilter>(widget?.config?.advanced_filter ?? { groups: [] })
     const [slicerMode, setSlicerMode] = useState<'dropdown' | 'list' | 'daterange'>(widget?.config?.slicer_mode ?? 'dropdown')
     const [metricSearch, setMetricSearch] = useState('')
+    // Etapas del embudo (config.metrics). Vacío = embudo por defecto.
+    const [funnelStages, setFunnelStages] = useState<string[]>(
+        Array.isArray(widget?.config?.metrics) && widget.config.metrics.length >= 2
+            ? widget.config.metrics
+            : [...DEFAULT_FUNNEL_STAGES]
+    )
+    // Métricas con datos reales para este cliente/rango (mapa métrica → bool).
+    const [availability, setAvailability] = useState<Record<string, boolean> | null>(null)
+    // Variante del scorecard + sus parámetros.
+    const [variant, setVariant] = useState<ScorecardVariant>(widget?.config?.variant ?? 'default')
+    const [thGreenOp, setThGreenOp]   = useState<'gte' | 'lte'>(widget?.config?.threshold?.greenOp ?? 'gte')
+    const [thGreen, setThGreen]       = useState<string>(String(widget?.config?.threshold?.green ?? ''))
+    const [thYellowOp, setThYellowOp] = useState<'gte' | 'lte'>(widget?.config?.threshold?.yellowOp ?? 'gte')
+    const [thYellow, setThYellow]     = useState<string>(String(widget?.config?.threshold?.yellow ?? ''))
+    const [target, setTarget]         = useState<string>(String(widget?.config?.target ?? ''))
+    // Filtro rápido por nombre de campaña (se traduce a una condición utm_campaign).
+    const [campaignOp, setCampaignOp]       = useState<FilterOp>(widget?.config?.campaign_filter?.op ?? 'contains')
+    const [campaignValue, setCampaignValue] = useState(widget?.config?.campaign_filter?.value ?? '')
+    const [campaignOptions, setCampaignOptions] = useState<string[]>([])
 
     // Campos de formulario del cliente (raw_fields) → dimensiones + métricas.
     useEffect(() => {
@@ -100,8 +126,49 @@ export function BiWidgetEditor({ widget, calculatedFields = [], clienteId, dateF
         return () => { cancelled = true }
     }, [clienteId, dateFrom, dateTo])
 
+    // Qué métricas tienen datos para este cliente y rango. Sirve para avisar antes
+    // de configurar un widget que va a mostrar 0 (cliente sin ventas, sin TikTok…).
+    useEffect(() => {
+        const params = new URLSearchParams()
+        if (clienteId) params.set('cliente_id', clienteId)
+        if (dateFrom)  params.set('date_from', dateFrom)
+        if (dateTo)    params.set('date_to', dateTo)
+        let cancelled = false
+        fetch(`/api/report-utm/bi/metrics-availability?${params}`)
+            .then(r => r.json())
+            .then(json => { if (!cancelled) setAvailability(json.data ?? null) })
+            .catch(() => { if (!cancelled) setAvailability(null) })
+        return () => { cancelled = true }
+    }, [clienteId, dateFrom, dateTo])
+
+    // Nombres de campaña del cliente, para autocompletar el filtro rápido.
+    useEffect(() => {
+        if (!clienteId) { setCampaignOptions([]); return }
+        const params = new URLSearchParams({ type: 'distinct', dimension: 'utm_campaign', cliente_id: clienteId })
+        if (dateFrom) params.set('date_from', dateFrom)
+        if (dateTo)   params.set('date_to', dateTo)
+        let cancelled = false
+        fetch(`/api/report-utm/bi/query?${params}`)
+            .then(r => r.json())
+            .then(json => { if (!cancelled) setCampaignOptions(Array.isArray(json.data) ? json.data : []) })
+            .catch(() => { if (!cancelled) setCampaignOptions([]) })
+        return () => { cancelled = true }
+    }, [clienteId, dateFrom, dateTo])
+
+    /**
+     * ¿Esta métrica no trae datos en el rango? Solo se afirma para métricas del
+     * catálogo base y con el mapa ya cargado: los campos calculados y de
+     * formulario no se evalúan (y sin mapa no se marca nada).
+     */
+    const hasNoData = (m: string) =>
+        !!availability && m in availability && availability[m] === false
+
     const isChart = ['line', 'area', 'bar', 'combo', 'pie', 'scatter'].includes(type)
-    const supportsDim2 = ['bar', 'combo', 'area', 'line'].includes(type)
+    // El apilado (dimensión secundaria) agrupa filas de leads/ventas: solo puede
+    // contar filas o sumar importes. Con gasto, alcance o GA4 devolvería un conteo
+    // de filas sin sentido, así que solo se ofrece para las métricas que soporta.
+    const dim2Supported = supportsPivot(String(metric))
+    const supportsDim2 = ['bar', 'combo', 'area', 'line'].includes(type) && dim2Supported
     const isStructural = type === 'section' || type === 'heading' || type === 'text' || type === 'summary'
 
     // Opciones derivadas de los campos de formulario descubiertos.
@@ -196,7 +263,11 @@ export function BiWidgetEditor({ widget, calculatedFields = [], clienteId, dateF
         if (type === 'slicer') {
             config.dimension = dim === 'date' ? 'utm_source' : dim
             config.slicer_mode = slicerMode
-        } else if (type !== 'funnel') {
+        } else if (type === 'funnel') {
+            // Etapas en el orden elegido; con menos de 2 el servidor usa el embudo
+            // por defecto (impresiones → clics → leads → ventas).
+            if (funnelStages.length >= 2) config.metrics = funnelStages as BiMetric[]
+        } else {
             // Tablas: lista de columnas. Otros widgets: una sola métrica.
             config.metric = type === 'table' ? tableCols.join(',') : tableCols[0] ?? 'leads_count'
             if (type !== 'scorecard') {
@@ -207,7 +278,21 @@ export function BiWidgetEditor({ widget, calculatedFields = [], clienteId, dateF
                 config.sort = sort
                 if (isChart) config.color = color
             }
-            if (type === 'scorecard') config.compare_period = compare
+            if (type === 'scorecard') {
+                config.compare_period = compare
+                // Solo se persiste lo que no es el default, para no engordar el layout.
+                if (variant !== 'default') config.variant = variant
+                if (variant === 'threshold') {
+                    const g = Number(thGreen), y = Number(thYellow)
+                    if (Number.isFinite(g) && Number.isFinite(y)) {
+                        config.threshold = { greenOp: thGreenOp, green: g, yellowOp: thYellowOp, yellow: y }
+                    }
+                }
+                if (variant === 'progress') {
+                    const t = Number(target)
+                    if (Number.isFinite(t) && t > 0) config.target = t
+                }
+            }
             if (type === 'table') {
                 config.show_totals = showTotals
                 if (conditional.length) config.conditional = conditional
@@ -217,6 +302,10 @@ export function BiWidgetEditor({ widget, calculatedFields = [], clienteId, dateF
         // Filtro propio del widget (Y de O): aplica a todos los widgets de datos.
         if (type !== 'slicer' && advancedFilterHasConditions(advancedFilter)) {
             config.advanced_filter = advancedFilter
+        }
+        // Filtro rápido por campaña: recorta gasto y leads solo en este widget.
+        if (type !== 'slicer' && campaignValue.trim()) {
+            config.campaign_filter = { op: campaignOp, value: campaignValue.trim() }
         }
         onSave({
             id,
@@ -448,6 +537,48 @@ export function BiWidgetEditor({ widget, calculatedFields = [], clienteId, dateF
                         </>
                     )}
 
+                    {/* Etapas del embudo */}
+                    {type === 'funnel' && (
+                        <div>
+                            <label className="flex items-center gap-1 text-xs font-medium text-muted-foreground mb-1">
+                                Etapas del embudo
+                                <HelpTip text="Marca las etapas en el orden en que las quieres ver, de arriba (mayor volumen) a abajo. Entre cada par se calcula el % de conversión. Mínimo 2 etapas." />
+                            </label>
+                            <div className="max-h-44 overflow-y-auto rounded-lg border border-border bg-muted/30 divide-y divide-border">
+                                {FUNNEL_STAGE_METRICS.map(m => {
+                                    const checked = funnelStages.includes(m)
+                                    const order = funnelStages.indexOf(m)
+                                    return (
+                                        <label key={m} className="flex items-center gap-2 px-3 py-2 cursor-pointer hover:bg-accent transition-colors">
+                                            <input
+                                                type="checkbox"
+                                                checked={checked}
+                                                onChange={() => setFunnelStages(prev =>
+                                                    prev.includes(m) ? prev.filter(s => s !== m) : [...prev, m]
+                                                )}
+                                                className="h-3.5 w-3.5 rounded accent-emerald-500"
+                                            />
+                                            <span className="text-xs text-foreground flex-1">{METRIC_META[m].label}</span>
+                                            {hasNoData(m) && (
+                                                <span className="text-[9px] text-amber-600 dark:text-amber-400">sin datos</span>
+                                            )}
+                                            {checked && (
+                                                <span className="text-[10px] font-mono text-emerald-600 dark:text-emerald-400">
+                                                    {order + 1}
+                                                </span>
+                                            )}
+                                        </label>
+                                    )
+                                })}
+                            </div>
+                            <p className="text-[10px] text-muted-foreground mt-1">
+                                {funnelStages.length < 2
+                                    ? 'Marca al menos 2 etapas (si no, se usa el embudo por defecto).'
+                                    : `${funnelStages.length} etapas · en el orden marcado`}
+                            </p>
+                        </div>
+                    )}
+
                     {/* Metric + Dimension (not for funnel/slicer/estructurales) */}
                     {!isStructural && type !== 'funnel' && type !== 'slicer' && (
                         <>
@@ -483,6 +614,9 @@ export function BiWidgetEditor({ widget, calculatedFields = [], clienteId, dateF
                                                             className="h-3.5 w-3.5 rounded accent-emerald-500"
                                                         />
                                                         <span className="text-xs text-foreground flex-1">{m.label}</span>
+                                                        {hasNoData(m.value) && (
+                                                            <span className="text-[9px] text-amber-600 dark:text-amber-400">sin datos</span>
+                                                        )}
                                                         {checked && (
                                                             <span className="text-[10px] font-mono text-emerald-600 dark:text-emerald-400">
                                                                 col {order + 1}
@@ -505,9 +639,20 @@ export function BiWidgetEditor({ widget, calculatedFields = [], clienteId, dateF
                                         className="w-full px-3 py-2 text-sm rounded-lg bg-muted border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
                                     >
                                         {metricOptions.map(m => (
-                                            <option key={m.value} value={m.value}>{m.label}</option>
+                                            <option key={m.value} value={m.value}>
+                                                {m.label}{hasNoData(m.value) ? ' · sin datos en el rango' : ''}
+                                            </option>
                                         ))}
                                     </select>
+                                )}
+                                {hasNoData(String(metric)) && (
+                                    <div className="mt-2 flex items-start gap-2 rounded-lg border border-amber-300/60 dark:border-amber-500/30 bg-amber-50/60 dark:bg-amber-500/10 px-3 py-2">
+                                        <AlertTriangle className="h-3.5 w-3.5 text-amber-500 shrink-0 mt-0.5" />
+                                        <p className="text-[11px] text-amber-700 dark:text-amber-300 leading-snug">
+                                            <strong>{resolveMetricLabel(String(metric))}</strong> no tiene datos para este cliente en el rango
+                                            seleccionado: el widget mostrará 0. Puedes dejarlo configurado si esperas que la fuente empiece a alimentarse.
+                                        </p>
+                                    </div>
                                 )}
                             </div>
 
@@ -536,6 +681,14 @@ export function BiWidgetEditor({ widget, calculatedFields = [], clienteId, dateF
                                         </div>
                                     )}
                                 </div>
+                            )}
+
+                            {['bar', 'combo', 'area', 'line'].includes(type) && !dim2Supported && (
+                                <p className="text-[10px] text-muted-foreground leading-snug">
+                                    El apilado por dimensión secundaria solo está disponible para{' '}
+                                    {PIVOT_METRICS.map(m => METRIC_META[m].label).join(', ')} — son las únicas
+                                    métricas que se pueden desglosar fila a fila.
+                                </p>
                             )}
 
                             {supportsDim2 && (
@@ -625,6 +778,73 @@ export function BiWidgetEditor({ widget, calculatedFields = [], clienteId, dateF
                                     <span className="text-xs font-medium text-foreground">Comparar vs período anterior</span>
                                     <HelpTip text="Muestra el % de cambio respecto al período inmediatamente anterior del mismo largo. Ej: si filtras últimos 7 días, compara con los 7 días previos. Flecha verde = subió, roja = bajó." />
                                 </label>
+                            )}
+
+                            {/* Presentación del scorecard: semáforo / progreso */}
+                            {type === 'scorecard' && (
+                                <div className="rounded-xl border border-border p-3 space-y-2.5">
+                                    <label className="flex items-center gap-1 text-[11px] font-medium text-foreground">
+                                        Presentación
+                                        <HelpTip text="Estándar = solo el número. Semáforo = lo pinta de verde/ámbar/rojo según los umbrales que definas aquí. Progreso = barra de avance hacia un objetivo." />
+                                    </label>
+                                    <div className="grid grid-cols-3 gap-1.5">
+                                        {SCORECARD_VARIANTS.map(v => (
+                                            <button
+                                                key={v.value}
+                                                onClick={() => setVariant(v.value)}
+                                                className={`px-2 py-1.5 rounded-lg text-[11px] font-medium border transition-colors ${
+                                                    variant === v.value
+                                                        ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+                                                        : 'border-border bg-muted/30 text-muted-foreground hover:bg-accent'
+                                                }`}
+                                            >
+                                                {v.label}
+                                            </button>
+                                        ))}
+                                    </div>
+
+                                    {variant === 'threshold' && (
+                                        <div className="space-y-1.5">
+                                            {([
+                                                { color: 'Verde', op: thGreenOp, setOp: setThGreenOp, val: thGreen, setVal: setThGreen },
+                                                { color: 'Ámbar', op: thYellowOp, setOp: setThYellowOp, val: thYellow, setVal: setThYellow },
+                                            ] as const).map(row => (
+                                                <div key={row.color} className="flex items-center gap-1.5">
+                                                    <span className="w-12 text-[11px] text-muted-foreground">{row.color}</span>
+                                                    <select
+                                                        value={row.op}
+                                                        onChange={e => row.setOp(e.target.value as 'gte' | 'lte')}
+                                                        className="px-2 py-1.5 text-xs rounded-lg bg-muted border border-border text-foreground"
+                                                    >
+                                                        <option value="gte">≥</option>
+                                                        <option value="lte">≤</option>
+                                                    </select>
+                                                    <input
+                                                        type="number" value={row.val}
+                                                        onChange={e => row.setVal(e.target.value)}
+                                                        placeholder="valor"
+                                                        className="flex-1 px-2 py-1.5 text-xs rounded-lg bg-muted border border-border text-foreground"
+                                                    />
+                                                </div>
+                                            ))}
+                                            <p className="text-[10px] text-muted-foreground">
+                                                Si no cumple ninguno de los dos, se pinta en rojo.
+                                            </p>
+                                        </div>
+                                    )}
+
+                                    {variant === 'progress' && (
+                                        <div>
+                                            <label className="block text-[10px] font-medium text-muted-foreground mb-1">Objetivo del período</label>
+                                            <input
+                                                type="number" value={target}
+                                                onChange={e => setTarget(e.target.value)}
+                                                placeholder="ej. 500"
+                                                className="w-full px-2 py-1.5 text-xs rounded-lg bg-muted border border-border text-foreground"
+                                            />
+                                        </div>
+                                    )}
+                                </div>
                             )}
 
                             {/* Totales (tabla) */}
@@ -741,6 +961,52 @@ export function BiWidgetEditor({ widget, calculatedFields = [], clienteId, dateF
                                 </div>
                             )}
                         </>
+                    )}
+
+                    {/* Filtro rápido por campaña: recorta gasto Y leads de este widget */}
+                    {!isStructural && type !== 'slicer' && (
+                        <div className="rounded-xl border border-border p-3 space-y-2">
+                            <p className="flex items-center gap-1 text-[11px] font-medium text-foreground">
+                                Campaña
+                                <HelpTip text="Limita este widget a las campañas cuyo nombre cumpla la condición. A diferencia de otros filtros, este SÍ recorta el gasto de anuncios (además de los leads), porque el nombre de campaña es el puente entre ambos." />
+                            </p>
+                            <div className="flex items-center gap-1.5">
+                                <select
+                                    value={campaignOp}
+                                    onChange={e => setCampaignOp(e.target.value as FilterOp)}
+                                    className="px-2 py-1.5 text-xs rounded-lg bg-muted border border-border text-foreground"
+                                >
+                                    {FILTER_OPS.map(o => (
+                                        <option key={o.value} value={o.value}>{o.label}</option>
+                                    ))}
+                                </select>
+                                <input
+                                    type="text"
+                                    list="bi-campaign-options"
+                                    value={campaignValue}
+                                    onChange={e => setCampaignValue(e.target.value)}
+                                    placeholder="nombre de campaña…"
+                                    className="flex-1 px-2 py-1.5 text-xs rounded-lg bg-muted border border-border text-foreground"
+                                />
+                                {campaignValue && (
+                                    <button
+                                        onClick={() => setCampaignValue('')}
+                                        title="Quitar filtro de campaña"
+                                        className="p-1.5 rounded-lg text-muted-foreground hover:text-red-500 transition-colors"
+                                    >
+                                        <X className="h-3.5 w-3.5" />
+                                    </button>
+                                )}
+                            </div>
+                            <datalist id="bi-campaign-options">
+                                {campaignOptions.map(c => <option key={c} value={c} />)}
+                            </datalist>
+                            {!clienteId && (
+                                <p className="text-[10px] text-muted-foreground">
+                                    Selecciona un cliente para ver la lista de campañas.
+                                </p>
+                            )}
+                        </div>
                     )}
 
                     {/* Filtros del widget (Y de O): filtran SOLO este widget, en Y con los globales */}

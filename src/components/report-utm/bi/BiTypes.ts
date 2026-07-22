@@ -1,7 +1,11 @@
-import type { BiMetric, BiDimension, DateGrouping, ValueFilter, AdvancedFilter } from '@/lib/report-utm/bi-metadata'
+import type { BiMetric, BiDimension, DateGrouping, ValueFilter, AdvancedFilter, CampaignFilterSpec } from '@/lib/report-utm/bi-metadata'
 
 export type { ValueFilter } from '@/lib/report-utm/bi-metadata'
 
+// Tipos de widget que el editor ofrece y el dispatcher (BiWidgetCard) renderiza.
+// Se retiraron treemap, matrix, kpi, multicard, narrative y decomposition: estaban
+// declarados pero sin componente ni opción en el editor, así que solo podían
+// acabar en "Widget desconocido".
 export type WidgetType =
     | 'scorecard'
     | 'line'
@@ -10,15 +14,9 @@ export type WidgetType =
     | 'combo'
     | 'pie'
     | 'scatter'
-    | 'treemap'
     | 'table'
-    | 'matrix'
     | 'funnel'
     | 'slicer'
-    | 'kpi'
-    | 'multicard'
-    | 'narrative'
-    | 'decomposition'
     // ── Bloques estructurales / presentacionales (sin fetch de datos) ──
     | 'section'   // contenedor colapsable que agrupa widgets (config.children)
     | 'heading'   // título divisor a lo ancho
@@ -26,6 +24,22 @@ export type WidgetType =
     | 'summary'   // resumen ejecutivo en lenguaje simple (auto o config.text)
 
 export type SlicerMode = 'dropdown' | 'list' | 'daterange'
+
+/**
+ * Presentación de un scorecard:
+ *  - `default`   solo el valor (con delta si `compare_period`)
+ *  - `threshold` semáforo con umbrales propios del widget
+ *  - `progress`  barra de avance hacia `target`
+ */
+export type ScorecardVariant = 'default' | 'threshold' | 'progress'
+
+/** Umbrales del semáforo. Verde si cumple el primero; ámbar si cumple el segundo; rojo si no. */
+export interface ScorecardThreshold {
+    greenOp: 'gte' | 'lte'
+    green: number
+    yellowOp: 'gte' | 'lte'
+    yellow: number
+}
 
 export interface ConditionalRule {
     metric: string          // a qué métrica/columna aplica
@@ -37,7 +51,7 @@ export interface ConditionalRule {
 export interface WidgetConfig {
     metric?: BiMetric | string       // comma-separated for multi-metric widgets; incluye tokens fieldagg:
     dimension?: BiDimension | string // incluye tokens field:<clave> (campos de formulario)
-    dimension2?: BiDimension | string // dimensión secundaria (stacked / combo / matrix)
+    dimension2?: BiDimension | string // dimensión secundaria (stacked / combo)
     date_grouping?: DateGrouping
     metrics?: BiMetric[]             // used in funnel widget
     limit?: number                   // Top-N
@@ -47,7 +61,11 @@ export interface WidgetConfig {
     conditional?: ConditionalRule[]  // formato condicional en tablas
     value_filters?: ValueFilter[]    // ocultar filas que no cumplan condiciones numéricas
     advanced_filter?: AdvancedFilter // filtro Y-de-O propio del widget (se combina en Y con el del informe)
+    campaign_filter?: CampaignFilterSpec // filtro rápido por nombre de campaña (recorta gasto y leads)
     show_totals?: boolean            // fila de totales en tablas
+    // ── Scorecard: variantes de presentación ──
+    variant?: ScorecardVariant       // default = solo valor (+ delta si compare_period)
+    threshold?: ScorecardThreshold   // variant 'threshold': umbrales verde/ámbar propios del widget
     // Power BI extras
     slicer_mode?: SlicerMode         // slicer: tipo de control
     source?: 'leads' | 'sales'       // slicer/distinct: tabla base
@@ -86,6 +104,7 @@ export interface CalculatedField {
     name: string        // nombre visible y key
     expression: string  // ej. "revenue / leads_count"
     format?: 'number' | 'currency' | 'percent' | 'ratio'
+    decimals?: number   // 0-4; sin definir usa el redondeo por defecto del formato
 }
 
 export interface BiSchedule {

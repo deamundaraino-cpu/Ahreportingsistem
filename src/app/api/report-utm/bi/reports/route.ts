@@ -11,7 +11,7 @@ export async function GET() {
     const db = await createAdminClient()
     const { data, error } = await db
         .from('bi_reports')
-        .select('id,nombre,descripcion,filters,created_at,updated_at,cliente_id')
+        .select('id,nombre,descripcion,filters,created_at,updated_at,cliente_id,is_template')
         .order('updated_at', { ascending: false })
         .limit(100)
 

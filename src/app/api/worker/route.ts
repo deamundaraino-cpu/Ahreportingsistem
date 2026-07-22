@@ -35,6 +35,82 @@ function computeSyncHash(obj: any): string {
     return (h >>> 0).toString(16)
 }
 
+/**
+ * Familias de acciones de Meta.
+ *
+ * Un mismo evento se reporta con varios `action_type` según cómo esté configurada
+ * la cuenta: nativo (`add_to_cart`), agregado omnicanal (`omni_add_to_cart`) y del
+ * píxel (`offsite_conversion.fb_pixel_add_to_cart`). Son EL MISMO evento, así que
+ * el valor de la familia es el MÁXIMO entre variantes, nunca la suma.
+ *
+ * Antes cada evento se buscaba con un `if` suelto y varios solo miraban la variante
+ * `fb_pixel_*`: las cuentas que reportan la nativa/omni devolvían 0 para siempre
+ * (carrito, ver contenido, búsquedas, contacto, agenda, suscripción…).
+ */
+const META_ACTION_FAMILIES: Record<string, string[]> = {
+    lead:                  ['lead', 'offsite_conversion.fb_pixel_lead'],
+    purchase:              ['purchase', 'omni_purchase', 'offsite_conversion.fb_pixel_purchase'],
+    complete_registration: ['complete_registration', 'omni_complete_registration', 'offsite_conversion.fb_pixel_complete_registration'],
+    add_to_cart:           ['add_to_cart', 'omni_add_to_cart', 'offsite_conversion.fb_pixel_add_to_cart'],
+    initiate_checkout:     ['initiate_checkout', 'omni_initiated_checkout', 'offsite_conversion.fb_pixel_initiate_checkout'],
+    view_content:          ['view_content', 'omni_view_content', 'offsite_conversion.fb_pixel_view_content'],
+    search:                ['search', 'omni_search', 'offsite_conversion.fb_pixel_search'],
+    add_to_wishlist:       ['add_to_wishlist', 'omni_add_to_wishlist', 'offsite_conversion.fb_pixel_add_to_wishlist'],
+    customize_product:     ['customize_product', 'omni_customize_product', 'offsite_conversion.fb_pixel_customize_product'],
+    contact:               ['contact', 'omni_contact', 'offsite_conversion.fb_pixel_contact'],
+    schedule:              ['schedule', 'omni_schedule', 'offsite_conversion.fb_pixel_schedule'],
+    start_trial:           ['start_trial', 'omni_start_trial', 'offsite_conversion.fb_pixel_start_trial'],
+    submit_application:    ['submit_application', 'omni_submit_application', 'offsite_conversion.fb_pixel_submit_application'],
+    subscribe:             ['subscribe', 'omni_subscribe', 'offsite_conversion.fb_pixel_subscribe'],
+    find_location:         ['find_location', 'omni_find_location', 'offsite_conversion.fb_pixel_find_location'],
+    donate:                ['donate', 'omni_donate', 'offsite_conversion.fb_pixel_donate'],
+    landing_page_view:     ['landing_page_view'],
+    video_view:            ['video_view'],
+    messaging:             ['onsite_conversion.messaging_conversation_started_7d'],
+    page_engagement:       ['page_engagement'],
+    post_engagement:       ['post_engagement'],
+    post_reaction:         ['post_reaction'],
+    post_share:            ['post_share', 'post'],
+    post_save:             ['onsite_conversion.post_save'],
+    comment:               ['comment'],
+}
+
+/** action_types conocidos (para reportar los que Meta envía y no mapeamos). */
+const KNOWN_ACTION_TYPES = new Set(Object.values(META_ACTION_FAMILIES).flat())
+
+/** Recolecta action_types no mapeados de toda la corrida, para diagnosticar. */
+const unmappedActionTypes = new Set<string>()
+
+interface MetaActionTotals {
+    /** Valor por familia (máximo entre sus variantes). */
+    fam: Record<string, number>
+    /** Valor exacto de un action_type concreto (leads_form necesita el nativo). */
+    exact: Record<string, number>
+}
+
+/** Normaliza el array `actions` de un insight de Meta a totales por familia. */
+function parseMetaActions(actions: any): MetaActionTotals {
+    const exact: Record<string, number> = {}
+    if (Array.isArray(actions)) {
+        for (const a of actions) {
+            const t = a?.action_type || ''
+            if (!t) continue
+            const val = parseInt(a?.value || '0') || 0
+            exact[t] = (exact[t] ?? 0) + val
+            if (!KNOWN_ACTION_TYPES.has(t) && !t.startsWith('offsite_conversion.fb_pixel_custom.')
+                && !t.startsWith('offsite_conversion.custom.')) {
+                unmappedActionTypes.add(t)
+            }
+        }
+    }
+    const fam: Record<string, number> = {}
+    for (const [family, variants] of Object.entries(META_ACTION_FAMILIES)) {
+        // Máximo entre variantes: nativa y píxel describen el mismo evento.
+        fam[family] = variants.reduce((max, v) => Math.max(max, exact[v] ?? 0), 0)
+    }
+    return { fam, exact }
+}
+
 export async function GET(request: Request) {
     const authHeader = request.headers.get('authorization')
     // CORRECCIÓN 1: Backticks en el Bearer
@@ -93,6 +169,22 @@ export async function GET(request: Request) {
         }
     } catch {
         return NextResponse.json({ error: 'Fechas inválidas.' }, { status: 400 })
+    }
+
+    // Nunca sincronizar el futuro: un rango con `end` pasado de hoy creaba filas
+    // vacías en metricas_diarias (las APIs no devuelven nada para esos días) que
+    // luego ensucian los informes. Se recorta contra HOY en hora Colombia, igual
+    // criterio que el resto del worker.
+    const todayStr = colombiaToday()
+    const skippedFuture = datesToSync.filter(d => d > todayStr).length
+    if (skippedFuture > 0) {
+        const pastDates = datesToSync.filter(d => d <= todayStr)
+        datesToSync.length = 0
+        datesToSync.push(...pastDates)
+        log(`[worker] Se omiten ${skippedFuture} fecha(s) futura(s) (> ${todayStr}): las APIs no tienen datos y solo crearían filas vacías.`)
+    }
+    if (datesToSync.length === 0) {
+        return NextResponse.json({ error: 'El rango pedido no incluye ninguna fecha pasada o de hoy.' }, { status: 400 })
     }
 
     // Procesar todos los clientes en paralelo — reduce tiempo total de N×T a T (el cliente más lento)
@@ -540,7 +632,7 @@ export async function GET(request: Request) {
                 url.searchParams.append('access_token', token)
                 url.searchParams.append('time_range', JSON.stringify({ since: startDate, until: endDate }))
                 url.searchParams.append('time_increment', '1')
-                url.searchParams.append('fields', 'campaign_id,campaign_name,spend,impressions,clicks,inline_link_clicks,reach,frequency,cpc,cpm,ctr,actions,conversions,video_thruplay_watched_actions')
+                url.searchParams.append('fields', 'campaign_id,campaign_name,spend,impressions,clicks,inline_link_clicks,reach,frequency,cpc,cpm,ctr,actions,conversions,video_thruplay_watched_actions,video_p3_watched_actions')
                 url.searchParams.append('level', 'campaign')
                 url.searchParams.append('limit', '500')
 
@@ -574,80 +666,38 @@ export async function GET(request: Request) {
                         const cCpm = parseFloat(camp.cpm || '0')
                         const cCtr = parseFloat(camp.ctr || '0')
 
-                        let cLeads = 0, cLeadsForm = 0, cPurchases = 0, cAddsToCart = 0, cInitiatesCheckout = 0
-                        let cLandingPageViews = 0, cVideoViews = 0, cVideoThruplay = 0, cVideo3s = 0, cResults = 0
-                        let cCompleteRegistration = 0, cViewContent = 0, cSearch = 0, cAddToWishlist = 0
-                        let cContact = 0, cSchedule = 0, cStartTrial = 0, cSubmitApplication = 0
-                        let cSubscribe = 0, cFindLocation = 0, cCustomizeProduct = 0, cDonate = 0
-                        let cMessagingConversations = 0
-                        let cPageEngagement = 0, cPostEngagement = 0, cPostReactions = 0
-                        let cPostShares = 0, cPostSaves = 0, cPostComments = 0
+                        let cVideoThruplay = 0, cVideo3s = 0, cResults = 0
                         const cCustomConversions: Record<string, number> = {}
-                        // Track native vs pixel separately to avoid double-counting.
-                        // Meta reports both native and offsite_conversion.fb_pixel_* for pixel
-                        // campaigns — they represent the same event. We take the max.
-                        let cNativeLeads = 0, cPixelLeads = 0
-                        let cNativePurchases = 0, cPixelPurchases = 0
-                        let cNativeCompleteReg = 0, cPixelCompleteReg = 0
 
-                        if (camp.actions) {
-                            camp.actions.forEach((a: any) => {
-                                const val = parseInt(a.value || '0')
-                                const t = a.action_type || ''
-                                // Leads: track native and pixel separately, resolved after loop
-                                if (t === 'lead') cNativeLeads += val
-                                if (t === 'offsite_conversion.fb_pixel_lead') cPixelLeads += val
-                                // Purchases: track native and pixel separately, resolved after loop
-                                if (t === 'purchase') cNativePurchases += val
-                                if (t === 'offsite_conversion.fb_pixel_purchase') cPixelPurchases += val
-                                // Registro completado: track native and pixel separately, resolved after loop
-                                if (t === 'complete_registration') cNativeCompleteReg += val
-                                if (t === 'offsite_conversion.fb_pixel_complete_registration') cPixelCompleteReg += val
-                                // Carrito y checkout
-                                if (t === 'offsite_conversion.fb_pixel_add_to_cart') cAddsToCart += val
-                                if (t === 'offsite_conversion.fb_pixel_initiate_checkout') cInitiatesCheckout += val
-                                // Landing page y video
-                                if (t === 'landing_page_view') cLandingPageViews += val
-                                if (t === 'video_view') cVideoViews += val
-                                // Contenido y navegación
-                                if (t === 'offsite_conversion.fb_pixel_view_content' || t === 'view_content') cViewContent += val
-                                if (t === 'offsite_conversion.fb_pixel_search' || t === 'search') cSearch += val
-                                if (t === 'offsite_conversion.fb_pixel_add_to_wishlist' || t === 'add_to_wishlist') cAddToWishlist += val
-                                if (t === 'offsite_conversion.fb_pixel_customize_product' || t === 'customize_product') cCustomizeProduct += val
-                                // Contacto y agenda
-                                if (t === 'offsite_conversion.fb_pixel_contact' || t === 'contact') cContact += val
-                                if (t === 'offsite_conversion.fb_pixel_schedule' || t === 'schedule') cSchedule += val
-                                if (t === 'offsite_conversion.fb_pixel_start_trial' || t === 'start_trial') cStartTrial += val
-                                if (t === 'offsite_conversion.fb_pixel_submit_application' || t === 'submit_application') cSubmitApplication += val
-                                if (t === 'offsite_conversion.fb_pixel_subscribe' || t === 'subscribe') cSubscribe += val
-                                if (t === 'offsite_conversion.fb_pixel_find_location' || t === 'find_location') cFindLocation += val
-                                if (t === 'offsite_conversion.fb_pixel_donate' || t === 'donate') cDonate += val
-                                // Mensajería
-                                if (t === 'onsite_conversion.messaging_conversation_started_7d') cMessagingConversations += val
-                                // Engagement
-                                if (t === 'page_engagement') cPageEngagement += val
-                                if (t === 'post_engagement') cPostEngagement += val
-                                if (t === 'post_reaction') cPostReactions += val
-                                if (t === 'post_share' || t === 'post') cPostShares += val
-                                if (t === 'onsite_conversion.post_save') cPostSaves += val
-                                if (t === 'comment') cPostComments += val
-                            })
-                        }
-
-                        // Resolve leads/purchases: if both native and pixel are reported for the
-                        // same campaign, they represent the same event — take the max to avoid doubling.
-                        // If only one is non-zero, it's used as-is.
-                        cLeads = (cNativeLeads > 0 && cPixelLeads > 0)
-                            ? Math.max(cNativeLeads, cPixelLeads)
-                            : cNativeLeads + cPixelLeads
-                        // Form leads: only native Lead Ads form submissions (action_type = 'lead')
-                        cLeadsForm = cNativeLeads
-                        cPurchases = (cNativePurchases > 0 && cPixelPurchases > 0)
-                            ? Math.max(cNativePurchases, cPixelPurchases)
-                            : cNativePurchases + cPixelPurchases
-                        cCompleteRegistration = (cNativeCompleteReg > 0 && cPixelCompleteReg > 0)
-                            ? Math.max(cNativeCompleteReg, cPixelCompleteReg)
-                            : cNativeCompleteReg + cPixelCompleteReg
+                        // Totales por familia de acción (máximo entre variantes nativa/omni/píxel).
+                        const { fam, exact } = parseMetaActions(camp.actions)
+                        const cLeads = fam.lead
+                        // Leads de formulario: SOLO los envíos nativos de Lead Ads.
+                        const cLeadsForm = exact['lead'] ?? 0
+                        const cPurchases = fam.purchase
+                        const cCompleteRegistration = fam.complete_registration
+                        const cAddsToCart = fam.add_to_cart
+                        const cInitiatesCheckout = fam.initiate_checkout
+                        const cLandingPageViews = fam.landing_page_view
+                        const cVideoViews = fam.video_view
+                        const cViewContent = fam.view_content
+                        const cSearch = fam.search
+                        const cAddToWishlist = fam.add_to_wishlist
+                        const cCustomizeProduct = fam.customize_product
+                        const cContact = fam.contact
+                        const cSchedule = fam.schedule
+                        const cStartTrial = fam.start_trial
+                        const cSubmitApplication = fam.submit_application
+                        const cSubscribe = fam.subscribe
+                        const cFindLocation = fam.find_location
+                        const cDonate = fam.donate
+                        const cMessagingConversations = fam.messaging
+                        const cPageEngagement = fam.page_engagement
+                        const cPostEngagement = fam.post_engagement
+                        const cPostReactions = fam.post_reaction
+                        const cPostShares = fam.post_share
+                        const cPostSaves = fam.post_save
+                        const cPostComments = fam.comment
 
                         // ThruPlay y vistas de 3s (campos separados en la respuesta de Meta)
                         if (camp.video_thruplay_watched_actions) {
@@ -768,7 +818,7 @@ export async function GET(request: Request) {
                 levelUrl.searchParams.append('access_token', token)
                 levelUrl.searchParams.append('time_range', JSON.stringify({ since: startDate, until: endDate }))
                 levelUrl.searchParams.append('time_increment', '1')
-                levelUrl.searchParams.append('fields', `${extraIds}campaign_id,campaign_name,spend,impressions,clicks,inline_link_clicks,reach,frequency,cpc,cpm,ctr,actions,conversions,video_thruplay_watched_actions`)
+                levelUrl.searchParams.append('fields', `${extraIds}campaign_id,campaign_name,spend,impressions,clicks,inline_link_clicks,reach,frequency,cpc,cpm,ctr,actions,conversions,video_thruplay_watched_actions,video_p3_watched_actions`)
                 levelUrl.searchParams.append('level', level)
                 levelUrl.searchParams.append('limit', '500')
 
@@ -783,61 +833,38 @@ export async function GET(request: Request) {
                 paged.list.forEach((item: any) => {
                     const day = item.date_start
                     if (!day) return
-                    let iLeads = 0, iLeadsForm = 0, iPurchases = 0, iAddsToCart = 0, iInitiatesCheckout = 0
-                    let iLandingPageViews = 0, iVideoViews = 0, iVideoThruplay = 0, iVideo3s = 0
-                    let iCompleteRegistration = 0, iViewContent = 0, iSearch = 0, iAddToWishlist = 0
-                    let iContact = 0, iSchedule = 0, iStartTrial = 0, iSubmitApplication = 0
-                    let iSubscribe = 0, iFindLocation = 0, iCustomizeProduct = 0, iDonate = 0
-                    let iMessagingConversations = 0, iPageEngagement = 0, iPostEngagement = 0
-                    let iPostReactions = 0, iPostShares = 0, iPostSaves = 0, iPostComments = 0
+                    let iVideoThruplay = 0, iVideo3s = 0
                     let iResults = 0
-                    let iNativeLeads = 0, iPixelLeads = 0
-                    let iNativePurchases = 0, iPixelPurchases = 0
-                    let iNativeCompleteReg = 0, iPixelCompleteReg = 0
                     const iCustomConversions: Record<string, number> = {}
 
-                    if (item.actions) {
-                        item.actions.forEach((a: any) => {
-                            const val = parseInt(a.value || '0')
-                            const t = a.action_type || ''
-                            if (t === 'lead') iNativeLeads += val
-                            if (t === 'offsite_conversion.fb_pixel_lead') iPixelLeads += val
-                            if (t === 'purchase') iNativePurchases += val
-                            if (t === 'offsite_conversion.fb_pixel_purchase') iPixelPurchases += val
-                            if (t === 'complete_registration') iNativeCompleteReg += val
-                            if (t === 'offsite_conversion.fb_pixel_complete_registration') iPixelCompleteReg += val
-                            if (t === 'offsite_conversion.fb_pixel_add_to_cart') iAddsToCart += val
-                            if (t === 'offsite_conversion.fb_pixel_initiate_checkout') iInitiatesCheckout += val
-                            if (t === 'landing_page_view') iLandingPageViews += val
-                            if (t === 'video_view') iVideoViews += val
-                            if (t === 'offsite_conversion.fb_pixel_view_content' || t === 'view_content') iViewContent += val
-                            if (t === 'offsite_conversion.fb_pixel_search' || t === 'search') iSearch += val
-                            if (t === 'offsite_conversion.fb_pixel_add_to_wishlist' || t === 'add_to_wishlist') iAddToWishlist += val
-                            if (t === 'offsite_conversion.fb_pixel_customize_product' || t === 'customize_product') iCustomizeProduct += val
-                            if (t === 'offsite_conversion.fb_pixel_contact' || t === 'contact') iContact += val
-                            if (t === 'offsite_conversion.fb_pixel_schedule' || t === 'schedule') iSchedule += val
-                            if (t === 'offsite_conversion.fb_pixel_start_trial' || t === 'start_trial') iStartTrial += val
-                            if (t === 'offsite_conversion.fb_pixel_submit_application' || t === 'submit_application') iSubmitApplication += val
-                            if (t === 'offsite_conversion.fb_pixel_subscribe' || t === 'subscribe') iSubscribe += val
-                            if (t === 'offsite_conversion.fb_pixel_find_location' || t === 'find_location') iFindLocation += val
-                            if (t === 'offsite_conversion.fb_pixel_donate' || t === 'donate') iDonate += val
-                            if (t === 'onsite_conversion.messaging_conversation_started_7d') iMessagingConversations += val
-                            if (t === 'page_engagement') iPageEngagement += val
-                            if (t === 'post_engagement') iPostEngagement += val
-                            if (t === 'post_reaction') iPostReactions += val
-                            if (t === 'post_share' || t === 'post') iPostShares += val
-                            if (t === 'onsite_conversion.post_save') iPostSaves += val
-                            if (t === 'comment') iPostComments += val
-                        })
-                    }
-
-                    iLeads = (iNativeLeads > 0 && iPixelLeads > 0)
-                        ? Math.max(iNativeLeads, iPixelLeads) : iNativeLeads + iPixelLeads
-                    iLeadsForm = iNativeLeads
-                    iPurchases = (iNativePurchases > 0 && iPixelPurchases > 0)
-                        ? Math.max(iNativePurchases, iPixelPurchases) : iNativePurchases + iPixelPurchases
-                    iCompleteRegistration = (iNativeCompleteReg > 0 && iPixelCompleteReg > 0)
-                        ? Math.max(iNativeCompleteReg, iPixelCompleteReg) : iNativeCompleteReg + iPixelCompleteReg
+                    // Mismo criterio que a nivel campaña: familias con máximo entre variantes.
+                    const { fam: iFam, exact: iExact } = parseMetaActions(item.actions)
+                    const iLeads = iFam.lead
+                    const iLeadsForm = iExact['lead'] ?? 0
+                    const iPurchases = iFam.purchase
+                    const iCompleteRegistration = iFam.complete_registration
+                    const iAddsToCart = iFam.add_to_cart
+                    const iInitiatesCheckout = iFam.initiate_checkout
+                    const iLandingPageViews = iFam.landing_page_view
+                    const iVideoViews = iFam.video_view
+                    const iViewContent = iFam.view_content
+                    const iSearch = iFam.search
+                    const iAddToWishlist = iFam.add_to_wishlist
+                    const iCustomizeProduct = iFam.customize_product
+                    const iContact = iFam.contact
+                    const iSchedule = iFam.schedule
+                    const iStartTrial = iFam.start_trial
+                    const iSubmitApplication = iFam.submit_application
+                    const iSubscribe = iFam.subscribe
+                    const iFindLocation = iFam.find_location
+                    const iDonate = iFam.donate
+                    const iMessagingConversations = iFam.messaging
+                    const iPageEngagement = iFam.page_engagement
+                    const iPostEngagement = iFam.post_engagement
+                    const iPostReactions = iFam.post_reaction
+                    const iPostShares = iFam.post_share
+                    const iPostSaves = iFam.post_save
+                    const iPostComments = iFam.comment
 
                     if (item.video_thruplay_watched_actions) {
                         item.video_thruplay_watched_actions.forEach((a: any) => { iVideoThruplay += parseInt(a.value || '0') })
@@ -1949,6 +1976,14 @@ export async function GET(request: Request) {
             link: '/dashboard',
             metadata: { reason: 'api_disconnected_or_inconsistent', alerts: inconsistencyAlerts.slice(0, 100), range: { start: startDateStr, end: endDateStr } },
         })
+    }
+
+    // Diagnóstico: action_types que Meta envió y no mapeamos a ninguna métrica.
+    // Si aquí aparece un evento que el cliente sí usa, hay que añadirlo a
+    // META_ACTION_FAMILIES (es la causa de métricas que salen siempre en 0).
+    if (unmappedActionTypes.size > 0) {
+        log(`[Meta] action_types sin mapear (${unmappedActionTypes.size}): ${Array.from(unmappedActionTypes).sort().join(', ')}`)
+        unmappedActionTypes.clear()
     }
 
     // Evaluar reglas de alertas condicionales

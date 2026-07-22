@@ -2,10 +2,11 @@
 
 import { useEffect, useState } from 'react'
 import { TrendingUp, TrendingDown, Minus, Loader2, Target } from 'lucide-react'
-import type { BiFilters, WidgetConfig, CalculatedField } from '../BiTypes'
+import type { BiFilters, WidgetConfig, CalculatedField, ScorecardThreshold } from '../BiTypes'
 import type { BiMetric, ClienteGoals, GoalStatus } from '@/lib/report-utm/bi-metadata'
-import { METRIC_META, appendUtmFilters, utmFilterSignature, appendFieldFilters, fieldFilterSignature, appendDimFilters, dimFilterSignature, appendAdvancedFilter, advancedFilterSignature, widgetAdvancedSignature, fieldMetricLabel, fieldMetricFormat, metricGlossary, isLowerBetter, evaluateGoal } from '@/lib/report-utm/bi-metadata'
+import { METRIC_META, appendUtmFilters, utmFilterSignature, appendFieldFilters, fieldFilterSignature, appendDimFilters, dimFilterSignature, appendAdvancedFilter, advancedFilterSignature, widgetAdvancedSignature, withCampaignFilter, fieldMetricLabel, fieldMetricFormat, metricGlossary, isLowerBetter, evaluateGoal } from '@/lib/report-utm/bi-metadata'
 import { fetchClienteGoals } from '@/lib/report-utm/client-goals'
+import { useBiQueryBase } from '../BiQueryContext'
 import { HelpTip } from '../HelpTip'
 
 interface Props {
@@ -17,7 +18,14 @@ interface Props {
 
 type ValFormat = 'number' | 'currency' | 'percent' | 'ratio'
 
-function formatVal(value: number, format: ValFormat): string {
+/** `decimals` (campos calculados) fija los decimales y desactiva el abreviado k/M. */
+function formatVal(value: number, format: ValFormat, decimals?: number): string {
+    if (decimals !== undefined) {
+        const n = value.toLocaleString('es-AR', { minimumFractionDigits: decimals, maximumFractionDigits: decimals })
+        if (format === 'percent') return `${n}%`
+        if (format === 'ratio')   return `${n}x`
+        return n
+    }
     if (format === 'currency') {
         return value.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
     }
@@ -29,6 +37,7 @@ function formatVal(value: number, format: ValFormat): string {
 }
 
 export function ScorecardWidget({ title, config, filters, calculatedFields = [] }: Props) {
+    const queryBase = useBiQueryBase()
     const [value, setValue]   = useState<number | null>(null)
     const [prev, setPrev]     = useState<number | null>(null)
     const [loading, setLoading] = useState(true)
@@ -55,10 +64,10 @@ export function ScorecardWidget({ title, config, filters, calculatedFields = [] 
         appendUtmFilters(params, filters)
         appendFieldFilters(params, filters)
         appendDimFilters(params, filters)
-        appendAdvancedFilter(params, filters, config.advanced_filter)
+        appendAdvancedFilter(params, filters, withCampaignFilter(config.advanced_filter, config.campaign_filter))
         if (calcField) params.set(`calc[${calcField.name}]`, calcField.expression)
 
-        fetch(`/api/report-utm/bi/query?${params}`)
+        fetch(`${queryBase}?${params}`)
             .then(r => r.json())
             .then(json => {
                 if (compare) {
@@ -74,7 +83,7 @@ export function ScorecardWidget({ title, config, filters, calculatedFields = [] 
             })
             .catch(() => setError('Error al cargar'))
             .finally(() => setLoading(false))
-    }, [metric, calcField?.expression, compare, filters.cliente_id, filters.date_from, filters.date_to, utmFilterSignature(filters), fieldFilterSignature(filters), dimFilterSignature(filters), advancedFilterSignature(filters), widgetAdvancedSignature(config.advanced_filter)])
+    }, [queryBase, metric, calcField?.expression, compare, filters.cliente_id, filters.date_from, filters.date_to, utmFilterSignature(filters), fieldFilterSignature(filters), dimFilterSignature(filters), advancedFilterSignature(filters), widgetAdvancedSignature(withCampaignFilter(config.advanced_filter, config.campaign_filter))])
 
     // Metas del cliente para el semáforo (una sola petición por cliente).
     const clienteId = filters.cliente_id
@@ -91,13 +100,26 @@ export function ScorecardWidget({ title, config, filters, calculatedFields = [] 
         ? ((value - prev) / prev) * 100
         : null
 
-    const goal = value !== null ? evaluateGoal(metric, value, goals) : null
+    const variant = config.variant ?? 'default'
+    // Semáforo por umbrales propios del widget. Cuando está configurado manda
+    // sobre el semáforo por metas del cliente (que sigue siendo el default).
+    const thresholdStatus = variant === 'threshold' && value !== null
+        ? evalThreshold(value, config.threshold)
+        : null
+    const goal = thresholdStatus === null && value !== null ? evaluateGoal(metric, value, goals) : null
+    const accentStatus = thresholdStatus ?? goal?.status ?? null
     const glossary = metricGlossary(metric)
+
+    // Progreso hacia el objetivo del widget (0-100, tolera superarlo).
+    const target = config.target
+    const progressPct = variant === 'progress' && value !== null && target && target > 0
+        ? Math.min(100, Math.max(0, (value / target) * 100))
+        : null
 
     return (
         <div
             className="rounded-2xl border border-border bg-card p-5 flex flex-col gap-3 h-full"
-            style={goal ? { borderLeft: `3px solid ${GOAL_COLOR[goal.status]}` } : undefined}
+            style={accentStatus ? { borderLeft: `3px solid ${GOAL_COLOR[accentStatus]}` } : undefined}
         >
             <p className="flex items-center gap-1 text-xs font-medium text-muted-foreground">
                 {title}
@@ -116,10 +138,26 @@ export function ScorecardWidget({ title, config, filters, calculatedFields = [] 
                         {format === 'currency' && (
                             <span className="text-base font-medium text-muted-foreground pb-0.5">$ </span>
                         )}
-                        <p className="text-3xl font-bold font-mono tabular-nums text-foreground leading-none">
-                            {value !== null ? formatVal(value, format) : '—'}
+                        <p
+                            className="text-3xl font-bold font-mono tabular-nums leading-none text-foreground"
+                            style={thresholdStatus ? { color: GOAL_COLOR[thresholdStatus] } : undefined}
+                        >
+                            {value !== null ? formatVal(value, format, calcField?.decimals) : "—"}
                         </p>
                     </div>
+                    {progressPct !== null && (
+                        <div className="space-y-1 pt-0.5">
+                            <div className="h-1.5 rounded-full bg-muted overflow-hidden">
+                                <div
+                                    className="h-full rounded-full transition-all duration-500"
+                                    style={{ width: `${progressPct}%`, background: '#10b981' }}
+                                />
+                            </div>
+                            <p className="text-[10px] text-muted-foreground">
+                                {progressPct.toFixed(0)}% del objetivo ({formatVal(target as number, format)})
+                            </p>
+                        </div>
+                    )}
                     {compare && delta !== null && (
                         <div className="flex items-center gap-1.5">
                             <DeltaBadge delta={delta} lowerIsBetter={isLowerBetter(metric)} />
@@ -143,6 +181,19 @@ export function ScorecardWidget({ title, config, filters, calculatedFields = [] 
             </p>
         </div>
     )
+}
+
+/**
+ * Semáforo por umbrales del widget: verde si cumple el umbral verde, ámbar si
+ * cumple el ámbar, rojo si no cumple ninguno. Sin umbrales configurados no pinta
+ * nada (devuelve null) y el scorecard cae al semáforo por metas del cliente.
+ */
+function evalThreshold(value: number, t: ScorecardThreshold | undefined): GoalStatus | null {
+    if (!t || !Number.isFinite(t.green) || !Number.isFinite(t.yellow)) return null
+    const ok = (op: 'gte' | 'lte', ref: number) => (op === 'gte' ? value >= ref : value <= ref)
+    if (ok(t.greenOp, t.green)) return 'good'
+    if (ok(t.yellowOp, t.yellow)) return 'warn'
+    return 'bad'
 }
 
 const GOAL_COLOR: Record<GoalStatus, string> = {

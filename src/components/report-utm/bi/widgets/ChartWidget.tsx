@@ -17,9 +17,11 @@ import type { BiMetric, BiDimension, BiQueryRow, BiPivotRow } from '@/lib/report
 import {
     METRIC_META, DIMENSION_META, appendUtmFilters, utmFilterSignature, applyValueFilters,
     appendFieldFilters, fieldFilterSignature, appendAdvancedFilter, advancedFilterSignature,
-    appendDimFilters, dimFilterSignature, widgetAdvancedSignature,
+    appendDimFilters, dimFilterSignature, widgetAdvancedSignature, withCampaignFilter,
     fieldMetricLabel, fieldMetricFormat, fieldDimLabel, isFieldMetric, metricGlossary,
+    supportsPivot,
 } from '@/lib/report-utm/bi-metadata'
+import { useBiQueryBase } from '../BiQueryContext'
 import { HelpTip } from '../HelpTip'
 
 const COLORS = [
@@ -84,6 +86,7 @@ function ChartTooltip({ active, payload, label, format }: ChartTooltipProps) {
 }
 
 export function ChartWidget({ title, type, config, filters, calculatedFields = [], onDrill }: Props) {
+    const queryBase = useBiQueryBase()
     const [rows, setRows]       = useState<BiQueryRow[]>([])
     const [pivot, setPivot]     = useState<{ rows: BiPivotRow[]; seriesKeys: string[] } | null>(null)
     const [loading, setLoading] = useState(true)
@@ -101,9 +104,13 @@ export function ChartWidget({ title, type, config, filters, calculatedFields = [
     // (dimensión secundaria) no soporta calc, así que se usa la ruta estándar.
     const calcField = calculatedFields.find(c => c.name === metric)
     const format: ColFormat = (calcField?.format ?? METRIC_META[metric as BiMetric]?.format ?? fieldMetricFormat(metric) ?? 'number') as ColFormat
-    // El pivot (dimensión secundaria) solo cuenta filas/suma revenue → no aplica
-    // ni a campos calculados ni a métricas de campo (sum/avg de raw_fields).
-    const usePivot  = !calcField && !isFieldMetric(metric) && !!dimension2 && (type === 'bar' || type === 'combo' || type === 'area' || type === 'line')
+    // El pivot (dimensión secundaria) agrupa filas de lead_events/sales_events:
+    // solo sabe contar filas o sumar `amount`. Por eso no aplica a campos
+    // calculados, ni a métricas de campo, ni a métricas de gasto/campaña/GA4
+    // (con esas devolvería un conteo de filas disfrazado). En esos casos se
+    // ignora la dimensión secundaria y se usa la ruta estándar.
+    const usePivot  = !calcField && !isFieldMetric(metric) && supportsPivot(metric) && !!dimension2
+        && (type === 'bar' || type === 'combo' || type === 'area' || type === 'line')
 
     useEffect(() => {
         setLoading(true)
@@ -130,18 +137,18 @@ export function ChartWidget({ title, type, config, filters, calculatedFields = [
         appendUtmFilters(params, filters)
         appendFieldFilters(params, filters)
         appendDimFilters(params, filters)
-        appendAdvancedFilter(params, filters, config.advanced_filter)
+        appendAdvancedFilter(params, filters, withCampaignFilter(config.advanced_filter, config.campaign_filter))
         if (calcField) params.set(`calc[${calcField.name}]`, calcField.expression)
 
-        fetch(`/api/report-utm/bi/query?${params}`)
+        fetch(`${queryBase}?${params}`)
             .then(r => r.json())
             .then(json => {
                 if (usePivot) { setPivot(json.data ?? { rows: [], seriesKeys: [] }); setRows([]) }
-                else { setRows(json.data ?? []); setPivot(null) }
+                else { setRows(Array.isArray(json.data) ? json.data : []); setPivot(null) }
             })
             .catch(() => setError('Error al cargar'))
             .finally(() => setLoading(false))
-    }, [metric, calcField?.expression, dimension, dimension2, usePivot, grouping, limit, sort, filters.cliente_id, filters.date_from, filters.date_to, utmFilterSignature(filters), fieldFilterSignature(filters), dimFilterSignature(filters), advancedFilterSignature(filters), widgetAdvancedSignature(config.advanced_filter)])
+    }, [queryBase, metric, calcField?.expression, dimension, dimension2, usePivot, grouping, limit, sort, filters.cliente_id, filters.date_from, filters.date_to, utmFilterSignature(filters), fieldFilterSignature(filters), dimFilterSignature(filters), advancedFilterSignature(filters), widgetAdvancedSignature(withCampaignFilter(config.advanced_filter, config.campaign_filter))])
 
     const dimLabel = DIMENSION_META[dimension]?.label ?? fieldDimLabel(dimension) ?? dimension
     const metLabel = METRIC_META[metric as BiMetric]?.label ?? fieldMetricLabel(metric) ?? calcField?.name ?? metric

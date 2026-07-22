@@ -2,7 +2,8 @@ import { createAdminClient } from '@/utils/supabase/server'
 import type { BiMetric, BiDimension, DateGrouping, BiQueryParams, BiQueryRow, BiPivotRow, FieldAgg, AdvancedFilter } from './bi-metadata'
 import {
     evaluateExpression, parseFilterValue, AD_JSONB_METRICS, AD_SCALAR_METRICS, AD_RATE_METRICS,
-    OFFLINE_METRICS, SUBS_METRICS,
+    MANUAL_JSONB_METRICS, OFFLINE_METRICS, SUBS_METRICS,
+    METRIC_META, FUNNEL_STAGE_METRICS, DEFAULT_FUNNEL_STAGES,
     isFieldDim, parseFieldDim, parseFieldMetric,
     extractFieldMetricAliases, parseFieldNumber,
     advancedFilterHasConditions, matchFilterCondition,
@@ -65,7 +66,9 @@ export async function runBiQuery(params: BiQueryParams): Promise<BiQueryRow[]> {
     const needsSales = !isFieldDimQuery && !isAdsOnlyDim && requires(['sales_count', 'revenue', 'cpa', 'roas', 'conversion_rate'])
     const needsAds   = !isFieldDimQuery && requires([
         'spend', 'meta_spend', 'tiktok_spend', 'cpl', 'cpa', 'roas', 'clicks', 'impressions', 'cpc', 'cpm', 'frequency', 'ctr',
-        ...AD_JSONB_METRICS, ...AD_SCALAR_METRICS, ...AD_RATE_METRICS, 'hotmart_revenue', 'hotmart_sales',
+        ...AD_JSONB_METRICS, ...AD_SCALAR_METRICS, ...AD_RATE_METRICS,
+        ...MANUAL_JSONB_METRICS.map(m => m.metric),
+        'hotmart_revenue', 'hotmart_sales', 'hotmart_roas', 'hotmart_cpa', 'hotmart_roi',
     ])
     // Offline (día×cliente) y suscripciones (snapshot) son globales/por fecha,
     // no cruzan por dimensiones de lead/venta/anuncio.
@@ -330,6 +333,7 @@ function newAdEntry(): Record<string, number> {
     const e: Record<string, number> = { spend: 0, meta_spend: 0, tiktok_spend: 0, clicks: 0, impressions: 0 }
     for (const k of AD_JSONB_METRICS) e[k] = 0
     for (const k of AD_SCALAR_METRICS) e[k] = 0
+    for (const { metric } of MANUAL_JSONB_METRICS) e[metric] = 0
     // Acumuladores para promediar tasas GA4 ponderadas por sesiones.
     e._ga_bounce_wsum = 0
     e._ga_dur_wsum = 0
@@ -375,6 +379,9 @@ async function queryAdsDirect(
         'fecha', 'meta_spend', 'tiktok_spend', 'meta_clicks', 'tiktok_clicks',
         'meta_impressions', 'tiktok_impressions',
         ...AD_SCALAR_METRICS, ...AD_RATE_METRICS,
+        // Métricas cargadas a mano por el equipo (ventas cerradas): viven en este
+        // JSONB, no en una columna propia.
+        'metricas_manuales',
         ...(adBreakdown ? [adBreakdown] : ['meta_campaigns']),
     ]
     let q = (await (await import('@/utils/supabase/server')).createAdminClient())
@@ -447,6 +454,11 @@ async function queryAdsDirect(
         entry.impressions += Number(r.meta_impressions ?? 0) + Number(r.tiktok_impressions ?? 0)
         // Métricas escalares aditivas (GA4 sesiones, TikTok conv., Hotmart ventas…)
         for (const k of AD_SCALAR_METRICS) entry[k] += Number(r[k] ?? 0)
+        // Métricas manuales del dashboard (JSONB metricas_manuales).
+        const manuales = (r.metricas_manuales ?? {}) as Record<string, unknown>
+        for (const { metric, jsonKey } of MANUAL_JSONB_METRICS) {
+            entry[metric] += Number(manuales[jsonKey] ?? 0) || 0
+        }
         // Tasas GA4: promedio ponderado por sesiones (acumular numerador).
         const gaSess = Number(r.ga_sessions ?? 0)
         entry._ga_bounce_wsum += Number(r.ga_bounce_rate ?? 0) * gaSess
@@ -670,11 +682,10 @@ function mergeResults(
         const row: BiQueryRow = { dimension_value: key === 'total' ? null : key }
 
         if (params.metrics.includes('leads_count'))     row.leads_count     = leads_count
-        // Leads (todos los canales) = conteo de-duplicado de lead_events, que YA abarca todos los
-        // canales (formularios web + Meta Lead Ads, ingeridos vía webhook/polling). NO se suma
-        // metricas_diarias.leads_form: es el conteo agregado que Meta reporta de esos MISMOS leads
-        // → sumarlo duplicaría. Equivale a leads_count.
-        if (params.metrics.includes('leads_total'))     row.leads_total     = leads_count
+        // Compat: 'leads_total' era un duplicado exacto de leads_count (mismo conteo
+        // de-duplicado de lead_events, que ya abarca todos los canales) y se retiró del
+        // catálogo. Se sigue respondiendo para layouts anteriores a la migración 045.
+        if ((params.metrics as string[]).includes('leads_total')) row.leads_total = leads_count
         if (params.metrics.includes('sales_count'))     row.sales_count     = sales_count
         if (params.metrics.includes('revenue'))         row.revenue         = revenue
         if (params.metrics.includes('spend'))           row.spend           = spend
@@ -698,11 +709,25 @@ function mergeResults(
         for (const k of AD_SCALAR_METRICS) {
             if (params.metrics.includes(k as BiMetric)) row[k] = Number(ad?.[k] ?? 0)
         }
+        // Métricas manuales del dashboard (JSONB metricas_manuales)
+        for (const { metric } of MANUAL_JSONB_METRICS) {
+            if (params.metrics.includes(metric as BiMetric)) row[metric] = Number(ad?.[metric] ?? 0)
+        }
         // GA4 tasas (promedio ponderado) + convenientes Hotmart (computadas)
         if (params.metrics.includes('ga_bounce_rate'))          row.ga_bounce_rate          = gaBounceRate
         if (params.metrics.includes('ga_avg_session_duration')) row.ga_avg_session_duration = gaAvgDuration
         if (params.metrics.includes('hotmart_revenue'))         row.hotmart_revenue         = hotmartRevenue
         if (params.metrics.includes('hotmart_sales'))           row.hotmart_sales           = hotmartSales
+        // Retorno sobre la facturación agregada de Hotmart. Alternativa a
+        // roas/cpa (que dependen de sales_events) para clientes que venden por
+        // Hotmart sin webhook de ventas configurado.
+        //
+        // Exigen que AMBAS partes existan (mismo criterio que cpl/cpa): un cliente
+        // que no vende por Hotmart mostraría si no un ROAS de 0 y un ROI de -100%,
+        // que se leen como "se perdió toda la inversión" en vez de "sin datos".
+        if (params.metrics.includes('hotmart_roas')) row.hotmart_roas = spend > 0 && hotmartRevenue > 0 ? round2(hotmartRevenue / spend) : null
+        if (params.metrics.includes('hotmart_cpa'))  row.hotmart_cpa  = spend > 0 && hotmartSales > 0 ? round2(spend / hotmartSales) : null
+        if (params.metrics.includes('hotmart_roi'))  row.hotmart_roi  = spend > 0 && hotmartRevenue > 0 ? round2(((hotmartRevenue - spend) / spend) * 100) : null
         // Conversiones offline
         const off = offlineData.find(r => (r.dim ?? 'total') === key)
         if (params.metrics.includes('offline_leads'))   row.offline_leads   = off?.offline_leads   ?? 0
@@ -741,10 +766,14 @@ function mergeResults(
             }
             for (const k of AD_JSONB_METRICS) baseValues[k] = Number(ad?.[k] ?? 0)
             for (const k of AD_SCALAR_METRICS) baseValues[k] = Number(ad?.[k] ?? 0)
+            for (const { metric } of MANUAL_JSONB_METRICS) baseValues[metric] = Number(ad?.[metric] ?? 0)
             baseValues.ga_bounce_rate = gaBounceRate ?? 0
             baseValues.ga_avg_session_duration = gaAvgDuration ?? 0
             baseValues.hotmart_revenue = hotmartRevenue
             baseValues.hotmart_sales = hotmartSales
+            baseValues.hotmart_roas = spend > 0 ? round2(hotmartRevenue / spend) : 0
+            baseValues.hotmart_cpa  = hotmartSales > 0 && spend > 0 ? round2(spend / hotmartSales) : 0
+            baseValues.hotmart_roi  = spend > 0 ? round2(((hotmartRevenue - spend) / spend) * 100) : 0
             baseValues.offline_leads   = off?.offline_leads   ?? 0
             baseValues.offline_ventas  = off?.offline_ventas  ?? 0
             baseValues.offline_revenue = round2(off?.offline_revenue ?? 0)
@@ -756,6 +785,18 @@ function mergeResults(
         }
 
         rows.push(row)
+    }
+
+    // Una serie temporal se ordena por FECHA, no por valor: ordenarla por la
+    // métrica dejaba la gráfica de evolución con los días descolocados
+    // (18 jul, 16 jul, 19 jul…). Las claves de fecha (día 'YYYY-MM-DD', semana
+    // 'YYYY-MM-DD' del lunes, mes 'YYYY-MM') ordenan bien como texto.
+    if (params.dimension === 'date') {
+        rows.sort((a, b) => String(a.dimension_value ?? '').localeCompare(String(b.dimension_value ?? '')))
+        // Con límite se conservan los períodos MÁS RECIENTES (el final de la serie),
+        // manteniendo el orden cronológico.
+        if (params.limit && rows.length > params.limit) return rows.slice(-params.limit)
+        return rows
     }
 
     // Orden: por la primera métrica solicitada (o el campo de orden).
@@ -1114,25 +1155,46 @@ export async function runFunnelQuery(params: {
     date_to?: string
     filters?: Record<string, string>
     advancedFilter?: AdvancedFilter
+    /** Etapas del embudo, en orden. Se filtran contra FUNNEL_STAGE_METRICS. */
+    metrics?: BiMetric[]
 }): Promise<{ stage: string; value: number; label: string }[]> {
     const dateFrom = params.date_from ?? new Date(Date.now() - 30 * 86400_000).toISOString().slice(0, 10)
     const dateTo   = params.date_to   ?? new Date().toISOString().slice(0, 10)
 
+    // Etapas válidas del widget; si no configura ninguna (o todas son inválidas)
+    // se usa el embudo clásico impresiones → clics → leads → ventas.
+    const allowed = new Set<string>(FUNNEL_STAGE_METRICS)
+    const requested = (params.metrics ?? []).filter(m => allowed.has(m))
+    const stages: BiMetric[] = requested.length >= 2 ? requested : DEFAULT_FUNNEL_STAGES
+
+    const { metrics: _ignored, ...queryParams } = params
+
+    // Las tres fuentes (gasto/campaña, leads, ventas) se consultan por separado
+    // porque cada una tiene su propia tabla; solo se piden las que hagan falta.
+    const adsMetrics   = stages.filter(m => m !== 'leads_count' && m !== 'sales_count')
+    const needsLeads   = stages.includes('leads_count')
+    const needsSales   = stages.includes('sales_count')
+
     const [adsResult, leadsResult, salesResult] = await Promise.all([
-        runBiQuery({ metrics: ['impressions', 'clicks', 'spend'], dimension: 'none', ...params, date_from: dateFrom, date_to: dateTo }),
-        runBiQuery({ metrics: ['leads_count'], dimension: 'none', ...params, date_from: dateFrom, date_to: dateTo }),
-        runBiQuery({ metrics: ['sales_count'], dimension: 'none', ...params, date_from: dateFrom, date_to: dateTo }),
+        adsMetrics.length
+            ? runBiQuery({ ...queryParams, metrics: adsMetrics, dimension: 'none', date_from: dateFrom, date_to: dateTo })
+            : Promise.resolve([] as BiQueryRow[]),
+        needsLeads
+            ? runBiQuery({ ...queryParams, metrics: ['leads_count'], dimension: 'none', date_from: dateFrom, date_to: dateTo })
+            : Promise.resolve([] as BiQueryRow[]),
+        needsSales
+            ? runBiQuery({ ...queryParams, metrics: ['sales_count'], dimension: 'none', date_from: dateFrom, date_to: dateTo })
+            : Promise.resolve([] as BiQueryRow[]),
     ])
 
-    const impressions = adsResult[0]?.impressions ?? 0
-    const clicks      = adsResult[0]?.clicks      ?? 0
-    const leads       = leadsResult[0]?.leads_count ?? 0
-    const sales       = salesResult[0]?.sales_count ?? 0
-
-    return [
-        { stage: 'impressions', value: impressions, label: 'Impresiones' },
-        { stage: 'clicks',      value: clicks,      label: 'Clics' },
-        { stage: 'leads',       value: leads,       label: 'Leads' },
-        { stage: 'sales',       value: sales,       label: 'Ventas' },
-    ]
+    return stages.map(metric => {
+        const source = metric === 'leads_count' ? leadsResult
+            : metric === 'sales_count' ? salesResult
+            : adsResult
+        return {
+            stage: metric,
+            value: Number(source[0]?.[metric] ?? 0),
+            label: METRIC_META[metric]?.label ?? metric,
+        }
+    })
 }

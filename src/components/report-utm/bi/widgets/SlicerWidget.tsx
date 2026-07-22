@@ -5,6 +5,7 @@ import { Loader2, Filter, Check } from 'lucide-react'
 import type { BiFilters, WidgetConfig } from '../BiTypes'
 import type { BiDimension } from '@/lib/report-utm/bi-metadata'
 import { DIMENSION_META, fieldDimLabel } from '@/lib/report-utm/bi-metadata'
+import { useBiQueryBase } from '../BiQueryContext'
 
 interface Props {
     title: string
@@ -15,6 +16,7 @@ interface Props {
 }
 
 export function SlicerWidget({ title, config, filters, onSetFilter, onSetDateRange }: Props) {
+    const queryBase = useBiQueryBase()
     const dimension = (config.dimension as BiDimension) ?? 'utm_source'
     const mode = config.slicer_mode ?? 'dropdown'
     const dimLabel = DIMENSION_META[dimension]?.label ?? fieldDimLabel(dimension) ?? dimension
@@ -30,12 +32,12 @@ export function SlicerWidget({ title, config, filters, onSetFilter, onSetDateRan
         if (filters.cliente_id) params.set('cliente_id', filters.cliente_id)
         if (filters.date_from)  params.set('date_from', filters.date_from)
         if (filters.date_to)    params.set('date_to', filters.date_to)
-        fetch(`/api/report-utm/bi/query?${params}`)
+        fetch(`${queryBase}?${params}`)
             .then(r => r.json())
-            .then(json => setValues(json.data ?? []))
+            .then(json => setValues(Array.isArray(json.data) ? json.data : []))
             .catch(() => setValues([]))
             .finally(() => setLoading(false))
-    }, [dimension, mode, config.source, filters.cliente_id, filters.date_from, filters.date_to])
+    }, [queryBase, dimension, mode, config.source, filters.cliente_id, filters.date_from, filters.date_to])
 
     // valor(es) seleccionados desde el estado global de filtros
     const current = (filters[dimension] ?? '').split(',').map(s => s.trim()).filter(Boolean)
