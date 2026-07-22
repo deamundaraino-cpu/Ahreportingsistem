@@ -1,7 +1,8 @@
 // Cron: envío automático de informes BI programados.
 //
-// Corre CADA HORA. Recorre los informes (bi_reports) con schedule.enabled=true,
-// comprueba si la hora/día de Colombia coincide con la programación del informe
+// Corre UNA VEZ AL DÍA (13:00 UTC = 08:00 Colombia; el plan Hobby de Vercel no
+// admite crons más frecuentes). Recorre los informes (bi_reports) con
+// schedule.enabled=true, comprueba si el día de Colombia coincide con la programación
 // (semanal / quincenal / mensual), calcula el último período COMPLETO y delega
 // el envío + registro en el historial a `deliverReport`.
 // Protegido por CRON_SECRET (mismo patrón que los demás crons).
@@ -20,7 +21,6 @@ interface Schedule {
     frequency?: ReportFrequency
     day_of_week?: number
     day_of_month?: number
-    hour?: number
     channels?: { whatsapp?: boolean; email?: boolean }
     emails?: string[]
 }

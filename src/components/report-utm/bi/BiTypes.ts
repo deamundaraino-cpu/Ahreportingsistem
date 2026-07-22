@@ -95,8 +95,6 @@ export interface BiSchedule {
     day_of_week?: number
     /** monthly: día 1-28 (default 1). biweekly usa siempre los días 1 y 16. */
     day_of_month?: number
-    /** Hora de envío 0-23 en horario de Colombia (default 8). */
-    hour?: number
     channels?: { whatsapp?: boolean; email?: boolean }
     emails?: string[]
 }

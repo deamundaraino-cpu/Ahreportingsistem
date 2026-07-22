@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { X, Clock, Check, Plus, Trash2, MessageCircle, Mail, History, Send, Copy, ExternalLink, Loader2 } from 'lucide-react'
 import type { BiSchedule, BiDelivery } from './BiTypes'
-import { describeSchedule } from '@/lib/report-utm/report-periods'
+import { describeSchedule, DELIVERY_HOUR } from '@/lib/report-utm/report-periods'
 
 interface Props {
     reportId: string
@@ -29,7 +29,6 @@ export function BiScheduleModal({ reportId, initial, onSaved, onClose }: Props) 
     const [frequency, setFrequency] = useState<NonNullable<BiSchedule['frequency']>>(initial?.frequency ?? 'monthly')
     const [dayOfWeek, setDayOfWeek] = useState<number>(initial?.day_of_week ?? 1)
     const [dayOfMonth, setDayOfMonth] = useState<number>(initial?.day_of_month ?? 1)
-    const [hour, setHour]           = useState<number>(initial?.hour ?? 8)
     const [whatsapp, setWhatsapp]   = useState(!!initial?.channels?.whatsapp)
     const [email, setEmail]         = useState(!!initial?.channels?.email)
     const [emails, setEmails]       = useState<string[]>(initial?.emails?.length ? initial.emails : [''])
@@ -56,7 +55,6 @@ export function BiScheduleModal({ reportId, initial, onSaved, onClose }: Props) 
             frequency,
             ...(frequency === 'weekly'  ? { day_of_week: dayOfWeek }   : {}),
             ...(frequency === 'monthly' ? { day_of_month: dayOfMonth } : {}),
-            hour,
             channels: { whatsapp, email },
             emails: emails.map(e => e.trim()).filter(Boolean),
         }
@@ -192,20 +190,14 @@ export function BiScheduleModal({ reportId, initial, onSaved, onClose }: Props) 
                             </div>
                             <div>
                                 <label className="block text-xs font-medium text-muted-foreground mb-1.5">Hora (Colombia)</label>
-                                <select
-                                    value={hour}
-                                    onChange={e => setHour(Number(e.target.value))}
-                                    className="w-full px-3 py-2 text-sm rounded-lg bg-muted border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
-                                >
-                                    {Array.from({ length: 24 }, (_, h) => h).map(h => (
-                                        <option key={h} value={h}>{String(h).padStart(2, '0')}:00</option>
-                                    ))}
-                                </select>
+                                <p className="px-3 py-2 text-sm rounded-lg bg-muted/50 border border-border text-muted-foreground">
+                                    {String(DELIVERY_HOUR).padStart(2, '0')}:00
+                                </p>
                             </div>
                         </div>
 
                         <p className="-mt-2 mb-4 text-[11px] text-emerald-700 dark:text-emerald-400">
-                            {describeSchedule({ frequency, day_of_week: dayOfWeek, day_of_month: dayOfMonth, hour })}.
+                            {describeSchedule({ frequency, day_of_week: dayOfWeek, day_of_month: dayOfMonth })}.
                             Cada envío reporta el último período completo.
                         </p>
 

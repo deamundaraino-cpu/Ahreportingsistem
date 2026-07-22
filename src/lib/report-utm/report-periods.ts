@@ -148,20 +148,26 @@ export function computePeriod(freq: ReportFrequency, now: Date = new Date()): Re
 }
 
 /**
- * ¿Toca enviar ahora? Compara el reloj de Bogotá contra la configuración.
- * El cron corre cada hora, así que basta con acertar hora + día.
+ * Hora fija (reloj de Bogotá) a la que salen las entregas automáticas.
+ * El plan Hobby de Vercel solo permite crons de una vez al día, así que el
+ * digest corre una sola vez (13:00 UTC = 08:00 Colombia) y la hora no es
+ * configurable por informe. Ver `vercel.json` → /api/cron/bi-report-digest.
+ */
+export const DELIVERY_HOUR = 8
+
+/**
+ * ¿Toca enviar hoy? Compara el día del reloj de Bogotá contra la configuración.
+ * El cron corre una vez al día, así que basta con acertar el día.
  *
  *   weekly   → day_of_week (0-6, default 1 = lunes)
  *   biweekly → días 1 y 16 del mes (fijo)
  *   monthly  → day_of_month (1-28, default 1)
  */
 export function matchesSchedule(
-    schedule: { frequency?: ReportFrequency; day_of_week?: number; day_of_month?: number; hour?: number },
+    schedule: { frequency?: ReportFrequency; day_of_week?: number; day_of_month?: number },
     now: Date = new Date(),
 ): boolean {
     const p = bogotaParts(now)
-    const hour = clampInt(schedule.hour, 0, 23, 8)
-    if (p.hour !== hour) return false
 
     switch (schedule.frequency) {
         case 'weekly':
@@ -180,15 +186,13 @@ function clampInt(v: unknown, min: number, max: number, fallback: number): numbe
     return n
 }
 
-/** Descripción corta de la programación para la UI. Ej. "Cada lunes a las 8:00". */
+/** Descripción corta de la programación para la UI. Ej. "Cada lunes a las 08:00". */
 export function describeSchedule(schedule: {
     frequency?: ReportFrequency
     day_of_week?: number
     day_of_month?: number
-    hour?: number
 }): string {
-    const hour = clampInt(schedule.hour, 0, 23, 8)
-    const at = `a las ${String(hour).padStart(2, '0')}:00`
+    const at = `a las ${String(DELIVERY_HOUR).padStart(2, '0')}:00`
     switch (schedule.frequency) {
         case 'weekly': {
             const days = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado']
