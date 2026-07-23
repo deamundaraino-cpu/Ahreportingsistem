@@ -5,6 +5,7 @@ import { revalidatePath } from 'next/cache'
 import { headers } from 'next/headers'
 import { BetaAnalyticsDataClient } from '@google-analytics/data'
 import type { ConversionesConfig, DriveSheet } from '@/lib/integrations/google-sheets-conversiones'
+import type { GA4Property } from '@/lib/integrations/google-analytics'
 
 export async function getClientes() {
     const supabase = await createClient()
@@ -189,27 +190,42 @@ export async function deleteLayout(id: string) {
 // ─── Connection Tests ───────────────────────────────────────────────────────
 
 export async function testGA4Connection(config: any) {
-    if (!config.ga_property_id || !config.ga_client_email || !config.ga_private_key) {
-        return { error: 'Faltan credenciales de Google Analytics 4 (JSON o Property ID).' }
+    if (!config.ga_property_id) {
+        return { error: 'Falta el Property ID de Google Analytics 4.' }
+    }
+
+    // Misma precedencia que el worker: OAuth de agencia primero, service account
+    // como fallback legacy. Antes esta prueba solo sabía usar service account, así
+    // que fallaba en clientes configurados por OAuth (que son el modo recomendado).
+    const { hasAgencyGoogleConnection, getAgencyAccessToken } = await import('@/lib/integrations/google-auth')
+    const useAgencyOAuth = await hasAgencyGoogleConnection()
+    const hasServiceAccount = !!(config.ga_client_email && config.ga_private_key)
+
+    if (!useAgencyOAuth && !hasServiceAccount) {
+        return { error: 'No hay conexión de Google de la agencia ni credenciales de Service Account. Conecta la cuenta en Ajustes → Conexión Google.' }
     }
 
     try {
-        let cleanKey = config.ga_private_key
-        if (cleanKey.includes('\\n')) {
-            cleanKey = cleanKey.replace(/\\n/g, '\n')
-        }
-
-        const propertyName = config.ga_property_id.startsWith('properties/') 
-            ? config.ga_property_id 
+        const propertyName = config.ga_property_id.startsWith('properties/')
+            ? config.ga_property_id
             : `properties/${config.ga_property_id}`
 
-        const client = new BetaAnalyticsDataClient({
-            credentials: {
-                client_email: config.ga_client_email,
-                private_key: cleanKey,
-                project_id: config.ga_project_id
+        let client: BetaAnalyticsDataClient
+        if (useAgencyOAuth) {
+            client = new BetaAnalyticsDataClient({ authClient: await getAgencyAccessToken() as any })
+        } else {
+            let cleanKey = config.ga_private_key
+            if (cleanKey.includes('\\n')) {
+                cleanKey = cleanKey.replace(/\\n/g, '\n')
             }
-        })
+            client = new BetaAnalyticsDataClient({
+                credentials: {
+                    client_email: config.ga_client_email,
+                    private_key: cleanKey,
+                    project_id: config.ga_project_id
+                }
+            })
+        }
 
         // Llamada mínima: pedir 1 día de sesiones
         const [response] = await client.runReport({
@@ -218,15 +234,19 @@ export async function testGA4Connection(config: any) {
             metrics: [{ name: 'sessions' }],
         })
 
+        const via = useAgencyOAuth ? 'OAuth de agencia' : 'Service Account'
+        const sessions = response.rows?.[0]?.metricValues?.[0]?.value || '0'
         return {
             success: true,
-            name: `Conexión exitosa. Sesiones ayer: ${response.rows?.[0]?.metricValues?.[0]?.value || '0'}`
+            message: `Conexión exitosa vía ${via}. Sesiones ayer: ${sessions}`,
         }
     } catch (err: any) {
         // Mapeo de errores amigables
         const msg = err.message || ''
         if (msg.includes('PERMISSION_DENIED') || msg.includes('403')) {
-            return { error: '⛔ Sin permisos. Verifica que el email de servicio tenga rol "Lector" en GA4 → Admin → Gestión de acceso a la propiedad.' }
+            return useAgencyOAuth
+                ? { error: `⛔ Sin permisos. La cuenta de Google de la agencia no tiene acceso a esta propiedad. Dale rol "Lector" en GA4 → Administrar → Gestión de acceso a la propiedad.` }
+                : { error: '⛔ Sin permisos. Verifica que el email de servicio tenga rol "Lector" en GA4 → Admin → Gestión de acceso a la propiedad.' }
         }
         if (msg.includes('NOT_FOUND') || msg.includes('404')) {
             return { error: '❌ Property ID no encontrado. Verifica el ID numérico en GA4 → Administrar → Detalles de la propiedad.' }
@@ -764,6 +784,27 @@ export async function listDriveSheets() {
         return { sheets: data.sheets as DriveSheet[] }
     } catch (e: any) {
         return { error: e.message || 'Error al listar Sheets' }
+    }
+}
+
+// Propiedades GA4 visibles para la cuenta OAuth de la agencia, para el selector
+// por cliente (evita teclear el ID numérico a mano).
+export async function listGa4Properties() {
+    try {
+        const headersList = await headers()
+        const host = headersList.get('host') || 'localhost:3001'
+        const protocol = host.includes('localhost') ? 'http' : 'https'
+        const baseUrl = `${protocol}://${host}`
+
+        const res = await fetch(`${baseUrl}/api/admin/list-ga4-properties`, {
+            cache: 'no-store',
+        })
+
+        const data = await res.json()
+        if (!res.ok) return { error: data.error || 'Error al listar propiedades de GA4' }
+        return { properties: data.properties as GA4Property[] }
+    } catch (e: any) {
+        return { error: e.message || 'Error al listar propiedades de GA4' }
     }
 }
 

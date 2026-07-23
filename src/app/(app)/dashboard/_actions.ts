@@ -219,7 +219,9 @@ export async function getDashboardData(clientId: string, startStr: string, endSt
   // Compute available platforms from client API config (used for attribution fallback)
   const cfg = (cliente.config_api as any) || {};
   const availablePlatforms = new Set<string>(['meta']);
-  if (cfg.ga_property_id && cfg.ga_client_email) availablePlatforms.add('ga4');
+  // Basta el property id: la autenticación puede venir del OAuth de agencia
+  // (sin ga_client_email). Mismo criterio que el worker y que getReportData.
+  if (cfg.ga_property_id) availablePlatforms.add('ga4');
   if (cfg.hotmart_basic || cfg.hotmart_token) availablePlatforms.add('hotmart');
   if (cfg.tiktok_advertiser_id && cfg.tiktok_access_token) availablePlatforms.add('tiktok');
 

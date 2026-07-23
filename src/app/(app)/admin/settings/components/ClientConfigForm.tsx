@@ -6,10 +6,11 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter }
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Button } from '@/components/ui/button'
-import { updateClienteConfig, deleteCliente, assignLayoutToCliente, testMetaConnection, testHotmartConnection, refreshMetaCustomConversions, testTikTokConnection, syncClienteMetrics, testGA4Connection, syncGoogleSheets, syncConversionesOffline, detectConversionesColumns, listDriveSheets, fetchMetaAdAccounts, fetchTikTokAdAccounts } from '../_actions'
+import { updateClienteConfig, deleteCliente, assignLayoutToCliente, testMetaConnection, testHotmartConnection, refreshMetaCustomConversions, testTikTokConnection, syncClienteMetrics, testGA4Connection, syncGoogleSheets, syncConversionesOffline, detectConversionesColumns, listDriveSheets, listGa4Properties, fetchMetaAdAccounts, fetchTikTokAdAccounts } from '../_actions'
 import type { CustomColumnDef, CustomColumnType, DetectedColumn, ConversionesConfig, DriveSheet } from '@/lib/integrations/google-sheets-conversiones'
+import type { GA4Property } from '@/lib/integrations/google-analytics'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { Loader2, ArrowLeft, Save, Trash2, CheckCircle2, AlertCircle, RefreshCw, LayoutDashboard, DownloadCloud, DatabaseZap, Plus, FolderSearch, FileSpreadsheet, Search } from 'lucide-react'
+import { Loader2, ArrowLeft, Save, Trash2, CheckCircle2, AlertCircle, RefreshCw, LayoutDashboard, DownloadCloud, DatabaseZap, Plus, FolderSearch, FileSpreadsheet, Search, BarChart3, ChevronDown } from 'lucide-react'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -185,7 +186,7 @@ function TikTokAccountRow({ account, sharedToken, testStatus, onChange, onRemove
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
-export function ClientConfigForm({ cliente, layouts = [], isAdmin = false }: { cliente: any; layouts?: any[]; isAdmin?: boolean }) {
+export function ClientConfigForm({ cliente, layouts = [], isAdmin = false, googleConnected = false, googleEmail = null }: { cliente: any; layouts?: any[]; isAdmin?: boolean; googleConnected?: boolean; googleEmail?: string | null }) {
     const router = useRouter()
     const searchParams = useSearchParams()
     const [loading, setLoading] = useState(false)
@@ -242,6 +243,13 @@ const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean
     const [driveLoading, setDriveLoading] = useState(false)
     const [driveError, setDriveError] = useState<string | null>(null)
     const [driveQuery, setDriveQuery] = useState('')
+    // ── Selector de propiedad GA4 (vía OAuth de agencia) ─────────────────────
+    const [ga4PickerOpen, setGa4PickerOpen] = useState(false)
+    const [ga4Properties, setGa4Properties] = useState<GA4Property[]>([])
+    const [ga4Loading, setGa4Loading] = useState(false)
+    const [ga4Error, setGa4Error] = useState<string | null>(null)
+    const [ga4Query, setGa4Query] = useState('')
+    const [showGa4Legacy, setShowGa4Legacy] = useState(!googleConnected)
     const [selectedLayoutId, setSelectedLayoutId] = useState<string>(cliente.layout_id || '')
     const today = new Date().toISOString().split('T')[0]
     const defaultStart = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
@@ -395,6 +403,41 @@ const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean
         setAvailableTiktokAccounts(null)
         setSelectedTiktokIds(new Set())
     }
+
+    // ── Selector de propiedad GA4 ────────────────────────────────────────────
+    async function openGa4Picker() {
+        setGa4PickerOpen(true)
+        setGa4Loading(true)
+        setGa4Error(null)
+        setGa4Query('')
+        const res = await listGa4Properties()
+        if ('error' in res && res.error) {
+            setGa4Error(res.error)
+            setGa4Properties([])
+        } else {
+            setGa4Properties(res.properties ?? [])
+        }
+        setGa4Loading(false)
+    }
+
+    function selectGa4Property(prop: GA4Property) {
+        // Guardamos también el nombre para poder mostrarlo sin volver a llamar a la API.
+        setConfig({
+            ...config,
+            ga_property_id: prop.id,
+            ga_property_name: prop.name,
+            ga_account_name: prop.accountName,
+        })
+        setGa4PickerOpen(false)
+    }
+
+    const filteredGa4Properties = ga4Properties.filter(p => {
+        if (!ga4Query) return true
+        const q = ga4Query.toLowerCase()
+        return p.name.toLowerCase().includes(q)
+            || p.accountName.toLowerCase().includes(q)
+            || p.id.includes(q)
+    })
 
     async function runTest(key: string, fn: () => Promise<any>) {
         setTestStatus(prev => ({ ...prev, [key]: { loading: true } }))
@@ -892,35 +935,79 @@ const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean
                                 ga_client_email: config.ga_client_email,
                                 ga_private_key: config.ga_private_key,
                             }))}
-                            disabled={testStatus.ga4?.loading || !config.ga_property_id || !config.ga_client_email || !config.ga_private_key}
+                            disabled={testStatus.ga4?.loading || !config.ga_property_id || (!googleConnected && (!config.ga_client_email || !config.ga_private_key))}
                         >
                             {testStatus.ga4?.loading ? <RefreshCw className="w-3 h-3 animate-spin mr-2" /> : <RefreshCw className="w-3 h-3 mr-2" />}
                             Probar Conexión
                         </Button>
                     </div>
                     <CardDescription>
-                        Conecta una cuenta de servicio de Google Cloud para extraer métricas de GA4 (Sesiones, Rebote).
+                        {googleConnected
+                            ? 'Selecciona la propiedad de GA4 que corresponde a este cliente. Se usan los permisos de la cuenta de Google de la agencia.'
+                            : 'Conecta una cuenta de servicio de Google Cloud para extraer métricas de GA4 (Sesiones, Rebote).'}
                     </CardDescription>
                     {testStatus.ga4?.success && <p className="text-green-600 dark:text-green-500 text-xs flex items-start mt-2"><CheckCircle2 className="w-4 h-4 mr-1 shrink-0" /> <span dangerouslySetInnerHTML={{ __html: testStatus.ga4.message || 'Conexión Exitosa' }} /></p>}
                     {testStatus.ga4?.error && <p className="text-red-500 text-xs flex items-start mt-2"><AlertCircle className="w-4 h-4 mr-1 shrink-0" /> <span>{testStatus.ga4.error}</span></p>}
                 </CardHeader>
                 <CardContent className="space-y-4">
-                    <div className="space-y-2">
-                        <Label htmlFor="ga_property_id" className="text-foreground/90">Property ID <span className="text-muted-foreground/70 font-normal ml-1">(ej: 400123456)</span></Label>
-                        <Input
-                            id="ga_property_id"
-                            value={config.ga_property_id || ''}
-                            onChange={(e) => setConfig({ ...config, ga_property_id: e.target.value })}
-                            className="bg-background border-input"
-                        />
-                    </div>
+                    {googleConnected ? (
+                        <div className="space-y-2">
+                            <Label className="text-foreground/90">Propiedad de GA4</Label>
+                            {config.ga_property_id ? (
+                                <div className="flex items-center justify-between gap-3 bg-muted/50 border border-border rounded-lg px-3 py-2.5">
+                                    <div className="flex items-center gap-3 min-w-0">
+                                        <BarChart3 className="w-4 h-4 text-orange-500 shrink-0" />
+                                        <div className="min-w-0">
+                                            <p className="text-sm font-medium text-foreground truncate">
+                                                {config.ga_property_name || `Propiedad ${config.ga_property_id}`}
+                                            </p>
+                                            <p className="text-xs text-muted-foreground truncate">
+                                                {config.ga_account_name ? `${config.ga_account_name} · ` : ''}ID {config.ga_property_id}
+                                            </p>
+                                        </div>
+                                    </div>
+                                    <Button variant="outline" size="sm" onClick={openGa4Picker} className="shrink-0">
+                                        Cambiar
+                                    </Button>
+                                </div>
+                            ) : (
+                                <Button variant="outline" onClick={openGa4Picker} className="w-full justify-start">
+                                    <FolderSearch className="w-4 h-4 mr-2" />
+                                    Seleccionar propiedad de GA4…
+                                </Button>
+                            )}
+                            <p className="text-xs text-muted-foreground">
+                                Se listan las propiedades a las que tiene acceso {googleEmail || 'la cuenta de Google de la agencia'}.
+                            </p>
+                        </div>
+                    ) : (
+                        <div className="space-y-2">
+                            <Label htmlFor="ga_property_id" className="text-foreground/90">Property ID <span className="text-muted-foreground/70 font-normal ml-1">(ej: 400123456)</span></Label>
+                            <Input
+                                id="ga_property_id"
+                                value={config.ga_property_id || ''}
+                                onChange={(e) => setConfig({ ...config, ga_property_id: e.target.value })}
+                                className="bg-background border-input"
+                            />
+                            <p className="text-xs text-amber-700 dark:text-amber-400/80 bg-amber-500/5 border border-amber-500/20 rounded p-2">
+                                No hay una cuenta de Google de la agencia conectada. Conéctala en{' '}
+                                <a href="/admin/settings" className="underline">Ajustes → Conexión Google</a> para elegir la
+                                propiedad de una lista en vez de teclear el ID, o usa las credenciales de Service Account de abajo.
+                            </p>
+                        </div>
+                    )}
 
-                    <p className="text-xs text-emerald-700 dark:text-emerald-400/80 bg-emerald-500/5 border border-emerald-500/20 rounded p-2">
-                        Si conectaste la cuenta de Google de la agencia (en Ajustes → Conexión Google), solo necesitas el
-                        Property ID. Las credenciales de Service Account de abajo son opcionales (modo legacy).
-                    </p>
+                    {/* Service Account: modo legacy, plegado cuando hay OAuth de agencia. */}
+                    <button
+                        type="button"
+                        onClick={() => setShowGa4Legacy(v => !v)}
+                        className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                    >
+                        <ChevronDown className={`w-3.5 h-3.5 transition-transform ${showGa4Legacy ? '' : '-rotate-90'}`} />
+                        Credenciales de Service Account (legacy, opcional)
+                    </button>
 
-                    <div className="bg-muted/40 border border-border p-4 rounded-lg space-y-4 relative overflow-hidden">
+                    <div className={`bg-muted/40 border border-border p-4 rounded-lg space-y-4 relative overflow-hidden ${showGa4Legacy ? '' : 'hidden'}`}>
                         <div className="absolute top-0 left-0 w-1 h-full bg-indigo-500/50"></div>
                         
                         <div className="flex items-center gap-3">
@@ -971,6 +1058,64 @@ const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean
                     </div>
                 </CardContent>
             </Card>
+
+            {/* ── GA4 Property Picker Modal ─────────────────────────────────── */}
+            <Dialog open={ga4PickerOpen} onOpenChange={(open) => { if (!open) setGa4PickerOpen(false) }}>
+                <DialogContent className="sm:max-w-lg">
+                    <DialogHeader>
+                        <DialogTitle className="flex items-center gap-2">
+                            <BarChart3 className="w-4 h-4 text-orange-500" />
+                            Seleccionar propiedad de GA4
+                        </DialogTitle>
+                    </DialogHeader>
+
+                    <div className="relative">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+                        <Input
+                            placeholder="Buscar por propiedad, cuenta o ID…"
+                            value={ga4Query}
+                            onChange={(e) => setGa4Query(e.target.value)}
+                            className="pl-9 bg-background border-input"
+                        />
+                    </div>
+
+                    <div className="overflow-y-auto max-h-72 space-y-0.5 -mx-1 px-1">
+                        {ga4Loading && (
+                            <div className="flex items-center justify-center py-8 gap-2 text-muted-foreground text-sm">
+                                <RefreshCw className="w-4 h-4 animate-spin" /> Cargando propiedades…
+                            </div>
+                        )}
+                        {ga4Error && (
+                            <p className="text-sm text-red-500 flex items-center gap-2 py-4">
+                                <AlertCircle className="w-4 h-4 shrink-0" /> {ga4Error}
+                            </p>
+                        )}
+                        {!ga4Loading && !ga4Error && filteredGa4Properties.length === 0 && (
+                            <p className="text-sm text-muted-foreground text-center py-6">No se encontraron propiedades.</p>
+                        )}
+                        {filteredGa4Properties.map((prop) => (
+                            <button
+                                key={prop.id}
+                                className={`w-full text-left flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-muted/60 transition-colors ${config.ga_property_id === prop.id ? 'bg-muted/60' : ''}`}
+                                onClick={() => selectGa4Property(prop)}
+                            >
+                                <BarChart3 className="w-4 h-4 text-orange-500 shrink-0" />
+                                <div className="min-w-0 flex-1">
+                                    <p className="text-sm font-medium text-foreground truncate">{prop.name}</p>
+                                    <p className="text-xs text-muted-foreground truncate">{prop.accountName} · ID {prop.id}</p>
+                                </div>
+                                {config.ga_property_id === prop.id && (
+                                    <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
+                                )}
+                            </button>
+                        ))}
+                    </div>
+
+                    <p className="text-xs text-muted-foreground/60 text-center border-t border-border pt-3">
+                        ¿Falta una propiedad? Dale acceso de Lector a {googleEmail || 'la cuenta de la agencia'} en GA4 → Administrar.
+                    </p>
+                </DialogContent>
+            </Dialog>
 
             {/* ─── TikTok ───────────────────────────────────────────────────── */}
             <Card className="bg-card border-border">
