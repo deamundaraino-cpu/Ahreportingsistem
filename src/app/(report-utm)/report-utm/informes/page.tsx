@@ -6,7 +6,13 @@ import { InformesBrowser, type Report } from './InformesBrowser'
 
 export const dynamic = 'force-dynamic'
 
-export default async function InformesPage() {
+export default async function InformesPage(props: {
+    searchParams: Promise<{ [key: string]: string | string[] | undefined }>
+}) {
+    const searchParams = await props.searchParams
+    // ?cliente=<report_utm.clientes.id> — deep link desde el dashboard del cliente.
+    const initialClienteId = typeof searchParams.cliente === 'string' ? searchParams.cliente : ''
+
     const db = await createAdminClient()
     const rtm = await reportUtmAdminClient()
 
@@ -56,6 +62,7 @@ export default async function InformesPage() {
                 templates={templates}
                 editableTemplateIds={editableTemplateIds}
                 clientes={(clientes ?? []) as { id: string; nombre: string }[]}
+                initialClienteId={initialClienteId}
             />
         </div>
     )

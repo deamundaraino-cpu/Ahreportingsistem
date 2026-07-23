@@ -33,6 +33,17 @@ export interface SheetTabConfig {
   col_valor?: string
   col_fuente?: string
   col_notas?: string
+  /**
+   * Cada fila vale UNA conversión. Para hojas donde una fila = un lead/venta
+   * (exports de formularios de Meta, listados de WhatsApp…), que no tienen
+   * columna de cantidad: sin esto todas sus filas se descartaban por cantidad 0.
+   */
+  count_rows?: boolean
+  /**
+   * Valor fijo de `tipo` cuando la pestaña no tiene columna de tipo. Sin él, las
+   * filas entran como 'otro' y no suman en `offline_leads` / `offline_ventas`.
+   */
+  tipo_fijo?: string
   /** Columnas adicionales de ESTA pestaña definidas por el analista. */
   custom_columns?: Record<string, CustomColumnDef>
 }
@@ -236,7 +247,10 @@ function inferType(name: string, samples: string[]): CustomColumnType {
 function parseDate(raw: string): string {
   if (!raw) return ''
   const t = raw.trim()
-  if (/^\d{4}-\d{2}-\d{2}/.test(t)) return t.split('T')[0]
+  // Acepta fecha sola, ISO con T y "YYYY-MM-DD HH:MM:SS" (separador espacio, el
+  // que usan los exports de formularios de Meta). Antes solo se cortaba por la
+  // T, así que la variante con espacio se descartaba como fecha inválida.
+  if (/^\d{4}-\d{2}-\d{2}/.test(t)) return t.slice(0, 10)
   const dmy = t.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})/)
   if (dmy) return `${dmy[3]}-${dmy[2].padStart(2, '0')}-${dmy[1].padStart(2, '0')}`
   const mdy = t.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/)
@@ -366,8 +380,12 @@ export function parseRowsForTab(
     throw new Error(`Columna de fecha "${colFecha}" no encontrada. Disponibles: ${headers.join(', ')}`)
   }
   // Un nombre de columna mal escrito se leía como vacío sin aviso: ahora queda
-  // registrado en el reporte de calidad del sync.
-  for (const [label, col] of Object.entries({ tipo: colTipo, cantidad: colCantidad, valor: colValor, fuente: colFuente, notas: colNotas })) {
+  // registrado en el reporte de calidad del sync. Las columnas resueltas por
+  // configuración (cantidad con `count_rows`, tipo con `tipo_fijo`) no se avisan.
+  const opcionales: Record<string, string> = { valor: colValor, fuente: colFuente, notas: colNotas }
+  if (!tab.count_rows) opcionales.cantidad = colCantidad
+  if (!tab.tipo_fijo)  opcionales.tipo = colTipo
+  for (const [label, col] of Object.entries(opcionales)) {
     if (!headersLower.includes(col.toLowerCase().trim())) {
       quality.warnings.push(`Columna de ${label} "${col}" no existe en la pestaña`)
     }
@@ -408,8 +426,10 @@ export function parseRowsForTab(
       continue
     }
 
-    const tipo     = (row.get(colTipo)     || 'otro').toString().trim().toLowerCase()
-    const cantidad = toNumber((row.get(colCantidad) || '0').toString())
+    const rawTipo  = (row.get(colTipo) ?? '').toString().trim()
+    const tipo     = (rawTipo || tab.tipo_fijo || 'otro').toLowerCase()
+    // En modo "una fila = una conversión" la columna de cantidad no se lee.
+    const cantidad = tab.count_rows ? 1 : toNumber((row.get(colCantidad) || '0').toString())
     const rawValor = (row.get(colValor) || '').toString()
     const valor    = rawValor.trim() ? toNumber(rawValor) : null
     const fuente   = (row.get(colFuente) || '').toString().trim()
@@ -436,6 +456,17 @@ export function parseRowsForTab(
   }
 
   quality.rows_ok = conversiones.length
+  // Los descartes se explican con la columna concreta: un "0 filas importadas"
+  // sin motivo obliga a adivinar si falla la fecha, la cantidad o el mapeo.
+  if (quality.fecha_invalida > 0) {
+    quality.warnings.push(`${quality.fecha_invalida} filas sin fecha válida en "${colFecha}"`)
+  }
+  if (quality.cantidad_invalida > 0) {
+    quality.warnings.push(
+      `${quality.cantidad_invalida} filas con cantidad 0 o vacía en "${colCantidad}"` +
+      ' — si el Sheet trae una conversión por fila, activa "Cada fila es una conversión"'
+    )
+  }
   return { rows: conversiones, quality }
 }
 

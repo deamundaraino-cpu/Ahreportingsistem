@@ -19,7 +19,6 @@ Mapa completo de la interfaz. La app usa el **App Router** de Next.js con *route
 | `/terms` | `src/app/terms/page.tsx` | Términos de servicio |
 | `/p/[token]` | `src/app/p/[token]/page.tsx` | Dashboard **espejo** público por token (solo lectura) |
 | `/report/[clientId]` | `src/app/report/[clientId]/page.tsx` | Reporte público del cliente (solo lectura) |
-| `/report/[clientId]/monthly/[year]/[month]` | `…/monthly/[year]/[month]/page.tsx` | Reporte mensual con gráficos, optimizado para PDF |
 | `/report/monthly/[slug]` | `src/app/report/monthly/[slug]/page.tsx` | Reporte mensual accesible por slug público |
 | `/t/[slug]` | `src/app/t/[slug]/route.ts` | Redirección de enlace de tracking (Report-UTM) |
 
@@ -38,7 +37,7 @@ Wrapper: `src/app/(app)/layout.tsx`. Requiere sesión, obtiene el rol de `user_p
 | `/dashboard` | `(app)/dashboard/page.tsx` | Home: KPIs (clientes, integraciones activas, alertas), grilla de clientes, accesos rápidos, resumen de soporte |
 | `/dashboard/[clientId]` | `(app)/dashboard/[clientId]/page.tsx` | Dashboard del cliente: embudo consolidado (Meta/Hotmart/GA4), selector de fechas, tabs, enlaces interno/público, leads de Google Sheets. Los traffickers solo acceden a clientes asignados |
 
-Componentes principales (`(app)/dashboard/components/`): `DashboardClient`, `DateRangeSelector`, `MetricCharts`, `MonthlyReportTab`, `RankingTableBlock`, `PuzzleComponents`, `CountryBreakdown`, `GoogleSheetsLeadsCard`, `LayoutConfigModal`, `TabConfigModal`, `QuickEditModal`, `TabArchiveView`, `SupportModule`, `CopyLinkButton`, `PublicLinkButton`, `MonthSelector`.
+Componentes principales (`(app)/dashboard/components/`): `DashboardClient`, `DateRangeSelector`, `MetricCharts`, `RankingTableBlock`, `PuzzleComponents`, `CountryBreakdown`, `GoogleSheetsLeadsCard`, `LayoutConfigModal`, `TabConfigModal`, `QuickEditModal`, `TabArchiveView`, `SupportModule`, `CopyLinkButton`, `PublicLinkButton`.
 
 ### Soporte
 
@@ -129,7 +128,6 @@ Mutaciones tipo RPC (`'use server'` en archivos `_actions.ts`). Principales:
 | `/admin/reports/[id]` | `src/app/(app)/admin/reports/[id]/page.tsx` |
 | `/admin/layouts` | `src/app/(app)/admin/layouts/page.tsx` |
 | `/report/[clientId]` | `src/app/report/[clientId]/page.tsx` |
-| `/report/[clientId]/monthly/[year]/[month]` | `src/app/report/[clientId]/monthly/[year]/[month]/page.tsx` |
 | `/report/monthly/[slug]` | `src/app/report/monthly/[slug]/page.tsx` |
 | `/p/[token]` | `src/app/p/[token]/page.tsx` |
 | `/report-utm` | `src/app/(report-utm)/report-utm/page.tsx` |

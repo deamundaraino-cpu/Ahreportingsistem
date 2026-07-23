@@ -8,10 +8,15 @@ Sistema para generar reportes mensuales por cliente a partir de plantillas, revi
 |-------|-----------|
 | Tablas | `report_templates`, `monthly_reports` (migración 004) |
 | Gestión (admin) | `/admin/reports`, `/admin/reports/[id]` |
-| API de datos | `GET/POST /api/reports/monthly` |
-| Vista pública por cliente | `/report/[clientId]/monthly/[year]/[month]` |
 | Vista pública por slug | `/report/monthly/[slug]` |
-| Tab en dashboard | `MonthlyReportTab.tsx` |
+
+> **Retirado:** la pestaña «📊 Reporte Mensual» del dashboard de cliente
+> (`MonthlyReportTab.tsx`), su API `GET/POST /api/reports/monthly` y su vista pública
+> `/report/[clientId]/monthly/[year]/[month]` se eliminaron: quedan suplidas por los informes
+> del BI Builder en `/report-utm/informes`, accesibles desde el botón «Ir a los Informes» de la
+> cabecera del dashboard. La tabla `reportes_mensuales` (notas ejecutivas de aquella pestaña)
+> quedó huérfana y sin código que la use; no se borró por precaución. El módulo admin descrito
+> aquí es independiente y sigue vigente.
 
 ## Plantillas (`report_templates`)
 
@@ -45,49 +50,3 @@ borrador → revision → aprobado → publicado
 
 Server actions en `(app)/admin/reports/_actions.ts`: `getMonthlyReports`, `getMonthlyReport`, `getReportTemplates`, `discoverCampaigns`, `createMonthlyReport`, `updateMonthlyReport`.
 
-## API de datos: `GET /api/reports/monthly`
-
-Params: `clientId`, `year`, `month`. Agrega los datos del mes y devuelve:
-
-```jsonc
-{
-  "client":  { "name", "logo_url", "currency", "roas_target" },
-  "summary": { "spend","reach","impressions","clicks","link_clicks",
-               "results","leads","purchases","landing_views",
-               "cpa","roas","ctr","cpm" },
-  "daily":   [{ "date","spend","results" }],
-  "campaigns": [{
-    "name","campaign_id","spend","impressions","clicks","link_clicks",
-    "reach","frequency","cpc","cpm","ctr","leads","purchases",
-    "initiates_checkout","landing_page_views","results",
-    "thumbnail_url","cpa","roas","roasStatus"
-  }],
-  "spend_distribution": [{ "name","value","pct" }],
-  "audience": {
-    "by_age":    [{ "group","spend_pct","results_pct" }],
-    "by_gender": [{ "gender","spend_pct","results_pct" }]
-  },
-  "creatives": { "top": [...], "bottom": [...] },
-  "previous_month": { "spend","results","cpa","ctr","reach" },
-  "notes": "…"
-}
-```
-
-`POST /api/reports/monthly` con `{ clientId, year, month, notas }` actualiza las notas ejecutivas.
-
-## Vista pública (`/report/[clientId]/monthly/[year]/[month]`)
-
-Componente cliente que consume la API y renderiza con Recharts. Secciones:
-
-1. Encabezado (logo, periodo, acciones).
-2. Tarjetas KPI (spend, results, CPA, CTR, reach, impressions, CPM, ROAS).
-3. Evolución diaria (área: spend + results).
-4. Tabla de campañas (ordenable).
-5. Distribución de presupuesto (pie).
-6. Audiencia (edad/género).
-7. Creativos top/bottom.
-8. Comparativa mes anterior.
-9. Notas ejecutivas.
-10. Pie con compartir / descargar PDF.
-
-Está **optimizado para impresión** (CSS de print): se puede exportar a PDF con Ctrl+P o mediante `jspdf` + `html2canvas`. Estas rutas permiten ser embebidas (CSP `frame-ancestors *`).

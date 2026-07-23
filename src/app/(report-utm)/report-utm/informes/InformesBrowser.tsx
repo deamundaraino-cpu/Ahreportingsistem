@@ -25,11 +25,13 @@ interface Props {
     /** Plantillas que el usuario puede editar/borrar (id set). */
     editableTemplateIds: string[]
     clientes: { id: string; nombre: string }[]
+    /** Filtro de cliente preseleccionado (deep link `?cliente=` desde el dashboard). */
+    initialClienteId?: string
 }
 
-export function InformesBrowser({ custom, templates, editableTemplateIds, clientes }: Props) {
+export function InformesBrowser({ custom, templates, editableTemplateIds, clientes, initialClienteId = '' }: Props) {
     const [query, setQuery] = useState('')
-    const [clienteId, setClienteId] = useState<string>('')
+    const [clienteId, setClienteId] = useState<string>(initialClienteId)
     const [sort, setSort] = useState<Sort>('recent')
     const [showTemplates, setShowTemplates] = useState(true)
 
@@ -45,10 +47,15 @@ export function InformesBrowser({ custom, templates, editableTemplateIds, client
         for (const r of custom) {
             if (r.cliente_id) counts.set(r.cliente_id, (counts.get(r.cliente_id) ?? 0) + 1)
         }
+        // Un deep link puede apuntar a un cliente que aún no tiene informes: se añade con
+        // conteo 0 para que el select y el chip reflejen el filtro en vez de quedar vacíos.
+        if (initialClienteId && clienteMap.has(initialClienteId) && !counts.has(initialClienteId)) {
+            counts.set(initialClienteId, 0)
+        }
         return [...counts.entries()]
             .map(([id, count]) => ({ id, nombre: clienteMap.get(id) ?? 'Cliente', count }))
             .sort((a, b) => a.nombre.localeCompare(b.nombre))
-    }, [custom, clienteMap])
+    }, [custom, clienteMap, initialClienteId])
 
     const apply = (list: Report[], matchCliente: boolean) => {
         const q = query.trim().toLowerCase()

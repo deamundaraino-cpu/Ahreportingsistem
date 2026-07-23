@@ -35,10 +35,6 @@ import { CountryBreakdown } from './CountryBreakdown'
 import { RankingTableBlock } from './RankingTableBlock'
 import { TabArchiveView } from './TabArchiveView'
 
-const MonthlyReportTab = dynamic(
-    () => import('./MonthlyReportTab').then(m => ({ default: m.MonthlyReportTab })),
-    { loading: () => <Skeleton className="h-64 rounded-xl" /> }
-)
 const SupportModule = dynamic(
     () => import('./SupportModule').then(m => ({ default: m.SupportModule })),
     { loading: () => <Skeleton className="h-64 rounded-xl" /> }
@@ -364,7 +360,7 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
     useEffect(() => {
         setSortedTabs(initialTabs)
         // If active tab no longer exists, reset to 'general'
-        if (activeTabId !== 'general' && activeTabId !== 'monthly-report' && activeTabId !== 'soporte') {
+        if (activeTabId !== 'general' && activeTabId !== 'soporte') {
             const tabExists = initialTabs.some((t: any) => t.id === activeTabId)
             if (!tabExists) {
                 setActiveTabId('general')
@@ -1102,13 +1098,6 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                             )}
                         </button>
                     )}
-                    {/* Pestaña fija de Reporte Mensual */}
-                    <button
-                        onClick={() => setActiveTabId('monthly-report')}
-                        className={`px-4 py-2 text-sm font-medium rounded-t-lg transition whitespace-nowrap border-b-2 flex items-center gap-1.5 ${activeTabId === 'monthly-report' ? 'border-amber-500 text-amber-600 dark:text-amber-400 bg-amber-500/10' : 'border-transparent text-muted-foreground hover:text-foreground hover:bg-accent'}`}
-                    >
-                        📊 Reporte Mensual
-                    </button>
                     {/* Pestaña fija de Roadmap */}
                     <button
                         onClick={() => setActiveTabId('soporte')}
@@ -1121,18 +1110,13 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
 
 
 
-            {/* Reporte Mensual Tab Content */}
-            {activeTabId === 'monthly-report' && (
-                <MonthlyReportTab clientId={cliente.id} />
-            )}
-
             {/* Soporte Tab Content */}
             {activeTabId === 'soporte' && (
                 <SupportModule clientId={cliente.id} userRole={userRole} clienteNombre={cliente.nombre ?? ''} />
             )}
 
             {/* Toolbar + Dashboard Content */}
-            {activeTabId !== 'monthly-report' && activeTabId !== 'soporte' && (<>
+            {activeTabId !== 'soporte' && (<>
             <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
                     <div className="flex items-center gap-2 text-xs text-indigo-600 dark:text-indigo-400 bg-indigo-500/5 border border-indigo-500/20 rounded-lg px-3 py-1.5">
@@ -1636,7 +1620,7 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                     </div>
                 )}
             </div>
-            </>)} {/* end activeTabId !== 'monthly-report' */}
+            </>)} {/* end activeTabId !== 'soporte' */}
 
             {/* Modals */}
             {showTabModal && (

@@ -466,7 +466,16 @@ const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean
                     || (res.totalLeads !== undefined
                         ? `${res.totalLeads} leads | ${res.qualifiedLeads ?? 0} calificados | ${res.daysProcessed ?? 0} días guardados`
                         : res.totalFilas !== undefined
-                        ? `${res.totalFilas} filas importadas | ${res.diasProcesados ?? 0} días guardados`
+                        // Un "0 filas" a secas no dice nada: se añade cuántas se
+                        // descartaron y el primer aviso que lo explica.
+                        ? [
+                            `${res.totalFilas} filas importadas`,
+                            `${res.diasProcesados ?? 0} días guardados`,
+                            ...(res.filasDescartadas ? [`${res.filasDescartadas} descartadas`] : []),
+                            ...(Array.isArray(res.warnings) && res.warnings.length > 0
+                                ? [res.warnings.length === 1 ? res.warnings[0] : `${res.warnings[0]} (+${res.warnings.length - 1} avisos)`]
+                                : []),
+                          ].join(' | ')
                         : undefined)
                 setTestStatus(prev => ({
                     ...prev,
@@ -1579,20 +1588,34 @@ const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean
                         const heads = (res.headers ?? []).map(h => h.toLowerCase().trim())
                         const mapped: [string, string][] = [
                             ['fecha',    tab.col_fecha    || 'fecha'],
-                            ['tipo',     tab.col_tipo     || 'tipo'],
-                            ['cantidad', tab.col_cantidad || 'cantidad'],
                             ['valor',    tab.col_valor    || 'valor'],
                             ['fuente',   tab.col_fuente   || 'fuente'],
                             ['notas',    tab.col_notas    || 'notas'],
                         ]
+                        if (!tab.tipo_fijo)  mapped.push(['tipo',     tab.col_tipo     || 'tipo'])
+                        if (!tab.count_rows) mapped.push(['cantidad', tab.col_cantidad || 'cantidad'])
+
                         const missing = mapped.filter(([, c]) => !heads.includes(c.toLowerCase().trim()))
                         const faltaFecha = missing.some(([k]) => k === 'fecha')
+                        // Sin cantidad TODAS las filas se descartan: es un fallo,
+                        // no un aviso. Se resuelve con "cada fila es una conversión".
+                        const faltaCantidad = missing.some(([k]) => k === 'cantidad')
+                        const problemas: string[] = []
+                        if (faltaFecha) problemas.push('Falta la columna de fecha: no se puede importar.')
+                        if (faltaCantidad) problemas.push('Falta la columna de cantidad: se descartarían todas las filas. Marca "Cada fila es una conversión" si el Sheet tiene un lead o venta por fila.')
+                        if (!tab.tipo_fijo && missing.some(([k]) => k === 'tipo')) {
+                            problemas.push('Sin columna de tipo: las filas entrarán como "otro" y no sumarán en leads/ventas offline. Usa "Tipo fijo".')
+                        }
+                        const opcionales = missing.map(([k]) => k).filter(k => k !== 'fecha' && k !== 'cantidad' && k !== 'tipo')
+
                         out.push({
                             tab: label,
-                            ok: !faltaFecha,
-                            message: missing.length === 0
-                                ? 'Todas las columnas mapeadas existen'
-                                : `${faltaFecha ? 'Falta la columna de fecha. ' : ''}Sin columna para: ${missing.map(([k]) => k).join(', ')}`,
+                            ok: !faltaFecha && !faltaCantidad,
+                            message: problemas.length === 0
+                                ? (opcionales.length === 0
+                                    ? 'Todas las columnas mapeadas existen'
+                                    : `Listo para importar. Sin columna (opcional) para: ${opcionales.join(', ')}`)
+                                : problemas.join(' '),
                         })
                     }
                     setValidateUI(prev => ({ ...prev, [sid]: { loading: false, results: out } }))
@@ -1636,7 +1659,10 @@ const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean
                                     const dupCustomKeys = (() => {
                                         const seen = new Map<string, number>()
                                         for (const t of tabs) {
-                                            for (const k of Object.keys(t.custom_columns ?? {})) seen.set(k, (seen.get(k) ?? 0) + 1)
+                                            // Solo cuentan las marcadas para sincronizar: el resto no llega a la base.
+                                            for (const [k, def] of Object.entries(t.custom_columns ?? {})) {
+                                                if (def.include) seen.set(k, (seen.get(k) ?? 0) + 1)
+                                            }
                                         }
                                         return Array.from(seen.entries()).filter(([, n]) => n > 1).map(([k]) => k)
                                     })()
@@ -1758,7 +1784,9 @@ const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean
                                                     {dupCustomKeys.length > 0 && (
                                                         <p className="text-xs text-amber-600 dark:text-amber-400 flex items-start gap-1">
                                                             <AlertCircle className="w-3 h-3 mt-0.5 shrink-0" />
-                                                            Columnas repetidas entre pestañas ({dupCustomKeys.join(', ')}): sus valores se suman en la misma variable <span className="font-mono">sheet_*</span>.
+                                                            Columnas repetidas entre pestañas ({dupCustomKeys.slice(0, 5).join(', ')}
+                                                            {dupCustomKeys.length > 5 ? ` y ${dupCustomKeys.length - 5} más` : ''}): si las marcas
+                                                            como &quot;Usar&quot; en varias pestañas, sus valores se suman en la misma variable <span className="font-mono">sheet_*</span>.
                                                         </p>
                                                     )}
 
@@ -1823,19 +1851,61 @@ const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean
                                                                                 { field: 'col_valor',    label: 'Valor $',  placeholder: 'valor',    hint: 'Revenue (opcional)' },
                                                                                 { field: 'col_fuente',   label: 'Fuente',   placeholder: 'fuente',   hint: '"meta", "tiktok"…' },
                                                                                 { field: 'col_notas',    label: 'Notas',    placeholder: 'notas',    hint: 'Texto libre (opcional)' },
-                                                                            ].map(({ field, label, placeholder, hint }) => (
-                                                                                <div key={field} className="space-y-1">
-                                                                                    <Label className="text-muted-foreground text-xs">{label}</Label>
-                                                                                    <Input
-                                                                                        placeholder={placeholder}
-                                                                                        list={headerOpts.length > 0 ? listId : undefined}
-                                                                                        value={(tab as any)[field] || ''}
-                                                                                        onChange={(e) => updateTab(idx, tab.id, { [field]: e.target.value })}
-                                                                                        className="bg-background border-input h-8 text-sm"
-                                                                                    />
-                                                                                    <p className="text-xs text-muted-foreground/60">{hint}</p>
-                                                                                </div>
-                                                                            ))}
+                                                                            ].map(({ field, label, placeholder, hint }) => {
+                                                                                // Cantidad y Tipo pueden resolverse por configuración
+                                                                                // en hojas donde una fila = una conversión.
+                                                                                const porConfig =
+                                                                                    (field === 'col_cantidad' && tab.count_rows) ||
+                                                                                    (field === 'col_tipo' && !!tab.tipo_fijo)
+                                                                                return (
+                                                                                    <div key={field} className="space-y-1">
+                                                                                        <Label className="text-muted-foreground text-xs">{label}</Label>
+                                                                                        <Input
+                                                                                            placeholder={porConfig ? 'definido abajo' : placeholder}
+                                                                                            list={headerOpts.length > 0 ? listId : undefined}
+                                                                                            disabled={porConfig}
+                                                                                            value={porConfig ? '' : ((tab as any)[field] || '')}
+                                                                                            onChange={(e) => updateTab(idx, tab.id, { [field]: e.target.value })}
+                                                                                            className="bg-background border-input h-8 text-sm disabled:opacity-50"
+                                                                                        />
+                                                                                        <p className="text-xs text-muted-foreground/60">{hint}</p>
+                                                                                    </div>
+                                                                                )
+                                                                            })}
+                                                                        </div>
+
+                                                                        {/* Hojas donde una fila = una conversión (exports de leads) */}
+                                                                        <div className="border-t border-border pt-3 space-y-2">
+                                                                            <label className="flex items-start gap-2 text-xs text-foreground cursor-pointer">
+                                                                                <input
+                                                                                    type="checkbox"
+                                                                                    checked={!!tab.count_rows}
+                                                                                    onChange={(e) => updateTab(idx, tab.id, { count_rows: e.target.checked })}
+                                                                                    className="rounded border-input bg-background text-indigo-500 focus:ring-indigo-500 mt-0.5"
+                                                                                />
+                                                                                <span>
+                                                                                    Cada fila es una conversión
+                                                                                    <span className="block text-muted-foreground/60">
+                                                                                        Para hojas sin columna de cantidad (un lead o una venta por fila).
+                                                                                    </span>
+                                                                                </span>
+                                                                            </label>
+                                                                            <div className="flex items-center gap-2">
+                                                                                <Label className="text-muted-foreground text-xs shrink-0">Tipo fijo</Label>
+                                                                                <select
+                                                                                    value={tab.tipo_fijo ?? ''}
+                                                                                    onChange={(e) => updateTab(idx, tab.id, { tipo_fijo: e.target.value || undefined })}
+                                                                                    className="h-7 text-xs rounded-md border border-input bg-background px-2 text-foreground focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                                                                                >
+                                                                                    <option value="">Usar la columna de tipo</option>
+                                                                                    <option value="lead">Todas son leads</option>
+                                                                                    <option value="venta">Todas son ventas</option>
+                                                                                    <option value="otro">Otro</option>
+                                                                                </select>
+                                                                                <span className="text-xs text-muted-foreground/60">
+                                                                                    Sin esto las filas entran como &quot;otro&quot; y no suman en leads/ventas offline.
+                                                                                </span>
+                                                                            </div>
                                                                         </div>
                                                                     </div>
 

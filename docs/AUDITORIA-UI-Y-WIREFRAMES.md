@@ -46,7 +46,6 @@ PÚBLICO (sin login)
 ├── /privacy · /terms      Legales
 ├── /p/[token]             Dashboard espejo público (solo lectura, embebible)
 ├── /report/[clientId]     Reporte público del cliente
-├── /report/[clientId]/monthly/[year]/[month]   Reporte mensual (PDF-ready)
 ├── /report/monthly/[slug] Reporte mensual por slug público
 └── /t/[slug]              Redirect de tracking link (sin UI)
 

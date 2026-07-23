@@ -133,12 +133,6 @@ Recibe ventas de Hotmart. Valida firma (HMAC o hottok), parsea el payload (`hotm
 
 ## Reportes y datos (sesión)
 
-### `GET /api/reports/monthly`
-Datos del reporte mensual. Params: `clientId`, `year`, `month`. Devuelve `client`, `summary` (KPIs), `daily`, `campaigns`, `spend_distribution`, `audience` (por edad/género), `creatives` (top/bottom), `previous_month` y `notes`. Lo consume `/report/[clientId]/monthly/[year]/[month]`.
-
-### `POST /api/reports/monthly`
-Actualiza notas: `{ clientId, year, month, notas }`.
-
 ### `POST /api/admin/sync-google-sheets`
 Sincroniza leads manualmente. Body `{ clientId }`. `GET ?clientId=` devuelve el estado de configuración.
 
@@ -180,7 +174,6 @@ Resuelve el slug de tracking → destino con UTMs. Setea cookies de atribución 
 | `/api/cron/report-utm/aggregate` | GET/POST | CRON_SECRET |
 | `/api/report-utm/pixel/event` | POST/OPTIONS | público |
 | `/api/report-utm/webhooks/hotmart/[clienteId]` | GET/POST | HMAC/hottok |
-| `/api/reports/monthly` | GET/POST | sesión |
 | `/api/admin/sync-google-sheets` | GET/POST | sesión |
 | `/api/layouts/reorder` | POST | sesión |
 | `/api/backfill-forms` | POST | sesión |

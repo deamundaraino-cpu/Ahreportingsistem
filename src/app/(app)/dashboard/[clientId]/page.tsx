@@ -9,6 +9,8 @@ import { getBitacoras } from "../../admin/settings/[id]/_actions"
 import { format, subDays } from "date-fns"
 import { createClient, createAdminClient } from "@/utils/supabase/server"
 import { redirect } from "next/navigation"
+import Link from "next/link"
+import { PieChart } from "lucide-react"
 
 export default async function DashboardPage(props: {
     params: Promise<{ clientId: string }>
@@ -45,10 +47,24 @@ export default async function DashboardPage(props: {
         return { userRole: role, allowed: !!assignment, userId: user.id }
     }
 
-    const [{ userRole, allowed, userId }, dashboardData, initialBitacoras] = await Promise.all([
+    // Los clientes del dashboard (public.clientes) y los de report_utm son entidades
+    // distintas: el puente es report_utm.clientes.public_cliente_id. Sin enlace no hay
+    // informes que filtrar, así que el botón simplemente no se muestra.
+    const resolveInformesClienteId = async (): Promise<string | null> => {
+        if (process.env.NEXT_PUBLIC_REPORT_UTM_ENABLED !== 'true') return null
+        // limit(1) y no maybeSingle(): nada impide que dos clientes report_utm
+        // apunten al mismo public_cliente_id.
+        const { data } = await adminSupabase
+            .schema('report_utm').from('clientes')
+            .select('id').eq('public_cliente_id', clientId).limit(1)
+        return data?.[0]?.id ?? null
+    }
+
+    const [{ userRole, allowed, userId }, dashboardData, initialBitacoras, informesClienteId] = await Promise.all([
         authCheck(),
         getDashboardData(clientId, fromStr, toStr),
         getBitacoras(clientId),
+        resolveInformesClienteId(),
     ])
 
     if (!allowed) redirect('/dashboard')
@@ -66,6 +82,15 @@ export default async function DashboardPage(props: {
                             initialTabIds={dashboardData?.layoutPublico?.type === 'tab_mirror' ? (dashboardData.layoutPublico.tab_ids ?? []) : []}
                             initialBranding={dashboardData?.layoutPublico?.branding ?? {}}
                         />
+                        {informesClienteId && (
+                            <Link
+                                href={`/report-utm/informes?cliente=${informesClienteId}`}
+                                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-emerald-500/30 bg-emerald-50 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-100 dark:hover:bg-emerald-500/20 transition-colors"
+                            >
+                                <PieChart className="h-3.5 w-3.5" />
+                                Ir a los Informes
+                            </Link>
+                        )}
                     </div>
                     <p className="text-sm text-muted-foreground font-medium">Embudo de Ventas V2</p>
                     <p className="text-muted-foreground text-sm">Datos consolidados de Meta, Hotmart y Google Analytics 4.</p>

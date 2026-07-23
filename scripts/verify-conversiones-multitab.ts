@@ -195,6 +195,44 @@ sec('parseRowsForTab — filas válidas y descartadas')
     check('toNumber cubre ambas convenciones de separadores', ok, detalles.join('; '))
 }
 
+{
+    // Export de formulario de Meta: una fila = un lead, sin columnas de cantidad
+    // ni de tipo, y con `created_time` en "YYYY-MM-DD HH:MM:SS".
+    const headers = ['id', 'created_time', 'campaign_name', 'full_name', 'email']
+    const rows = fakeRows(headers, [
+        ['1001', '2026-04-15 13:22:05', 'Abril V2', 'Ana', 'ana@x.com'],
+        ['1002', '2026-04-15 09:10:00', 'Abril V2', 'Beto', 'beto@x.com'],
+        ['1003', '2026-04-16T08:00:00+0000', 'Abril V2', 'Cami', 'cami@x.com'],
+    ])
+
+    // Sin la configuración adecuada: todo se descarta (el síntoma reportado).
+    const crudo = parseRowsForTab(headers, rows, { id: 't', sheet_name: 'F', enabled: true, col_fecha: 'created_time' }, 's', 'F')
+    check('sin cantidad se descartan todas las filas', crudo.rows.length === 0, String(crudo.rows.length))
+    check('el descarte se explica en los avisos',
+        crudo.quality.warnings.some(w => w.includes('cantidad 0 o vacía')), crudo.quality.warnings.join(' | '))
+
+    // Con "cada fila es una conversión" + tipo fijo.
+    const tab: SheetTabConfig = {
+        id: 't', sheet_name: 'F', enabled: true,
+        col_fecha: 'created_time', count_rows: true, tipo_fijo: 'lead',
+    }
+    const { rows: parsed, quality } = parseRowsForTab(headers, rows, tab, 's', 'F')
+    check('count_rows importa todas las filas', parsed.length === 3, String(parsed.length))
+    check('cada fila cuenta como 1', parsed.every(r => r.cantidad === 1))
+    check('tipo_fijo marca las filas como lead', parsed.every(r => r.tipo === 'lead'))
+    check('fecha con espacio se recorta a YYYY-MM-DD', parsed[0].fecha === '2026-04-15', parsed[0].fecha)
+    check('fecha ISO con T también', parsed[2].fecha === '2026-04-16', parsed[2].fecha)
+    check('no avisa de cantidad cuando count_rows está activo',
+        !quality.warnings.some(w => w.includes('cantidad')), quality.warnings.join(' | '))
+    check('no avisa de tipo cuando hay tipo_fijo',
+        !quality.warnings.some(w => w.includes('de tipo')), quality.warnings.join(' | '))
+
+    const agg = computeConversionesAggregates(parsed)
+    const d15 = agg.find(a => a.fecha === '2026-04-15')!
+    check('agrega 2 leads el 15 de abril', d15.total_cantidad === 2, String(d15.total_cantidad))
+    check('el tipo lead permite que sume en offline_leads', agg.every(a => a.tipo === 'lead'))
+}
+
 // ─── Agregación diaria ──────────────────────────────────────────────────────
 
 sec('computeConversionesAggregates — sumas y porcentajes ponderados')
