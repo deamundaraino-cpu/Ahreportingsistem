@@ -11,6 +11,7 @@ import {
     appendDimFilters, dimFilterSignature, widgetAdvancedSignature, withCampaignFilter,
     fieldMetricLabel, fieldMetricFormat, fieldDimLabel, isFieldMetric, parseFieldMetric,
     isAdditiveMetric,
+    isOfflineFieldMetric, parseOfflineFieldMetric, offlineFieldLabel, offlineFieldFormat,
 } from '@/lib/report-utm/bi-metadata'
 import { useBiQueryBase } from '../BiQueryContext'
 
@@ -65,13 +66,22 @@ export function TableWidget({ title, config, filters, calculatedFields = [], h =
     const calcMap = new Map(calculatedFields.map(c => [c.name, c]))
     const baseMetrics = colKeys.filter(k => METRIC_META[k as BiMetric]) as BiMetric[]
     const fieldMetricCols = colKeys.filter(isFieldMetric)
+    // Columnas adicionales de Sheets offline (offfield:<tipo>:<clave>).
+    const offlineFieldCols = colKeys.filter(isOfflineFieldMetric)
     const usedCalc = colKeys.filter(k => calcMap.has(k)).map(k => calcMap.get(k)!)
 
     function colLabel(key: string): string {
-        return METRIC_META[key as BiMetric]?.label ?? fieldMetricLabel(key) ?? calcMap.get(key)?.name ?? key
+        return METRIC_META[key as BiMetric]?.label
+            ?? fieldMetricLabel(key)
+            ?? offlineFieldLabel(key)
+            ?? calcMap.get(key)?.name ?? key
     }
     function colFormat(key: string): ColFormat {
-        return (METRIC_META[key as BiMetric]?.format ?? calcMap.get(key)?.format ?? fieldMetricFormat(key) ?? 'number') as ColFormat
+        return (METRIC_META[key as BiMetric]?.format
+            ?? calcMap.get(key)?.format
+            ?? fieldMetricFormat(key)
+            ?? offlineFieldFormat(key)
+            ?? 'number') as ColFormat
     }
 
     useEffect(() => {
@@ -86,7 +96,7 @@ export function TableWidget({ title, config, filters, calculatedFields = [], h =
         }
 
         const params = new URLSearchParams({
-            metrics: [...baseMetrics, ...fieldMetricCols].join(','),
+            metrics: [...baseMetrics, ...fieldMetricCols, ...offlineFieldCols].join(','),
             dimension,
             limit: String(rowLimit),
             sort: config.sort === 'asc' ? 'asc' : 'desc',
@@ -161,6 +171,12 @@ export function TableWidget({ title, config, filters, calculatedFields = [], h =
         for (const key of fieldMetricCols) {
             const agg = parseFieldMetric(key)?.agg
             if (agg === 'sum' || agg === 'count') {
+                t[key] = round2(filteredRows.reduce((s, r) => s + Number(r[key] ?? 0), 0))
+            }
+        }
+        // Columnas de Sheet: conteos e importes suman; los porcentajes no.
+        for (const key of offlineFieldCols) {
+            if (parseOfflineFieldMetric(key)?.type !== 'percentage') {
                 t[key] = round2(filteredRows.reduce((s, r) => s + Number(r[key] ?? 0), 0))
             }
         }

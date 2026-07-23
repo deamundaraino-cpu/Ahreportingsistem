@@ -4,7 +4,10 @@ import { createClient, createAdminClient } from '@/utils/supabase/server'
 import { revalidatePath } from 'next/cache'
 import { headers } from 'next/headers'
 import { BetaAnalyticsDataClient } from '@google-analytics/data'
-import type { ConversionesConfig, DriveSheet } from '@/lib/integrations/google-sheets-conversiones'
+import type {
+    ConversionesConfig, DriveSheet, SheetTabConfig, SheetTabInfo,
+    DetectedColumn, SheetSyncStatus,
+} from '@/lib/integrations/google-sheets-conversiones'
 import type { GA4Property } from '@/lib/integrations/google-analytics'
 
 export async function getClientes() {
@@ -746,7 +749,7 @@ export async function disconnectGoogle(): Promise<{ success: boolean; error?: st
 
 // ─── Conversiones Offline ────────────────────────────────────────────────────
 
-export async function detectConversionesColumns(sheetConfig: ConversionesConfig) {
+export async function detectConversionesColumns(sheetConfig: ConversionesConfig, tab?: SheetTabConfig) {
     try {
         const headersList = await headers()
         const host = headersList.get('host') || 'localhost:3001'
@@ -756,15 +759,59 @@ export async function detectConversionesColumns(sheetConfig: ConversionesConfig)
         const res = await fetch(`${baseUrl}/api/admin/detect-sheet-columns`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ sheetConfig }),
+            body: JSON.stringify({ sheetConfig, tab }),
             cache: 'no-store',
         })
 
         const data = await res.json()
         if (!res.ok) return { error: data.error || 'Error al detectar columnas' }
-        return { columns: data.columns }
+        return { headers: (data.headers ?? []) as string[], columns: data.columns as DetectedColumn[] }
     } catch (e: any) {
         return { error: e.message || 'Error al detectar columnas' }
+    }
+}
+
+// Pestañas reales del documento, para elegirlas en vez de teclear el nombre.
+export async function listConversionesTabs(sheetConfig: ConversionesConfig) {
+    try {
+        const headersList = await headers()
+        const host = headersList.get('host') || 'localhost:3001'
+        const protocol = host.includes('localhost') ? 'http' : 'https'
+        const baseUrl = `${protocol}://${host}`
+
+        const res = await fetch(`${baseUrl}/api/admin/list-sheet-tabs`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sheetConfig }),
+            cache: 'no-store',
+        })
+
+        const data = await res.json()
+        if (!res.ok) return { error: data.error || 'Error al listar las pestañas' }
+        return { tabs: data.tabs as SheetTabInfo[] }
+    } catch (e: any) {
+        return { error: e.message || 'Error al listar las pestañas' }
+    }
+}
+
+// Estado del último sync por sheet (filas ok/descartadas y avisos por pestaña).
+export async function getConversionesSyncStatus(clienteId: string) {
+    try {
+        const headersList = await headers()
+        const host = headersList.get('host') || 'localhost:3001'
+        const protocol = host.includes('localhost') ? 'http' : 'https'
+        const baseUrl = `${protocol}://${host}`
+
+        const res = await fetch(
+            `${baseUrl}/api/admin/sync-conversiones-offline?clientId=${encodeURIComponent(clienteId)}`,
+            { cache: 'no-store' }
+        )
+
+        const data = await res.json()
+        if (!res.ok) return { error: data.error || 'Error al consultar el estado del sync' }
+        return { lastSync: (data.lastSync ?? {}) as Record<string, SheetSyncStatus> }
+    } catch (e: any) {
+        return { error: e.message || 'Error al consultar el estado del sync' }
     }
 }
 

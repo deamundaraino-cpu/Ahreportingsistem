@@ -9,21 +9,23 @@
 
 import { useRef, useState } from 'react'
 import { Search, Plus, X } from 'lucide-react'
-import { METRIC_META, humanizeFieldKey, fieldMetricAlias } from '@/lib/report-utm/bi-metadata'
-import type { BiMetric, FormFieldMeta } from '@/lib/report-utm/bi-metadata'
+import { METRIC_META, humanizeFieldKey, fieldMetricAlias, offlineFieldAlias } from '@/lib/report-utm/bi-metadata'
+import type { BiMetric, FormFieldMeta, OfflineFieldMeta } from '@/lib/report-utm/bi-metadata'
 
 interface Props {
     value: string
     onChange: (v: string) => void
     /** Campos de formulario del cliente, para ofrecer sus alias f_sum__/f_avg__. */
     formFields?: FormFieldMeta[]
+    /** Columnas adicionales de los Sheets offline, con sus alias off__. */
+    offlineFields?: OfflineFieldMeta[]
     placeholder?: string
 }
 
 interface MetricOption { key: string; label: string }
 
 /** Agrupa el catálogo por origen, para que la lista sea navegable. */
-function buildGroups(formFields: FormFieldMeta[]): { title: string; items: MetricOption[] }[] {
+function buildGroups(formFields: FormFieldMeta[], offlineFields: OfflineFieldMeta[]): { title: string; items: MetricOption[] }[] {
     const of = (keys: string[]): MetricOption[] =>
         keys.filter(k => METRIC_META[k as BiMetric])
             .map(k => ({ key: k, label: METRIC_META[k as BiMetric].label }))
@@ -56,23 +58,30 @@ function buildGroups(formFields: FormFieldMeta[]): { title: string; items: Metri
         ]))
         .filter(o => !!o.key) as MetricOption[]
 
+    // Columnas adicionales de los Sheets offline (alias off__<clave>).
+    const columnasSheet: MetricOption[] = offlineFields.map(f => ({
+        key: offlineFieldAlias(f.key),
+        label: `${f.label} (Sheet)`,
+    }))
+
     return [
         { title: 'Núcleo', items: nucleo },
         { title: 'Campaña (Meta / TikTok)', items: campana },
         { title: 'Hotmart', items: hotmart },
         { title: 'Google Analytics', items: ga },
         { title: 'Offline', items: offline },
+        { title: 'Columnas de Sheets', items: columnasSheet },
         { title: 'Suscripciones', items: subs },
         { title: 'Campos del formulario', items: campos },
     ].filter(g => g.items.length > 0)
 }
 
-export function BiFormulaInput({ value, onChange, formFields = [], placeholder }: Props) {
+export function BiFormulaInput({ value, onChange, formFields = [], offlineFields = [], placeholder }: Props) {
     const inputRef = useRef<HTMLInputElement>(null)
     const [open, setOpen] = useState(false)
     const [search, setSearch] = useState('')
 
-    const groups = buildGroups(formFields)
+    const groups = buildGroups(formFields, offlineFields)
     const q = search.trim().toLowerCase()
     const filtered = q
         ? groups

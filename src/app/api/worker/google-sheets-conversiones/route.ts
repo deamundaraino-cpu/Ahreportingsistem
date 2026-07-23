@@ -1,17 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import {
-  fetchConversionesFromSheet,
-  computeConversionesAggregates,
-  saveConversionesToDb,
+  syncClienteConversiones,
   normalizeSheetConfigs,
 } from '@/lib/integrations/google-sheets-conversiones'
-import type { CustomColumnDef, ConversionRow } from '@/lib/integrations/google-sheets-conversiones'
 
 /**
  * Worker de conversiones offline — sincroniza Google Sheets → DB.
  * Corre diariamente a las 07:00 AM Colombia (UTC-5 → 12:00 UTC) vía Vercel Cron.
- * Soporta múltiples sheets por cliente (config como array).
+ * Soporta múltiples sheets por cliente, y varias pestañas por sheet.
  *
  * GET /api/worker/google-sheets-conversiones
  * Authorization: Bearer {CRON_SECRET}
@@ -39,30 +36,26 @@ export async function GET(request: NextRequest) {
   const results: Record<string, any> = {}
 
   for (const cliente of clientes || []) {
-    const enabledSheets = normalizeSheetConfigs(cliente.config_api?.google_sheets_conversiones)
-      .filter(s => s.enabled && s.sheet_url)
-
+    const rawConfig = cliente.config_api?.google_sheets_conversiones
+    const enabledSheets = normalizeSheetConfigs(rawConfig).filter(s => s.enabled && s.sheet_url)
     if (enabledSheets.length === 0) continue
 
     try {
-      let allRows: ConversionRow[] = []
-      const mergedCustomCols: Record<string, CustomColumnDef> = {}
+      // Cada sheet se guarda por separado: uno que falle no borra los datos de
+      // los demás ni aborta el resto del cliente.
+      const { results: sheetResults } = await syncClienteConversiones(supabase, cliente.id, rawConfig)
 
-      for (const sheetCfg of enabledSheets) {
-        const rows = await fetchConversionesFromSheet(sheetCfg)
-        allRows = [...allRows, ...rows]
-        if (sheetCfg.custom_columns) {
-          Object.assign(mergedCustomCols, sheetCfg.custom_columns)
-        }
+      const failed = sheetResults.filter(r => !r.success)
+      results[cliente.nombre] = {
+        success: failed.length === 0,
+        sheets: sheetResults.length,
+        rowsProcessed: sheetResults.reduce((s, r) => s + r.rowsProcessed, 0),
+        daysProcessed: sheetResults.reduce((s, r) => s + r.daysProcessed, 0),
+        rowsDescartadas: sheetResults.reduce((s, r) => s + r.rowsDescartadas, 0),
+        ...(failed.length > 0
+          ? { errors: failed.map(r => `${r.name}: ${r.error}`) }
+          : {}),
       }
-
-      const aggregates = computeConversionesAggregates(
-        allRows,
-        Object.keys(mergedCustomCols).length > 0 ? mergedCustomCols : undefined
-      )
-      const saved = await saveConversionesToDb(supabase, cliente.id, allRows, aggregates)
-
-      results[cliente.nombre] = { success: true, sheets: enabledSheets.length, ...saved }
     } catch (err: any) {
       results[cliente.nombre] = { success: false, error: err.message }
     }

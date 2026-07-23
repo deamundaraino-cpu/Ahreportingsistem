@@ -6,6 +6,7 @@ import {
     METRIC_META, FUNNEL_STAGE_METRICS, DEFAULT_FUNNEL_STAGES,
     isFieldDim, parseFieldDim, parseFieldMetric,
     extractFieldMetricAliases, parseFieldNumber,
+    parseOfflineFieldMetric, extractOfflineFieldAliases,
     advancedFilterHasConditions, matchFilterCondition,
     campaignNameFilterPredicate, hasCampaignFilter, hasNonAttributableFilter,
 } from './bi-metadata'
@@ -55,6 +56,23 @@ export async function runBiQuery(params: BiQueryParams): Promise<BiQueryRow[]> {
     const fieldMetrics = Array.from(fieldMetricReqs.values())
     const isFieldDimQuery = fieldDimKey !== null
 
+    // ── Columnas adicionales de Sheets offline (custom_fields JSONB) ───
+    // Mismo patrón que los campos de formulario: token "offfield:<clave>" en
+    // params.metrics o alias "off__<clave>" dentro de un campo calculado.
+    const offlineFieldReqs = new Map<string, OfflineFieldReq>()
+    for (const m of params.metrics) {
+        const parsed = parseOfflineFieldMetric(m)
+        if (parsed) offlineFieldReqs.set(m, { key: parsed.key, outKey: m, type: parsed.type })
+    }
+    for (const cf of params.calculated ?? []) {
+        for (const of of extractOfflineFieldAliases(cf.expression)) {
+            if (!offlineFieldReqs.has(of.alias)) {
+                offlineFieldReqs.set(of.alias, { key: of.key, outKey: of.alias, type: 'count' })
+            }
+        }
+    }
+    const offlineFields = Array.from(offlineFieldReqs.values())
+
     const isSalesOnlyDim = SALES_ONLY_DIMS.has(params.dimension)
     const isAdsOnlyDim   = ADS_ONLY_DIMS.has(params.dimension)
     // Los leads no tienen columnas de producto/tipo/país ni desglose por anuncio →
@@ -73,7 +91,7 @@ export async function runBiQuery(params: BiQueryParams): Promise<BiQueryRow[]> {
     // Offline (día×cliente) y suscripciones (snapshot) son globales/por fecha,
     // no cruzan por dimensiones de lead/venta/anuncio.
     const isBreakdownDim = isSalesOnlyDim || isAdsOnlyDim || isFieldDimQuery
-    const needsOffline = !isBreakdownDim && requires([...OFFLINE_METRICS])
+    const needsOffline = !isBreakdownDim && (requires([...OFFLINE_METRICS]) || offlineFields.length > 0)
     const needsSubs    = !isBreakdownDim && requires([...SUBS_METRICS])
 
     const dateFrom = params.date_from ?? new Date(Date.now() - 30 * 86400_000).toISOString().slice(0, 10)
@@ -103,7 +121,7 @@ export async function runBiQuery(params: BiQueryParams): Promise<BiQueryRow[]> {
     // ── OFFLINE query (conversiones_offline_diarias) ──────────────────
     let offlineData: OfflineRow[] = []
     if (needsOffline) {
-        offlineData = await queryOfflineDirect(params, dateFrom, dateTo)
+        offlineData = await queryOfflineDirect(params, dateFrom, dateTo, offlineFields)
     }
 
     // ── SUBS query (hotmart_subscriptions_snapshot, último snapshot) ──
@@ -113,7 +131,7 @@ export async function runBiQuery(params: BiQueryParams): Promise<BiQueryRow[]> {
     }
 
     // ── Merge results ─────────────────────────────────────────────────
-    return mergeResults(params, leadsData, salesData, adsData, fieldMetrics, offlineData, subsData)
+    return mergeResults(params, leadsData, salesData, adsData, fieldMetrics, offlineData, subsData, offlineFields)
 }
 
 // ── Campos de formulario: tipos de agregación ─────────────────────────
@@ -563,7 +581,19 @@ async function queryAdsCampaignFiltered(
 
 // ── Offline (conversiones_offline_diarias) ────────────────────────────
 
-interface OfflineRow { dim: string | null; offline_leads: number; offline_ventas: number; offline_revenue: number; offline_total: number }
+interface OfflineRow {
+    dim: string | null
+    offline_leads: number; offline_ventas: number; offline_revenue: number; offline_total: number
+    /** Columnas adicionales del Sheet solicitadas (clave sanitizada → valor). */
+    fields: Record<string, number>
+}
+
+/**
+ * Columna adicional de Sheet pedida en la query. `type` viene del propio token
+ * (`offfield:<tipo>:<clave>`); los alias de expresión calculada no lo llevan y
+ * agregan por suma.
+ */
+interface OfflineFieldReq { key: string; outKey: string; type: 'count' | 'currency' | 'percentage' }
 
 /** Resuelve el public cliente_id enlazado a un cliente report_utm (o null). */
 async function resolvePublicClienteId(rtmClienteId: string): Promise<string | null> {
@@ -574,10 +604,18 @@ async function resolvePublicClienteId(rtmClienteId: string): Promise<string | nu
     return data?.public_cliente_id ?? null
 }
 
-async function queryOfflineDirect(params: BiQueryParams, dateFrom: string, dateTo: string): Promise<OfflineRow[]> {
+async function queryOfflineDirect(
+    params: BiQueryParams,
+    dateFrom: string,
+    dateTo: string,
+    offlineFields: OfflineFieldReq[] = []
+): Promise<OfflineRow[]> {
     const db = await createAdminClient()
+    const needsFields = offlineFields.length > 0
     let q = db.from('conversiones_offline_diarias')
-        .select('fecha,tipo,total_cantidad,total_valor')
+        .select(needsFields
+            ? 'fecha,tipo,total_cantidad,total_valor,custom_fields'
+            : 'fecha,tipo,total_cantidad,total_valor')
         .gte('fecha', dateFrom).lte('fecha', dateTo)
 
     if (params.cliente_id) {
@@ -591,17 +629,50 @@ async function queryOfflineDirect(params: BiQueryParams, dateFrom: string, dateT
 
     const grouping = params.date_grouping ?? 'day'
     const map = new Map<string, OfflineRow>()
-    for (const r of data as Record<string, unknown>[]) {
+    // Los porcentajes no se suman: se promedian ponderados por la cantidad de la
+    // fila, igual que al agregar el Sheet (computeConversionesAggregates).
+    const pct = new Map<string, Record<string, { total: number; weight: number }>>()
+
+    for (const r of data as unknown as Record<string, unknown>[]) {
         const dim = params.dimension === 'date' ? truncateDate(String(r.fecha ?? ''), grouping) : 'total'
         let e = map.get(dim)
-        if (!e) { e = { dim, offline_leads: 0, offline_ventas: 0, offline_revenue: 0, offline_total: 0 }; map.set(dim, e) }
+        if (!e) {
+            e = { dim, offline_leads: 0, offline_ventas: 0, offline_revenue: 0, offline_total: 0, fields: {} }
+            map.set(dim, e)
+            pct.set(dim, {})
+        }
         const qty = Number(r.total_cantidad ?? 0)
         const val = Number(r.total_valor ?? 0)
         if (r.tipo === 'lead')  e.offline_leads  += qty
         if (r.tipo === 'venta') e.offline_ventas += qty
         e.offline_revenue += val
         e.offline_total   += qty
+
+        if (needsFields) {
+            const custom = (r.custom_fields ?? {}) as Record<string, unknown>
+            for (const f of offlineFields) {
+                const v = Number(custom[f.key] ?? 0)
+                if (!Number.isFinite(v)) continue
+                if (f.type === 'percentage') {
+                    const acc = pct.get(dim)!
+                    if (!acc[f.key]) acc[f.key] = { total: 0, weight: 0 }
+                    acc[f.key].total  += v * qty
+                    acc[f.key].weight += qty
+                } else {
+                    e.fields[f.key] = (e.fields[f.key] ?? 0) + v
+                }
+            }
+        }
     }
+
+    for (const [dim, acc] of pct) {
+        const e = map.get(dim)
+        if (!e) continue
+        for (const [k, { total, weight }] of Object.entries(acc)) {
+            e.fields[k] = weight > 0 ? round2(total / weight) : 0
+        }
+    }
+
     return Array.from(map.values())
 }
 
@@ -642,7 +713,8 @@ function mergeResults(
     adsData:   AdRow[],
     fieldMetrics: FieldMetricReq[],
     offlineData: OfflineRow[] = [],
-    subsData: Record<string, number> | null = null
+    subsData: Record<string, number> | null = null,
+    offlineFields: OfflineFieldReq[] = []
 ): BiQueryRow[] {
     const keys = new Set<string>()
     leadsData.forEach(r => keys.add(r.dim ?? 'total'))
@@ -734,6 +806,14 @@ function mergeResults(
         if (params.metrics.includes('offline_ventas'))  row.offline_ventas  = off?.offline_ventas  ?? 0
         if (params.metrics.includes('offline_revenue')) row.offline_revenue = round2(off?.offline_revenue ?? 0)
         if (params.metrics.includes('offline_total'))   row.offline_total   = off?.offline_total   ?? 0
+        // Columnas adicionales del Sheet: se emiten por su token y quedan
+        // disponibles por alias para los campos calculados.
+        const offlineFieldValues: Record<string, number> = {}
+        for (const of of offlineFields) {
+            const v = off?.fields[of.key] ?? 0
+            offlineFieldValues[of.outKey] = v
+            if ((params.metrics as string[]).includes(of.outKey)) row[of.outKey] = v
+        }
         // Suscripciones (snapshot): solo en la fila global "(total)"
         if (subsData && key === 'total') {
             for (const k of SUBS_METRICS) {
@@ -778,6 +858,7 @@ function mergeResults(
             baseValues.offline_ventas  = off?.offline_ventas  ?? 0
             baseValues.offline_revenue = round2(off?.offline_revenue ?? 0)
             baseValues.offline_total   = off?.offline_total   ?? 0
+            Object.assign(baseValues, offlineFieldValues)   // alias off__<clave>
             if (subsData && key === 'total') for (const k of SUBS_METRICS) baseValues[k] = subsData[k] ?? 0
             for (const cf of params.calculated) {
                 row[cf.name] = evaluateExpression(cf.expression, baseValues)

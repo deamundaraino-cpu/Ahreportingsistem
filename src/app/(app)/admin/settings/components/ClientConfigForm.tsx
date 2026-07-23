@@ -6,8 +6,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter }
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Button } from '@/components/ui/button'
-import { updateClienteConfig, deleteCliente, assignLayoutToCliente, testMetaConnection, testHotmartConnection, refreshMetaCustomConversions, testTikTokConnection, syncClienteMetrics, testGA4Connection, syncGoogleSheets, syncConversionesOffline, detectConversionesColumns, listDriveSheets, listGa4Properties, fetchMetaAdAccounts, fetchTikTokAdAccounts } from '../_actions'
-import type { CustomColumnDef, CustomColumnType, DetectedColumn, ConversionesConfig, DriveSheet } from '@/lib/integrations/google-sheets-conversiones'
+import { updateClienteConfig, deleteCliente, assignLayoutToCliente, testMetaConnection, testHotmartConnection, refreshMetaCustomConversions, testTikTokConnection, syncClienteMetrics, testGA4Connection, syncGoogleSheets, syncConversionesOffline, detectConversionesColumns, listConversionesTabs, getConversionesSyncStatus, listDriveSheets, listGa4Properties, fetchMetaAdAccounts, fetchTikTokAdAccounts } from '../_actions'
+import type { CustomColumnDef, CustomColumnType, ConversionesConfig, DriveSheet, SheetTabConfig, SheetTabInfo, SheetSyncStatus } from '@/lib/integrations/google-sheets-conversiones'
 import type { GA4Property } from '@/lib/integrations/google-analytics'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Loader2, ArrowLeft, Save, Trash2, CheckCircle2, AlertCircle, RefreshCw, LayoutDashboard, DownloadCloud, DatabaseZap, Plus, FolderSearch, FileSpreadsheet, Search, BarChart3, ChevronDown } from 'lucide-react'
@@ -234,8 +234,23 @@ export function ClientConfigForm({ cliente, layouts = [], isAdmin = false, googl
 const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean, success?: boolean, error?: string, message?: string } }>({})
     const [layoutSaving, setLayoutSaving] = useState(false)
     // ── Conversiones Offline multi-sheet UI state ────────────────────────────
-    // Per-sheet: { [sheetId]: { detectingCols, detectColsError } }
-    const [sheetUI, setSheetUI] = useState<Record<string, { detectingCols: boolean; detectColsError: string | null }>>({})
+    // Por pestaña: clave `${sheetId}:${tabId}` → estado de "Detectar columnas".
+    const [sheetUI, setSheetUI] = useState<Record<string, { detectingCols: boolean; detectColsError: string | null; headers?: string[] }>>({})
+    // Por sheet: pestañas reales descubiertas en el documento.
+    const [tabsUI, setTabsUI] = useState<Record<string, { loading: boolean; error: string | null; available: SheetTabInfo[] }>>({})
+    // Por sheet: resultado de "Validar configuración".
+    const [validateUI, setValidateUI] = useState<Record<string, { loading: boolean; results: { tab: string; ok: boolean; message: string }[] }>>({})
+    // Por sheet: último sync registrado (filas ok/descartadas, avisos por pestaña).
+    const [convSyncStatus, setConvSyncStatus] = useState<Record<string, SheetSyncStatus>>({})
+
+    // El estado del último sync vive en la BD (tabla de log), no en la config.
+    useEffect(() => {
+        let cancelled = false
+        getConversionesSyncStatus(cliente.id).then(res => {
+            if (!cancelled && 'lastSync' in res && res.lastSync) setConvSyncStatus(res.lastSync)
+        }).catch(() => { /* la tabla de log puede no existir aún */ })
+        return () => { cancelled = true }
+    }, [cliente.id])
     // Sheet picker modal
     const [pickerOpen, setPickerOpen] = useState(false)
     const [pickerForSheetId, setPickerForSheetId] = useState<string | null>(null)
@@ -1452,17 +1467,84 @@ const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean
                     setPickerForSheetId(null)
                 }
 
-                const detectColumns = async (idx: number) => {
+                // ── Pestañas ─────────────────────────────────────────────────
+                // Las configs anteriores guardaban una sola pestaña con el mapeo
+                // a nivel de sheet: se sintetiza como una pestaña única para que
+                // se editen igual (al guardar quedan ya en formato `tabs`).
+                const tabsOf = (sheet: ConversionesConfig): SheetTabConfig[] => {
+                    if (Array.isArray(sheet.tabs)) return sheet.tabs
+                    return [{
+                        id: `${sheet.id ?? 'sheet'}_tab`,
+                        sheet_name: sheet.sheet_name ?? '',
+                        enabled: true,
+                        col_fecha: sheet.col_fecha, col_tipo: sheet.col_tipo, col_cantidad: sheet.col_cantidad,
+                        col_valor: sheet.col_valor, col_fuente: sheet.col_fuente, col_notas: sheet.col_notas,
+                        custom_columns: sheet.custom_columns,
+                    }]
+                }
+
+                // Al escribir `tabs` se retiran los campos planos legacy del sheet.
+                const setTabs = (idx: number, tabs: SheetTabConfig[]) => {
+                    const next = convSheets.map((s, i) => {
+                        if (i !== idx) return s
+                        const {
+                            sheet_name: _sn, col_fecha: _cf, col_tipo: _ct, col_cantidad: _cc,
+                            col_valor: _cv, col_fuente: _cfu, col_notas: _cn, custom_columns: _cx,
+                            ...rest
+                        } = s
+                        return { ...rest, tabs }
+                    })
+                    setConfig({ ...config, google_sheets_conversiones: next })
+                }
+
+                const updateTab = (sheetIdx: number, tabId: string, partial: Partial<SheetTabConfig>) => {
+                    setTabs(sheetIdx, tabsOf(convSheets[sheetIdx]).map(t => t.id === tabId ? { ...t, ...partial } : t))
+                }
+
+                const addTab = (sheetIdx: number, sheetName = '') => {
+                    const existing = tabsOf(convSheets[sheetIdx])
+                    if (sheetName && existing.some(t => t.sheet_name === sheetName)) return
+                    setTabs(sheetIdx, [...existing, { id: crypto.randomUUID(), sheet_name: sheetName, enabled: true }])
+                }
+
+                const removeTab = (sheetIdx: number, tabId: string) => {
+                    const t = tabsOf(convSheets[sheetIdx]).find(x => x.id === tabId)
+                    const hasMapping = t && (Object.keys(t.custom_columns ?? {}).length > 0
+                        || !!(t.col_fecha || t.col_tipo || t.col_cantidad || t.col_valor || t.col_fuente || t.col_notas))
+                    if (hasMapping && !confirm(`¿Quitar la pestaña "${t!.sheet_name || '(primera pestaña)'}" y su mapeo de columnas?`)) return
+                    setTabs(sheetIdx, tabsOf(convSheets[sheetIdx]).filter(x => x.id !== tabId))
+                }
+
+                const detectTabs = async (idx: number) => {
                     const sheet = convSheets[idx]
                     const sid = sheet.id ?? String(idx)
-                    setSheetUI(prev => ({ ...prev, [sid]: { detectingCols: true, detectColsError: null } }))
-                    const res = await detectConversionesColumns(sheet)
+                    setTabsUI(prev => ({ ...prev, [sid]: { loading: true, error: null, available: prev[sid]?.available ?? [] } }))
+                    const res = await listConversionesTabs(sheet)
                     if ('error' in res && res.error) {
-                        setSheetUI(prev => ({ ...prev, [sid]: { detectingCols: false, detectColsError: res.error! } }))
+                        setTabsUI(prev => ({ ...prev, [sid]: { loading: false, error: res.error!, available: [] } }))
                     } else {
-                        const existing = sheet.custom_columns || {}
-                        const merged: Record<string, CustomColumnDef> = { ...existing }
-                        for (const col of ((res as any).columns as DetectedColumn[])) {
+                        setTabsUI(prev => ({ ...prev, [sid]: { loading: false, error: null, available: (res as any).tabs as SheetTabInfo[] } }))
+                    }
+                }
+
+                const toggleAvailableTab = (idx: number, title: string) => {
+                    const existing = tabsOf(convSheets[idx]).find(t => t.sheet_name === title)
+                    if (existing) removeTab(idx, existing.id)
+                    else addTab(idx, title)
+                }
+
+                const detectColumns = async (idx: number, tabId: string) => {
+                    const sheet = convSheets[idx]
+                    const tab = tabsOf(sheet).find(t => t.id === tabId)
+                    if (!tab) return
+                    const key = `${sheet.id ?? idx}:${tabId}`
+                    setSheetUI(prev => ({ ...prev, [key]: { detectingCols: true, detectColsError: null, headers: prev[key]?.headers } }))
+                    const res = await detectConversionesColumns(sheet, tab)
+                    if ('error' in res && res.error) {
+                        setSheetUI(prev => ({ ...prev, [key]: { detectingCols: false, detectColsError: res.error! } }))
+                    } else {
+                        const merged: Record<string, CustomColumnDef> = { ...(tab.custom_columns || {}) }
+                        for (const col of (res.columns ?? [])) {
                             if (!merged[col.sanitized_name]) {
                                 merged[col.sanitized_name] = {
                                     col_name: col.col_name,
@@ -1472,9 +1554,48 @@ const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean
                                 }
                             }
                         }
-                        updateSheet(idx, { custom_columns: merged })
-                        setSheetUI(prev => ({ ...prev, [sid]: { detectingCols: false, detectColsError: null } }))
+                        updateTab(idx, tabId, { custom_columns: merged })
+                        setSheetUI(prev => ({
+                            ...prev,
+                            [key]: { detectingCols: false, detectColsError: null, headers: res.headers ?? [] },
+                        }))
                     }
+                }
+
+                // Comprueba acceso al doc, existencia de la pestaña y de las
+                // columnas mapeadas. No bloquea el guardado: solo informa.
+                const validateSheet = async (idx: number) => {
+                    const sheet = convSheets[idx]
+                    const sid = sheet.id ?? String(idx)
+                    setValidateUI(prev => ({ ...prev, [sid]: { loading: true, results: [] } }))
+                    const out: { tab: string; ok: boolean; message: string }[] = []
+                    for (const tab of tabsOf(sheet).filter(t => t.enabled !== false)) {
+                        const label = tab.sheet_name || '(primera pestaña)'
+                        const res = await detectConversionesColumns(sheet, tab)
+                        if ('error' in res && res.error) {
+                            out.push({ tab: label, ok: false, message: res.error })
+                            continue
+                        }
+                        const heads = (res.headers ?? []).map(h => h.toLowerCase().trim())
+                        const mapped: [string, string][] = [
+                            ['fecha',    tab.col_fecha    || 'fecha'],
+                            ['tipo',     tab.col_tipo     || 'tipo'],
+                            ['cantidad', tab.col_cantidad || 'cantidad'],
+                            ['valor',    tab.col_valor    || 'valor'],
+                            ['fuente',   tab.col_fuente   || 'fuente'],
+                            ['notas',    tab.col_notas    || 'notas'],
+                        ]
+                        const missing = mapped.filter(([, c]) => !heads.includes(c.toLowerCase().trim()))
+                        const faltaFecha = missing.some(([k]) => k === 'fecha')
+                        out.push({
+                            tab: label,
+                            ok: !faltaFecha,
+                            message: missing.length === 0
+                                ? 'Todas las columnas mapeadas existen'
+                                : `${faltaFecha ? 'Falta la columna de fecha. ' : ''}Sin columna para: ${missing.map(([k]) => k).join(', ')}`,
+                        })
+                    }
+                    setValidateUI(prev => ({ ...prev, [sid]: { loading: false, results: out } }))
                 }
 
                 const filteredDriveSheets = driveSheets.filter(s =>
@@ -1506,8 +1627,19 @@ const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean
 
                                 {convSheets.map((sheet, idx) => {
                                     const sid = sheet.id ?? String(idx)
-                                    const ui = sheetUI[sid] || { detectingCols: false, detectColsError: null }
-                                    const customCols = sheet.custom_columns || {}
+                                    const tabs = tabsOf(sheet)
+                                    const tabsState = tabsUI[sid] || { loading: false, error: null, available: [] }
+                                    const validation = validateUI[sid]
+                                    const lastSync = convSyncStatus[sid]
+                                    // Dos pestañas con columnas que sanitizan al mismo nombre se
+                                    // suman en la variable sheet_<nombre>: conviene avisarlo.
+                                    const dupCustomKeys = (() => {
+                                        const seen = new Map<string, number>()
+                                        for (const t of tabs) {
+                                            for (const k of Object.keys(t.custom_columns ?? {})) seen.set(k, (seen.get(k) ?? 0) + 1)
+                                        }
+                                        return Array.from(seen.entries()).filter(([, n]) => n > 1).map(([k]) => k)
+                                    })()
 
                                     return (
                                         <div key={sid} className="border border-border rounded-lg overflow-hidden">
@@ -1559,133 +1691,292 @@ const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean
                                                     </div>
                                                 </div>
 
-                                                {/* Tab name */}
-                                                <div className="space-y-1.5">
-                                                    <Label className="text-foreground/90 text-sm">
-                                                        Pestaña <span className="text-muted-foreground/60">(opcional)</span>
-                                                    </Label>
-                                                    <Input
-                                                        placeholder="Nombre de la pestaña — vacío = primera pestaña"
-                                                        value={sheet.sheet_name || ''}
-                                                        onChange={(e) => updateSheet(idx, { sheet_name: e.target.value })}
-                                                        className="bg-background border-input"
-                                                    />
-                                                </div>
-
-                                                {/* Column mapping */}
-                                                <div className="bg-muted/40 border border-border p-4 rounded-lg space-y-3 relative overflow-hidden">
-                                                    <div className="absolute top-0 left-0 w-1 h-full bg-violet-500/50" />
-                                                    <h4 className="text-sm font-medium text-foreground">Nombres de columnas</h4>
-                                                    <p className="text-xs text-muted-foreground/70 -mt-1">Nombres exactos de las columnas en el Sheet. Vacío = usa el valor por defecto.</p>
-                                                    <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                                                        {[
-                                                            { field: 'col_fecha',    label: 'Fecha',    placeholder: 'fecha',    hint: 'DD/MM/YYYY o YYYY-MM-DD' },
-                                                            { field: 'col_tipo',     label: 'Tipo',     placeholder: 'tipo',     hint: '"lead", "venta", etc.' },
-                                                            { field: 'col_cantidad', label: 'Cantidad', placeholder: 'cantidad', hint: 'Número entero' },
-                                                            { field: 'col_valor',    label: 'Valor $',  placeholder: 'valor',    hint: 'Revenue (opcional)' },
-                                                            { field: 'col_fuente',   label: 'Fuente',   placeholder: 'fuente',   hint: '"meta", "tiktok"…' },
-                                                            { field: 'col_notas',    label: 'Notas',    placeholder: 'notas',    hint: 'Texto libre (opcional)' },
-                                                        ].map(({ field, label, placeholder, hint }) => (
-                                                            <div key={field} className="space-y-1">
-                                                                <Label className="text-muted-foreground text-xs">{label}</Label>
-                                                                <Input
-                                                                    placeholder={placeholder}
-                                                                    value={(sheet as any)[field] || ''}
-                                                                    onChange={(e) => updateSheet(idx, { [field]: e.target.value })}
-                                                                    className="bg-background border-input h-8 text-sm"
-                                                                />
-                                                                <p className="text-xs text-muted-foreground/60">{hint}</p>
-                                                            </div>
-                                                        ))}
-                                                    </div>
-                                                </div>
-
-                                                {/* Custom columns */}
-                                                <div className="bg-muted/40 border border-border p-4 rounded-lg space-y-3 relative overflow-hidden">
-                                                    <div className="absolute top-0 left-0 w-1 h-full bg-indigo-500/50" />
-                                                    <div className="flex items-center justify-between">
+                                                {/* Pestañas del documento */}
+                                                <div className="space-y-2">
+                                                    <div className="flex items-center justify-between gap-2">
                                                         <div>
-                                                            <h4 className="text-sm font-medium text-foreground">Columnas adicionales</h4>
-                                                            <p className="text-xs text-muted-foreground/70 mt-0.5">Detecta campos extra para usar como variables en fórmulas.</p>
+                                                            <Label className="text-foreground/90 text-sm">Pestañas a sincronizar</Label>
+                                                            <p className="text-xs text-muted-foreground/70 mt-0.5">
+                                                                Cada pestaña tiene su propio mapeo de columnas.
+                                                            </p>
                                                         </div>
-                                                        <Button
-                                                            variant="outline"
-                                                            size="sm"
-                                                            className="h-7 text-xs shrink-0"
-                                                            disabled={ui.detectingCols || !sheet.sheet_url}
-                                                            onClick={() => detectColumns(idx)}
-                                                        >
-                                                            {ui.detectingCols
-                                                                ? <RefreshCw className="w-3 h-3 animate-spin mr-1" />
-                                                                : <DatabaseZap className="w-3 h-3 mr-1" />}
-                                                            Detectar columnas
-                                                        </Button>
+                                                        <div className="flex gap-2 shrink-0">
+                                                            <Button
+                                                                variant="outline"
+                                                                size="sm"
+                                                                className="h-7 text-xs"
+                                                                disabled={tabsState.loading || !sheet.sheet_url}
+                                                                onClick={() => detectTabs(idx)}
+                                                            >
+                                                                {tabsState.loading
+                                                                    ? <RefreshCw className="w-3 h-3 animate-spin mr-1" />
+                                                                    : <FolderSearch className="w-3 h-3 mr-1" />}
+                                                                Detectar pestañas
+                                                            </Button>
+                                                            <Button
+                                                                variant="ghost"
+                                                                size="sm"
+                                                                className="h-7 text-xs"
+                                                                onClick={() => addTab(idx)}
+                                                            >
+                                                                <Plus className="w-3 h-3 mr-1" /> Manual
+                                                            </Button>
+                                                        </div>
                                                     </div>
 
-                                                    {ui.detectColsError && (
+                                                    {tabsState.error && (
                                                         <p className="text-xs text-red-500 flex items-center gap-1">
-                                                            <AlertCircle className="w-3 h-3" /> {ui.detectColsError}
+                                                            <AlertCircle className="w-3 h-3" /> {tabsState.error}
                                                         </p>
                                                     )}
 
-                                                    {Object.keys(customCols).length > 0 ? (
-                                                        <div className="space-y-2">
-                                                            <div className="grid grid-cols-[1fr_120px_1fr_32px] gap-2 px-1">
-                                                                <span className="text-xs text-muted-foreground/60">Columna en Sheet</span>
-                                                                <span className="text-xs text-muted-foreground/60">Tipo</span>
-                                                                <span className="text-xs text-muted-foreground/60">Label</span>
-                                                                <span className="text-xs text-muted-foreground/60">Usar</span>
+                                                    {tabsState.available.length > 0 && (
+                                                        <div className="bg-muted/40 border border-border rounded-lg p-3 space-y-1.5">
+                                                            <p className="text-xs text-muted-foreground/70">
+                                                                Pestañas del documento — marca las que quieras sincronizar:
+                                                            </p>
+                                                            <div className="grid grid-cols-2 md:grid-cols-3 gap-1.5">
+                                                                {tabsState.available.map(t => {
+                                                                    const checked = tabs.some(x => x.sheet_name === t.title)
+                                                                    return (
+                                                                        <label key={t.title} className="flex items-center gap-2 text-xs text-foreground cursor-pointer">
+                                                                            <input
+                                                                                type="checkbox"
+                                                                                checked={checked}
+                                                                                onChange={() => toggleAvailableTab(idx, t.title)}
+                                                                                className="rounded border-input bg-background text-indigo-500 focus:ring-indigo-500"
+                                                                            />
+                                                                            <span className="truncate" title={t.title}>{t.title}</span>
+                                                                            <span className="text-muted-foreground/50 shrink-0">({t.rowCount})</span>
+                                                                        </label>
+                                                                    )
+                                                                })}
                                                             </div>
-                                                            {Object.entries(customCols).map(([sanitized, def]) => (
-                                                                <div key={sanitized} className="grid grid-cols-[1fr_120px_1fr_32px] gap-2 items-center">
-                                                                    <span className="text-xs text-muted-foreground font-mono truncate" title={def.col_name}>{def.col_name}</span>
-                                                                    <select
-                                                                        value={def.type}
-                                                                        onChange={(e) => {
-                                                                            const updated = { ...customCols, [sanitized]: { ...def, type: e.target.value as CustomColumnType } }
-                                                                            updateSheet(idx, { custom_columns: updated })
-                                                                        }}
-                                                                        className="h-7 text-xs rounded-md border border-input bg-background px-2 text-foreground focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                                                                    >
-                                                                        <option value="count">Cantidad</option>
-                                                                        <option value="currency">Moneda</option>
-                                                                        <option value="percentage">Porcentaje</option>
-                                                                        <option value="date">Fecha</option>
-                                                                        <option value="text">Texto</option>
-                                                                    </select>
-                                                                    <Input
-                                                                        value={def.label}
-                                                                        onChange={(e) => {
-                                                                            const updated = { ...customCols, [sanitized]: { ...def, label: e.target.value } }
-                                                                            updateSheet(idx, { custom_columns: updated })
-                                                                        }}
-                                                                        className="h-7 text-xs bg-background border-input"
-                                                                        placeholder="Nombre visible"
-                                                                    />
+                                                        </div>
+                                                    )}
+
+                                                    {dupCustomKeys.length > 0 && (
+                                                        <p className="text-xs text-amber-600 dark:text-amber-400 flex items-start gap-1">
+                                                            <AlertCircle className="w-3 h-3 mt-0.5 shrink-0" />
+                                                            Columnas repetidas entre pestañas ({dupCustomKeys.join(', ')}): sus valores se suman en la misma variable <span className="font-mono">sheet_*</span>.
+                                                        </p>
+                                                    )}
+
+                                                    {tabs.length === 0 && (
+                                                        <p className="text-xs text-muted-foreground/50 text-center py-3 border border-dashed border-border rounded-lg">
+                                                            Sin pestañas seleccionadas. Usa &quot;Detectar pestañas&quot; o agrégala manualmente.
+                                                        </p>
+                                                    )}
+
+                                                    {/* Una sub-tarjeta por pestaña, con su mapeo propio */}
+                                                    {tabs.map((tab) => {
+                                                        const tabKey = `${sid}:${tab.id}`
+                                                        const ui = sheetUI[tabKey] || { detectingCols: false, detectColsError: null }
+                                                        const headerOpts = ui.headers ?? []
+                                                        const customCols = tab.custom_columns || {}
+                                                        const listId = `headers-${tabKey}`
+
+                                                        return (
+                                                            <div key={tab.id} className="border border-border rounded-lg overflow-hidden">
+                                                                <div className="flex items-center gap-2 px-3 py-2 bg-muted/30 border-b border-border">
                                                                     <input
                                                                         type="checkbox"
-                                                                        checked={def.include}
-                                                                        title={def.include ? 'Incluir en sync' : 'Excluir del sync'}
-                                                                        onChange={(e) => {
-                                                                            const updated = { ...customCols, [sanitized]: { ...def, include: e.target.checked } }
-                                                                            updateSheet(idx, { custom_columns: updated })
-                                                                        }}
-                                                                        className="rounded border-input bg-background text-indigo-500 focus:ring-indigo-500 justify-self-center"
+                                                                        checked={tab.enabled !== false}
+                                                                        onChange={(e) => updateTab(idx, tab.id, { enabled: e.target.checked })}
+                                                                        className="rounded border-input bg-background text-indigo-500 focus:ring-indigo-500 shrink-0"
                                                                     />
+                                                                    <Input
+                                                                        placeholder="Nombre de la pestaña — vacío = primera pestaña"
+                                                                        value={tab.sheet_name || ''}
+                                                                        onChange={(e) => updateTab(idx, tab.id, { sheet_name: e.target.value })}
+                                                                        className="bg-background border-input h-7 text-xs"
+                                                                    />
+                                                                    <Button
+                                                                        variant="ghost"
+                                                                        size="sm"
+                                                                        onClick={() => removeTab(idx, tab.id)}
+                                                                        className="text-muted-foreground/70 hover:text-red-500 shrink-0 h-7 w-7 p-0"
+                                                                    >
+                                                                        <Trash2 className="w-3 h-3" />
+                                                                    </Button>
                                                                 </div>
-                                                            ))}
-                                                            <p className="text-xs text-muted-foreground/60 pt-1">
-                                                                Variable en fórmulas: <span className="font-mono">sheet_</span> + nombre sanitizado. Ej: <span className="font-mono text-indigo-400">sheet_{Object.keys(customCols)[0] || 'columna'}</span>
-                                                            </p>
-                                                        </div>
-                                                    ) : (
-                                                        !ui.detectingCols && (
-                                                            <p className="text-xs text-muted-foreground/50 text-center py-2">
-                                                                Haz clic en &quot;Detectar columnas&quot; para identificar campos extra.
-                                                            </p>
+
+                                                                <div className="p-3 space-y-3">
+                                                                    {/* Mapeo de columnas de esta pestaña */}
+                                                                    <div className="bg-muted/40 border border-border p-3 rounded-lg space-y-3 relative overflow-hidden">
+                                                                        <div className="absolute top-0 left-0 w-1 h-full bg-violet-500/50" />
+                                                                        <h4 className="text-sm font-medium text-foreground">Nombres de columnas</h4>
+                                                                        <p className="text-xs text-muted-foreground/70 -mt-1">
+                                                                            Nombres exactos en la pestaña. Vacío = usa el valor por defecto.
+                                                                            {headerOpts.length > 0 && ' Se sugieren los encabezados detectados.'}
+                                                                        </p>
+                                                                        {headerOpts.length > 0 && (
+                                                                            <datalist id={listId}>
+                                                                                {headerOpts.map(h => <option key={h} value={h} />)}
+                                                                            </datalist>
+                                                                        )}
+                                                                        <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                                                                            {[
+                                                                                { field: 'col_fecha',    label: 'Fecha',    placeholder: 'fecha',    hint: 'DD/MM/YYYY o YYYY-MM-DD' },
+                                                                                { field: 'col_tipo',     label: 'Tipo',     placeholder: 'tipo',     hint: '"lead", "venta", etc.' },
+                                                                                { field: 'col_cantidad', label: 'Cantidad', placeholder: 'cantidad', hint: 'Número entero' },
+                                                                                { field: 'col_valor',    label: 'Valor $',  placeholder: 'valor',    hint: 'Revenue (opcional)' },
+                                                                                { field: 'col_fuente',   label: 'Fuente',   placeholder: 'fuente',   hint: '"meta", "tiktok"…' },
+                                                                                { field: 'col_notas',    label: 'Notas',    placeholder: 'notas',    hint: 'Texto libre (opcional)' },
+                                                                            ].map(({ field, label, placeholder, hint }) => (
+                                                                                <div key={field} className="space-y-1">
+                                                                                    <Label className="text-muted-foreground text-xs">{label}</Label>
+                                                                                    <Input
+                                                                                        placeholder={placeholder}
+                                                                                        list={headerOpts.length > 0 ? listId : undefined}
+                                                                                        value={(tab as any)[field] || ''}
+                                                                                        onChange={(e) => updateTab(idx, tab.id, { [field]: e.target.value })}
+                                                                                        className="bg-background border-input h-8 text-sm"
+                                                                                    />
+                                                                                    <p className="text-xs text-muted-foreground/60">{hint}</p>
+                                                                                </div>
+                                                                            ))}
+                                                                        </div>
+                                                                    </div>
+
+                                                                    {/* Columnas adicionales de esta pestaña */}
+                                                                    <div className="bg-muted/40 border border-border p-3 rounded-lg space-y-3 relative overflow-hidden">
+                                                                        <div className="absolute top-0 left-0 w-1 h-full bg-indigo-500/50" />
+                                                                        <div className="flex items-center justify-between">
+                                                                            <div>
+                                                                                <h4 className="text-sm font-medium text-foreground">Columnas adicionales</h4>
+                                                                                <p className="text-xs text-muted-foreground/70 mt-0.5">Campos extra para usar como variables en fórmulas y en el BI.</p>
+                                                                            </div>
+                                                                            <Button
+                                                                                variant="outline"
+                                                                                size="sm"
+                                                                                className="h-7 text-xs shrink-0"
+                                                                                disabled={ui.detectingCols || !sheet.sheet_url}
+                                                                                onClick={() => detectColumns(idx, tab.id)}
+                                                                            >
+                                                                                {ui.detectingCols
+                                                                                    ? <RefreshCw className="w-3 h-3 animate-spin mr-1" />
+                                                                                    : <DatabaseZap className="w-3 h-3 mr-1" />}
+                                                                                Detectar columnas
+                                                                            </Button>
+                                                                        </div>
+
+                                                                        {ui.detectColsError && (
+                                                                            <p className="text-xs text-red-500 flex items-center gap-1">
+                                                                                <AlertCircle className="w-3 h-3" /> {ui.detectColsError}
+                                                                            </p>
+                                                                        )}
+
+                                                                        {Object.keys(customCols).length > 0 ? (
+                                                                            <div className="space-y-2">
+                                                                                <div className="grid grid-cols-[1fr_120px_1fr_32px] gap-2 px-1">
+                                                                                    <span className="text-xs text-muted-foreground/60">Columna en Sheet</span>
+                                                                                    <span className="text-xs text-muted-foreground/60">Tipo</span>
+                                                                                    <span className="text-xs text-muted-foreground/60">Label</span>
+                                                                                    <span className="text-xs text-muted-foreground/60">Usar</span>
+                                                                                </div>
+                                                                                {Object.entries(customCols).map(([sanitized, def]) => (
+                                                                                    <div key={sanitized} className="grid grid-cols-[1fr_120px_1fr_32px] gap-2 items-center">
+                                                                                        <span className="text-xs text-muted-foreground font-mono truncate" title={def.col_name}>{def.col_name}</span>
+                                                                                        <select
+                                                                                            value={def.type}
+                                                                                            onChange={(e) => {
+                                                                                                const updated = { ...customCols, [sanitized]: { ...def, type: e.target.value as CustomColumnType } }
+                                                                                                updateTab(idx, tab.id, { custom_columns: updated })
+                                                                                            }}
+                                                                                            className="h-7 text-xs rounded-md border border-input bg-background px-2 text-foreground focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                                                                                        >
+                                                                                            <option value="count">Cantidad</option>
+                                                                                            <option value="currency">Moneda</option>
+                                                                                            <option value="percentage">Porcentaje</option>
+                                                                                            <option value="date">Fecha</option>
+                                                                                            <option value="text">Texto</option>
+                                                                                        </select>
+                                                                                        <Input
+                                                                                            value={def.label}
+                                                                                            onChange={(e) => {
+                                                                                                const updated = { ...customCols, [sanitized]: { ...def, label: e.target.value } }
+                                                                                                updateTab(idx, tab.id, { custom_columns: updated })
+                                                                                            }}
+                                                                                            className="h-7 text-xs bg-background border-input"
+                                                                                            placeholder="Nombre visible"
+                                                                                        />
+                                                                                        <input
+                                                                                            type="checkbox"
+                                                                                            checked={def.include}
+                                                                                            title={def.include ? 'Incluir en sync' : 'Excluir del sync'}
+                                                                                            onChange={(e) => {
+                                                                                                const updated = { ...customCols, [sanitized]: { ...def, include: e.target.checked } }
+                                                                                                updateTab(idx, tab.id, { custom_columns: updated })
+                                                                                            }}
+                                                                                            className="rounded border-input bg-background text-indigo-500 focus:ring-indigo-500 justify-self-center"
+                                                                                        />
+                                                                                    </div>
+                                                                                ))}
+                                                                                <p className="text-xs text-muted-foreground/60 pt-1">
+                                                                                    Variable en fórmulas: <span className="font-mono">sheet_</span> + nombre sanitizado. Ej: <span className="font-mono text-indigo-400">sheet_{Object.keys(customCols)[0] || 'columna'}</span>
+                                                                                </p>
+                                                                            </div>
+                                                                        ) : (
+                                                                            !ui.detectingCols && (
+                                                                                <p className="text-xs text-muted-foreground/50 text-center py-2">
+                                                                                    Haz clic en &quot;Detectar columnas&quot; para identificar campos extra.
+                                                                                </p>
+                                                                            )
+                                                                        )}
+                                                                    </div>
+                                                                </div>
+                                                            </div>
                                                         )
+                                                    })}
+                                                </div>
+
+                                                {/* Validación + estado del último sync */}
+                                                <div className="flex flex-wrap items-center gap-2 pt-1">
+                                                    <Button
+                                                        variant="outline"
+                                                        size="sm"
+                                                        className="h-7 text-xs"
+                                                        disabled={validation?.loading || !sheet.sheet_url}
+                                                        onClick={() => validateSheet(idx)}
+                                                    >
+                                                        {validation?.loading
+                                                            ? <RefreshCw className="w-3 h-3 animate-spin mr-1" />
+                                                            : <CheckCircle2 className="w-3 h-3 mr-1" />}
+                                                        Validar configuración
+                                                    </Button>
+                                                    {lastSync && (
+                                                        <span
+                                                            className={`text-xs flex items-center gap-1 ${lastSync.status === 'error' ? 'text-red-500' : 'text-muted-foreground'}`}
+                                                            title={(lastSync.detalle?.por_pestana ?? [])
+                                                                .map(q => `${q.tab_name}: ${q.rows_ok} filas${q.warnings.length ? ` — ${q.warnings.join('; ')}` : ''}`)
+                                                                .join('\n') || lastSync.detalle?.error || ''}
+                                                        >
+                                                            {lastSync.status === 'error'
+                                                                ? <AlertCircle className="w-3 h-3" />
+                                                                : <CheckCircle2 className="w-3 h-3" />}
+                                                            Último sync: {lastSync.rows_ok} filas
+                                                            {lastSync.rows_descartadas > 0 && ` · ${lastSync.rows_descartadas} descartadas`}
+                                                            {' · '}{new Date(lastSync.run_at).toLocaleString('es-CO')}
+                                                        </span>
                                                     )}
                                                 </div>
+
+                                                {validation?.results && validation.results.length > 0 && (
+                                                    <div className="space-y-1">
+                                                        {validation.results.map(r => (
+                                                            <p
+                                                                key={r.tab}
+                                                                className={`text-xs flex items-start gap-1 ${r.ok ? 'text-green-600 dark:text-green-500' : 'text-red-500'}`}
+                                                            >
+                                                                {r.ok
+                                                                    ? <CheckCircle2 className="w-3 h-3 mt-0.5 shrink-0" />
+                                                                    : <AlertCircle className="w-3 h-3 mt-0.5 shrink-0" />}
+                                                                <span><span className="font-medium">{r.tab}</span> — {r.message}</span>
+                                                            </p>
+                                                        ))}
+                                                    </div>
+                                                )}
                                             </div>
                                         </div>
                                     )

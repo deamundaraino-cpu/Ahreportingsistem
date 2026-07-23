@@ -1,5 +1,6 @@
 import { randomUUID } from 'crypto'
 import { GoogleSpreadsheet } from 'google-spreadsheet'
+import type { GoogleSpreadsheetWorksheet } from 'google-spreadsheet'
 import { JWT, OAuth2Client } from 'google-auth-library'
 import { hasAgencyGoogleConnection, getAgencyAccessToken } from './google-auth'
 
@@ -15,6 +16,27 @@ export interface CustomColumnDef {
   sample_values?: string[]  // solo durante detección, no se persiste
 }
 
+/**
+ * Config de UNA pestaña dentro de un spreadsheet. Cada pestaña tiene su propio
+ * mapeo de columnas: dos pestañas del mismo doc pueden llamar distinto a la
+ * columna de fecha o exponer columnas adicionales diferentes.
+ */
+export interface SheetTabConfig {
+  /** UUID para identificar la pestaña en la UI (no es el ID de Google). */
+  id: string
+  /** Título exacto de la pestaña. Vacío = primera pestaña del doc. */
+  sheet_name: string
+  enabled: boolean
+  col_fecha?: string
+  col_tipo?: string
+  col_cantidad?: string
+  col_valor?: string
+  col_fuente?: string
+  col_notas?: string
+  /** Columnas adicionales de ESTA pestaña definidas por el analista. */
+  custom_columns?: Record<string, CustomColumnDef>
+}
+
 export interface ConversionesConfig {
   /** UUID que identifica esta config de sheet dentro del array del cliente. */
   id?: string
@@ -22,6 +44,13 @@ export interface ConversionesConfig {
   name?: string
   enabled: boolean
   sheet_url: string
+  /**
+   * Pestañas a sincronizar de este documento. Formato actual: la UI escribe
+   * siempre `tabs`. Las configs anteriores (una sola pestaña con los campos
+   * planos de abajo) se convierten al vuelo en `normalizeTabs`.
+   */
+  tabs?: SheetTabConfig[]
+  // ── Campos legacy (una sola pestaña, mapeo a nivel de sheet) ──────────────
   sheet_name?: string
   col_fecha?: string
   col_tipo?: string
@@ -29,7 +58,6 @@ export interface ConversionesConfig {
   col_valor?: string
   col_fuente?: string
   col_notas?: string
-  /** Columnas adicionales del Sheet definidas/confirmadas por el analista. */
   custom_columns?: Record<string, CustomColumnDef>
   client_email?: string
   private_key?: string
@@ -43,15 +71,67 @@ export interface DriveSheet {
   modifiedTime: string
 }
 
+/** Una pestaña real del documento, tal como la reporta Google. */
+export interface SheetTabInfo {
+  title: string
+  index: number
+  rowCount: number
+}
+
 /**
  * Normaliza el campo google_sheets_conversiones (que puede ser un objeto legacy
- * o un array) y devuelve siempre un array de ConversionesConfig.
+ * o un array) y devuelve siempre un array de ConversionesConfig con `tabs`
+ * resueltas y un `id` estable (necesario para el replace por sheet).
  */
 export function normalizeSheetConfigs(raw: unknown): ConversionesConfig[] {
-  if (!raw) return []
-  if (Array.isArray(raw)) return raw as ConversionesConfig[]
-  if (typeof raw === 'object') return [{ id: 'legacy', name: 'Sheet Principal', ...(raw as ConversionesConfig) }]
-  return []
+  const list: ConversionesConfig[] = !raw
+    ? []
+    : Array.isArray(raw)
+      ? (raw as ConversionesConfig[])
+      : typeof raw === 'object'
+        ? [{ id: 'legacy', name: 'Sheet Principal', ...(raw as ConversionesConfig) }]
+        : []
+
+  // El id es la clave de partición en la base (sheet_id): una config sin id
+  // guardada antes de esta versión recibe uno derivado de su posición.
+  return list.map((cfg, i) => ({ ...cfg, id: cfg.id || `sheet_${i}`, tabs: normalizeTabs(cfg) }))
+}
+
+/**
+ * Devuelve las pestañas de un sheet. Si la config es del formato plano anterior
+ * (sin `tabs`), sintetiza una única pestaña con su mapeo — así el worker
+ * sincroniza configs viejas sin necesidad de migrar el JSONB en producción.
+ */
+export function normalizeTabs(cfg: ConversionesConfig): SheetTabConfig[] {
+  if (Array.isArray(cfg.tabs) && cfg.tabs.length > 0) {
+    return cfg.tabs.map((t, i) => ({
+      ...t,
+      id: t.id || `tab_${i}`,
+      sheet_name: t.sheet_name ?? '',
+      enabled: t.enabled !== false,
+    }))
+  }
+  return [{
+    id: cfg.id ? `${cfg.id}_tab` : 'tab_0',
+    sheet_name: cfg.sheet_name ?? '',
+    enabled: true,
+    col_fecha: cfg.col_fecha,
+    col_tipo: cfg.col_tipo,
+    col_cantidad: cfg.col_cantidad,
+    col_valor: cfg.col_valor,
+    col_fuente: cfg.col_fuente,
+    col_notas: cfg.col_notas,
+    custom_columns: cfg.custom_columns,
+  }]
+}
+
+/** Une las columnas adicionales de todas las pestañas de un sheet. */
+export function mergeTabCustomColumns(tabs: SheetTabConfig[]): Record<string, CustomColumnDef> {
+  const merged: Record<string, CustomColumnDef> = {}
+  for (const tab of tabs) {
+    if (tab.custom_columns) Object.assign(merged, tab.custom_columns)
+  }
+  return merged
 }
 
 export interface ConversionRow {
@@ -62,6 +142,10 @@ export interface ConversionRow {
   fuente: string
   notas: string
   custom_fields: Record<string, any>
+  /** Config de sheet de la que proviene la fila (para el replace por sheet). */
+  sheet_id: string
+  /** Pestaña concreta de la que proviene la fila. */
+  tab_name: string
 }
 
 export interface ConversionDiaria {
@@ -81,6 +165,15 @@ export interface DetectedColumn {
   sample_values: string[]
 }
 
+/** Resultado de leer UNA pestaña: cuántas filas entraron y cuáles se descartaron. */
+export interface TabSyncQuality {
+  tab_name: string
+  rows_ok: number
+  fecha_invalida: number
+  cantidad_invalida: number
+  warnings: string[]
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function extractSheetId(url: string): string | null {
@@ -94,6 +187,28 @@ async function createAuthClient(clientEmail?: string, clientKey?: string): Promi
   const key = (clientKey || process.env.GOOGLE_SERVICE_ACCOUNT_KEY)?.replace(/\\n/g, '\n')
   if (!email || !key) throw new Error('Google service account credentials not configured')
   return new JWT({ email, key, scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly'] })
+}
+
+/** Abre el documento una sola vez (loadInfo trae ya todas las pestañas). */
+async function loadDoc(config: ConversionesConfig): Promise<GoogleSpreadsheet> {
+  const sheetId = extractSheetId(config.sheet_url)
+  if (!sheetId) throw new Error(`URL de Google Sheets inválida: ${config.sheet_url}`)
+  const auth = await createAuthClient(config.client_email, config.private_key)
+  const doc = new GoogleSpreadsheet(sheetId, auth)
+  await doc.loadInfo()
+  return doc
+}
+
+/** Resuelve la pestaña por título; vacío = la primera del documento. */
+function resolveTab(doc: GoogleSpreadsheet, tabName: string): GoogleSpreadsheetWorksheet {
+  const name = tabName?.trim()
+  if (!name) return doc.sheetsByIndex[0]
+  const sheet = doc.sheetsByTitle[name]
+  if (!sheet) {
+    const available = Object.keys(doc.sheetsByTitle).join(', ')
+    throw new Error(`Pestaña "${name}" no encontrada. Disponibles: ${available}`)
+  }
+  return sheet
 }
 
 export function sanitizeColName(name: string): string {
@@ -129,59 +244,82 @@ function parseDate(raw: string): string {
   return ''
 }
 
+/**
+ * Convierte el texto de una celda a número. Acepta las dos convenciones de
+ * separadores (misma regla que `parseFieldNumber` del BI):
+ *   "1.000,50" → 1000.5    "1,000.50" → 1000.5    "12,5" → 12.5
+ *
+ * El "1.200" con punto de miles es el caso importante: la versión anterior
+ * limpiaba solo las comas y parseFloat lo leía como 1.2, así que un valor de
+ * $1.200 entraba a la base como 1,2.
+ */
 function toNumber(raw: string): number {
   if (!raw) return 0
-  const cleaned = raw.replace(/[^0-9.,-]/g, '').replace(/,(\d{2})$/, '.$1').replace(/,/g, '')
-  const n = parseFloat(cleaned)
+  let s = raw.replace(/[^0-9.,-]/g, '')
+  if (!s) return 0
+  if (/^-?\d{1,3}(\.\d{3})+(,\d+)?$/.test(s))       s = s.replace(/\./g, '').replace(',', '.')  // 1.000,50
+  else if (/^-?\d{1,3}(,\d{3})+(\.\d+)?$/.test(s))  s = s.replace(/,/g, '')                     // 1,000.50
+  else if (/^-?\d+(,\d+)?$/.test(s))                s = s.replace(',', '.')                     // 12,5
+  else                                              s = s.replace(/,/g, '')                     // resto: coma = miles
+  const n = parseFloat(s)
   return isNaN(n) ? 0 : n
+}
+
+/** Nombres de columna estándar de una pestaña (con sus valores por defecto). */
+function standardColNames(tab: SheetTabConfig) {
+  return {
+    colFecha:    tab.col_fecha    || 'fecha',
+    colTipo:     tab.col_tipo     || 'tipo',
+    colCantidad: tab.col_cantidad || 'cantidad',
+    colValor:    tab.col_valor    || 'valor',
+    colFuente:   tab.col_fuente   || 'fuente',
+    colNotas:    tab.col_notas    || 'notas',
+  }
 }
 
 // ── API pública ───────────────────────────────────────────────────────────────
 
 /**
- * Inspecciona los encabezados del Sheet y propone tipos para cada columna extra.
- * No guarda nada — solo devuelve sugerencias para que el analista confirme.
+ * Lista las pestañas reales del documento, para que la UI ofrezca elegirlas en
+ * vez de teclear el nombre a mano.
  */
-export async function detectSheetColumns(config: ConversionesConfig): Promise<DetectedColumn[]> {
-  const sheetId = extractSheetId(config.sheet_url)
-  if (!sheetId) throw new Error(`URL de Google Sheets inválida: ${config.sheet_url}`)
+export async function listSheetTabs(config: ConversionesConfig): Promise<SheetTabInfo[]> {
+  const doc = await loadDoc(config)
+  return doc.sheetsByIndex.map((s, index) => ({
+    title: s.title,
+    index,
+    rowCount: s.rowCount ?? 0,
+  }))
+}
 
-  const auth = await createAuthClient(config.client_email, config.private_key)
-  const doc = new GoogleSpreadsheet(sheetId, auth)
-  await doc.loadInfo()
-
-  let sheet
-  if (config.sheet_name?.trim()) {
-    sheet = doc.sheetsByTitle[config.sheet_name.trim()]
-    if (!sheet) {
-      const available = Object.keys(doc.sheetsByTitle).join(', ')
-      throw new Error(`Pestaña "${config.sheet_name}" no encontrada. Disponibles: ${available}`)
-    }
-  } else {
-    sheet = doc.sheetsByIndex[0]
-  }
+/**
+ * Inspecciona los encabezados de UNA pestaña y propone tipos para cada columna
+ * extra. No guarda nada — solo devuelve sugerencias para que el analista
+ * confirme. Devuelve también los headers completos para poblar el mapeo estándar.
+ */
+export async function detectSheetColumns(
+  config: ConversionesConfig,
+  tab?: SheetTabConfig
+): Promise<{ headers: string[]; columns: DetectedColumn[] }> {
+  const target = tab ?? normalizeTabs(config)[0]
+  const doc = await loadDoc(config)
+  const sheet = resolveTab(doc, target.sheet_name)
 
   const rows = await sheet.getRows({ limit: 6 })
-  const headers = sheet.headerValues
+  const headers = sheet.headerValues ?? []
 
-  const colFecha    = (config.col_fecha    || 'fecha').toLowerCase().trim()
-  const colTipo     = (config.col_tipo     || 'tipo').toLowerCase().trim()
-  const colCantidad = (config.col_cantidad || 'cantidad').toLowerCase().trim()
-  const colValor    = (config.col_valor    || 'valor').toLowerCase().trim()
-  const colFuente   = (config.col_fuente   || 'fuente').toLowerCase().trim()
-  const colNotas    = (config.col_notas    || 'notas').toLowerCase().trim()
-  const standardCols = new Set([colFecha, colTipo, colCantidad, colValor, colFuente, colNotas])
-
+  const std = standardColNames(target)
+  const standardCols = new Set(Object.values(std).map(c => c.toLowerCase().trim()))
   const extraHeaders = headers.filter(h => !standardCols.has(h.toLowerCase().trim()))
 
-  return extraHeaders.map(col => {
+  const columns = extraHeaders.map(col => {
     const samples = rows
       .map(r => (r.get(col) || '').toString().trim())
       .filter(Boolean)
       .slice(0, 5)
 
     const sanitized = sanitizeColName(col)
-    const existing = config.custom_columns?.[sanitized]
+    const existing = target.custom_columns?.[sanitized]
 
     return {
       col_name:       col,
@@ -191,61 +329,69 @@ export async function detectSheetColumns(config: ConversionesConfig): Promise<De
       sample_values:  samples,
     }
   })
+
+  return { headers, columns }
+}
+
+/** Fila del Sheet, reducida a lo que necesita el parser (facilita probarlo). */
+export interface SheetRowLike {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  get(column: string): any
 }
 
 /**
- * Lee todas las filas de conversiones. Procesa columnas extra según custom_columns si
- * está configurado; si no hay configuración, lee todas las columnas numéricas.
+ * Convierte las filas crudas de una pestaña en conversiones, contando las que
+ * se descartan y por qué. Pura: no toca red ni base, así que es la parte
+ * verificable del sync (ver scripts/verify-conversiones-multitab.ts).
  */
-export async function fetchConversionesFromSheet(config: ConversionesConfig): Promise<ConversionRow[]> {
-  const sheetId = extractSheetId(config.sheet_url)
-  if (!sheetId) throw new Error(`URL de Google Sheets inválida: ${config.sheet_url}`)
-
-  const auth = await createAuthClient(config.client_email, config.private_key)
-  const doc = new GoogleSpreadsheet(sheetId, auth)
-  await doc.loadInfo()
-
-  let sheet
-  if (config.sheet_name?.trim()) {
-    sheet = doc.sheetsByTitle[config.sheet_name.trim()]
-    if (!sheet) {
-      const available = Object.keys(doc.sheetsByTitle).join(', ')
-      throw new Error(`Pestaña "${config.sheet_name}" no encontrada. Disponibles: ${available}`)
-    }
-  } else {
-    sheet = doc.sheetsByIndex[0]
+export function parseRowsForTab(
+  headers: string[],
+  rows: SheetRowLike[],
+  tab: SheetTabConfig,
+  sheetId: string,
+  tabTitle: string
+): { rows: ConversionRow[]; quality: TabSyncQuality } {
+  const quality: TabSyncQuality = {
+    tab_name: tabTitle,
+    rows_ok: 0,
+    fecha_invalida: 0,
+    cantidad_invalida: 0,
+    warnings: [],
   }
 
-  const rows = await sheet.getRows()
-  const headers = sheet.headerValues
+  const { colFecha, colTipo, colCantidad, colValor, colFuente, colNotas } = standardColNames(tab)
 
-  const colFecha    = config.col_fecha    || 'fecha'
-  const colTipo     = config.col_tipo     || 'tipo'
-  const colCantidad = config.col_cantidad || 'cantidad'
-  const colValor    = config.col_valor    || 'valor'
-  const colFuente   = config.col_fuente   || 'fuente'
-  const colNotas    = config.col_notas    || 'notas'
+  const headersLower = headers.map(h => h.toLowerCase().trim())
+  if (!headersLower.includes(colFecha.toLowerCase().trim())) {
+    throw new Error(`Columna de fecha "${colFecha}" no encontrada. Disponibles: ${headers.join(', ')}`)
+  }
+  // Un nombre de columna mal escrito se leía como vacío sin aviso: ahora queda
+  // registrado en el reporte de calidad del sync.
+  for (const [label, col] of Object.entries({ tipo: colTipo, cantidad: colCantidad, valor: colValor, fuente: colFuente, notas: colNotas })) {
+    if (!headersLower.includes(col.toLowerCase().trim())) {
+      quality.warnings.push(`Columna de ${label} "${col}" no existe en la pestaña`)
+    }
+  }
 
   const standardCols = new Set(
     [colFecha, colTipo, colCantidad, colValor, colFuente, colNotas].map(c => c.toLowerCase().trim())
   )
 
-  if (!headers.map(h => h.toLowerCase().trim()).includes(colFecha.toLowerCase().trim())) {
-    throw new Error(`Columna de fecha "${colFecha}" no encontrada. Disponibles: ${headers.join(', ')}`)
-  }
-
-  // Determinar qué columnas extra procesar
-  // Si hay custom_columns configuradas → las que tienen include:true (incluyendo texto/fecha)
-  // Si no hay configuración → todas las detectadas por defecto
-  const customCols = config.custom_columns
+  // Columnas extra: las configuradas con include:true, o todas las detectadas
+  // si la pestaña aún no tiene configuración (comportamiento legacy).
+  const customCols = tab.custom_columns
   let extraColsToProcess: Array<{ header: string; sanitized: string; type: CustomColumnType }>
 
   if (customCols && Object.keys(customCols).length > 0) {
     extraColsToProcess = Object.entries(customCols)
       .filter(([, def]) => def.include)
       .map(([sanitized, def]) => ({ header: def.col_name, sanitized, type: def.type }))
+    for (const col of extraColsToProcess) {
+      if (!headersLower.includes(col.header.toLowerCase().trim())) {
+        quality.warnings.push(`Columna adicional "${col.header}" no existe en la pestaña`)
+      }
+    }
   } else {
-    // Legacy: detectar automáticamente
     extraColsToProcess = headers
       .filter(h => !standardCols.has(h.toLowerCase().trim()))
       .map(h => ({ header: h, sanitized: sanitizeColName(h), type: 'count' as CustomColumnType }))
@@ -255,7 +401,12 @@ export async function fetchConversionesFromSheet(config: ConversionesConfig): Pr
 
   for (const row of rows) {
     const fecha = parseDate((row.get(colFecha) || '').toString())
-    if (!fecha || fecha.length !== 10) continue
+    if (!fecha || fecha.length !== 10) {
+      // Fila totalmente vacía (relleno del Sheet): no es un error de datos.
+      const isBlank = headers.every(h => !(row.get(h) || '').toString().trim())
+      if (!isBlank) quality.fecha_invalida++
+      continue
+    }
 
     const tipo     = (row.get(colTipo)     || 'otro').toString().trim().toLowerCase()
     const cantidad = toNumber((row.get(colCantidad) || '0').toString())
@@ -264,7 +415,7 @@ export async function fetchConversionesFromSheet(config: ConversionesConfig): Pr
     const fuente   = (row.get(colFuente) || '').toString().trim()
     const notas    = (row.get(colNotas)  || '').toString().trim()
 
-    if (cantidad <= 0) continue
+    if (cantidad <= 0) { quality.cantidad_invalida++; continue }
 
     const custom_fields: Record<string, any> = {}
     for (const col of extraColsToProcess) {
@@ -278,10 +429,68 @@ export async function fetchConversionesFromSheet(config: ConversionesConfig): Pr
       }
     }
 
-    conversiones.push({ fecha, tipo, cantidad, valor, fuente, notas, custom_fields })
+    conversiones.push({
+      fecha, tipo, cantidad, valor, fuente, notas, custom_fields,
+      sheet_id: sheetId, tab_name: tabTitle,
+    })
   }
 
-  return conversiones
+  quality.rows_ok = conversiones.length
+  return { rows: conversiones, quality }
+}
+
+/** Lee una pestaña ya resuelta del documento y la parsea. */
+async function parseTabRows(
+  sheet: GoogleSpreadsheetWorksheet,
+  tab: SheetTabConfig,
+  sheetId: string
+): Promise<{ rows: ConversionRow[]; quality: TabSyncQuality }> {
+  const rows = await sheet.getRows()
+  return parseRowsForTab(sheet.headerValues ?? [], rows, tab, sheetId, sheet.title)
+}
+
+/**
+ * Lee todas las pestañas habilitadas de un documento. El doc se carga una sola
+ * vez y cada pestaña aplica su propio mapeo de columnas.
+ *
+ * Una pestaña que falla (no existe, sin columna de fecha) queda como warning y
+ * no impide sincronizar las demás; si fallan TODAS se lanza el error para que
+ * el sheet se marque como fallido y sus datos anteriores se conserven.
+ */
+export async function fetchConversionesFromSheet(
+  config: ConversionesConfig
+): Promise<{ rows: ConversionRow[]; quality: TabSyncQuality[] }> {
+  const sheetId = config.id || 'sheet_0'
+  const tabs = normalizeTabs(config).filter(t => t.enabled)
+  if (tabs.length === 0) return { rows: [], quality: [] }
+
+  const doc = await loadDoc(config)
+
+  const allRows: ConversionRow[] = []
+  const quality: TabSyncQuality[] = []
+  let failed = 0
+
+  for (const tab of tabs) {
+    try {
+      const sheet = resolveTab(doc, tab.sheet_name)
+      const res = await parseTabRows(sheet, tab, sheetId)
+      allRows.push(...res.rows)
+      quality.push(res.quality)
+    } catch (err: any) {
+      failed++
+      quality.push({
+        tab_name: tab.sheet_name || '(primera pestaña)',
+        rows_ok: 0, fecha_invalida: 0, cantidad_invalida: 0,
+        warnings: [err.message || 'Error leyendo la pestaña'],
+      })
+    }
+  }
+
+  if (failed === tabs.length) {
+    throw new Error(quality.map(q => `${q.tab_name}: ${q.warnings.join('; ')}`).join(' | '))
+  }
+
+  return { rows: allRows, quality }
 }
 
 /**
@@ -366,17 +575,17 @@ export async function listGoogleSheets(): Promise<DriveSheet[]> {
 }
 
 /**
- * Reemplazo completo por cliente, en orden seguro.
+ * Reemplazo completo de UN sheet del cliente, en orden seguro.
  *
- * Antes se borraba TODO y después se insertaba: si el insert fallaba a mitad
- * (timeout, error de red, hoja mal formada), el cliente se quedaba sin ninguna
- * conversión hasta el siguiente sync manual. Ahora se inserta primero con un
- * `sync_batch_id` nuevo y solo al terminar se borran las filas de lotes
- * anteriores — un fallo deja los datos viejos intactos.
+ * Se inserta primero el lote nuevo con un `sync_batch_id` y solo al terminar se
+ * borran las filas de lotes anteriores DE ESE MISMO SHEET. Antes el borrado era
+ * por cliente: en un sync multi-sheet, si un sheet fallaba, el replace con las
+ * filas de los que sí funcionaron borraba silenciosamente sus datos.
  */
-export async function saveConversionesToDb(
+export async function saveConversionesSheetToDb(
   supabase: any,
   clienteId: string,
+  sheetId: string,
   rows: ConversionRow[],
   aggregates: ConversionDiaria[]
 ): Promise<{ rowsProcessed: number; daysProcessed: number }> {
@@ -387,6 +596,7 @@ export async function saveConversionesToDb(
       cliente_id: clienteId, fecha: r.fecha, tipo: r.tipo,
       cantidad: r.cantidad, valor: r.valor, fuente: r.fuente, notas: r.notas,
       custom_fields: r.custom_fields, sync_batch_id: batchId,
+      sheet_id: sheetId, tab_name: r.tab_name,
     }))
     for (let i = 0; i < toInsert.length; i += 500) {
       const { error } = await supabase.from('conversiones_offline').insert(toInsert.slice(i, i + 500))
@@ -402,7 +612,7 @@ export async function saveConversionesToDb(
     const toInsert = aggregates.map(a => ({
       cliente_id: clienteId, fecha: a.fecha, tipo: a.tipo, fuente: a.fuente,
       total_cantidad: a.total_cantidad, total_valor: a.total_valor,
-      custom_fields: a.custom_fields, sync_batch_id: batchId,
+      custom_fields: a.custom_fields, sync_batch_id: batchId, sheet_id: sheetId,
     }))
     for (let i = 0; i < toInsert.length; i += 500) {
       const { error } = await supabase.from('conversiones_offline_diarias').insert(toInsert.slice(i, i + 500))
@@ -414,11 +624,163 @@ export async function saveConversionesToDb(
     }
   }
 
-  // El lote nuevo está completo: recién ahora se retira el anterior.
+  // El lote nuevo está completo: recién ahora se retira el anterior de este sheet.
   await supabase.from('conversiones_offline')
-    .delete().eq('cliente_id', clienteId).neq('sync_batch_id', batchId)
+    .delete().eq('cliente_id', clienteId).eq('sheet_id', sheetId).neq('sync_batch_id', batchId)
   await supabase.from('conversiones_offline_diarias')
-    .delete().eq('cliente_id', clienteId).neq('sync_batch_id', batchId)
+    .delete().eq('cliente_id', clienteId).eq('sheet_id', sheetId).neq('sync_batch_id', batchId)
 
   return { rowsProcessed: rows.length, daysProcessed: aggregates.length }
+}
+
+/**
+ * Borra las filas que ya no pertenecen a ningún sheet configurado: las de un
+ * sheet eliminado de la config y las anteriores a la trazabilidad por sheet
+ * (sheet_id NULL). Debe llamarse DESPUÉS de los saves — si no, borraría los
+ * datos legacy antes de que el sync los repueble.
+ */
+export async function cleanupOrphanConversiones(
+  supabase: any,
+  clienteId: string,
+  validSheetIds: string[]
+): Promise<number> {
+  let deleted = 0
+
+  for (const table of ['conversiones_offline', 'conversiones_offline_diarias']) {
+    const { error: nullErr, count } = await supabase.from(table)
+      .delete({ count: 'exact' }).eq('cliente_id', clienteId).is('sheet_id', null)
+    if (!nullErr) deleted += count ?? 0
+
+    const { data } = await supabase.from(table)
+      .select('sheet_id').eq('cliente_id', clienteId).not('sheet_id', 'is', null).limit(5000)
+    const orphans = Array.from(new Set(
+      ((data ?? []) as { sheet_id: string }[]).map(r => r.sheet_id)
+    )).filter(id => !validSheetIds.includes(id))
+
+    if (orphans.length > 0) {
+      const { error, count: c } = await supabase.from(table)
+        .delete({ count: 'exact' }).eq('cliente_id', clienteId).in('sheet_id', orphans)
+      if (!error) deleted += c ?? 0
+    }
+  }
+
+  return deleted
+}
+
+export type SyncLogStatus = 'ok' | 'partial' | 'error'
+
+/** Fila del log tal como la devuelve el endpoint de estado (para la UI). */
+export interface SheetSyncStatus {
+  sheet_id: string
+  run_at: string
+  status: SyncLogStatus
+  rows_ok: number
+  rows_descartadas: number
+  detalle: { por_pestana?: TabSyncQuality[]; error?: string }
+}
+
+/**
+ * Registra el resultado del sync de un sheet (filas ok, descartadas y avisos por
+ * pestaña) para que la UI de settings pueda mostrarlo. Nunca lanza: un fallo de
+ * log no debe tumbar un sync que sí guardó datos.
+ */
+export async function logSyncResult(
+  supabase: any,
+  clienteId: string,
+  sheetId: string,
+  status: SyncLogStatus,
+  quality: TabSyncQuality[],
+  errorMessage?: string
+): Promise<void> {
+  try {
+    const rowsOk = quality.reduce((s, q) => s + q.rows_ok, 0)
+    const descartadas = quality.reduce((s, q) => s + q.fecha_invalida + q.cantidad_invalida, 0)
+
+    await supabase.from('conversiones_offline_sync_log').insert({
+      cliente_id: clienteId,
+      sheet_id: sheetId,
+      status,
+      rows_ok: rowsOk,
+      rows_descartadas: descartadas,
+      detalle: { por_pestana: quality, ...(errorMessage ? { error: errorMessage } : {}) },
+    })
+
+    // Retención: solo los 20 registros más recientes por (cliente, sheet).
+    const { data: old } = await supabase.from('conversiones_offline_sync_log')
+      .select('id').eq('cliente_id', clienteId).eq('sheet_id', sheetId)
+      .order('run_at', { ascending: false }).range(20, 999)
+    const ids = ((old ?? []) as { id: string }[]).map(r => r.id)
+    if (ids.length > 0) {
+      await supabase.from('conversiones_offline_sync_log').delete().in('id', ids)
+    }
+  } catch (err) {
+    console.error('[conversiones] no se pudo registrar el log de sync:', err)
+  }
+}
+
+/**
+ * Sincroniza TODOS los sheets habilitados de un cliente: fetch por sheet,
+ * agregados por sheet, replace por sheet y log de calidad. Un sheet que falla no
+ * afecta a los demás ni borra sus datos.
+ */
+export interface SheetSyncResult {
+  sheet_id: string
+  name: string
+  success: boolean
+  rowsProcessed: number
+  daysProcessed: number
+  rowsDescartadas: number
+  quality: TabSyncQuality[]
+  error?: string
+}
+
+export async function syncClienteConversiones(
+  supabase: any,
+  clienteId: string,
+  rawConfig: unknown
+): Promise<{ results: SheetSyncResult[]; rows: ConversionRow[] }> {
+  const allSheets = normalizeSheetConfigs(rawConfig)
+  const enabledSheets = allSheets.filter(s => s.enabled && s.sheet_url)
+
+  const results: SheetSyncResult[] = []
+  const allRows: ConversionRow[] = []
+
+  for (const sheetCfg of enabledSheets) {
+    const sheetId = sheetCfg.id!
+    const label = sheetCfg.name || sheetCfg.sheet_url
+    try {
+      const { rows, quality } = await fetchConversionesFromSheet(sheetCfg)
+      const customCols = mergeTabCustomColumns(normalizeTabs(sheetCfg))
+      const aggregates = computeConversionesAggregates(
+        rows,
+        Object.keys(customCols).length > 0 ? customCols : undefined
+      )
+      const saved = await saveConversionesSheetToDb(supabase, clienteId, sheetId, rows, aggregates)
+      allRows.push(...rows)
+
+      const descartadas = quality.reduce((s, q) => s + q.fecha_invalida + q.cantidad_invalida, 0)
+      const hasWarnings = quality.some(q => q.warnings.length > 0)
+      const status: SyncLogStatus = hasWarnings ? 'partial' : 'ok'
+      await logSyncResult(supabase, clienteId, sheetId, status, quality)
+
+      results.push({
+        sheet_id: sheetId, name: label, success: true,
+        rowsProcessed: saved.rowsProcessed, daysProcessed: saved.daysProcessed,
+        rowsDescartadas: descartadas, quality,
+      })
+    } catch (err: any) {
+      await logSyncResult(supabase, clienteId, sheetId, 'error', [], err.message)
+      results.push({
+        sheet_id: sheetId, name: label, success: false,
+        rowsProcessed: 0, daysProcessed: 0, rowsDescartadas: 0,
+        quality: [], error: err.message,
+      })
+    }
+  }
+
+  // Los sheets retirados de la config (y los datos previos a la trazabilidad por
+  // sheet) se limpian con la config ya leída correctamente.
+  await cleanupOrphanConversiones(supabase, clienteId, enabledSheets.map(s => s.id!))
+
+  return { results, rows: allRows }
 }

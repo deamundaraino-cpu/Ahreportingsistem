@@ -5,7 +5,7 @@ import { TrendingUp, TrendingDown, Minus, Loader2, Target } from 'lucide-react'
 import type { BiFilters, WidgetConfig, CalculatedField, ScorecardThreshold } from '../BiTypes'
 import { WIDGET_FORMULA_KEY } from '../BiTypes'
 import type { BiMetric, ClienteGoals, GoalStatus } from '@/lib/report-utm/bi-metadata'
-import { METRIC_META, appendUtmFilters, utmFilterSignature, appendFieldFilters, fieldFilterSignature, appendDimFilters, dimFilterSignature, appendAdvancedFilter, advancedFilterSignature, widgetAdvancedSignature, withCampaignFilter, fieldMetricLabel, fieldMetricFormat, metricGlossary, isLowerBetter, evaluateGoal } from '@/lib/report-utm/bi-metadata'
+import { METRIC_META, appendUtmFilters, utmFilterSignature, appendFieldFilters, fieldFilterSignature, appendDimFilters, dimFilterSignature, appendAdvancedFilter, advancedFilterSignature, widgetAdvancedSignature, withCampaignFilter, fieldMetricLabel, fieldMetricFormat, offlineFieldLabel, offlineFieldFormat, metricGlossary, isLowerBetter, evaluateGoal } from '@/lib/report-utm/bi-metadata'
 import { fetchClienteGoals } from '@/lib/report-utm/client-goals'
 import { useBiQueryBase } from '../BiQueryContext'
 import { HelpTip } from '../HelpTip'
@@ -54,11 +54,11 @@ export function ScorecardWidget({ title, config, filters, calculatedFields = [] 
     const calcField = calculatedFields.find(c => c.name === metric)
     const format: ValFormat = formula
         ? (config.formula_format ?? 'number')
-        : ((calcField?.format ?? METRIC_META[metric as BiMetric]?.format ?? fieldMetricFormat(metric) ?? 'number') as ValFormat)
+        : ((calcField?.format ?? METRIC_META[metric as BiMetric]?.format ?? fieldMetricFormat(metric) ?? offlineFieldFormat(metric) ?? 'number') as ValFormat)
     const decimals = formula ? config.formula_decimals : calcField?.decimals
     const label = formula
         ? formula
-        : (METRIC_META[metric as BiMetric]?.label ?? fieldMetricLabel(metric) ?? calcField?.name ?? metric)
+        : (METRIC_META[metric as BiMetric]?.label ?? fieldMetricLabel(metric) ?? offlineFieldLabel(metric) ?? calcField?.name ?? metric)
 
     useEffect(() => {
         setLoading(true)

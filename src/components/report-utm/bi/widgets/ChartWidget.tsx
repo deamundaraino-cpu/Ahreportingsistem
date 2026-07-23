@@ -20,6 +20,7 @@ import {
     appendFieldFilters, fieldFilterSignature, appendAdvancedFilter, advancedFilterSignature,
     appendDimFilters, dimFilterSignature, widgetAdvancedSignature, withCampaignFilter,
     fieldMetricLabel, fieldMetricFormat, fieldDimLabel, isFieldMetric, metricGlossary,
+    offlineFieldLabel, offlineFieldFormat,
     supportsPivot,
 } from '@/lib/report-utm/bi-metadata'
 import { useBiQueryBase } from '../BiQueryContext'
@@ -108,7 +109,7 @@ export function ChartWidget({ title, type, config, filters, calculatedFields = [
     const calcField = calculatedFields.find(c => c.name === metric)
     const format: ColFormat = formula
         ? (config.formula_format ?? 'number')
-        : ((calcField?.format ?? METRIC_META[metric as BiMetric]?.format ?? fieldMetricFormat(metric) ?? 'number') as ColFormat)
+        : ((calcField?.format ?? METRIC_META[metric as BiMetric]?.format ?? fieldMetricFormat(metric) ?? offlineFieldFormat(metric) ?? 'number') as ColFormat)
     // El pivot (dimensión secundaria) agrupa filas de lead_events/sales_events:
     // solo sabe contar filas o sumar `amount`. Por eso no aplica a campos
     // calculados, ni a métricas de campo, ni a métricas de gasto/campaña/GA4
@@ -159,7 +160,7 @@ export function ChartWidget({ title, type, config, filters, calculatedFields = [
     }, [queryBase, metric, formula, calcField?.expression, dimension, dimension2, usePivot, grouping, limit, sort, filters.cliente_id, filters.date_from, filters.date_to, utmFilterSignature(filters), fieldFilterSignature(filters), dimFilterSignature(filters), advancedFilterSignature(filters), widgetAdvancedSignature(withCampaignFilter(config.advanced_filter, config.campaign_filter))])
 
     const dimLabel = DIMENSION_META[dimension]?.label ?? fieldDimLabel(dimension) ?? dimension
-    const metLabel = formula ? formula : (METRIC_META[metric as BiMetric]?.label ?? fieldMetricLabel(metric) ?? calcField?.name ?? metric)
+    const metLabel = formula ? formula : (METRIC_META[metric as BiMetric]?.label ?? fieldMetricLabel(metric) ?? offlineFieldLabel(metric) ?? calcField?.name ?? metric)
 
     const chartData = applyValueFilters(rows, config.value_filters).map(r => ({
         name:  r.dimension_value ?? 'Total',

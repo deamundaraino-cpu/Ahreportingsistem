@@ -13,7 +13,7 @@
 import { createAdminClient } from '@/utils/supabase/server'
 import {
     METRIC_META, AD_JSONB_METRICS, AD_SCALAR_METRICS, MANUAL_JSONB_METRICS,
-    OFFLINE_METRICS, SUBS_METRICS,
+    OFFLINE_METRICS, SUBS_METRICS, makeOfflineFieldMetric, isOfflineFieldMetric,
 } from './bi-metadata'
 import type { BiMetric } from './bi-metadata'
 
@@ -95,7 +95,7 @@ export async function getMetricAvailability(params: AvailabilityParams): Promise
     const salesQ = rtm.from('sales_events').select('amount')
         .gte('created_at', dateFrom + 'T00:00:00').lte('created_at', dateTo + 'T23:59:59')
         .eq('status', 'approved').limit(1000)
-    let offlineQ = db.from('conversiones_offline_diarias').select('tipo, total_cantidad, total_valor')
+    let offlineQ = db.from('conversiones_offline_diarias').select('tipo, total_cantidad, total_valor, custom_fields')
         .gte('fecha', dateFrom).lte('fecha', dateTo).limit(1000)
     let subsQ = db.from('hotmart_subscriptions_snapshot')
         .select('active_count, delayed_count, canceled_count, total_count, active_recurring_value')
@@ -125,6 +125,14 @@ export async function getMetricAvailability(params: AvailabilityParams): Promise
         bump('offline_revenue', num(o.total_valor))
         if (o.tipo === 'lead')  bump('offline_leads', cant)
         if (o.tipo === 'venta') bump('offline_ventas', cant)
+        // Columnas adicionales del Sheet: disponibles si traen algún valor. El
+        // token lleva el tipo y los datos no lo guardan, así que se marcan las
+        // tres variantes (solo una existirá en el catálogo del cliente).
+        for (const [k, v] of Object.entries((o.custom_fields ?? {}) as Record<string, unknown>)) {
+            for (const t of ['count', 'currency', 'percentage'] as const) {
+                bump(makeOfflineFieldMetric(t, k), num(v))
+            }
+        }
     }
     const subs = (subsRes.data ?? [])[0] as Record<string, unknown> | undefined
     if (subs) {
@@ -158,6 +166,10 @@ export async function getMetricAvailability(params: AvailabilityParams): Promise
     }
     // Se declaran explícitamente para no depender del orden del switch.
     for (const k of [...OFFLINE_METRICS, ...SUBS_METRICS]) out[k] = has(k)
+    // Tokens dinámicos de columnas de Sheet (offfield:*) vistos en el rango.
+    for (const k of Object.keys(totals)) {
+        if (isOfflineFieldMetric(k)) out[k] = has(k)
+    }
 
     return out
 }

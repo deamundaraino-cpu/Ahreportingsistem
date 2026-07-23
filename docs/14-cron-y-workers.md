@@ -121,6 +121,22 @@ Sincroniza conversiones offline hacia `conversiones_offline` y
 solo al completarse se borra el anterior, de modo que un fallo a mitad deja los
 datos viejos intactos.
 
+Cada cliente puede tener **varios sheets** y cada sheet **varias pestañas**, con
+su propio mapeo de columnas (`config_api.google_sheets_conversiones[].tabs[]`;
+las configs con el mapeo plano anterior se convierten al vuelo en `normalizeTabs`
+y siguen funcionando sin migrar el JSONB).
+
+El reemplazo es **por sheet**, no por cliente: las filas llevan `sheet_id` y
+`tab_name` y el borrado del lote anterior filtra por `sheet_id`. Antes, si un
+sheet fallaba en un sync con varios, el replace se hacía igual con las filas de
+los demás y los datos del sheet caído se borraban en silencio. Al final del
+cliente, `cleanupOrphanConversiones` retira lo que ya no pertenece a ningún sheet
+configurado (incluidas las filas previas a la trazabilidad, con `sheet_id` NULL).
+
+Cada corrida deja un registro en `conversiones_offline_sync_log` (filas ok,
+descartadas por fecha inválida o cantidad ≤ 0, y avisos por pestaña), que la UI
+de `/admin/settings` muestra bajo cada sheet.
+
 ### `/api/cron/refresh-meta-tokens` / `refresh-hotmart-tokens`
 Renuevan tokens antes de que caduquen (Meta < 10 días, Hotmart < 30 min).
 

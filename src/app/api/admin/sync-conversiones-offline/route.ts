@@ -1,18 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import {
-  fetchConversionesFromSheet,
-  computeConversionesAggregates,
-  saveConversionesToDb,
+  syncClienteConversiones,
   normalizeSheetConfigs,
 } from '@/lib/integrations/google-sheets-conversiones'
-import type { CustomColumnDef, ConversionRow } from '@/lib/integrations/google-sheets-conversiones'
 
 /**
  * Sync manual de conversiones offline desde Google Sheets.
  * POST /api/admin/sync-conversiones-offline
  * Body: { clientId: string }
- * Sincroniza todos los sheets habilitados del cliente y combina sus filas.
+ * Sincroniza todos los sheets habilitados del cliente (cada uno con sus
+ * pestañas) de forma independiente: el fallo de uno no toca los datos de otro.
  */
 export async function POST(request: NextRequest) {
   try {
@@ -36,8 +34,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Cliente no encontrado' }, { status: 404 })
     }
 
-    const allSheets = normalizeSheetConfigs(cliente.config_api?.google_sheets_conversiones)
-    const enabledSheets = allSheets.filter(s => s.enabled && s.sheet_url)
+    const rawConfig = cliente.config_api?.google_sheets_conversiones
+    const enabledSheets = normalizeSheetConfigs(rawConfig).filter(s => s.enabled && s.sheet_url)
 
     if (enabledSheets.length === 0) {
       return NextResponse.json(
@@ -46,44 +44,37 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Combinar filas y custom_columns de todos los sheets habilitados
-    let allRows: ConversionRow[] = []
-    const mergedCustomCols: Record<string, CustomColumnDef> = {}
-    const sheetErrors: string[] = []
+    const { results, rows } = await syncClienteConversiones(supabase, cliente.id, rawConfig)
 
-    for (const sheetCfg of enabledSheets) {
-      try {
-        const rows = await fetchConversionesFromSheet(sheetCfg)
-        allRows = [...allRows, ...rows]
-        if (sheetCfg.custom_columns) {
-          Object.assign(mergedCustomCols, sheetCfg.custom_columns)
-        }
-      } catch (err: any) {
-        sheetErrors.push(`${sheetCfg.name || sheetCfg.sheet_url}: ${err.message}`)
-      }
-    }
-
-    const aggregates = computeConversionesAggregates(
-      allRows,
-      Object.keys(mergedCustomCols).length > 0 ? mergedCustomCols : undefined
-    )
-    const saved = await saveConversionesToDb(supabase, cliente.id, allRows, aggregates)
-
-    const porTipo = allRows.reduce<Record<string, { cantidad: number; valor: number }>>((acc, r) => {
+    const porTipo = rows.reduce<Record<string, { cantidad: number; valor: number }>>((acc, r) => {
       if (!acc[r.tipo]) acc[r.tipo] = { cantidad: 0, valor: 0 }
       acc[r.tipo].cantidad += r.cantidad
       acc[r.tipo].valor    += r.valor ?? 0
       return acc
     }, {})
 
+    const warnings = [
+      ...results.filter(r => !r.success).map(r => `${r.name}: ${r.error}`),
+      ...results.flatMap(r => r.quality.flatMap(q =>
+        q.warnings.map(w => `${r.name} › ${q.tab_name}: ${w}`)
+      )),
+    ]
+
     return NextResponse.json({
-      success:         true,
+      success:         results.some(r => r.success),
       clientName:      cliente.nombre,
-      totalFilas:      allRows.length,
-      diasProcesados:  saved.daysProcessed,
-      sheetsProcessed: enabledSheets.length,
+      totalFilas:      rows.length,
+      diasProcesados:  results.reduce((s, r) => s + r.daysProcessed, 0),
+      filasDescartadas: results.reduce((s, r) => s + r.rowsDescartadas, 0),
+      sheetsProcessed: results.length,
       porTipo,
-      ...(sheetErrors.length > 0 ? { warnings: sheetErrors } : {}),
+      sheets: results.map(r => ({
+        sheet_id: r.sheet_id, name: r.name, success: r.success,
+        filas: r.rowsProcessed, dias: r.daysProcessed,
+        descartadas: r.rowsDescartadas, quality: r.quality,
+        ...(r.error ? { error: r.error } : {}),
+      })),
+      ...(warnings.length > 0 ? { warnings } : {}),
       timestamp:       new Date().toISOString(),
     })
   } catch (error: any) {
@@ -97,7 +88,8 @@ export async function POST(request: NextRequest) {
 
 /**
  * GET /api/admin/sync-conversiones-offline?clientId=UUID
- * Verifica si el cliente tiene al menos un sheet habilitado.
+ * Verifica si el cliente tiene al menos un sheet habilitado y devuelve el
+ * estado del último sync de cada uno (filas ok/descartadas, avisos por pestaña).
  */
 export async function GET(request: NextRequest) {
   try {
@@ -120,10 +112,25 @@ export async function GET(request: NextRequest) {
     const sheets = normalizeSheetConfigs(cliente?.config_api?.google_sheets_conversiones)
     const enabledSheets = sheets.filter(s => s.enabled && s.sheet_url)
 
+    // Último log por sheet. La tabla puede no existir aún (migración 056 sin
+    // aplicar): en ese caso simplemente no se reporta estado.
+    const lastSync: Record<string, any> = {}
+    const { data: logs } = await supabase
+      .from('conversiones_offline_sync_log')
+      .select('sheet_id, run_at, status, rows_ok, rows_descartadas, detalle')
+      .eq('cliente_id', clientId)
+      .order('run_at', { ascending: false })
+      .limit(100)
+
+    for (const log of (logs ?? []) as any[]) {
+      if (!lastSync[log.sheet_id]) lastSync[log.sheet_id] = log
+    }
+
     return NextResponse.json({
       isConfigured: enabledSheets.length > 0,
       sheetsCount:  enabledSheets.length,
       sheetNames:   enabledSheets.map(s => s.name || s.sheet_url),
+      lastSync,
     })
   } catch {
     return NextResponse.json({ error: 'Error al verificar configuración' }, { status: 500 })

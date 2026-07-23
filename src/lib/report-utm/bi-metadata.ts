@@ -565,6 +565,85 @@ export function extractFieldMetricAliases(
     return out
 }
 
+// ── Columnas adicionales de Sheets offline (custom_fields JSONB) ──────
+// Cada cliente define en su config qué columnas extra de sus Google Sheets se
+// sincronizan (`custom_columns` por pestaña), y el sync las guarda en
+// `conversiones_offline_diarias.custom_fields`. Como son dinámicas por cliente,
+// se referencian con un token namespaced igual que los campos de formulario:
+//   • Métrica: "offfield:<tipo>:<clave>"  (tipo = count | currency | percentage)
+// El tipo viaja en el token para que los widgets sepan formatear (y el motor,
+// promediar los porcentajes) sin releer la config del cliente.
+// En expresiones de campos calculados se usa el alias "off__<clave>", que al no
+// llevar tipo siempre agrega por suma.
+
+export type OfflineFieldType = 'count' | 'currency' | 'percentage'
+
+export const OFFLINE_FIELD_PREFIX = 'offfield:'
+
+const OFFLINE_TYPES = new Set<string>(['count', 'currency', 'percentage'])
+
+export function makeOfflineFieldMetric(type: OfflineFieldType, key: string): string {
+    return `${OFFLINE_FIELD_PREFIX}${type}:${key}`
+}
+export function isOfflineFieldMetric(token: string): boolean {
+    return typeof token === 'string' && token.startsWith(OFFLINE_FIELD_PREFIX)
+}
+export function parseOfflineFieldMetric(token: string): { type: OfflineFieldType; key: string } | null {
+    if (!isOfflineFieldMetric(token)) return null
+    const rest = token.slice(OFFLINE_FIELD_PREFIX.length)
+    const idx = rest.indexOf(':')
+    if (idx <= 0) return null
+    const type = rest.slice(0, idx)
+    const key = rest.slice(idx + 1)
+    if (!OFFLINE_TYPES.has(type) || !key) return null
+    return { type: type as OfflineFieldType, key }
+}
+
+/** Alias identificador-safe para usar una columna de Sheet en expresiones calc. */
+export function offlineFieldAlias(key: string): string {
+    return `off__${key.toLowerCase().replace(/[^a-z0-9_]/g, '_')}`
+}
+
+/** Extrae de una expresión calc las columnas de Sheet referenciadas por alias. */
+export function extractOfflineFieldAliases(expression: string): { key: string; alias: string }[] {
+    const out: { key: string; alias: string }[] = []
+    const re = /\boff__([a-z0-9_]+)\b/gi
+    let m: RegExpExecArray | null
+    while ((m = re.exec(expression)) !== null) {
+        const key = m[1].toLowerCase()
+        out.push({ key, alias: `off__${key}` })
+    }
+    return out
+}
+
+/** Metadata de una columna adicional de Sheet expuesta en el BI. */
+export interface OfflineFieldMeta {
+    key: string                       // nombre sanitizado (clave en custom_fields)
+    label: string                     // etiqueta configurada por el analista
+    type: OfflineFieldType
+    /** Sheets/pestañas donde está definida (para el tooltip del editor). */
+    sources: string[]
+}
+
+/**
+ * Etiqueta legible para un token de columna de Sheet. null si no lo es.
+ * Con la lista de columnas del cliente usa la etiqueta configurada; sin ella
+ * (widgets ya guardados) humaniza la clave.
+ */
+export function offlineFieldLabel(token: string, fields: OfflineFieldMeta[] = []): string | null {
+    const parsed = parseOfflineFieldMetric(token)
+    if (!parsed) return null
+    const meta = fields.find(f => f.key === parsed.key)
+    return `${meta?.label ?? humanizeFieldKey(parsed.key)} (Sheet)`
+}
+
+/** Formato de visualización de un token de columna de Sheet. null si no lo es. */
+export function offlineFieldFormat(token: string): 'number' | 'currency' | 'percent' | null {
+    const parsed = parseOfflineFieldMetric(token)
+    if (!parsed) return null
+    return parsed.type === 'currency' ? 'currency' : parsed.type === 'percentage' ? 'percent' : 'number'
+}
+
 /** 'producto_interes' → 'Producto interes'. */
 export function humanizeFieldKey(key: string): string {
     const s = key.replace(/[_-]+/g, ' ').trim()

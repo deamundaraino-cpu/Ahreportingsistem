@@ -3,10 +3,11 @@
 import { useState, useEffect } from 'react'
 import { X, Plus, Search, AlertTriangle } from 'lucide-react'
 import type { BiWidget, WidgetType, WidgetConfig, CalculatedField, ConditionalRule, ValueFilter, ScorecardVariant } from './BiTypes'
-import type { BiMetric, BiDimension, ValueOp, FieldAgg, FormFieldMeta, AdvancedFilter, FilterOp } from '@/lib/report-utm/bi-metadata'
+import type { BiMetric, BiDimension, ValueOp, FieldAgg, FormFieldMeta, OfflineFieldMeta, AdvancedFilter, FilterOp } from '@/lib/report-utm/bi-metadata'
 import {
     METRIC_META, DIMENSION_META, VALUE_OPS, FIELD_AGGS, FILTERABLE_BASE_DIMS, FILTER_OPS,
     makeFieldDim, makeFieldMetric, humanizeFieldKey, fieldDimLabel, fieldMetricLabel,
+    makeOfflineFieldMetric, offlineFieldLabel,
     advancedFilterHasConditions, supportsPivot, PIVOT_METRICS,
     FUNNEL_STAGE_METRICS, DEFAULT_FUNNEL_STAGES, evaluateExpression,
 } from '@/lib/report-utm/bi-metadata'
@@ -80,6 +81,7 @@ export function BiWidgetEditor({ widget, calculatedFields = [], clienteId, dateF
     const [dim,    setDim]    = useState<string>(widget?.config?.dimension ?? 'utm_source')
     const [dim2,   setDim2]   = useState<string>(widget?.config?.dimension2 ?? 'none')
     const [formFields, setFormFields] = useState<FormFieldMeta[]>([])
+    const [offlineFields, setOfflineFields] = useState<OfflineFieldMeta[]>([])
     const [grouping, setGrouping] = useState<'day' | 'week' | 'month'>(widget?.config?.date_grouping ?? 'day')
     const [colSpan, setColSpan] = useState(widget?.w ?? 2)
     const [rowSpan, setRowSpan] = useState(widget?.h ?? 1)
@@ -135,6 +137,17 @@ export function BiWidgetEditor({ widget, calculatedFields = [], clienteId, dateF
             .catch(() => { if (!cancelled) setFormFields([]) })
         return () => { cancelled = true }
     }, [clienteId, dateFrom, dateTo])
+
+    // Columnas adicionales de los Sheets offline del cliente → métricas del BI.
+    useEffect(() => {
+        if (!clienteId) { setOfflineFields([]); return }
+        let cancelled = false
+        fetch(`/api/report-utm/bi/offline-fields?cliente_id=${encodeURIComponent(clienteId)}`)
+            .then(r => r.json())
+            .then(json => { if (!cancelled) setOfflineFields(json.data ?? []) })
+            .catch(() => { if (!cancelled) setOfflineFields([]) })
+        return () => { cancelled = true }
+    }, [clienteId])
 
     // Qué métricas tienen datos para este cliente y rango. Sirve para avisar antes
     // de configurar un widget que va a mostrar 0 (cliente sin ventas, sin TikTok…).
@@ -217,9 +230,18 @@ export function BiWidgetEditor({ widget, calculatedFields = [], clienteId, dateF
     // base de filtro (UTMs, país, formulario…) + campos de formulario del cliente.
     const filterFieldOptions: { value: string; label: string }[] = [...FILTERABLE_BASE_DIMS, ...fieldDimOptions]
 
+    // Columnas adicionales de los Sheets offline → métricas "offfield:<clave>".
+    const offlineMetricOptions = offlineFields.map(f => ({
+        value: makeOfflineFieldMetric(f.type, f.key),
+        label: `${f.label} (Sheet)`,
+    }))
+
     // Etiquetas que resuelven también tokens de campo.
     const resolveMetricLabel = (k: string) =>
-        METRIC_META[k as BiMetric]?.label ?? fieldMetricLabel(k) ?? calculatedFields.find(c => c.name === k)?.name ?? k
+        METRIC_META[k as BiMetric]?.label
+        ?? fieldMetricLabel(k)
+        ?? offlineFieldLabel(k, offlineFields)
+        ?? calculatedFields.find(c => c.name === k)?.name ?? k
     const resolveDimLabel = (d: string) =>
         DIMENSION_META[d as BiDimension]?.label ?? fieldDimLabel(d) ?? d
 
@@ -232,8 +254,8 @@ export function BiWidgetEditor({ widget, calculatedFields = [], clienteId, dateF
     const allowFormula = type === 'scorecard' || isChart
     // Las métricas de campo (sum/avg/… de raw_fields) se usan igual que las calc.
     const metricOptions = (allowCalc
-        ? [...ALL_METRICS, ...calcAsMetrics, ...fieldMetricOptions]
-        : ALL_METRICS)
+        ? [...ALL_METRICS, ...calcAsMetrics, ...fieldMetricOptions, ...offlineMetricOptions]
+        : [...ALL_METRICS, ...offlineMetricOptions])
         .filter(m => !metricSearch || m.label.toLowerCase().includes(metricSearch.toLowerCase()))
 
     // Columnas de tabla (multi-columna): el config.metric guarda la lista separada por coma.
@@ -658,6 +680,7 @@ export function BiWidgetEditor({ widget, calculatedFields = [], clienteId, dateF
                                             value={formula}
                                             onChange={setFormula}
                                             formFields={formFields}
+                                            offlineFields={offlineFields}
                                         />
                                         <div className="grid grid-cols-2 gap-2">
                                             <div>

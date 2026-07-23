@@ -112,6 +112,63 @@ En el dashboard, los leads se muestran en `GoogleSheetsLeadsCard`.
 
 ---
 
+## Google Sheets (conversiones offline)
+
+Integración **independiente** de la de leads: importa leads y ventas que no
+captura el píxel (WhatsApp, llamadas, cierres manuales). Código en
+`src/lib/integrations/google-sheets-conversiones.ts`.
+
+**Auth**: la conexión OAuth de la agencia (`app_integrations`) si existe; si no,
+cuenta de servicio. Un solo login de Google sirve para todos los clientes.
+
+### Configuración (por cliente)
+En `config_api.google_sheets_conversiones` — un **array** de sheets, cada uno con
+sus **pestañas**:
+
+```jsonc
+[{
+  "id": "uuid",                 // clave de partición: el replace es por sheet
+  "name": "Leads WhatsApp",
+  "enabled": true,
+  "sheet_url": "https://docs.google.com/spreadsheets/d/...",
+  "tabs": [{
+    "id": "uuid",
+    "sheet_name": "Enero",      // vacío = primera pestaña del doc
+    "enabled": true,
+    "col_fecha": "Fecha", "col_tipo": "Tipo", "col_cantidad": "Cantidad",
+    "col_valor": "Valor", "col_fuente": "Fuente", "col_notas": "Notas",
+    "custom_columns": {         // columnas extra de ESTA pestaña
+      "citas_agendadas": { "col_name": "Citas Agendadas", "type": "count", "label": "Citas", "include": true }
+    }
+  }]
+}]
+```
+
+Las configs anteriores (mapeo plano a nivel de sheet, una sola pestaña) siguen
+funcionando: `normalizeTabs` las convierte en una pestaña única al leerlas, y la
+UI las guarda en formato `tabs` la primera vez que se editan.
+
+### Flujo
+`syncClienteConversiones` → por sheet: `fetchConversionesFromSheet` (abre el doc
+una vez e itera sus pestañas habilitadas, cada una con su mapeo) →
+`computeConversionesAggregates` → `saveConversionesSheetToDb` (replace por sheet)
+→ `logSyncResult`. Al final, `cleanupOrphanConversiones`.
+
+### Disparadores
+- **Automático**: `GET /api/worker/google-sheets-conversiones` (job `sheets_conversiones`).
+- **Manual**: `POST /api/admin/sync-conversiones-offline` desde la UI.
+- **Descubrimiento**: `POST /api/admin/list-sheet-tabs` (pestañas del doc) y
+  `POST /api/admin/detect-sheet-columns` (encabezados + columnas extra de una pestaña).
+
+### Dónde se usan los datos
+- Dashboard y motor de fórmulas: `offline_leads/ventas/revenue/total` y las
+  columnas extra como `sheet_<clave>`.
+- BI builder e informes programados: las mismas cuatro métricas más las columnas
+  extra como `offfield:<tipo>:<clave>` (alias `off__<clave>` en campos
+  calculados). El catálogo lo sirve `/api/report-utm/bi/offline-fields`.
+
+---
+
 ## WhatsApp (notificaciones a grupos · Baileys)
 
 Notificaciones a **grupos de WhatsApp**, ruteables **por cliente** o **por tipo de notificación**.
@@ -176,6 +233,7 @@ disparador de ventas no cambian. Mapeo de endpoints en `src/lib/whatsapp/provide
 | TikTok Ads | OAuth (env app + token por cliente) | `/admin/settings/[id]` | `tiktok_*`, `tiktok_campaigns/ads/adgroups` |
 | GA4 | Cuenta de servicio por cliente | `config_api.ga_*` | `ga_sessions` |
 | Hotmart (reporting) | Basic/API key por cliente | `config_api.hotmart_*` + funnel por tab | `ventas_*`, `hotmart_funnel_data` |
-| Google Sheets | Cuenta de servicio (global o por cliente) | `config_api.google_sheets` | `leads`, `leads_diarios` |
+| Google Sheets (leads) | Cuenta de servicio (global o por cliente) | `config_api.google_sheets` | `leads`, `leads_diarios` |
+| Google Sheets (conversiones offline) | OAuth de la agencia (o cuenta de servicio) | `config_api.google_sheets_conversiones[].tabs[]` | `conversiones_offline`, `conversiones_offline_diarias`, `conversiones_offline_sync_log` |
 | Hotmart (Report-UTM) | Webhook HMAC | `report_utm.integrations` | `report_utm.sales_events` |
 | WhatsApp | Gateway Baileys (Bearer) **o** Evolution API (apikey), según `WHATSAPP_PROVIDER` | `/admin/whatsapp` + envs del proveedor | `whatsapp_groups/routes/messages` (+ `session` solo en baileys) |
