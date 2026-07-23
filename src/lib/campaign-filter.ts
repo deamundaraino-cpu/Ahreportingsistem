@@ -105,6 +105,34 @@ export function filterCampaignList(
     )
 }
 
+/**
+ * ¿El desglose por campaña respalda la columna agregada de gasto?
+ *
+ * Importa porque todas las cifras de gasto del dashboard salen de sumar el array
+ * de campañas, nunca de la columna. Si el array quedó truncado (paginación de
+ * Meta rota antes del fix de 2026-06-23, o una página que falló a mitad), el día
+ * aparece en $0 aunque la cuenta sí gastó — indistinguible de un día sin
+ * inversión. Marcarlo permite avisar en vez de mostrar un cero que parece real.
+ *
+ * Tolerancia del 1% con piso de 1 unidad: absorbe redondeos sin tapar faltantes.
+ */
+function desgloseIncompleto(columna: any, campanas: any): boolean {
+    const col = parseFloat(columna ?? '0') || 0
+    if (col <= 0) return false
+    if (!Array.isArray(campanas)) return false
+    const arr = campanas.reduce((s: number, c: any) => s + (parseFloat(c?.spend || '0') || 0), 0)
+    return Math.abs(col - arr) > Math.max(1, col * 0.01)
+}
+
+export function metaRowIsIncomplete(row: any): boolean {
+    return desgloseIncompleto(row?.meta_spend, row?.meta_campaigns)
+}
+
+/** Igual que `metaRowIsIncomplete`, para el desglose de TikTok. */
+export function tiktokRowIsIncomplete(row: any): boolean {
+    return desgloseIncompleto(row?.tiktok_spend, row?.tiktok_campaigns)
+}
+
 export function enrichMetaRow(
     row: any,
     filter: string | CampaignFilterSpec | undefined,
@@ -112,6 +140,9 @@ export function enrichMetaRow(
 ): any {
     if (!row.meta_campaigns || !Array.isArray(row.meta_campaigns)) return row
 
+    // Se evalúan las dos plataformas aquí porque `enrichMetaRow` es el paso por el
+    // que pasan todas las filas del dashboard; `enrichTikTokRow` es opcional.
+    const incomplete = metaRowIsIncomplete(row) || tiktokRowIsIncomplete(row)
     const matching = filterCampaignList(row.meta_campaigns, filter, campaignGroups)
 
     // Reduce helper (inline to avoid breaking patterns)
@@ -121,6 +152,9 @@ export function enrichMetaRow(
     // Base metrics from matched campaigns
     const base = {
         ...row,
+        // El desglose no respalda la columna: las cifras de este día están
+        // incompletas y la UI debe avisarlo en vez de mostrar un cero creíble.
+        meta_data_incomplete: incomplete,
         // Entrega
         meta_spend:       rf('spend'),
         meta_impressions: ri('impressions'),

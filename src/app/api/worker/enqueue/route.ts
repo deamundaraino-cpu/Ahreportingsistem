@@ -1,7 +1,7 @@
 import { createClient } from '@supabase/supabase-js'
 import { NextResponse } from 'next/server'
 import { enqueueRange, enqueueJob, queueStats, type SyncJobTipo } from '@/lib/sync/queue'
-import { planDiario, planIntradia, planCierreMes, limpiarHistorial, PRIORIDAD } from '@/lib/sync/planner'
+import { planDiario, planIntradia, planCierreMes, planReconciliacion, limpiarHistorial, PRIORIDAD } from '@/lib/sync/planner'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -10,9 +10,10 @@ export const maxDuration = 60
 /**
  * Planner de la cola: crea los jobs, no los ejecuta.
  *
- *   POST /api/worker/enqueue?plan=diario     → plan del día (sustituye a los crons)
- *   POST /api/worker/enqueue?plan=intradia   → solo el día en curso
- *   POST /api/worker/enqueue?plan=cierre_mes → re-descarga final + congelado
+ *   POST /api/worker/enqueue?plan=diario         → plan del día (sustituye a los crons)
+ *   POST /api/worker/enqueue?plan=intradia       → solo el día en curso
+ *   POST /api/worker/enqueue?plan=cierre_mes     → re-descarga final + congelado
+ *   POST /api/worker/enqueue?plan=reconciliacion → audita el gasto de Meta y repara días incompletos
  *   POST /api/worker/enqueue  body: { tipo, cliente_id?, start, end, params?, prioridad? }
  *
  * Protegido por CRON_SECRET. Lo llama el scheduler del VPS (o GitHub Actions
@@ -43,6 +44,11 @@ export async function POST(request: Request) {
         if (plan === 'cierre_mes') {
             const periodo = new URL(request.url).searchParams.get('periodo') ?? undefined
             const res = await planCierreMes(db, periodo)
+            return NextResponse.json({ ok: true, plan, ...res, cola: await queueStats(db) })
+        }
+        if (plan === 'reconciliacion') {
+            const dias = Number(new URL(request.url).searchParams.get('dias')) || undefined
+            const res = await planReconciliacion(db, { dias })
             return NextResponse.json({ ok: true, plan, ...res, cola: await queueStats(db) })
         }
 

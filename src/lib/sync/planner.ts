@@ -139,6 +139,52 @@ export async function planCierreMes(db: any, periodo?: string): Promise<PlanResu
     return { encolados: total, detalle: { periodo: 1, rango: total } }
 }
 
+/**
+ * Reconciliación: verifica que el gasto guardado de Meta cuadre con el real de
+ * cada cuenta y repara los días que no.
+ *
+ * Existe porque el dashboard suma `meta_campaigns[]` filtrado por keyword, no la
+ * columna `meta_spend`: un array truncado hace que un día muestre $0 aunque haya
+ * habido gasto, y el worker nunca lo re-pide porque la fila "tiene datos". Los
+ * 120 días por defecto cubren con margen la época del bug de paginación de Meta
+ * (corregido el 2026-06-23).
+ *
+ * Cada job cuesta 1 fila por día a nivel de cuenta; solo se re-descargan los días
+ * que realmente divergen.
+ */
+export async function planReconciliacion(
+    db: any,
+    opts?: { dias?: number; triggeredBy?: string },
+): Promise<PlanResult> {
+    const dias = opts?.dias ?? 120
+    const hoy = colombiaToday()
+    const start = new Date(Date.parse(`${hoy}T00:00:00Z`) - dias * 86_400_000).toISOString().slice(0, 10)
+
+    const { data: clientes, error } = await db.from('clientes').select('id, config_api')
+    if (error) throw new Error(`planReconciliacion: ${error.message}`)
+
+    let total = 0
+    for (const c of (clientes ?? []) as Array<{ id: string; config_api: any }>) {
+        const cfg = c.config_api ?? {}
+        const tieneMeta = (Array.isArray(cfg.meta_accounts) && cfg.meta_accounts.length > 0)
+            || (!!cfg.meta_token && !!cfg.meta_account_id)
+        if (!tieneMeta) continue
+
+        const job = await enqueueJob(db, {
+            tipo: 'reconciliar',
+            clienteId: c.id,
+            start,
+            end: hoy,
+            params: { dias },
+            prioridad: PRIORIDAD.cierre,
+            triggeredBy: opts?.triggeredBy ?? 'reconciliacion',
+        })
+        if (job) total++
+    }
+
+    return { encolados: total, detalle: { reconciliar: total } }
+}
+
 /** Borra jobs y runs viejos. Llamar una vez al día desde el planner. */
 export async function limpiarHistorial(db: any, dias = 30): Promise<void> {
     const corte = new Date(Date.now() - dias * 86_400_000).toISOString()

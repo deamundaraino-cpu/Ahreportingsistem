@@ -59,6 +59,8 @@ function buildRequest(job: SyncJob, appUrl: string): { url: string; method: 'GET
     if (job.cliente_id) qs.set('client_id', job.cliente_id)
     if (job.params?.force) qs.set('force', '1')
     if (job.params?.refresh_days) qs.set('refresh_days', String(job.params.refresh_days))
+    // Acota el sync a ciertas fuentes (la reconciliación solo repara Meta).
+    if (job.params?.platforms) qs.set('platforms', String(job.params.platforms))
 
     switch (job.tipo) {
         case 'metricas':
@@ -76,6 +78,10 @@ function buildRequest(job: SyncJob, appUrl: string): { url: string; method: 'GET
             return { url: `${base}/api/cron/report-utm/aggregate?${qs}`, method: 'GET' }
         case 'cierre_mes':
             return { url: `${base}/api/cron/cierre-mes?${qs}`, method: 'POST' }
+        case 'reconciliar':
+            // heal=1: además de detectar, encola la reparación de los días malos.
+            qs.set('heal', '1')
+            return { url: `${base}/api/worker/reconcile?${qs}`, method: 'POST' }
         default:
             throw new Error(`Tipo de job desconocido: ${job.tipo}`)
     }

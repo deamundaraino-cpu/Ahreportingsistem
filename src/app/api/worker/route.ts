@@ -8,6 +8,7 @@ import { colombiaToday, colombiaYesterday } from '@/lib/date-utils'
 import { metaFetch, tiktokFetch, hotmartFetch, ga4Run, setRetryDeadline } from '@/lib/rate-limit'
 import { evaluateAlertRules } from '@/lib/notifications/rules-engine'
 import { getUsdRate, preloadUsdRates } from '@/lib/fx'
+import { importesCuadran, sumarCampanas } from '@/lib/sync/reconcile'
 
 // Vercel Hobby corta las funciones a 60s: pedir 300 no las alarga, solo hacía que
 // los presupuestos internos (270s) nunca dispararan y la función muriera a mitad
@@ -160,6 +161,17 @@ export async function GET(request: Request) {
     // cierre de mes para recoger la reatribución tardía de Meta antes de congelar.
     const forceRefresh = searchParams.get('force') === '1' || searchParams.get('force') === 'true'
     const refreshDaysOverride = Number(searchParams.get('refresh_days')) || null
+
+    // `platforms=meta` (CSV) limita el sync a ciertas fuentes. Reparar 120 días de
+    // Meta no debe arrastrar 120 días de Hotmart (paginado) ni de GA4 (6 queries
+    // por día) — eso es lo que hacía inviable un backfill amplio. Las plataformas
+    // excluidas se marcan como fallidas para que el guard de preservación deje
+    // intactos sus campos en la BD.
+    const platformsParam = searchParams.get('platforms')
+    const onlyPlatforms = platformsParam
+        ? new Set(platformsParam.split(',').map(p => p.trim().toLowerCase()).filter(Boolean))
+        : null
+    const wantsPlatform = (p: string) => !onlyPlatforms || onlyPlatforms.has(p)
 
     let query = adminSupabase.from('clientes').select('*')
     if (specificClientId) {
@@ -644,7 +656,7 @@ export async function GET(request: Request) {
         }
 
         const emptyMetaRecord = (apiSuccess: boolean) => ({
-            spend: 0, impressions: 0, clicks: 0, account_reach: 0,
+            spend: 0, impressions: 0, clicks: 0, account_reach: 0, account_spend: 0,
             campaigns: [] as any[], meta_ads: [] as any[], meta_adsets: [] as any[], forms: [] as any[], apiSuccess,
         })
 
@@ -690,7 +702,7 @@ export async function GET(request: Request) {
                 url.searchParams.append('access_token', token)
                 url.searchParams.append('time_range', JSON.stringify({ since: startDate, until: endDate }))
                 url.searchParams.append('time_increment', '1')
-                url.searchParams.append('fields', 'campaign_id,campaign_name,spend,impressions,clicks,inline_link_clicks,reach,frequency,cpc,cpm,ctr,actions,conversions,video_thruplay_watched_actions,video_p3_watched_actions')
+                url.searchParams.append('fields', 'campaign_id,campaign_name,spend,impressions,clicks,inline_link_clicks,reach,frequency,cpc,cpm,ctr,actions,conversions,video_thruplay_watched_actions')
                 url.searchParams.append('action_attribution_windows', META_ATTRIBUTION_WINDOWS)
                 url.searchParams.append('level', 'campaign')
                 url.searchParams.append('limit', '500')
@@ -758,13 +770,15 @@ export async function GET(request: Request) {
                         const cPostSaves = fam.post_save
                         const cPostComments = fam.comment
 
-                        // ThruPlay y vistas de 3s (campos separados en la respuesta de Meta)
+                        // ThruPlay: campo propio en la respuesta de Meta.
                         if (camp.video_thruplay_watched_actions) {
                             camp.video_thruplay_watched_actions.forEach((a: any) => { cVideoThruplay += parseInt(a.value || '0') })
                         }
-                        if (camp.video_p3_watched_actions) {
-                            camp.video_p3_watched_actions.forEach((a: any) => { cVideo3s += parseInt(a.value || '0') })
-                        }
+                        // Vistas de 3s: Meta retiró `video_p3_watched_actions` (y `video_3_sec_watched_actions`)
+                        // del parámetro fields — pedirlo devolvía (#100) y tumbaba TODA la llamada de insights,
+                        // dejando la cuenta entera sin datos. El equivalente vivo es la acción `video_view`,
+                        // que es justamente la reproducción de ≥3 segundos.
+                        cVideo3s = cVideoViews
 
                         if (camp.conversions) {
                             camp.conversions.forEach((cv: any) => {
@@ -833,20 +847,31 @@ export async function GET(request: Request) {
                     log(`[Meta] ${day} [${rawAccountId}] Spend: ${totalSpend}, Campañas: ${dedupedCampaigns.length}`)
                     } // ← cierre del loop por día (rowsByDay)
 
-                    // Reach deduplicado a nivel de cuenta para TODO el rango
-                    // (level=account + time_increment=1 → una fila de reach por día)
+                    // Reach y gasto a nivel de cuenta para TODO el rango
+                    // (level=account + time_increment=1 → una fila por día).
+                    //
+                    // El `spend` de aquí es la FUENTE DE VERDAD para detectar días
+                    // con el desglose por campaña incompleto: el dashboard suma
+                    // `meta_campaigns[]` filtrado por keyword, así que un array a
+                    // medias muestra $0 en un día que sí tuvo gasto. Cuesta una
+                    // sola fila por día, así que se pide siempre.
                     try {
                         const reachUrl = new URL(`https://graph.facebook.com/v19.0/${actId}/insights`)
                         reachUrl.searchParams.append('access_token', token)
                         reachUrl.searchParams.append('time_range', JSON.stringify({ since: startDate, until: endDate }))
                         reachUrl.searchParams.append('time_increment', '1')
-                        reachUrl.searchParams.append('fields', 'reach')
+                        reachUrl.searchParams.append('fields', 'reach,spend')
                         reachUrl.searchParams.append('level', 'account')
                         const reachPaged = await metaInsightsPaged(reachUrl.toString())
                         if (reachPaged.ok) {
                             for (const row of reachPaged.list) {
                                 const day = row.date_start
-                                if (day && row.reach) ensureDay(day).account_reach = parseInt(row.reach || '0')
+                                if (!day) continue
+                                const rec = ensureDay(day)
+                                if (row.reach) rec.account_reach = parseInt(row.reach || '0')
+                                if (row.spend != null) {
+                                    rec.account_spend = (rec.account_spend || 0) + (parseFloat(row.spend || '0') || 0)
+                                }
                             }
                         }
                     } catch (_e) { /* non-critical */ }
@@ -877,7 +902,7 @@ export async function GET(request: Request) {
                 levelUrl.searchParams.append('access_token', token)
                 levelUrl.searchParams.append('time_range', JSON.stringify({ since: startDate, until: endDate }))
                 levelUrl.searchParams.append('time_increment', '1')
-                levelUrl.searchParams.append('fields', `${extraIds}campaign_id,campaign_name,spend,impressions,clicks,inline_link_clicks,reach,frequency,cpc,cpm,ctr,actions,conversions,video_thruplay_watched_actions,video_p3_watched_actions`)
+                levelUrl.searchParams.append('fields', `${extraIds}campaign_id,campaign_name,spend,impressions,clicks,inline_link_clicks,reach,frequency,cpc,cpm,ctr,actions,conversions,video_thruplay_watched_actions`)
                 levelUrl.searchParams.append('action_attribution_windows', META_ATTRIBUTION_WINDOWS)
                 levelUrl.searchParams.append('level', level)
                 levelUrl.searchParams.append('limit', '500')
@@ -929,6 +954,8 @@ export async function GET(request: Request) {
                     if (item.video_thruplay_watched_actions) {
                         item.video_thruplay_watched_actions.forEach((a: any) => { iVideoThruplay += parseInt(a.value || '0') })
                     }
+                    // Mismo criterio que a nivel campaña: `video_view` = reproducción de ≥3s.
+                    iVideo3s = iVideoViews
 
                     if (item.conversions) {
                         item.conversions.forEach((cv: any) => {
@@ -1109,6 +1136,7 @@ export async function GET(request: Request) {
                     record.impressions += src.impressions
                     record.clicks += src.clicks
                     record.account_reach += src.account_reach  // suma de reach deduplicado por cuenta
+                    record.account_spend += (src.account_spend || 0)  // gasto real de la cuenta (control de integridad)
                     // Inyectar account_reach en cada campaña para poder filtrarlo en el dashboard
                     const campaignsWithReach = src.campaigns.map((c: any) => ({
                         ...c,
@@ -1216,7 +1244,7 @@ export async function GET(request: Request) {
         }
 
         const emptyTikTokRecord = (apiSuccess: boolean) => ({
-            spend: 0, impressions: 0, clicks: 0, conversions: 0,
+            spend: 0, impressions: 0, clicks: 0, conversions: 0, account_spend: 0,
             campaigns: [] as any[], tiktok_ads: [] as any[], tiktok_adgroups: [] as any[], apiSuccess,
         })
 
@@ -1354,6 +1382,29 @@ export async function GET(request: Request) {
                     for (const [day, ads] of adsByDate) ensureDay(day).tiktok_ads = ads
                     for (const [day, ag] of adgroupsByDate) ensureDay(day).tiktok_adgroups = ag
 
+                    // Gasto a nivel de ANUNCIANTE: fuente de verdad para detectar que
+                    // el desglose por campaña quedó incompleto. El dashboard suma el
+                    // array, no la columna, así que un array a medias muestra de menos.
+                    // Cuesta una fila por día.
+                    try {
+                        const advUrl = new URL('https://business-api.tiktok.com/open_api/v1.3/report/integrated/get/')
+                        advUrl.searchParams.append('advertiser_id', advertiserId)
+                        advUrl.searchParams.append('report_type', 'BASIC')
+                        advUrl.searchParams.append('data_level', 'AUCTION_ADVERTISER')
+                        advUrl.searchParams.append('dimensions', JSON.stringify(['stat_time_day']))
+                        advUrl.searchParams.append('metrics', JSON.stringify(['spend']))
+                        advUrl.searchParams.append('start_date', startDate)
+                        advUrl.searchParams.append('end_date', endDate)
+                        const advReport = await fetchTikTokPaged(advUrl, token)
+                        if (advReport.ok) {
+                            for (const row of advReport.list) {
+                                const day = String(row?.dimensions?.stat_time_day ?? '').slice(0, 10)
+                                if (!day) continue
+                                ensureDay(day).account_spend += parseFloat(row?.metrics?.spend || '0') || 0
+                            }
+                        }
+                    } catch (_e) { /* non-critical: solo es control de integridad */ }
+
                     log(`[TikTok] ${startDate}..${endDate} [${advertiserId}] días con datos: ${byDate.size}`)
                 } else {
                     log(`[TikTok] ${startDate}..${endDate} [${advertiserId}] Error de API: ${campReport.message}`)
@@ -1402,6 +1453,7 @@ export async function GET(request: Request) {
                     acc.impressions += rec.impressions
                     acc.clicks      += rec.clicks
                     acc.conversions += rec.conversions
+                    acc.account_spend += (rec.account_spend || 0)  // control de integridad
                     acc.campaigns.push(...rec.campaigns)
                     acc.tiktok_ads.push(...rec.tiktok_ads)
                     acc.tiktok_adgroups.push(...rec.tiktok_adgroups)
@@ -1459,8 +1511,8 @@ export async function GET(request: Request) {
             }
         }
 
-        async function fetchHotmart(targetDate: string): Promise<HotmartRecord> {
-            const record: HotmartRecord = {
+        function emptyHotmartRecord(): HotmartRecord {
+            return {
                 principal: 0, bump: 0, upsell: 0,
                 principal_count: 0, bump_count: 0, upsell_count: 0,
                 principal_bruto: 0, bump_bruto: 0, upsell_bruto: 0, ventas_count: 0,
@@ -1471,6 +1523,10 @@ export async function GET(request: Request) {
                 unconverted_count: 0,
                 monedas: [],
             }
+        }
+
+        async function fetchHotmart(targetDate: string): Promise<HotmartRecord> {
+            const record: HotmartRecord = emptyHotmartRecord()
             // Inicializar breakdown por cada funnel configurado
             for (const f of hotmartFunnels) {
                 record.by_tab[f.tab_id] = emptyFunnelBreakdown()
@@ -1884,6 +1940,23 @@ export async function GET(request: Request) {
             return record
         }
 
+        /**
+         * Records vacíos para plataformas excluidas por `?platforms=`.
+         *
+         * Van marcados con `apiSuccess: false` a propósito: es exactamente la señal
+         * que el guard de preservación usa para OMITIR esos campos del upsert. Así
+         * un backfill de Meta no toca las ventas ni las sesiones ya guardadas.
+         */
+        const skippedHotmartRecord = (): HotmartRecord => {
+            const r = emptyHotmartRecord()
+            r.apiSuccess = false
+            return r
+        }
+        const skippedGaRecord = (): GARecord => ({
+            sessions: 0, bounceRate: 0, avgSessionDuration: 0, funnel_pages: {},
+            apiSuccess: false, configured: true,
+        })
+
         // ─── Pre-fetch existing rows: sync_hash (idempotencia) + datos previos por
         // plataforma (para detectar inconsistencias: cero nuevo vs. valor previo > 0) ───
         const { data: existingHashRows } = await adminSupabase
@@ -1899,6 +1972,30 @@ export async function GET(request: Request) {
             (existingHashRows || []).map((r: any) => [r.fecha, r])
         )
         const hasMetaData = (r: any) => Number(r?.meta_spend) > 0 || (Array.isArray(r?.meta_campaigns) && r.meta_campaigns.length > 0)
+        /**
+         * ¿El desglose por campaña de esta fila respalda su columna `meta_spend`?
+         *
+         * El dashboard NO usa la columna cuando una pestaña filtra por keyword:
+         * suma `meta_campaigns[].spend` de las campañas que matchean. Una fila con
+         * gasto en la columna pero el array truncado muestra $0 ese día — que es
+         * como se perdieron ~$90k de un cliente en 3 días de julio.
+         *
+         * Sin esta comprobación, `hasMetaData` daba true para esas filas y
+         * `effectiveStart` las saltaba para siempre.
+         */
+        const rowConsistent = (columna: any, campanas: any) => {
+            const col = Number(columna) || 0
+            if (col <= 0) return true // sin gasto: nada que respaldar
+            if (!Array.isArray(campanas)) return false
+            return importesCuadran(col, sumarCampanas(campanas).total)
+        }
+        const metaRowConsistent = (r: any) => !!r && rowConsistent(r.meta_spend, r.meta_campaigns)
+        /**
+         * Mismo criterio para TikTok. `enrichTikTokRow` suma `tiktok_campaigns[]`
+         * igual que Meta, y `TIKTOK_REFRESH_DAYS` es solo 3, así que una fila
+         * incompleta se congelaba aún más rápido que en Meta.
+         */
+        const tiktokRowConsistent = (r: any) => !!r && rowConsistent(r.tiktok_spend, r.tiktok_campaigns)
         const hasTikTokData = (r: any) => Number(r?.tiktok_spend) > 0 || (Array.isArray(r?.tiktok_campaigns) && r.tiktok_campaigns.length > 0)
         const hasHotmartData = (r: any) => Number(r?.ventas_principal) > 0 || Number(r?.ventas_bump) > 0
             || Number(r?.ventas_upsell) > 0 || Number(r?.ventas_principal_count) > 0
@@ -1926,8 +2023,14 @@ export async function GET(request: Request) {
             }
             return null
         }
-        const metaStart = metaConfigured ? effectiveStart(META_REFRESH_DAYS, hasMetaData) : null
-        const tiktokStart = tiktokConfigured ? effectiveStart(TIKTOK_REFRESH_DAYS, hasTikTokData) : null
+        // Para Meta, "ya descargada" exige además que el desglose por campaña
+        // cuadre con la columna: si no, la fecha vuelve a pedirse aunque sea vieja.
+        const metaStart = metaConfigured && wantsPlatform('meta')
+            ? effectiveStart(META_REFRESH_DAYS, (r: any) => hasMetaData(r) && metaRowConsistent(r))
+            : null
+        const tiktokStart = tiktokConfigured && wantsPlatform('tiktok')
+            ? effectiveStart(TIKTOK_REFRESH_DAYS, (r: any) => hasTikTokData(r) && tiktokRowConsistent(r))
+            : null
 
         // Una sola llamada por nivel/cuenta para TODO el rango efectivo (en vez de 1/día).
         const emptyRangeMeta = { byDate: new Map<string, any>(), apiSuccess: true, configured: metaConfigured }
@@ -1973,9 +2076,12 @@ export async function GET(request: Request) {
             const chunkResults = await Promise.all(
                 chunk.map(async (targetDate) => {
                     // Hotmart y GA4 por día; Meta/TikTok salen del Map por rango.
+                    // Con `platforms` acotado se devuelve un record vacío marcado como
+                    // fallido: el guard de preservación omite esos campos del upsert
+                    // en vez de escribir ceros sobre los datos existentes.
                     const [hotmartRecord, gaRecord] = await Promise.all([
-                        fetchHotmart(targetDate),
-                        fetchGA4(targetDate),
+                        wantsPlatform('hotmart') ? fetchHotmart(targetDate) : Promise.resolve(skippedHotmartRecord()),
+                        wantsPlatform('ga4') ? fetchGA4(targetDate) : Promise.resolve(skippedGaRecord()),
                     ]);
                     // ¿Se pidió esta plataforma para esta fecha? (false = fecha vieja ya descargada)
                     const metaFetched = !!metaStart && targetDate >= metaStart
@@ -2012,11 +2118,37 @@ export async function GET(request: Request) {
                 const metaInconsistent = metaFetched && hasAnyMetaConfig && !metaApiFailed && metaRecord.spend === 0 && hasMetaData(prevRow)
                 const metaFailed = !metaFetched || metaApiFailed || metaInconsistent
 
+                // Control de integridad del desglose: el gasto que la plataforma
+                // reporta a nivel de CUENTA/ANUNCIANTE es la fuente de verdad. Si la
+                // suma por campaña no lo alcanza, el array quedó incompleto y el
+                // dashboard mostrará de menos (suma el array, no la columna). Se
+                // avisa pero NO se bloquea el upsert: lo recién bajado sigue siendo
+                // lo mejor que hay, y la reconciliación se encarga de repararlo.
+                const avisarDesvio = (plataforma: string, fetched: boolean, failed: boolean, rec: any) => {
+                    if (!fetched || failed) return
+                    const cuenta = Number(rec?.account_spend) || 0
+                    const campanas = Number(rec?.spend) || 0
+                    if (cuenta <= 0 || importesCuadran(cuenta, campanas)) return
+                    const desvio = cuenta - campanas
+                    log(`[${plataforma}] ${targetDate} ⚠ desglose incompleto: cuenta=${cuenta.toFixed(2)} vs campañas=${campanas.toFixed(2)} (faltan ${desvio.toFixed(2)})`)
+                    inconsistencyAlerts.push({
+                        cliente: cliente.nombre,
+                        platform: plataforma,
+                        fecha: targetDate,
+                        reason: `spend_mismatch:${desvio.toFixed(2)}`,
+                    })
+                }
+                avisarDesvio('Meta', metaFetched, metaFailed, metaRecord)
+                avisarDesvio('TikTok', tiktokFetched, tiktokFailed, tiktokRecord)
+
                 // ─── Misma red de seguridad para Hotmart y GA4 ───
                 // Estas dos plataformas escribían SIEMPRE: un error transitorio (token
                 // vencido, 500 de Hotmart, cuota de GA4) metía ceros encima de ventas y
                 // sesiones ya buenas, y el sync_hash cambiaba, así que ni se saltaba.
-                const hotmartApiFailed = hotmartConfigured && !hotmartRecord.apiSuccess
+                // `!wantsPlatform(...)` fuerza la preservación aunque el cliente no
+                // tenga la plataforma configurada: un backfill acotado nunca debe
+                // tocar columnas que no pidió.
+                const hotmartApiFailed = (hotmartConfigured || !wantsPlatform('hotmart')) && !hotmartRecord.apiSuccess
                 const hotmartInconsistent = hotmartConfigured && !hotmartApiFailed
                     && hotmartRecord.ventas_count === 0 && hasHotmartData(prevRow)
                 const hotmartFailed = hotmartApiFailed || hotmartInconsistent

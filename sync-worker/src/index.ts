@@ -105,7 +105,7 @@ async function drenarCola(): Promise<void> {
  * Pide a la app que encole un plan. El planning vive en la app (donde está el
  * modelo de datos), no aquí: este proceso solo decide CUÁNDO.
  */
-async function encolarPlan(plan: 'diario' | 'intradia' | 'cierre_mes'): Promise<void> {
+async function encolarPlan(plan: 'diario' | 'intradia' | 'cierre_mes' | 'reconciliacion'): Promise<void> {
     try {
         const res = await fetch(`${APP_URL!.replace(/\/$/, '')}/api/worker/enqueue?plan=${plan}`, {
             method: 'POST',
@@ -131,6 +131,10 @@ const horarios: Array<{ expr: string; nombre: string; fn: () => Promise<void> }>
     { expr: '0 14 * * *', nombre: 'plan diario (tarde)', fn: () => encolarPlan('diario') },
     // Cierre del mes anterior: el día 7 ya pasó la mayor parte de la reatribución.
     { expr: '0 3 7 * *', nombre: 'cierre de mes', fn: () => encolarPlan('cierre_mes') },
+    // Auditoría semanal: detecta días cuyo desglose de campañas de Meta no cuadra
+    // con el gasto real de la cuenta y los repara. Sin esto, un día con el array
+    // truncado se muestra en $0 para siempre.
+    { expr: '0 3 * * 0', nombre: 'reconciliación de gasto Meta', fn: () => encolarPlan('reconciliacion') },
 ]
 
 // ─── Healthcheck HTTP ────────────────────────────────────────────────────────

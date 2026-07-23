@@ -20,7 +20,10 @@ CREATE TABLE IF NOT EXISTS public.sync_jobs (
     id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     tipo          text NOT NULL CHECK (tipo IN (
                       'metricas', 'sheets_leads', 'sheets_conversiones',
-                      'meta_leads', 'utm_aggregate', 'cierre_mes'
+                      'meta_leads', 'utm_aggregate', 'cierre_mes',
+                      -- Audita el gasto de Meta guardado contra el real de la cuenta
+                      -- y reencola los días cuyo desglose por campaña esté incompleto.
+                      'reconciliar'
                   )),
     -- NULL = todos los clientes (el planner lo expande a un job por cliente).
     cliente_id    uuid REFERENCES public.clientes(id) ON DELETE CASCADE,

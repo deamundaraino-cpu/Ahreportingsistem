@@ -17,6 +17,8 @@ export type SyncJobTipo =
     | 'meta_leads'
     | 'utm_aggregate'
     | 'cierre_mes'
+    /** Compara el gasto guardado contra el real de la cuenta y repara los días que divergen. */
+    | 'reconciliar'
 
 export type SyncJobEstado = 'pending' | 'running' | 'done' | 'error' | 'cancelled'
 

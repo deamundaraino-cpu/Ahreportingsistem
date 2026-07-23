@@ -67,6 +67,7 @@ Todo lo demás lo programa el scheduler del `sync-worker`.
 | 05:00 | `diario` | Métricas de ayer y hoy (todos los clientes) + Sheets + Meta Leads + agregación UTM |
 | 14:00 | `diario` | Segunda pasada: recoge las correcciones de atribución del día |
 | día 7, 03:00 | `cierre_mes` | Re-descarga forzada del mes anterior (ventana de 35 días) y congelado |
+| domingo, 03:00 | `reconciliacion` | Audita el gasto de Meta contra el real de cada cuenta y repara los días con desglose incompleto |
 
 Además hace *poll* de la cola cada 15s, que es lo que hace que el botón
 "Sincronizar" del dashboard responda en segundos.
@@ -86,7 +87,7 @@ restantes vuelve a `pending`; al agotar `max_intentos` queda en `error` y genera
 notificación.
 
 Tipos de job: `metricas`, `sheets_leads`, `sheets_conversiones`, `meta_leads`,
-`utm_aggregate`, `cierre_mes`.
+`utm_aggregate`, `cierre_mes`, `reconciliar`.
 
 ## Workers
 
@@ -132,6 +133,78 @@ hora de venta, así que las ventas antiguas desaparecían y los conteos podían
 ### `/api/cron/cierre-mes`
 Congela un mes: copia las filas a `metricas_snapshots` y pone el candado en
 `periodos_cerrados`.
+
+### `/api/worker/reconcile` — auditoría del gasto (Meta y TikTok)
+
+**El problema que resuelve.** Ninguna cifra de gasto del dashboard sale de las
+columnas `meta_spend` / `tiktok_spend`: cuando una pestaña filtra por keyword, se
+suman los elementos de `meta_campaigns[]` / `tiktok_campaigns[]` cuyo nombre
+matchea (`src/lib/campaign-filter.ts`). Si un array quedó incompleto, el día
+muestra **$0 aunque la cuenta sí gastó**, y como la fila "tiene datos" el worker
+no la vuelve a pedir nunca. Así se perdieron ~$90.000 de un cliente en 3 días de
+julio.
+
+Dos orígenes conocidos de arrays incompletos:
+
+1. Antes del 2026-06-23 el worker leía solo la **primera página** de Meta insights
+   sin seguir `paging.next`: cualquier día con más de 500 filas de campaña perdía
+   el resto en silencio. **TikTok nunca tuvo este fallo** — `fetchTikTokPaged`
+   siguió `page_info.total_page` desde el principio y, ante un error, descarta la
+   lista parcial en lugar de guardarla.
+2. Una página que falla a mitad del rango deja ese día a medias.
+
+Aunque TikTok no arrastra daño histórico conocido, comparte la misma estructura y
+su ventana de refresco es de solo 3 días (frente a 7 de Meta), así que una fila
+incompleta se congelaría aún antes. Por eso la auditoría cubre las dos.
+
+**Cómo funciona.** Una sola llamada a nivel de cuenta por plataforma devuelve el
+gasto real por día (1 fila/día, muy barato):
+
+- Meta → `level=account, fields=spend, time_increment=1`
+- TikTok → `data_level=AUCTION_ADVERTISER, dimensions=["stat_time_day"]`
+
+Se compara con lo guardado y cada día se clasifica en `ok`, `fila_faltante`,
+`array_incompleto` o `spend_desactualizado`. Con `heal=1` los días malos se
+agrupan en rangos contiguos y se reencolan con `force=1&platforms=<plataforma>`
+— así reparar 120 días de Meta no
+arrastra 120 días de Hotmart (paginado) ni de GA4 (varias queries por día).
+
+```bash
+# Solo diagnóstico (no escribe nada)
+curl -X POST -H "Authorization: Bearer $CRON_SECRET" \
+  "https://reportes.adshouse.cloud/api/worker/reconcile?client_id=<uuid>&start=2026-07-01&end=2026-07-22"
+
+# Diagnóstico + reparación
+curl -X POST -H "Authorization: Bearer $CRON_SECRET" \
+  "https://reportes.adshouse.cloud/api/worker/reconcile?client_id=<uuid>&start=2026-07-01&end=2026-07-22&heal=1"
+
+# Auditar solo una plataforma
+curl -X POST -H "Authorization: Bearer $CRON_SECRET" \
+  "https://reportes.adshouse.cloud/api/worker/reconcile?client_id=<uuid>&platforms=tiktok"
+
+# Todos los clientes, últimos 120 días (vía la cola)
+curl -X POST -H "Authorization: Bearer $CRON_SECRET" \
+  "https://reportes.adshouse.cloud/api/worker/enqueue?plan=reconciliacion"
+```
+
+La respuesta incluye `faltante_total_en_dashboard` (cuánto gasto real no está
+reflejado) y desglosa el informe por plataforma. El día en curso se excluye de la
+reparación: la plataforma va en vivo y la BD es del último sync, así que siempre
+diverge.
+
+**Prevención continua.** El worker ya no considera "ya descargada" una fecha cuyo
+desglose no cuadre con su columna (`metaRowConsistent` / `tiktokRowConsistent`),
+pide el gasto a nivel de cuenta en cada sync para detectar desvíos al vuelo
+(alerta `spend_mismatch`), y el scheduler del VPS corre la reconciliación cada
+domingo a las 03:00. En la Vista de Embudo Diaria los días afectados llevan un ⚠
+en lugar de mostrar un $0 creíble.
+
+### Parámetro `platforms` del worker
+
+`GET /api/worker?...&platforms=meta` limita el sync a las fuentes indicadas (CSV:
+`meta`, `tiktok`, `hotmart`, `ga4`). Las excluidas se marcan como fallidas, lo que
+hace que el guard de preservación **omita sus columnas del upsert** en lugar de
+escribir ceros. Es lo que hace viable un backfill amplio de una sola plataforma.
 
 ## Sync manual desde el dashboard
 

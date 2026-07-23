@@ -1498,6 +1498,17 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                                                                                 return (
                                                                                     <TableCell key={col.id} className="font-mono text-xs">
                                                                                         {format(currentDate, 'dd MMM (EEE)', { locale: es })}
+                                                                                        {/* El desglose por campaña no cuadra con el gasto
+                                                                                            registrado: sin este aviso el día se ve como un
+                                                                                            cero legítimo en vez de como un dato faltante. */}
+                                                                                        {raw.meta_data_incomplete && (
+                                                                                            <span
+                                                                                                className="ml-1.5 text-amber-500 cursor-help"
+                                                                                                title="Este día tiene gasto registrado pero el detalle por campaña está incompleto, así que las cifras filtradas salen de menos. Se repara en la próxima reconciliación."
+                                                                                            >
+                                                                                                ⚠
+                                                                                            </span>
+                                                                                        )}
                                                                                     </TableCell>
                                                                                 )
                                                                             }

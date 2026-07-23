@@ -851,6 +851,20 @@ export async function updateManualMetric(
 /**
  * Get total historical spend for a specific keyword filter (for budget calculations)
  */
+/**
+ * Gasto acumulado de una pestaña: Meta + TikTok.
+ *
+ * Antes solo leía `meta_campaigns`/`meta_spend`, así que en un cliente que
+ * invierte en las dos plataformas la tarjeta "Gasto Acumulado" ignoraba el 100%
+ * de lo gastado en TikTok. No era un desfase intermitente: era un faltante
+ * sistemático en toda pestaña con keyword, y además inflaba cualquier cálculo
+ * que usara esta cifra como denominador (% de presupuesto consumido).
+ *
+ * El criterio de filtrado es el mismo que aplica el dashboard en el resto de
+ * métricas: se suman las campañas cuyo nombre contiene el keyword (ver
+ * `filterCampaignList` en src/lib/campaign-filter.ts). Sin keyword se usa la
+ * columna agregada.
+ */
 export async function getTabTotalSpend(
   clienteId: string,
   keywordFilter: string,
@@ -860,7 +874,7 @@ export async function getTabTotalSpend(
   const supabase = await createAdminClient();
   let query = supabase
     .from('metricas_diarias')
-    .select('meta_campaigns, meta_spend')
+    .select('meta_campaigns, meta_spend, tiktok_campaigns, tiktok_spend')
     .eq('cliente_id', clienteId);
   if (fechaInicio) query = query.gte('fecha', fechaInicio);
   if (fechaFin) query = query.lte('fecha', fechaFin);
@@ -868,17 +882,19 @@ export async function getTabTotalSpend(
 
   if (!metrics) return 0;
 
+  const kw = keywordFilter?.toLowerCase() ?? '';
+  /** Gasto de una plataforma en una fila, filtrado por keyword si lo hay. */
+  const spendDe = (columna: any, campanas: any) => {
+    if (!kw || !Array.isArray(campanas)) return parseFloat(columna || '0') || 0;
+    return campanas
+      .filter((c: any) => c.name?.toLowerCase().includes(kw))
+      .reduce((s: number, c: any) => s + (parseFloat(c.spend || '0') || 0), 0);
+  };
+
   let totalSpent = 0;
   metrics.forEach((row) => {
-    if (!keywordFilter || !row.meta_campaigns) {
-      totalSpent += parseFloat(row.meta_spend || '0');
-    } else {
-      const kw = keywordFilter.toLowerCase();
-      const matching = (Array.isArray(row.meta_campaigns) ? row.meta_campaigns : []).filter(
-        (c: any) => c.name?.toLowerCase().includes(kw)
-      );
-      totalSpent += matching.reduce((s: number, c: any) => s + parseFloat(c.spend || '0'), 0);
-    }
+    totalSpent += spendDe(row.meta_spend, row.meta_campaigns);
+    totalSpent += spendDe(row.tiktok_spend, row.tiktok_campaigns);
   });
   return totalSpent;
 }
