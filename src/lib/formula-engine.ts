@@ -6,7 +6,7 @@
 import { filterCampaignList, type AnyCampaignFilter } from './campaign-filter'
 
 // All available fields from metricas_diarias that formulas can reference.
-const FIELD_MAP: Record<string, string> = {
+export const FIELD_MAP: Record<string, string> = {
     // ── Meta: Entrega ────────────────────────────────────────────────────────
     meta_spend: 'meta_spend',
     meta_impressions: 'meta_impressions',
@@ -137,7 +137,7 @@ const FIELD_MAP: Record<string, string> = {
 
 // Complex metrics that should be resolved dynamically (as formulas)
 // to ensure perfect aggregation (e.g. not summing CPCs, but dividing total spend by total clicks).
-const MACRO_MAP: Record<string, string> = {
+export const MACRO_MAP: Record<string, string> = {
     meta_cpc: 'meta_spend / meta_clicks',
     meta_cpc_link: 'meta_spend / meta_link_clicks',
     meta_cpm: '(meta_spend / meta_impressions) * 1000',
@@ -535,7 +535,11 @@ export function filterRowByTikTokAccount(
 ): Record<string, any> {
     const hasFilter = filter !== undefined && filter !== ''
     if (!accountId && !hasFilter) return row
-    const campaigns: any[] = Array.isArray(row.tiktok_campaigns) ? row.tiktok_campaigns : []
+    // Sin desglose por campaña no se puede recortar: preservar el tiktok_spend
+    // almacenado (ya filtrado por el keyword de la pestaña) en vez de ponerlo en 0
+    // — mismo criterio que enrichTikTokRow para filas antiguas sin array.
+    if (!Array.isArray(row.tiktok_campaigns)) return row
+    const campaigns: any[] = row.tiktok_campaigns
     let filtered = accountId ? campaigns.filter(c => c.account_id === accountId) : campaigns
     if (hasFilter) filtered = filterCampaignList(filtered, filter, campaignGroups)
     return {

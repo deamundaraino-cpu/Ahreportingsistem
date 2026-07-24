@@ -10,7 +10,8 @@
  */
 
 import { splitRange, DEFAULT_CHUNK_DAYS } from '../src/lib/sync/queue'
-import { evaluateFormula } from '../src/lib/formula-engine'
+import { evaluateFormula, aggregateFormula, filterRowByTikTokAccount } from '../src/lib/formula-engine'
+import { applyCompoundFilter } from '../src/lib/campaign-filter'
 import {
     importesCuadran,
     sumarCampanas,
@@ -470,6 +471,93 @@ sec('campaign-filter — (de)serialización de filtro de pestaña')
     // Cero condiciones con valor → string vacío (sin filtro).
     check('sin condiciones válidas → string vacío', serializeTabFilter({ mode: 'and', conditions: [{ type: 'keyword', operator: 'includes', value: '' }] }) === '')
     check('vacío/nulo se parsea como string vacío', parseTabFilter('') === '' && parseTabFilter(null) === '')
+}
+
+// ─── Motor aritmético: precedencia, paréntesis, división por cero, constantes ─
+// El motor no usa eval (CSP bloquea unsafe-eval); safeEvalArithmetic parsea a mano.
+// Verificamos que respeta precedencia y casos límite.
+
+sec('formula-engine — aritmética base')
+
+{
+    const r = {}
+    check('suma simple', evaluateFormula('2 + 3', r) === 5)
+    check('precedencia * sobre +', evaluateFormula('2 + 3 * 4', r) === 14, String(evaluateFormula('2 + 3 * 4', r)))
+    check('paréntesis alteran precedencia', evaluateFormula('(2 + 3) * 4', r) === 20)
+    check('resta y negativo unario', evaluateFormula('10 - -5', r) === 15, String(evaluateFormula('10 - -5', r)))
+    check('división exacta', evaluateFormula('100 / 4', r) === 25)
+    check('división por cero → null', evaluateFormula('5 / 0', r) === null)
+    check('constante pura se respeta (valores fijos permitidos)', evaluateFormula('1549187', r) === 1549187)
+    check('campo + constante', evaluateFormula('meta_spend + 1000', { meta_spend: 500 }) === 1500)
+    check('campo ausente cuenta como 0', evaluateFormula('meta_spend + tiktok_spend', { meta_spend: 500 }) === 500)
+    check('meta_spend + tiktok_spend suma ambos', evaluateFormula('meta_spend + tiktok_spend', { meta_spend: 3729750, tiktok_spend: 1745991 }) === 5475741, String(evaluateFormula('meta_spend + tiktok_spend', { meta_spend: 3729750, tiktok_spend: 1745991 })))
+}
+
+// ─── aggregateFormula: agrega sumando campos, no promediando ratios ───────────
+// Y paridad clave: agg(a+b) === agg(a) + agg(b) sobre las mismas filas.
+
+sec('formula-engine — agregación correcta de ratios y sumas')
+
+{
+    const filas = [
+        { meta_spend: 100, meta_clicks: 10, tiktok_spend: 50 },
+        { meta_spend: 300, meta_clicks: 40, tiktok_spend: 150 },
+    ]
+    // CPC agregado = Σspend / Σclicks = 400/50 = 8 (NO promedio de 10 y 7.5)
+    check('CPC agregado usa totales, no promedia', aggregateFormula('meta_spend / meta_clicks', filas) === 8, String(aggregateFormula('meta_spend / meta_clicks', filas)))
+    // Paridad de la suma: la causa raíz del bug reportado.
+    const sumaConjunta = aggregateFormula('meta_spend + tiktok_spend', filas)
+    const sumaSeparada = (aggregateFormula('meta_spend', filas) ?? 0) + (aggregateFormula('tiktok_spend', filas) ?? 0)
+    check('agg(meta+tiktok) === agg(meta) + agg(tiktok)', sumaConjunta === sumaSeparada && sumaConjunta === 600, `${sumaConjunta} vs ${sumaSeparada}`)
+}
+
+// ─── applyCompoundFilter: el filtro de tarjeta recorta Meta Y TikTok ──────────
+// Antes solo recortaba Meta; una tarjeta con filtro propio mezclaba TikTok sin filtrar.
+
+sec('campaign-filter — applyCompoundFilter aplica a ambas plataformas')
+
+{
+    const row = {
+        meta_spend: 999, tiktok_spend: 999,
+        meta_campaigns: [
+            { name: '[WEBINAR] Meta', spend: 700, clicks: 7 },
+            { name: 'Otra Meta', spend: 300, clicks: 3 },
+        ],
+        tiktok_campaigns: [
+            { name: '[WEBINAR] TikTok', spend: 400, clicks: 4 },
+            { name: 'Otra TikTok', spend: 100, clicks: 1 },
+        ],
+    }
+    // Sin campaignFilter → fila intacta.
+    check('sin filtro de tarjeta devuelve la fila tal cual', applyCompoundFilter(row, '', undefined, []) === row)
+
+    // Filtro de tarjeta "webinar" → recorta AMBAS plataformas.
+    const filtered = applyCompoundFilter(row, '', { type: 'keyword', operator: 'includes', value: 'webinar' }, [])
+    check('recorta meta_spend a la campaña que matchea (700)', filtered.meta_spend === 700, String(filtered.meta_spend))
+    check('recorta tiktok_spend a la campaña que matchea (400)', filtered.tiktok_spend === 400, String(filtered.tiktok_spend))
+
+    // Keyword de pestaña + filtro de tarjeta se encadenan (Y).
+    const chained = applyCompoundFilter(row, 'meta', { type: 'keyword', operator: 'includes', value: 'webinar' }, [])
+    check('keyword pestaña ∧ filtro tarjeta: solo campañas con ambos (meta_spend 0, no hay "webinar" ∧ "meta" en TikTok)', chained.meta_spend === 700, String(chained.meta_spend))
+}
+
+// ─── filterRowByTikTokAccount: preserva spend almacenado sin array ────────────
+
+sec('formula-engine — filterRowByTikTokAccount preserva filas sin desglose')
+
+{
+    // Fila antigua sin array tiktok_campaigns: NO debe ponerse en 0.
+    const vieja = { tiktok_spend: 1549187 }
+    const out = filterRowByTikTokAccount(vieja, '7387', undefined, [])
+    check('sin array tiktok_campaigns preserva tiktok_spend almacenado', out.tiktok_spend === 1549187, String(out.tiktok_spend))
+
+    // Fila con array: filtra por cuenta.
+    const nueva = { tiktok_spend: 999, tiktok_campaigns: [
+        { name: 'A', spend: 600, account_id: '7387' },
+        { name: 'B', spend: 300, account_id: '7999' },
+    ] }
+    const filtrada = filterRowByTikTokAccount(nueva, '7387', undefined, [])
+    check('con array filtra por account_id (600)', filtrada.tiktok_spend === 600, String(filtrada.tiktok_spend))
 }
 
 // ─── Resultado ───────────────────────────────────────────────────────────────

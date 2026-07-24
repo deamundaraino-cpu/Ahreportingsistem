@@ -43,7 +43,7 @@ import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, us
 import { SortableContext, horizontalListSortingStrategy, verticalListSortingStrategy, useSortable, arrayMove } from '@dnd-kit/sortable'
 
 import { CSS } from '@dnd-kit/utilities'
-import { enrichMetaRow, enrichTikTokRow, filterCampaignList, parseTabFilter, tabFilterLabel } from '@/lib/campaign-filter'
+import { enrichMetaRow, enrichTikTokRow, parseTabFilter, tabFilterLabel, applyCompoundFilter } from '@/lib/campaign-filter'
 import { enrichOfflineRow } from '@/lib/offline-filter'
 import type { CampaignFilterSpec, TabCampaignFilter } from '@/lib/layout-types'
 
@@ -64,28 +64,6 @@ function resolveFilter(
 ): CampaignFilterSpec | string {
     if (campaignFilter) return campaignFilter
     return fallback
-}
-
-/**
- * Applies keyword global + campaignFilter específico en cadena sobre una fila de filteredMetrics.
- * filteredMetrics preserva meta_campaigns original (enrichMetaRow hace ...row),
- * así que podemos re-filtrar la lista de campañas: keyword primero, luego campaignFilter.
- * Los campos de funnel/hotmart/ga se conservan porque vienen del propio filteredRow.
- */
-function applyCompoundFilter(
-    filteredRow: any,
-    keyword: string | TabCampaignFilter,
-    campaignFilter: CampaignFilterSpec | undefined,
-    campaignGroups: any[]
-): any {
-    if (!campaignFilter) return filteredRow
-    if (!filteredRow.meta_campaigns || !Array.isArray(filteredRow.meta_campaigns)) {
-        return enrichMetaRow(filteredRow, campaignFilter, campaignGroups)
-    }
-    const kwCampaigns = keyword
-        ? filterCampaignList(filteredRow.meta_campaigns, keyword, campaignGroups)
-        : filteredRow.meta_campaigns
-    return enrichMetaRow({ ...filteredRow, meta_campaigns: kwCampaigns }, campaignFilter, campaignGroups)
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────

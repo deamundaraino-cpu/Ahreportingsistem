@@ -296,6 +296,40 @@ export function enrichTikTokRow(
     }
 }
 
+/**
+ * Encadena el filtro GLOBAL de la pestaña (`keyword`) con el filtro específico de
+ * una tarjeta/columna (`campaignFilter`): primero recorta la lista de campañas por
+ * el keyword de la pestaña, luego re-deriva las métricas con el filtro de la
+ * tarjeta. Se aplica a AMBAS plataformas (Meta y TikTok) — antes solo recortaba
+ * Meta, así que una tarjeta con filtro propio mezclaba TikTok sin filtrar.
+ *
+ * Sin `campaignFilter` devuelve la fila tal cual (ya viene enriquecida con el
+ * keyword de la pestaña). Los campos de funnel/hotmart/ga se conservan porque
+ * `enrichMetaRow`/`enrichTikTokRow` hacen `...row`.
+ */
+export function applyCompoundFilter(
+    row: any,
+    keyword: AnyCampaignFilter,
+    campaignFilter: CampaignFilterSpec | undefined,
+    campaignGroups?: any[]
+): any {
+    if (!campaignFilter) return row
+    let out = row
+    // Meta: keyword de pestaña → subset → filtro de tarjeta.
+    if (Array.isArray(row.meta_campaigns)) {
+        const kw = filterCampaignList(row.meta_campaigns, keyword, campaignGroups)
+        out = enrichMetaRow({ ...out, meta_campaigns: kw }, campaignFilter, campaignGroups)
+    } else {
+        out = enrichMetaRow(out, campaignFilter, campaignGroups)
+    }
+    // TikTok: mismo encadenamiento (antes se omitía).
+    if (Array.isArray(row.tiktok_campaigns)) {
+        const kw = filterCampaignList(row.tiktok_campaigns, keyword, campaignGroups)
+        out = enrichTikTokRow({ ...out, tiktok_campaigns: kw }, campaignFilter, campaignGroups)
+    }
+    return out
+}
+
 // ─── Filtro de pestaña: (de)serialización sobre keyword_meta (TEXT) ───────────
 // Un TabCampaignFilter viaja serializado dentro de `cliente_tabs.keyword_meta`
 // con el prefijo `__cf:` (sin migración de BD). Una sola condición `includes`
