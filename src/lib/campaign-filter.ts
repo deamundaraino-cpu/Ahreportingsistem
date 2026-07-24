@@ -1,4 +1,15 @@
-import type { CampaignFilterOperator, CampaignFilterSpec } from './layout-types'
+import type { CampaignFilterOperator, CampaignFilterSpec, TabCampaignFilter } from './layout-types'
+
+/** Filtro admitido en todo el pipeline: string simple, un spec, o compuesto Y/O. */
+export type AnyCampaignFilter = string | CampaignFilterSpec | TabCampaignFilter | undefined
+
+/** Prefijo con que se serializa un TabCampaignFilter dentro de `keyword_meta`. */
+const TAB_FILTER_PREFIX = '__cf:'
+
+/** Type guard: ¿es un filtro compuesto (lista de condiciones Y/O)? */
+function isTabFilter(f: AnyCampaignFilter): f is TabCampaignFilter {
+    return typeof f === 'object' && f !== null && 'conditions' in f && Array.isArray((f as TabCampaignFilter).conditions)
+}
 
 // Helper: Verificar si una campaña coincide con el patrón del grupo
 function campaignMatchesPattern(
@@ -64,45 +75,77 @@ function campaignMatchesOperator(
     }
 }
 
-/**
- * Filters a list of campaigns by a keyword/group/spec filter.
- * Returns the subset of campaigns that match. Exported for compound filtering.
- */
-export function filterCampaignList(
-    campaigns: any[],
-    filter: string | CampaignFilterSpec | undefined,
-    campaignGroups?: any[]
-): any[] {
-    if (!filter || (typeof filter === 'string' && filter === '') ||
-        (typeof filter !== 'string' && (Array.isArray(filter.value) ? filter.value.length === 0 : filter.value === ''))) {
-        return campaigns
+/** ¿El filtro (string vacío / spec sin valor / compuesto sin condiciones) es "nada"? */
+function isEmptyFilter(filter: AnyCampaignFilter): boolean {
+    if (!filter) return true
+    if (typeof filter === 'string') return filter === ''
+    if (isTabFilter(filter)) {
+        return filter.conditions.every(c => (Array.isArray(c.value) ? c.value.length === 0 : c.value === ''))
     }
+    return Array.isArray(filter.value) ? filter.value.length === 0 : filter.value === ''
+}
+
+type CampaignLike = { name?: string | null; campaign_id?: string | number | null }
+type CampaignGroupLike = { id?: string; campaign_group_mappings?: Array<{ campaign_id?: string; campaign_name_pattern?: string }> }
+
+/**
+ * ¿Una campaña individual cumple una condición simple (string o CampaignFilterSpec)?
+ * Es el ladrillo reutilizado tanto por el filtro simple como por el compuesto.
+ */
+function campaignMatchesOne(
+    campaign: CampaignLike,
+    filter: string | CampaignFilterSpec,
+    campaignGroups?: CampaignGroupLike[]
+): boolean {
     if (typeof filter === 'string') {
+        if (filter === '') return true
         if (campaignGroups && campaignGroups.length > 0) {
             const selectedGroup = campaignGroups.find(g => g.id === filter)
             if (selectedGroup && selectedGroup.campaign_group_mappings) {
-                return campaigns.filter((c: any) =>
-                    campaignMatchesGroup(c, selectedGroup.campaign_group_mappings)
-                )
+                return campaignMatchesGroup(campaign, selectedGroup.campaign_group_mappings)
             }
         }
-        const kw = filter.toLowerCase()
-        return campaigns.filter((c: any) => c.name?.toLowerCase().includes(kw))
+        return (campaign.name?.toLowerCase() ?? '').includes(filter.toLowerCase())
     }
-    // CampaignFilterSpec
     if (filter.type === 'group' && typeof filter.value === 'string' && campaignGroups) {
         const selectedGroup = campaignGroups.find(g => g.id === filter.value)
         if (selectedGroup && selectedGroup.campaign_group_mappings) {
-            return campaigns.filter((c: any) =>
-                campaignMatchesGroup(c, selectedGroup.campaign_group_mappings)
-            )
+            return campaignMatchesGroup(campaign, selectedGroup.campaign_group_mappings)
         }
-        return campaigns
+        return true // grupo no resuelto → no recorta (comportamiento previo)
     }
+    // Condición vacía no recorta.
+    if (Array.isArray(filter.value) ? filter.value.length === 0 : filter.value === '') return true
     const op: CampaignFilterOperator = filter.operator ?? 'includes'
-    return campaigns.filter((c: any) =>
-        campaignMatchesOperator(c.name || '', op, filter.value)
-    )
+    return campaignMatchesOperator(campaign.name || '', op, filter.value)
+}
+
+/**
+ * Filters a list of campaigns by a keyword/group/spec/compound filter.
+ * Returns the subset of campaigns that match. Exported for compound filtering.
+ *
+ * Un `TabCampaignFilter` combina varias condiciones con Y (todas) u O (alguna),
+ * reutilizando `campaignMatchesOne` por condición.
+ */
+export function filterCampaignList(
+    campaigns: any[],
+    filter: AnyCampaignFilter,
+    campaignGroups?: any[]
+): any[] {
+    if (isEmptyFilter(filter)) return campaigns
+
+    if (isTabFilter(filter)) {
+        // Condiciones con valor; las vacías se ignoran (no aportan al Y/O).
+        const conds = filter.conditions.filter(c => (Array.isArray(c.value) ? c.value.length > 0 : c.value !== ''))
+        if (conds.length === 0) return campaigns
+        return campaigns.filter((c: any) =>
+            filter.mode === 'or'
+                ? conds.some(cond => campaignMatchesOne(c, cond, campaignGroups))
+                : conds.every(cond => campaignMatchesOne(c, cond, campaignGroups))
+        )
+    }
+
+    return campaigns.filter((c: any) => campaignMatchesOne(c, filter as string | CampaignFilterSpec, campaignGroups))
 }
 
 /**
@@ -135,7 +178,7 @@ export function tiktokRowIsIncomplete(row: any): boolean {
 
 export function enrichMetaRow(
     row: any,
-    filter: string | CampaignFilterSpec | undefined,
+    filter: AnyCampaignFilter,
     campaignGroups?: any[]
 ): any {
     if (!row.meta_campaigns || !Array.isArray(row.meta_campaigns)) return row
@@ -235,7 +278,7 @@ export function enrichMetaRow(
  */
 export function enrichTikTokRow(
     row: any,
-    filter: string | CampaignFilterSpec | undefined,
+    filter: AnyCampaignFilter,
     campaignGroups?: any[]
 ): any {
     if (!row.tiktok_campaigns || !Array.isArray(row.tiktok_campaigns)) return row
@@ -251,4 +294,77 @@ export function enrichTikTokRow(
         tiktok_clicks:      ri('clicks'),
         tiktok_conversions: ri('conversions'),
     }
+}
+
+// ─── Filtro de pestaña: (de)serialización sobre keyword_meta (TEXT) ───────────
+// Un TabCampaignFilter viaja serializado dentro de `cliente_tabs.keyword_meta`
+// con el prefijo `__cf:` (sin migración de BD). Una sola condición `includes`
+// se guarda como string plano → compatibilidad total con pestañas existentes y
+// con cualquier consumidor que aún trate keyword_meta como texto.
+
+/**
+ * Lee `keyword_meta` crudo y devuelve el filtro efectivo:
+ * string plano (comportamiento clásico) o `TabCampaignFilter` compuesto.
+ * Ante JSON corrupto degrada al string tal cual (nunca lanza).
+ */
+export function parseTabFilter(raw: string | null | undefined): string | TabCampaignFilter {
+    if (!raw) return ''
+    if (!raw.startsWith(TAB_FILTER_PREFIX)) return raw
+    try {
+        const parsed = JSON.parse(raw.slice(TAB_FILTER_PREFIX.length))
+        if (parsed && Array.isArray(parsed.conditions)) {
+            const mode: 'and' | 'or' = parsed.mode === 'or' ? 'or' : 'and'
+            const conditions: CampaignFilterSpec[] = parsed.conditions
+                .filter((c: any) => c && (typeof c.value === 'string' || Array.isArray(c.value)))
+                .map((c: any) => ({
+                    type: c.type === 'group' ? 'group' : 'keyword',
+                    operator: c.operator,
+                    value: c.value,
+                }))
+            if (conditions.length > 0) return { mode, conditions }
+        }
+    } catch {
+        // JSON inválido → tratar como texto plano
+    }
+    return raw
+}
+
+/**
+ * Serializa un `TabCampaignFilter` para guardarlo en `keyword_meta`.
+ * Colapsa a string simple cuando hay una única condición `includes` (o ninguna),
+ * para no ensuciar datos que no lo necesitan y mantener retro-compatibilidad.
+ */
+export function serializeTabFilter(f: string | TabCampaignFilter | null | undefined): string {
+    if (f == null) return ''
+    if (typeof f === 'string') return f
+    const conds = f.conditions.filter(c => (Array.isArray(c.value) ? c.value.length > 0 : String(c.value ?? '') !== ''))
+    if (conds.length === 0) return ''
+    if (conds.length === 1) {
+        const c = conds[0]
+        if (c.type === 'keyword' && (c.operator ?? 'includes') === 'includes' && typeof c.value === 'string') {
+            return c.value
+        }
+    }
+    return TAB_FILTER_PREFIX + JSON.stringify({ mode: f.mode === 'or' ? 'or' : 'and', conditions: conds })
+}
+
+const OPERATOR_LABEL: Record<CampaignFilterOperator, string> = {
+    includes: 'incluye', excludes: 'excluye', exact: '=', not_exact: '≠',
+    starts_with: 'empieza', ends_with: 'termina', any_of: 'entre', none_of: 'fuera de',
+}
+
+/**
+ * Etiqueta legible del filtro de una pestaña para badges/tooltips.
+ * String plano → tal cual; compuesto → condiciones unidas por "y"/"o".
+ */
+export function tabFilterLabel(raw: string | null | undefined): string {
+    const f = parseTabFilter(raw)
+    if (typeof f === 'string') return f
+    const parts = f.conditions.map(c => {
+        const val = Array.isArray(c.value) ? c.value.join('/') : String(c.value ?? '')
+        if (c.type === 'group') return `grupo:${val}`
+        const op = c.operator ?? 'includes'
+        return op === 'includes' ? val : `${OPERATOR_LABEL[op]} ${val}`
+    })
+    return parts.join(f.mode === 'or' ? ' o ' : ' y ')
 }

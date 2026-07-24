@@ -3,8 +3,7 @@
  * Supports: +, -, *, / and references to raw DB columns.
  * Returns null when division by zero or any referenced value is missing (0).
  */
-import { filterCampaignList } from './campaign-filter'
-import type { CampaignFilterSpec } from './layout-types'
+import { filterCampaignList, type AnyCampaignFilter } from './campaign-filter'
 
 // All available fields from metricas_diarias that formulas can reference.
 const FIELD_MAP: Record<string, string> = {
@@ -531,7 +530,7 @@ export function aggregateFormula(
 export function filterRowByTikTokAccount(
     row: Record<string, any>,
     accountId: string | undefined,
-    filter?: string | CampaignFilterSpec,
+    filter?: AnyCampaignFilter,
     campaignGroups?: any[]
 ): Record<string, any> {
     const hasFilter = filter !== undefined && filter !== ''

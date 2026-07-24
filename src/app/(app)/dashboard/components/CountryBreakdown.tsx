@@ -4,6 +4,7 @@ import { useState, useMemo } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Globe, ChevronDown, ChevronUp, TrendingUp, DollarSign } from 'lucide-react'
 import { aggregateByCountry, type CountryMetrics } from '@/lib/country-parser'
+import type { TabCampaignFilter } from '@/lib/layout-types'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -136,7 +137,7 @@ function CountryRow({ cm, totalSpend, rank }: { cm: CountryMetrics; totalSpend: 
 
 interface CountryBreakdownProps {
     metrics: any[]           // enriched metric rows (already filtered by tab keyword)
-    keywordFilter?: string
+    keywordFilter?: string | TabCampaignFilter
     leadsFormula?: string    // e.g. "meta_custom_leadduaypiar" or "meta_leads"
 }
 

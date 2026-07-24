@@ -17,7 +17,7 @@ import {
 import { evaluateFormula, aggregateFormula } from '@/lib/formula-engine'
 import { format, parseISO, isValid, startOfWeek, startOfMonth, startOfYear } from 'date-fns'
 import { es } from 'date-fns/locale'
-import type { ChartDef } from '@/lib/layout-types'
+import type { ChartDef, TabCampaignFilter } from '@/lib/layout-types'
 import { enrichMetaRow, filterCampaignList } from '@/lib/campaign-filter'
 import { enrichOfflineRow } from '@/lib/offline-filter'
 import { aggregateRankingRows } from '@/lib/ranking-aggregation'
@@ -197,7 +197,7 @@ function buildDimensionData(
     campaignFilter?: import('@/lib/layout-types').CampaignFilterSpec,
     campaignGroups: any[] = [],
     accountId?: string,
-    effectiveKeyword?: string,
+    effectiveKeyword?: string | TabCampaignFilter,
     topN: number = 10
 ): Array<Record<string, any>> {
     const isTikTok = dimension.startsWith('tiktok_')
@@ -280,7 +280,7 @@ interface MetricChartsProps {
     varContext?: Record<string, number>
     rawMetrics?: any[]
     campaignGroups?: any[]
-    effectiveKeyword?: string
+    effectiveKeyword?: string | TabCampaignFilter
     sourceMapping?: Record<string, string>
     platformSet?: Set<string>
     layoutCustomMetrics?: Record<string, string>
@@ -326,7 +326,7 @@ function SingleMetricChart({
     varContext: Record<string, number>
     rawMetrics?: any[]
     campaignGroups: any[]
-    effectiveKeyword: string
+    effectiveKeyword: string | TabCampaignFilter
     sourceMapping: Record<string, string>
     platformSet: Set<string>
     layoutCustomMetrics: Record<string, string>

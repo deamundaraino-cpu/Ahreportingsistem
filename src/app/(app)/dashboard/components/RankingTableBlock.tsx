@@ -2,7 +2,7 @@
 
 import React, { useMemo, useEffect, useState, useRef } from 'react'
 import { ExternalLink, ChevronUp, ChevronDown, ChevronsUpDown, Layers, X } from 'lucide-react'
-import type { RankingTableDef } from '@/lib/layout-types'
+import type { RankingTableDef, TabCampaignFilter } from '@/lib/layout-types'
 import { evaluateFormula, formatValue } from '@/lib/formula-engine'
 import { aggregateRankingRows } from '@/lib/ranking-aggregation'
 
@@ -14,7 +14,7 @@ interface Props {
     customMetrics: Record<string, string>
     clienteId: string
     accountId?: string
-    effectiveKeyword?: string
+    effectiveKeyword?: string | TabCampaignFilter
 }
 
 interface ConsolidateModal {

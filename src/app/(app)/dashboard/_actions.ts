@@ -1,6 +1,7 @@
 'use server';
 
 import { createAdminClient, createClient } from '@/utils/supabase/server';
+import { filterCampaignList, parseTabFilter } from '@/lib/campaign-filter';
 import { notifyUsers } from '@/lib/notifications/notify';
 import { sendWhatsAppNotification } from '@/lib/whatsapp/notify';
 import { getWeeksInRange } from '@/lib/date-utils';
@@ -979,12 +980,13 @@ export async function getTabTotalSpend(
 
   if (!metrics) return 0;
 
-  const kw = keywordFilter?.toLowerCase() ?? '';
-  /** Gasto de una plataforma en una fila, filtrado por keyword si lo hay. */
+  // El keyword de la pestaña puede ser un filtro compuesto (Y/O) serializado.
+  const filter = parseTabFilter(keywordFilter);
+  const hasFilter = typeof filter === 'string' ? filter !== '' : filter.conditions.length > 0;
+  /** Gasto de una plataforma en una fila, filtrado por el filtro de pestaña si lo hay. */
   const spendDe = (columna: any, campanas: any) => {
-    if (!kw || !Array.isArray(campanas)) return parseFloat(columna || '0') || 0;
-    return campanas
-      .filter((c: any) => c.name?.toLowerCase().includes(kw))
+    if (!hasFilter || !Array.isArray(campanas)) return parseFloat(columna || '0') || 0;
+    return filterCampaignList(campanas, filter)
       .reduce((s: number, c: any) => s + (parseFloat(c.spend || '0') || 0), 0);
   };
 

@@ -5,9 +5,38 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Button } from '@/components/ui/button'
-import { Trash2, ChevronDown, ChevronRight, Zap, Copy, Bookmark } from 'lucide-react'
+import { Trash2, ChevronDown, ChevronRight, Zap, Copy, Bookmark, Plus, X } from 'lucide-react'
 import { saveClienteTab, deleteClienteTab, duplicateClienteTab, saveTabAsTemplate } from '../_actions'
+import { parseTabFilter, serializeTabFilter } from '@/lib/campaign-filter'
+import type { CampaignFilterOperator } from '@/lib/layout-types'
 import { toast } from 'sonner'
+
+/** Operadores ofrecidos en el filtro de pestaña (subset con etiquetas claras). */
+const TAB_FILTER_OPS: { value: CampaignFilterOperator; label: string }[] = [
+    { value: 'includes',    label: 'Contiene' },
+    { value: 'excludes',    label: 'No contiene' },
+    { value: 'exact',       label: 'Es igual a' },
+    { value: 'not_exact',   label: 'No es igual a' },
+    { value: 'starts_with', label: 'Empieza con' },
+    { value: 'ends_with',   label: 'Termina con' },
+]
+
+type FilterCond = { operator: CampaignFilterOperator; value: string }
+
+/** Estado inicial de condiciones a partir del keyword_meta guardado (string o compuesto). */
+function initConditions(raw: string | null | undefined): { mode: 'and' | 'or'; conditions: FilterCond[] } {
+    const parsed = parseTabFilter(raw)
+    if (typeof parsed === 'string') {
+        return { mode: 'and', conditions: [{ operator: 'includes', value: parsed }] }
+    }
+    return {
+        mode: parsed.mode,
+        conditions: parsed.conditions.map(c => ({
+            operator: (c.operator ?? 'includes') as CampaignFilterOperator,
+            value: Array.isArray(c.value) ? c.value.join(', ') : String(c.value ?? ''),
+        })),
+    }
+}
 
 type HotmartFunnel = {
     enabled?: boolean
@@ -45,7 +74,10 @@ export function TabConfigModal({
     clienteHasHotmart?: boolean
 }) {
     const [nombre, setNombre] = useState(tabToEdit?.nombre || '')
-    const [keyword, setKeyword] = useState(tabToEdit?.keyword_meta || '')
+    // Filtro de campaña: una o varias condiciones combinadas con Y/O.
+    const initial = initConditions(tabToEdit?.keyword_meta)
+    const [filterMode, setFilterMode] = useState<'and' | 'or'>(initial.mode)
+    const [conditions, setConditions] = useState<FilterCond[]>(initial.conditions)
     // Plantilla de pestaña a aplicar al crear una nueva (solo visualización)
     const [templateId, setTemplateId] = useState('none')
     const [savingTemplate, setSavingTemplate] = useState(false)
@@ -93,9 +125,27 @@ export function TabConfigModal({
         toast.success(`Plantilla "${name.trim()}" guardada`)
     }
 
+    const hasValidCondition = conditions.some(c => c.value.trim() !== '')
+
+    const updateCondition = (idx: number, patch: Partial<FilterCond>) =>
+        setConditions(prev => prev.map((c, i) => (i === idx ? { ...c, ...patch } : c)))
+    const addCondition = () =>
+        setConditions(prev => [...prev, { operator: 'includes', value: '' }])
+    const removeCondition = (idx: number) =>
+        setConditions(prev => (prev.length > 1 ? prev.filter((_, i) => i !== idx) : prev))
+
     const handleSave = async () => {
-        if (!nombre || !keyword) return
+        if (!nombre || !hasValidCondition) return
         setSaving(true)
+
+        // Serializa a keyword_meta: string plano si es una sola condición "Contiene",
+        // o JSON con prefijo __cf: si es compuesto. Retro-compatible con lo existente.
+        const keyword_meta = serializeTabFilter({
+            mode: filterMode,
+            conditions: conditions
+                .filter(c => c.value.trim() !== '')
+                .map(c => ({ type: 'keyword' as const, operator: c.operator, value: c.value.trim() })),
+        })
 
         let hotmart_funnel: HotmartFunnel | null = null
         if (clienteHasHotmart && funnelEnabled) {
@@ -114,7 +164,7 @@ export function TabConfigModal({
         await saveClienteTab(clienteId, {
             id: tabToEdit?.id,
             nombre,
-            keyword_meta: keyword,
+            keyword_meta,
             plantilla_id: layoutId === 'none' ? undefined : layoutId,
             fecha_inicio: fechaInicio || undefined,
             fecha_finalizacion: fechaFinalizacion || undefined,
@@ -137,7 +187,7 @@ export function TabConfigModal({
 
     return (
         <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-            <DialogContent className="bg-background border-border text-foreground max-h-[90vh] overflow-y-auto">
+            <DialogContent className="bg-background border-border text-foreground max-h-[90vh] overflow-y-auto overflow-x-hidden">
                 <DialogHeader>
                     <DialogTitle>{tabToEdit ? 'Editar Pestaña' : 'Nueva Pestaña'}</DialogTitle>
                     <DialogDescription className="text-muted-foreground/70">
@@ -145,7 +195,7 @@ export function TabConfigModal({
                     </DialogDescription>
                 </DialogHeader>
 
-                <div className="space-y-4 py-4">
+                <div className="space-y-4 py-4 min-w-0">
                     {/* Partir de plantilla (solo al crear una pestaña nueva) */}
                     {!tabToEdit && tabTemplates.length > 0 && (
                         <div className="space-y-2 rounded-lg border border-border bg-card/50 p-3">
@@ -181,13 +231,71 @@ export function TabConfigModal({
                     </div>
 
                     <div className="space-y-2">
-                        <label className="text-xs font-semibold text-muted-foreground">Palabra Clave (Filtro Meta)</label>
-                        <Input
-                            placeholder="Ej. EDU-TCC"
-                            value={keyword}
-                            onChange={e => setKeyword(e.target.value)}
-                            className="bg-card border-border"
-                        />
+                        <label className="text-xs font-semibold text-muted-foreground">Filtro de Campañas (Meta / TikTok)</label>
+
+                        {/* Selector Y/O (solo con 2+ condiciones) */}
+                        {conditions.length > 1 && (
+                            <div className="flex items-center gap-2">
+                                <span className="text-[11px] text-muted-foreground/70">Cumplir</span>
+                                <div className="inline-flex rounded-md border border-border overflow-hidden">
+                                    <button
+                                        type="button"
+                                        onClick={() => setFilterMode('and')}
+                                        className={`px-2.5 py-1 text-xs transition ${filterMode === 'and' ? 'bg-blue-600 text-white' : 'bg-card text-muted-foreground hover:bg-accent'}`}
+                                    >Todas (Y)</button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setFilterMode('or')}
+                                        className={`px-2.5 py-1 text-xs transition ${filterMode === 'or' ? 'bg-blue-600 text-white' : 'bg-card text-muted-foreground hover:bg-accent'}`}
+                                    >Alguna (O)</button>
+                                </div>
+                                <span className="text-[11px] text-muted-foreground/70">las condiciones</span>
+                            </div>
+                        )}
+
+                        <div className="space-y-2">
+                            {conditions.map((cond, idx) => (
+                                <div key={idx} className="flex items-center gap-2">
+                                    <Select value={cond.operator} onValueChange={v => updateCondition(idx, { operator: v as CampaignFilterOperator })}>
+                                        <SelectTrigger className="w-[140px] flex-shrink-0 bg-card border-border h-9">
+                                            <SelectValue />
+                                        </SelectTrigger>
+                                        <SelectContent className="bg-card border-border text-foreground z-[120]">
+                                            {TAB_FILTER_OPS.map(op => (
+                                                <SelectItem key={op.value} value={op.value}>{op.label}</SelectItem>
+                                            ))}
+                                        </SelectContent>
+                                    </Select>
+                                    <Input
+                                        placeholder="Ej. LSP"
+                                        value={cond.value}
+                                        onChange={e => updateCondition(idx, { value: e.target.value })}
+                                        className="bg-card border-border"
+                                    />
+                                    {conditions.length > 1 && (
+                                        <button
+                                            type="button"
+                                            onClick={() => removeCondition(idx)}
+                                            className="flex-shrink-0 p-1.5 rounded-md text-muted-foreground hover:text-red-500 hover:bg-red-500/10 transition"
+                                            title="Quitar condición"
+                                        >
+                                            <X className="w-4 h-4" />
+                                        </button>
+                                    )}
+                                </div>
+                            ))}
+                        </div>
+
+                        <button
+                            type="button"
+                            onClick={addCondition}
+                            className="flex items-center gap-1.5 text-xs text-blue-600 dark:text-blue-400 hover:underline"
+                        >
+                            <Plus className="w-3.5 h-3.5" /> Añadir condición
+                        </button>
+                        <p className="text-[10px] text-muted-foreground/70">
+                            Filtra las campañas de esta pestaña por su nombre. Combina varias condiciones para afinar (ej. <span className="font-mono">Contiene «LSP»</span> y <span className="font-mono">Contiene «LAGORANCOII»</span>).
+                        </p>
                     </div>
 
                     <div className="space-y-2">
@@ -359,8 +467,8 @@ export function TabConfigModal({
                     )}
                 </div>
 
-                <div className="flex items-center justify-between gap-2 pt-2 border-t border-border mt-2">
-                    <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-border mt-2">
+                    <div className="flex flex-wrap items-center gap-2">
                         {tabToEdit && (
                             <Button
                                 variant="destructive"
@@ -397,11 +505,11 @@ export function TabConfigModal({
                             </Button>
                         )}
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 ml-auto">
                         <Button variant="outline" onClick={onClose} disabled={saving} className="text-xs h-8 px-3 bg-card border-border hover:bg-accent">
                             Cancelar
                         </Button>
-                        <Button onClick={handleSave} disabled={saving || !nombre || !keyword} className="text-xs h-8 px-3 bg-blue-600 hover:bg-blue-700 text-white">
+                        <Button onClick={handleSave} disabled={saving || !nombre || !hasValidCondition} className="text-xs h-8 px-3 bg-blue-600 hover:bg-blue-700 text-white">
                             {saving ? 'Guardando...' : 'Guardar Pestaña'}
                         </Button>
                     </div>

@@ -2,7 +2,7 @@
 
 import React, { useState, useMemo, useEffect } from 'react'
 import { ArrowLeft, Eye, EyeOff, ChevronDown, ChevronRight, Loader2 } from 'lucide-react'
-import { enrichMetaRow } from '@/lib/campaign-filter'
+import { enrichMetaRow, parseTabFilter } from '@/lib/campaign-filter'
 import { aggregateFormula, formatValue } from '@/lib/formula-engine'
 import type { CardDef } from '@/lib/layout-types'
 import { getArchiveMetrics } from '../_actions'
@@ -34,7 +34,7 @@ function computeCardValue(
     const to = dateOverride !== undefined ? dateOverride.to : tab.fecha_finalizacion
     if (from) rows = rows.filter((m: any) => m.fecha >= from)
     if (to) rows = rows.filter((m: any) => m.fecha <= to)
-    const filter = card.campaignFilter ?? tab.keyword_meta ?? ''
+    const filter = card.campaignFilter ?? parseTabFilter(tab.keyword_meta)
     rows = rows.map((r: any) => enrichMetaRow(r, filter, campaignGroups))
     return aggregateFormula(card.formula, rows, {}, {}, new Set(['meta']), {})
 }

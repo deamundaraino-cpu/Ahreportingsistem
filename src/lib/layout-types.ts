@@ -30,6 +30,20 @@ export interface CampaignFilterSpec {
     value: string | string[]
 }
 
+/**
+ * Filtro compuesto de campañas para una PESTAÑA: varias condiciones combinadas
+ * con Y (todas deben cumplirse) u O (basta una).
+ *
+ * Se persiste dentro de `cliente_tabs.keyword_meta` (TEXT) serializado con el
+ * prefijo `__cf:` para no requerir migración de BD. Una sola condición `includes`
+ * se guarda como string plano (compatibilidad total hacia atrás). Ver
+ * `parseTabFilter` / `serializeTabFilter` en src/lib/campaign-filter.ts.
+ */
+export interface TabCampaignFilter {
+    mode: 'and' | 'or'
+    conditions: CampaignFilterSpec[]
+}
+
 export type FormFilterField = 'form_id' | 'form_name'
 
 export interface FormFilterSpec {

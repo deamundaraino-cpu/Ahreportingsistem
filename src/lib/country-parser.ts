@@ -5,6 +5,7 @@
  *   1. Bracket notation:  V3[PRODUCTO][MEXICO][CAPTACIÓN][CBO]
  *   2. Dash suffix:       Diplomado-Colombia
  */
+import { filterCampaignList, type AnyCampaignFilter } from './campaign-filter'
 
 // Known country names / abbreviations to recognize
 const KNOWN_COUNTRIES = [
@@ -152,7 +153,7 @@ function resolveLeadsFromCampaign(campaign: any, leadsFormula: string): number {
  */
 export function aggregateByCountry(
     metrics: any[],
-    keywordFilter: string = '',
+    keywordFilter: AnyCampaignFilter = '',
     leadsFormula: string = 'meta_leads'
 ): CountryMetrics[] {
     // country → { spend, leads, results, impressions, clicks, ads: Map<id, AdMetrics> }
@@ -165,14 +166,11 @@ export function aggregateByCountry(
         ads: Map<string, { name: string; spend: number; leads: number; results: number; impressions: number; clicks: number }>
     }>()
 
-    const kw = keywordFilter ? keywordFilter.toLowerCase() : ''
-
     for (const row of metrics) {
         if (!row.meta_campaigns || !Array.isArray(row.meta_campaigns)) continue
 
-        const campaigns: any[] = row.meta_campaigns.filter((c: any) =>
-            kw === '' || c.name?.toLowerCase().includes(kw)
-        )
+        // Soporta keyword simple o filtro compuesto (Y/O) de la pestaña.
+        const campaigns: any[] = filterCampaignList(row.meta_campaigns, keywordFilter)
 
         for (const campaign of campaigns) {
             const country = extractCountry(campaign.name || '', campaign.targeting_regions) ?? 'Sin País'

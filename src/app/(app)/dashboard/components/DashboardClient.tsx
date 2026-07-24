@@ -43,9 +43,9 @@ import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, us
 import { SortableContext, horizontalListSortingStrategy, verticalListSortingStrategy, useSortable, arrayMove } from '@dnd-kit/sortable'
 
 import { CSS } from '@dnd-kit/utilities'
-import { enrichMetaRow, enrichTikTokRow, filterCampaignList } from '@/lib/campaign-filter'
+import { enrichMetaRow, enrichTikTokRow, filterCampaignList, parseTabFilter, tabFilterLabel } from '@/lib/campaign-filter'
 import { enrichOfflineRow } from '@/lib/offline-filter'
-import type { CampaignFilterSpec } from '@/lib/layout-types'
+import type { CampaignFilterSpec, TabCampaignFilter } from '@/lib/layout-types'
 
 // ─── Helper Functions ────────────────────────────────────────────────────────
 
@@ -74,7 +74,7 @@ function resolveFilter(
  */
 function applyCompoundFilter(
     filteredRow: any,
-    keyword: string,
+    keyword: string | TabCampaignFilter,
     campaignFilter: CampaignFilterSpec | undefined,
     campaignGroups: any[]
 ): any {
@@ -159,8 +159,8 @@ function SortableTab({ tab, isActive, onSelect, onEdit, isPublic, hasOverride }:
                 {tab.nombre}
                 <span
                     className={`text-[10px] px-1.5 py-0.5 rounded font-mono tracking-wider transition ${isActive ? 'bg-blue-500/20 text-blue-500 dark:text-blue-300 border border-blue-500/20' : 'bg-muted/80 text-muted-foreground/50'}`}
-                    title={`Filtro de campaña: ${tab.keyword_meta}`}
-                >{tab.keyword_meta}</span>
+                    title={`Filtro de campaña: ${tabFilterLabel(tab.keyword_meta)}`}
+                >{tabFilterLabel(tab.keyword_meta)}</span>
                 {hasOverride && (
                     <span className="text-[9px] text-indigo-600 dark:text-indigo-400 font-bold" title="Vista personalizada">✦</span>
                 )}
@@ -432,7 +432,8 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
 
     // 2. Determine effective keyword filter
     // If we are on a custom tab, start with its keyword but allow manual overriding/filtering if keywordFilter is set
-    const effectiveKeyword = keywordFilter || (activeTabObj ? activeTabObj.keyword_meta : '')
+    // El keyword de una pestaña puede ser un filtro compuesto (Y/O) serializado.
+    const effectiveKeyword: string | TabCampaignFilter = keywordFilter || (activeTabObj ? parseTabFilter(activeTabObj.keyword_meta) : '')
 
     // 3. Determine effective layout — priority (highest to lowest):
     const { activeLayout, layoutIsCustomized } = useMemo(() => {
@@ -1018,7 +1019,7 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                         >
                             {tab.nombre}
                             {tab.keyword_meta && (
-                                <span className="text-[10px] bg-muted/80 px-1.5 py-0.5 rounded text-muted-foreground font-mono tracking-wider">{tab.keyword_meta}</span>
+                                <span className="text-[10px] bg-muted/80 px-1.5 py-0.5 rounded text-muted-foreground font-mono tracking-wider">{tabFilterLabel(tab.keyword_meta)}</span>
                             )}
                         </button>
                     ))}
@@ -1375,7 +1376,7 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                                                             </>
                                                         ) : activeTabObj ? (
                                                             <div className="text-xs text-muted-foreground/70 bg-background px-3 py-1.5 rounded-md border border-border">
-                                                                Filtro: <span className="font-mono text-foreground/90">"{activeTabObj.keyword_meta}"</span>
+                                                                Filtro: <span className="font-mono text-foreground/90">"{tabFilterLabel(activeTabObj.keyword_meta)}"</span>
                                                             </div>
                                                         ) : null}
                                                     </div>

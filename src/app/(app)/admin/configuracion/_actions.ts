@@ -5,7 +5,7 @@ import { revalidatePath } from 'next/cache';
 import { evaluateAlertRules, type RuleRow } from '@/lib/notifications/rules-engine';
 import { colombiaToday, colombiaYesterday } from '@/lib/date-utils';
 import { format, subDays, startOfMonth, endOfMonth, parseISO } from 'date-fns';
-import { enrichMetaRow, enrichTikTokRow } from '@/lib/campaign-filter';
+import { enrichMetaRow, enrichTikTokRow, parseTabFilter, type AnyCampaignFilter } from '@/lib/campaign-filter';
 
 type Role = 'superadmin' | 'admin' | 'trafficker' | 'viewer';
 
@@ -220,14 +220,14 @@ export async function testRule(ruleId: string) {
       .lte('fecha', end);
 
     // Tab info
-    let keywordFilter = '';
+    let keywordFilter: AnyCampaignFilter = '';
     let tabBudget: number | null = null;
     let tabName = '';
 
     if (tab_id) {
       const { data: tab } = await db.from('cliente_tabs').select('nombre, keyword_meta, presupuesto_objetivo').eq('id', tab_id).single();
       if (tab) {
-        keywordFilter = tab.keyword_meta || '';
+        keywordFilter = parseTabFilter(tab.keyword_meta);
         tabBudget = tab.presupuesto_objetivo ? Number(tab.presupuesto_objetivo) : null;
         tabName = tab.nombre;
       }
@@ -246,8 +246,8 @@ export async function testRule(ruleId: string) {
 
     (rows ?? []).forEach((row) => {
       const enrichedRow = enrichTikTokRow(
-        enrichMetaRow(row, keywordFilter || undefined, campaignGroups ?? []),
-        keywordFilter || undefined,
+        enrichMetaRow(row, keywordFilter, campaignGroups ?? []),
+        keywordFilter,
         campaignGroups ?? []
       );
       totalSpend += (Number(enrichedRow.meta_spend) || 0) + (Number(enrichedRow.tiktok_spend) || 0);

@@ -1,7 +1,7 @@
 import { type SupabaseClient } from '@supabase/supabase-js';
 import { parseISO, subDays, format, startOfMonth, endOfMonth } from 'date-fns';
 import { colombiaToday, colombiaYesterday } from '@/lib/date-utils';
-import { enrichMetaRow, enrichTikTokRow } from '@/lib/campaign-filter';
+import { enrichMetaRow, enrichTikTokRow, parseTabFilter } from '@/lib/campaign-filter';
 import { notifyUsers } from '@/lib/notifications/notify';
 import { sendWhatsAppNotification } from '@/lib/whatsapp/notify';
 
@@ -167,18 +167,18 @@ export async function evaluateAlertRules(
               continue;
             }
 
-            const keywordFilter = tab.keyword_meta || '';
+            const keywordFilter = parseTabFilter(tab.keyword_meta);
             const tabBudget = tab.presupuesto_objetivo ? Number(tab.presupuesto_objetivo) : null;
 
-            // G. Aggregate metrics filtered by this tab's keyword
+            // G. Aggregate metrics filtered by this tab's keyword/filtro compuesto
             let totalSpend = 0;
             let totalRevenue = 0;
             let totalLeads = 0;
 
             for (const row of ((metricsRows ?? []) as any[])) {
               const enrichedRow = enrichTikTokRow(
-                enrichMetaRow(row, keywordFilter || undefined, campaignGroups ?? []),
-                keywordFilter || undefined,
+                enrichMetaRow(row, keywordFilter, campaignGroups ?? []),
+                keywordFilter,
                 campaignGroups ?? []
               );
               totalSpend +=

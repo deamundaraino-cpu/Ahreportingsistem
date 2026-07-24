@@ -721,7 +721,6 @@ export async function GET(request: Request) {
                     }
 
                     for (const [day, dayRows] of rowsByDay) {
-                    let totalSpend = 0, totalImpr = 0, totalClicks = 0
                     const campaignsArr: any[] = []
 
                     dayRows.forEach((camp: any) => {
@@ -794,10 +793,6 @@ export async function GET(request: Request) {
 
                         cResults = cLeads + cPurchases + cInitiatesCheckout
 
-                        totalSpend += cSpend
-                        totalImpr += cImpr
-                        totalClicks += cClicks
-
                         campaignsArr.push({
                             campaign_id: camp.campaign_id || null,
                             account_id: rawAccountId,
@@ -838,11 +833,16 @@ export async function GET(request: Request) {
                     }
                     const dedupedCampaigns = Array.from(dedupedWithin.values())
                     const rec = ensureDay(day)
-                    rec.spend = totalSpend
-                    rec.impressions = totalImpr
-                    rec.clicks = totalClicks
+                    // La columna sale del array YA deduplicado, no de la suma previa.
+                    // Si Meta repite una fila de campaña (misma campaign_id en el día),
+                    // sumar antes del dedup inflaba la columna mientras el array —que es
+                    // lo que suma el dashboard— quedaba correcto. Recalcular aquí los
+                    // mantiene idénticos (columna == Σ meta_campaigns[].spend).
+                    rec.spend = dedupedCampaigns.reduce((s: number, c) => s + (c.spend || 0), 0)
+                    rec.impressions = dedupedCampaigns.reduce((s: number, c) => s + (c.impressions || 0), 0)
+                    rec.clicks = dedupedCampaigns.reduce((s: number, c) => s + (c.clicks || 0), 0)
                     rec.campaigns = dedupedCampaigns
-                    log(`[Meta] ${day} [${rawAccountId}] Spend: ${totalSpend}, Campañas: ${dedupedCampaigns.length}`)
+                    log(`[Meta] ${day} [${rawAccountId}] Spend: ${rec.spend}, Campañas: ${dedupedCampaigns.length}`)
                     } // ← cierre del loop por día (rowsByDay)
 
                     // Reach y gasto a nivel de cuenta para TODO el rango
@@ -1113,6 +1113,18 @@ export async function GET(request: Request) {
                 accountsToFetch = [{ account_id: config.meta_account_id, token: config.meta_token }]
             }
 
+            // Dedup por account_id normalizado (con/sin prefijo act_): la misma cuenta
+            // repetida en la config duplicaría su gasto. El array de campañas ya se
+            // protege con dedup cross-cuenta, pero la columna se sumaba por cuenta.
+            // Se conserva la primera aparición (su token).
+            const seenMetaActIds = new Set<string>()
+            accountsToFetch = accountsToFetch.filter((a) => {
+                const norm = a.account_id.startsWith('act_') ? a.account_id : `act_${a.account_id}`
+                if (seenMetaActIds.has(norm)) return false
+                seenMetaActIds.add(norm)
+                return true
+            })
+
             if (accountsToFetch.length === 0) {
                 log(`[Meta] Sin config para el cliente.`)
                 return { byDate, apiSuccess: false, configured: false }
@@ -1172,6 +1184,14 @@ export async function GET(request: Request) {
                         crossDedup.set(key, c)
                     }
                     record.campaigns = Array.from(crossDedup.values())
+                    // Recalcular la columna desde el array ya deduplicado cross-cuenta:
+                    // si la misma cuenta estuviera configurada dos veces, `record.spend`
+                    // (sumado por cuenta más arriba) la contaría doble mientras el array
+                    // queda correcto. Recalcular garantiza columna == Σ array también
+                    // en multi-cuenta, que es lo que muestra el dashboard.
+                    record.spend = record.campaigns.reduce((s: number, c: { spend?: number }) => s + (c.spend || 0), 0)
+                    record.impressions = record.campaigns.reduce((s: number, c: { impressions?: number }) => s + (c.impressions || 0), 0)
+                    record.clicks = record.campaigns.reduce((s: number, c: { clicks?: number }) => s + (c.clicks || 0), 0)
                 }
                 record.campaigns.forEach((camp: any) => {
                     if (camp.custom_conversions) {
@@ -1429,6 +1449,15 @@ export async function GET(request: Request) {
             } else if (config.tiktok_access_token && config.tiktok_advertiser_id) {
                 accountsToFetch = [{ advertiser_id: config.tiktok_advertiser_id, token: config.tiktok_access_token }]
             }
+
+            // Dedup por advertiser_id: la misma cuenta repetida en la config sumaría
+            // su gasto dos veces (aquí sí se suma por cuenta directamente).
+            const seenAdvIds = new Set<string>()
+            accountsToFetch = accountsToFetch.filter((a) => {
+                if (seenAdvIds.has(a.advertiser_id)) return false
+                seenAdvIds.add(a.advertiser_id)
+                return true
+            })
 
             if (accountsToFetch.length === 0) {
                 platformLogs.tiktok = 'Sin configurar'

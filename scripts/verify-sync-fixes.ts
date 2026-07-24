@@ -19,7 +19,15 @@ import {
     construirResumen,
     normalizarFilas,
 } from '../src/lib/sync/reconcile'
-import { metaRowIsIncomplete, tiktokRowIsIncomplete } from '../src/lib/campaign-filter'
+import {
+    metaRowIsIncomplete,
+    tiktokRowIsIncomplete,
+    filterCampaignList,
+    parseTabFilter,
+    serializeTabFilter,
+    tabFilterLabel,
+} from '../src/lib/campaign-filter'
+import type { TabCampaignFilter } from '../src/lib/layout-types'
 
 let pasadas = 0
 let fallidas = 0
@@ -360,6 +368,108 @@ sec('getTabTotalSpend — suma ambas plataformas')
         `${sumarPestana(filas, 'webinar')} vs ${soloMeta(filas, 'webinar')}`
     )
     check('un cliente solo-Meta no cambia', sumarPestana([{ meta_spend: 900, meta_campaigns: null, tiktok_spend: 0, tiktok_campaigns: null }], '') === 900)
+}
+
+// ─── Filtro compuesto por pestaña (Y/O de varias condiciones) ────────────────
+// Caso real Sur Profundo/Ranco 2: la keyword "LSP" también captura campañas
+// [EVS]. Con `contiene LSP` Y `contiene LAGORANCOII` se aísla Ranco II.
+
+sec('campaign-filter — filtro compuesto Y/O')
+
+{
+    const camps = [
+        { name: '[LSP] - [VP_LAGORANCOII] CAPTACIÓN', spend: 100 }, // Ranco II
+        { name: '[LSP] - [EVS] CAPTACIÓN', spend: 40 },             // EVS (no Ranco II)
+        { name: '[LSP] - [VP_LAGORANCOII] RECORDACIÓN', spend: 60 },// Ranco II
+        { name: 'OTRA CAMPAÑA', spend: 999 },
+    ]
+
+    const soloLsp = filterCampaignList(camps, 'lsp')
+    check('keyword simple "lsp" captura Ranco II + EVS (3 campañas)', soloLsp.length === 3, String(soloLsp.length))
+
+    const andFilter: TabCampaignFilter = {
+        mode: 'and',
+        conditions: [
+            { type: 'keyword', operator: 'includes', value: 'lsp' },
+            { type: 'keyword', operator: 'includes', value: 'lagorancoii' },
+        ],
+    }
+    const rancoII = filterCampaignList(camps, andFilter)
+    const rancoSpend = rancoII.reduce((s, c) => s + c.spend, 0)
+    check('Y: "lsp" ∧ "lagorancoii" aísla solo Ranco II (2 campañas)', rancoII.length === 2, String(rancoII.length))
+    check('Y: suma exacta de Ranco II = 160 (excluye EVS)', rancoSpend === 160, String(rancoSpend))
+
+    const orFilter: TabCampaignFilter = {
+        mode: 'or',
+        conditions: [
+            { type: 'keyword', operator: 'includes', value: 'evs' },
+            { type: 'keyword', operator: 'ends_with', value: 'recordación' },
+        ],
+    }
+    const orMatch = filterCampaignList(camps, orFilter)
+    check('O: "contiene evs" ∨ "termina en recordación" (2 campañas)', orMatch.length === 2, String(orMatch.length))
+
+    const excl: TabCampaignFilter = {
+        mode: 'and',
+        conditions: [
+            { type: 'keyword', operator: 'includes', value: 'lsp' },
+            { type: 'keyword', operator: 'excludes', value: 'evs' },
+        ],
+    }
+    check('Y con "excluye": lsp ∧ ¬evs = 2 campañas', filterCampaignList(camps, excl).length === 2)
+
+    // Condición vacía dentro del compuesto no recorta.
+    const conVacia: TabCampaignFilter = {
+        mode: 'and',
+        conditions: [
+            { type: 'keyword', operator: 'includes', value: 'lsp' },
+            { type: 'keyword', operator: 'includes', value: '' },
+        ],
+    }
+    check('condición vacía se ignora (no recorta de más)', filterCampaignList(camps, conVacia).length === 3)
+}
+
+sec('campaign-filter — (de)serialización de filtro de pestaña')
+
+{
+    // Una sola condición "includes" colapsa a string plano (retro-compatibilidad).
+    const simple = serializeTabFilter({ mode: 'and', conditions: [{ type: 'keyword', operator: 'includes', value: 'LSP' }] })
+    check('una condición includes → string plano', simple === 'LSP', simple)
+    check('string plano se parsea como string', parseTabFilter('LSP') === 'LSP')
+
+    // Dos condiciones → prefijo __cf: + JSON.
+    const comp: TabCampaignFilter = {
+        mode: 'and',
+        conditions: [
+            { type: 'keyword', operator: 'includes', value: 'LSP' },
+            { type: 'keyword', operator: 'includes', value: 'LAGORANCOII' },
+        ],
+    }
+    const ser = serializeTabFilter(comp)
+    check('compuesto serializa con prefijo __cf:', ser.startsWith('__cf:'), ser)
+
+    const round = parseTabFilter(ser)
+    check('round-trip mantiene el modo', typeof round !== 'string' && round.mode === 'and')
+    check('round-trip mantiene 2 condiciones', typeof round !== 'string' && round.conditions.length === 2)
+    check('round-trip mantiene los valores', typeof round !== 'string' && round.conditions[1].value === 'LAGORANCOII')
+
+    // JSON corrupto degrada a string plano (nunca lanza).
+    check('JSON corrupto degrada a string plano', parseTabFilter('__cf:{roto') === '__cf:{roto')
+
+    // Etiqueta legible.
+    check('etiqueta de string plano es el propio texto', tabFilterLabel('LSP') === 'LSP')
+    check('etiqueta de compuesto Y une con " y "', tabFilterLabel(ser) === 'LSP y LAGORANCOII', tabFilterLabel(ser))
+    check('operador no-includes aparece en la etiqueta', (() => {
+        const s = serializeTabFilter({ mode: 'or', conditions: [
+            { type: 'keyword', operator: 'includes', value: 'A' },
+            { type: 'keyword', operator: 'exact', value: 'B' },
+        ] })
+        return tabFilterLabel(s) === 'A o = B'
+    })())
+
+    // Cero condiciones con valor → string vacío (sin filtro).
+    check('sin condiciones válidas → string vacío', serializeTabFilter({ mode: 'and', conditions: [{ type: 'keyword', operator: 'includes', value: '' }] }) === '')
+    check('vacío/nulo se parsea como string vacío', parseTabFilter('') === '' && parseTabFilter(null) === '')
 }
 
 // ─── Resultado ───────────────────────────────────────────────────────────────
