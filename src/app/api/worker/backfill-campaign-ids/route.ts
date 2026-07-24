@@ -10,13 +10,12 @@
  */
 
 import { NextResponse } from 'next/server'
+import { requireCronAuth } from '@/lib/cron-auth'
 import { format, subDays } from 'date-fns'
 
 export async function GET(request: Request) {
-    const authHeader = request.headers.get('authorization')
-    if (process.env.CRON_SECRET && authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
-        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
+    const authError = requireCronAuth(request)
+    if (authError) return authError
 
     const { searchParams } = new URL(request.url)
     const clientId = searchParams.get('client_id')
@@ -35,8 +34,9 @@ export async function GET(request: Request) {
     workerUrl.searchParams.set('start', startDate)
     workerUrl.searchParams.set('end', endDate)
 
+    // La petición ya pasó requireCronAuth: reenviamos el mismo secreto al worker.
     const workerRes = await fetch(workerUrl.toString(), {
-        headers: { authorization: authHeader || '' },
+        headers: { authorization: `Bearer ${process.env.CRON_SECRET}` },
     })
 
     const result = await workerRes.json()

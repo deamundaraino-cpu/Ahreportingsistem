@@ -12,6 +12,21 @@ import { after } from 'next/server';
 /** Días por debajo de los cuales el sync se ejecuta al momento en vez de encolarse. */
 const SYNC_DIRECTO_MAX_DIAS = 7;
 
+/** Resultado de `triggerWorkerSync`, consumido por el botón "Sincronizar Datos". */
+export type SyncResult = {
+  ok: boolean;
+  error?: string;
+  queued?: boolean;
+  jobs?: number;
+  /** Rango efectivo encolado, para que la UI sondee su progreso. */
+  range?: { from: string; to: string };
+  partial?: boolean;
+  /** Aviso no bloqueante (p. ej. "sin datos que sincronizar"). */
+  warning?: string;
+  message?: string;
+  platform_status: { meta?: string; hotmart?: string; ga4?: string } | null;
+};
+
 /**
  * Lanza la sincronización de un cliente para un rango.
  *
@@ -20,7 +35,7 @@ const SYNC_DIRECTO_MAX_DIAS = 7;
  * que un rango de meses no cabe en los 60s de una función de Vercel — antes la
  * petición simplemente moría y el usuario no se enteraba de que faltaban datos.
  */
-export async function triggerWorkerSync(clientId: string, from: string, to: string) {
+export async function triggerWorkerSync(clientId: string, from: string, to: string): Promise<SyncResult> {
   if (!clientId || !from || !to) {
     return { ok: false, error: 'Parámetros inválidos', platform_status: null };
   }
@@ -57,6 +72,7 @@ export async function triggerWorkerSync(clientId: string, from: string, to: stri
           triggered_by: 'dashboard',
         }),
         cache: 'no-store',
+        signal: AbortSignal.timeout(30_000),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -76,11 +92,17 @@ export async function triggerWorkerSync(clientId: string, from: string, to: stri
         ok: true,
         queued: true,
         jobs: data?.encolados ?? 0,
+        // El rango real que hay que vigilar en el polling (puede diferir del
+        // pedido si el índice único dedupe contra jobs ya pendientes).
+        range: { from, to },
         platform_status: null,
-        message: `${data?.encolados ?? 0} tarea(s) en cola — el sync continúa en segundo plano.`,
+        message: `${data?.encolados ?? 0} tarea(s) en cola — sincronizando en segundo plano…`,
       };
-    } catch (err: any) {
-      return { ok: false, error: err?.message || 'Error de red', platform_status: null };
+    } catch (err) {
+      const msg = err instanceof Error && err.name === 'TimeoutError'
+        ? 'La cola no respondió a tiempo (timeout).'
+        : (err instanceof Error ? err.message : 'Error de red');
+      return { ok: false, error: msg, platform_status: null };
     }
   }
 
@@ -91,12 +113,43 @@ export async function triggerWorkerSync(clientId: string, from: string, to: stri
     const res = await fetch(url, {
       headers: { Authorization: `Bearer ${secret}` },
       cache: 'no-store',
+      // Los endpoints tienen maxDuration=60; cortamos antes para no dejar la
+      // promesa colgada si Vercel mata la función.
+      signal: AbortSignal.timeout(58_000),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
       return { ok: false, error: data?.error || `HTTP ${res.status}`, platform_status: null };
     }
-    const firstResult = Array.isArray(data?.results) ? data.results[0] : null;
+
+    const results = Array.isArray(data?.results) ? data.results : [];
+    const firstResult = results[0] ?? null;
+
+    // El endpoint responde 200 aunque el upsert a `metricas_diarias` falle: lo
+    // marca con status:'failed' por cliente. Hay que propagarlo como error real,
+    // no dar por buena una sincronización que no guardó nada.
+    const failed = results.filter((r: any) => r?.status === 'failed');
+    if (failed.length > 0) {
+      return {
+        ok: false,
+        error: `La descarga terminó, pero falló el guardado en la base de datos (${failed.length} día${failed.length > 1 ? 's' : ''}).`,
+        platform_status: firstResult?.platform_status ?? null,
+      };
+    }
+
+    // Sin resultados = no había nada que sincronizar (cliente sin config de APIs
+    // o rango totalmente congelado). No es un error, pero tampoco un "éxito" que
+    // haya traído datos: se avisa para no confundir al usuario.
+    if (results.length === 0) {
+      return {
+        ok: true,
+        queued: false,
+        warning:
+          'No había datos que sincronizar en este rango. Revisa la configuración de APIs del cliente o si el período está congelado.',
+        platform_status: null,
+      };
+    }
+
     return {
       ok: true,
       queued: false,
@@ -104,39 +157,81 @@ export async function triggerWorkerSync(clientId: string, from: string, to: stri
       platform_status: firstResult?.platform_status ?? null,
       message: data?.partial ? 'Sincronización parcial: el resto continúa en segundo plano.' : undefined,
     };
-  } catch (err: any) {
-    return { ok: false, error: err?.message || 'Error de red', platform_status: null };
+  } catch (err) {
+    const msg = err instanceof Error && err.name === 'TimeoutError'
+      ? 'La sincronización tardó demasiado (timeout). Prueba con un rango más corto.'
+      : (err instanceof Error ? err.message : 'Error de red');
+    return { ok: false, error: msg, platform_status: null };
   }
 }
 
-/** Estado de la cola para un cliente — alimenta el indicador de progreso del dashboard. */
-export async function getSyncJobsStatus(clienteId: string) {
+/**
+ * Progreso real de un sync encolado para un rango concreto.
+ *
+ * Lo consume el polling del botón "Sincronizar Datos": tras encolar, el
+ * dashboard pregunta aquí hasta que la cola termine, para no fingir "¡Actualizado!"
+ * cuando en realidad nadie ha procesado los jobs todavía.
+ */
+export async function getSyncProgress(clienteId: string, from: string, to: string) {
   const supabase = await createAdminClient();
-  const { data, error } = await supabase
+  // Ventana amplia para no confundir jobs de este sync con los del plan diario
+  // de días anteriores (que siguen en la tabla como 'done' hasta la limpieza).
+  const since = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+  const { data: jobs, error } = await supabase
     .from('sync_jobs')
-    .select('id, tipo, fecha_inicio, fecha_fin, estado, intentos, last_error, updated_at')
+    .select('id, estado, last_error, fecha_inicio, fecha_fin, updated_at')
     .eq('cliente_id', clienteId)
-    .in('estado', ['pending', 'running', 'error'])
-    .order('created_at', { ascending: true })
-    .limit(50);
+    .gte('created_at', since)
+    .lte('fecha_inicio', to)
+    .gte('fecha_fin', from)
+    .order('updated_at', { ascending: false })
+    .limit(100);
 
-  if (error) return { data: null, error: error.message };
-  return { data, error: null };
+  if (error) return { ok: false, estado: 'error' as const, error: error.message };
+
+  const list = jobs ?? [];
+  const pendientes = list.filter((j) => j.estado === 'pending' || j.estado === 'running').length;
+  const errores = list.filter((j) => j.estado === 'error');
+  const totales = list.length;
+
+  // 'empty' = no encontramos jobs en la ventana (procesados hace rato o nunca
+  // encolados). El caller lo interpreta como "ya no hay nada en cola".
+  let estado: 'working' | 'done' | 'error' | 'empty';
+  if (totales === 0) estado = 'empty';
+  else if (pendientes > 0) estado = 'working';
+  else if (errores.length > 0) estado = 'error';
+  else estado = 'done';
+
+  return { ok: true, estado, pendientes, totales, error: errores[0]?.last_error ?? null };
 }
 
-/** Frescura de los datos de un cliente: última verificación global y por fuente. */
+/**
+ * Frescura de los datos de un cliente para el semáforo del dashboard: última
+ * verificación en `metricas_diarias` + estado de la última ejecución en
+ * `sync_runs` (para pintar rojo cuando el último intento falló aunque haya datos
+ * viejos guardados).
+ */
 export async function getDataFreshness(clienteId: string) {
   const supabase = await createAdminClient();
-  const { data, error } = await supabase
-    .from('metricas_diarias')
-    .select('fecha, synced_at, source_synced_at, is_partial')
-    .eq('cliente_id', clienteId)
-    .order('synced_at', { ascending: false, nullsFirst: false })
-    .limit(1)
-    .maybeSingle();
+  const [metricaRes, runRes] = await Promise.all([
+    supabase
+      .from('metricas_diarias')
+      .select('fecha, synced_at, source_synced_at, is_partial')
+      .eq('cliente_id', clienteId)
+      .order('synced_at', { ascending: false, nullsFirst: false })
+      .limit(1)
+      .maybeSingle(),
+    supabase
+      .from('sync_runs')
+      .select('estado, finished_at, error')
+      .or(`cliente_id.eq.${clienteId},cliente_id.is.null`)
+      .order('started_at', { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+  ]);
 
-  if (error) return { data: null, error: error.message };
-  return { data, error: null };
+  if (metricaRes.error) return { data: null, lastRun: null, error: metricaRes.error.message };
+  return { data: metricaRes.data, lastRun: runRes.data ?? null, error: null };
 }
 
 export async function getLeadsDiarios(clientId: string) {

@@ -7,7 +7,7 @@
  */
 
 import { enqueueJob, enqueueRange, type SyncJobTipo } from './queue'
-import { colombiaToday, colombiaYesterday } from '../date-utils'
+import { colombiaToday, colombiaYesterday, COLOMBIA_UTC_OFFSET_MS } from '../date-utils'
 
 /** Prioridades: menor = antes. El sync manual (1) siempre adelanta al cron. */
 export const PRIORIDAD = {
@@ -183,6 +183,67 @@ export async function planReconciliacion(
     }
 
     return { encolados: total, detalle: { reconciliar: total } }
+}
+
+/**
+ * Garantiza que el plan diario esté encolado en la franja horaria actual.
+ *
+ * El scheduler del VPS (`sync-worker/`) es el planner primario, pero es un único
+ * punto de fallo: si el contenedor está caído, nadie llena la cola y los
+ * drenadores de respaldo (Vercel Cron, GitHub Actions) encuentran `sync_jobs`
+ * vacía. Esta función convierte a cualquier drenador en un planner de respaldo:
+ * antes de drenar, comprueba si ya se encoló un plan en la franja vigente
+ * (05:00 o 14:00 hora Colombia) y, si no, lo encola.
+ *
+ * Idempotencia en dos capas: (1) este guard temporal evita re-planificar una
+ * franja ya cubierta aunque sus jobs ya estén `done` (el índice único solo
+ * dedupe mientras están `pending|running`); (2) el índice único parcial de la
+ * migración impide duplicar un job todavía pendiente si el VPS y un drenador
+ * planifican a la vez.
+ */
+export async function ensurePlanDiario(
+    db: any,
+): Promise<{ ensured: boolean; encolados: number; franja: string }> {
+    // "Ahora" en reloj de pared colombiano: desplazamos el instante UTC y luego
+    // leemos sus componentes con getUTC* (Colombia = UTC-5 fijo, sin DST).
+    const col = new Date(Date.now() - COLOMBIA_UTC_OFFSET_MS)
+    const h = col.getUTCHours()
+    const y = col.getUTCFullYear()
+    const m = col.getUTCMonth()
+    const d = col.getUTCDate()
+
+    // Última franja programada ya pasada, en reloj colombiano.
+    let franjaCol: Date
+    let esManana: boolean
+    if (h >= 14) {
+        franjaCol = new Date(Date.UTC(y, m, d, 14, 0, 0))
+        esManana = false
+    } else if (h >= 5) {
+        franjaCol = new Date(Date.UTC(y, m, d, 5, 0, 0))
+        esManana = true
+    } else {
+        // Antes de las 05:00 COL la última franja fue la de las 14:00 de ayer.
+        franjaCol = new Date(Date.UTC(y, m, d - 1, 14, 0, 0))
+        esManana = false
+    }
+
+    // Colombia = UTC-5, así que el instante UTC real es la hora local + 5h.
+    const franjaUtcIso = new Date(franjaCol.getTime() + COLOMBIA_UTC_OFFSET_MS).toISOString()
+
+    const { data, error } = await db
+        .from('sync_jobs')
+        .select('id')
+        .in('triggered_by', ['planner', 'planner:auto'])
+        .eq('tipo', 'metricas')
+        .gte('created_at', franjaUtcIso)
+        .limit(1)
+    if (error) throw new Error(`ensurePlanDiario: ${error.message}`)
+    if (data && data.length > 0) return { ensured: false, encolados: 0, franja: franjaUtcIso }
+
+    const res = await planDiario(db, { triggeredBy: 'planner:auto' })
+    // La limpieza de historial se hace una vez al día, en la franja de la mañana.
+    if (esManana) await limpiarHistorial(db)
+    return { ensured: true, encolados: res.encolados, franja: franjaUtcIso }
 }
 
 /** Borra jobs y runs viejos. Llamar una vez al día desde el planner. */

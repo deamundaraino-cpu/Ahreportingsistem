@@ -23,6 +23,26 @@ import {
     enqueueJob,
     type SyncJob,
 } from './queue'
+import { notifyUsers } from '../notifications/notify'
+
+/** Avisa a admins cuando un job agota sus reintentos. Best-effort: nunca lanza. */
+async function notifyExhausted(db: any, job: SyncJob, message: string): Promise<void> {
+    try {
+        await notifyUsers({
+            db,
+            type: 'sync_failed',
+            severity: 'error',
+            audience: 'admins',
+            clienteId: job.cliente_id,
+            title: `Sincronización fallida: ${job.tipo}`,
+            message: message.slice(0, 200),
+            link: '/admin/sync',
+            metadata: { job_id: job.id, tipo: job.tipo, fecha_inicio: job.fecha_inicio, fecha_fin: job.fecha_fin },
+        })
+    } catch {
+        // El aviso es observabilidad; su fallo no puede tumbar el drenado de la cola.
+    }
+}
 
 export type RunnerOptions = {
     /** URL base de la app (ej. https://reportes.adshouse.cloud). */
@@ -178,6 +198,7 @@ export async function runJobs(db: any, opts: RunnerOptions): Promise<RunnerResul
                 result.failed++
                 result.details.push({ jobId: job.id, tipo: job.tipo, estado: exhausted ? 'error' : 'reintento', message: exec.message })
                 await recordRun(db, job, opts, startedAt, 'error', exec.body, exec.message)
+                if (exhausted) await notifyExhausted(db, job, exec.message ?? 'error desconocido')
                 continue
             }
 
@@ -211,6 +232,7 @@ export async function runJobs(db: any, opts: RunnerOptions): Promise<RunnerResul
             result.failed++
             result.details.push({ jobId: job.id, tipo: job.tipo, estado: exhausted ? 'error' : 'reintento', message })
             await recordRun(db, job, opts, startedAt, 'error', null, message)
+            if (exhausted) await notifyExhausted(db, job, message)
         }
     }
 

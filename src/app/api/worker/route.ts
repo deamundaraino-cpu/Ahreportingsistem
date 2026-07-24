@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js'
 import { NextResponse } from 'next/server'
+import { requireCronAuth } from '@/lib/cron-auth'
 import { format, parseISO, isBefore, addDays, differenceInDays } from 'date-fns'
 import { createClient as createSSRClient } from '@/utils/supabase/server'
 import { getAgencyAccessToken, hasAgencyGoogleConnection } from '@/lib/integrations/google-auth'
@@ -132,11 +133,8 @@ function parseMetaActions(actions: any): MetaActionTotals {
 }
 
 export async function GET(request: Request) {
-    const authHeader = request.headers.get('authorization')
-    // CORRECCIÓN 1: Backticks en el Bearer
-    if (process.env.CRON_SECRET && authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
-        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
+    const authError = requireCronAuth(request)
+    if (authError) return authError
 
     let adminSupabase: any;
     if (process.env.SUPABASE_SERVICE_ROLE_KEY) {

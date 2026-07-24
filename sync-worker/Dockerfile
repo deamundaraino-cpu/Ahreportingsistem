@@ -13,6 +13,8 @@ RUN cd sync-worker && npm install
 COPY sync-worker/tsconfig.json sync-worker/
 COPY sync-worker/src sync-worker/src
 COPY src/lib/sync src/lib/sync
+# runner.ts avisa a admins al agotar reintentos → arrastra el módulo de notificaciones.
+COPY src/lib/notifications src/lib/notifications
 
 RUN cd sync-worker && npm run build
 

@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState } from 'react'
+import React, { useState, useRef, useEffect } from 'react'
 import { useRouter, useSearchParams, useParams } from 'next/navigation'
 import {
     format, subDays, subYears, parseISO,
@@ -11,7 +11,8 @@ import { es } from 'date-fns/locale'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Loader2, RefreshCcw, CheckCircle2, AlertCircle, ChevronDown, CalendarDays, Clock } from 'lucide-react'
-import { triggerWorkerSync } from '../_actions'
+import { triggerWorkerSync, getSyncProgress } from '../_actions'
+import { SyncFreshnessBadge } from './SyncFreshnessBadge'
 
 const fmt = (d: Date) => format(d, 'yyyy-MM-dd')
 const fmtDisplay = (d: Date) => format(d, 'd MMM yyyy', { locale: es })
@@ -55,6 +56,22 @@ const PRESETS: Preset[] = [
     { id: 'all', label: 'Máximo', getRange: () => ({ from: 'all', to: fmt(hoyColombia()) }) },
 ]
 
+/**
+ * Chip de estado por plataforma. Antes solo distinguía "Saltado" vs "OK", así que
+ * un `Error Auth` o `Fallo Critico` del worker se pintaba en verde como si todo
+ * hubiera ido bien. Ahora hay tres estados reales.
+ */
+function PlatformChip({ label, estado }: { label: string; estado: string }) {
+    const s = estado.toLowerCase()
+    if (/error|fallo|auth/.test(s)) {
+        return <span className="text-red-500">{label}:FAIL</span>
+    }
+    if (s.includes('saltado')) {
+        return <span className="text-muted-foreground/70">{label}:Skip</span>
+    }
+    return <span className="text-green-500/80">{label}:OK</span>
+}
+
 function getActivePreset(from: string, to: string): string {
     for (const preset of PRESETS) {
         const range = preset.getRange()
@@ -73,9 +90,12 @@ export function DateRangeSelector({ basePath = '/dashboard', isPublic = false }:
     const fromParam = searchParams.get('from') || fmt(subDays(hoyColombia(), 29))
     const toParam = searchParams.get('to') || fmt(hoyColombia())
 
-    const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'success' | 'error' | 'queued'>('idle')
+    const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'success' | 'error' | 'queued' | 'stale'>('idle')
     const [syncLogs, setSyncLogs] = useState<{ meta?: string; hotmart?: string; ga4?: string }>({})
     const [syncMessage, setSyncMessage] = useState<string | null>(null)
+    // Se incrementa tras cada sync completado para forzar el refresco del semáforo.
+    const [freshKey, setFreshKey] = useState(0)
+    const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
     const [open, setOpen] = useState(false)
     const [showCustom, setShowCustom] = useState(false)
@@ -119,8 +139,57 @@ export function DateRangeSelector({ basePath = '/dashboard', isPublic = false }:
         navigate(customFrom, customTo)
     }
 
+    const stopPolling = () => {
+        if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null }
+    }
+    // Limpia el intervalo si el componente se desmonta a mitad de un sync en cola.
+    useEffect(() => () => stopPolling(), [])
+
+    const finishSuccess = () => {
+        stopPolling()
+        setSyncStatus('success')
+        setSyncMessage(null)
+        setFreshKey(k => k + 1)
+        router.refresh()
+        setTimeout(() => { setSyncStatus('idle') }, 5000)
+    }
+
+    /**
+     * Sondea el estado real de la cola tras encolar. Sin esto el botón fingía
+     * "En cola…" 12 s y volvía a idle, ocultando si el sync fallaba o si nadie
+     * llegaba a procesar los jobs.
+     */
+    const startPolling = (from: string, to: string) => {
+        if (!clientId) return
+        stopPolling()
+        const deadline = Date.now() + 3 * 60 * 1000
+        pollRef.current = setInterval(async () => {
+            if (Date.now() > deadline) {
+                stopPolling()
+                setSyncStatus('stale')
+                setSyncMessage('El sync sigue en cola. Si tarda, revísalo en el panel de sincronización (/admin/sync).')
+                return
+            }
+            try {
+                const prog = await getSyncProgress(clientId, from, to)
+                if (!prog.ok || prog.estado === 'working') return
+                if (prog.estado === 'error') {
+                    stopPolling()
+                    setSyncStatus('error')
+                    setSyncMessage(prog.error || 'Un job de sincronización falló.')
+                    return
+                }
+                // 'done' | 'empty' → ya no queda nada en cola para este rango.
+                finishSuccess()
+            } catch {
+                // Error transitorio de red: reintenta en el próximo tick.
+            }
+        }, 4000)
+    }
+
     const handleSync = async () => {
         if (!clientId || isPublic) return
+        stopPolling()
         setSyncStatus('syncing')
         setSyncLogs({})
         setSyncMessage(null)
@@ -128,22 +197,35 @@ export function DateRangeSelector({ basePath = '/dashboard', isPublic = false }:
             const syncFrom = fromParam === 'all' ? fmt(subDays(hoyColombia(), 365)) : fromParam
             const result = await triggerWorkerSync(clientId, syncFrom, toParam)
             if (!result.ok) throw new Error(result.error || 'Failed to sync')
-            setSyncMessage(result.message ?? null)
+
             if (result.queued) {
-                // Rango largo: quedó en cola. El aviso dura más porque el trabajo
-                // sigue en segundo plano y el usuario debe saber que no terminó aún.
+                // Rango largo: quedó en cola. Sondeamos hasta que termine de verdad.
                 setSyncStatus('queued')
-                setTimeout(() => { setSyncStatus('idle'); setSyncMessage(null) }, 12000)
+                setSyncMessage(result.message ?? 'Sincronizando en segundo plano…')
+                const r = result.range ?? { from: syncFrom, to: toParam }
+                startPolling(r.from, r.to)
                 return
             }
-            setSyncLogs(result.platform_status ?? { meta: 'Sincronizado', hotmart: 'Sincronizado', ga4: 'Sincronizado' })
-            setSyncStatus('success')
-            router.refresh()
-            setTimeout(() => { setSyncStatus('idle'); setSyncMessage(null) }, 5000)
+
+            // Rango corto (directo): puede traer un aviso ("sin datos") o ser parcial.
+            const warning = result.warning
+            setSyncLogs(result.platform_status ?? {})
+            if (warning) {
+                setSyncStatus('success')
+                setSyncMessage(warning)
+                setFreshKey(k => k + 1)
+                router.refresh()
+                setTimeout(() => { setSyncStatus('idle'); setSyncMessage(null) }, 8000)
+                return
+            }
+            setSyncMessage(result.message ?? null)
+            finishSuccess()
         } catch (err) {
             console.error('Error sincronizando', err)
+            stopPolling()
             setSyncStatus('error')
-            setTimeout(() => { setSyncStatus('idle'); setSyncMessage(null) }, 5000)
+            // El error persiste hasta reintentar: nada de auto-borrado a los 5 s.
+            setSyncMessage(err instanceof Error ? err.message : 'Error al sincronizar')
         }
     }
 
@@ -233,41 +315,53 @@ export function DateRangeSelector({ basePath = '/dashboard', isPublic = false }:
 
             <div className="h-8 w-px bg-muted-foreground/30 hidden sm:block mx-1" />
 
-            <div className={`flex flex-col items-end ${isPublic ? 'hidden' : ''}`}>
+            <div className={`flex flex-col items-end gap-1 ${isPublic ? 'hidden' : ''}`}>
                 <Button
                     onClick={handleSync}
                     variant="outline"
                     size="sm"
-                    disabled={syncStatus === 'syncing' || !clientId}
+                    disabled={syncStatus === 'syncing' || syncStatus === 'queued' || !clientId}
                     className={`mt-4 sm:mt-0 h-8 gap-2 border-border bg-background text-foreground/90 transition-colors
                         ${syncStatus === 'success' ? 'text-green-400 border-green-500/50 hover:bg-green-500/10 hover:text-green-300' : ''}
-                        ${syncStatus === 'error' ? 'text-red-600 dark:text-red-400 border-red-500/50 hover:bg-red-500/10 hover:text-red-300' : 'hover:bg-accent'}
+                        ${syncStatus === 'error' ? 'text-red-600 dark:text-red-400 border-red-500/50 hover:bg-red-500/10 hover:text-red-300' : ''}
+                        ${(syncStatus === 'queued' || syncStatus === 'stale') ? 'text-amber-600 dark:text-amber-400 border-amber-500/50 hover:bg-amber-500/10' : ''}
+                        ${syncStatus === 'idle' || syncStatus === 'syncing' ? 'hover:bg-accent' : ''}
                     `}
                 >
                     {syncStatus === 'syncing' && <Loader2 className="h-4 w-4 animate-spin text-blue-600 dark:text-blue-400" />}
-                    {syncStatus === 'queued' && <Clock className="h-4 w-4 text-amber-500" />}
+                    {syncStatus === 'queued' && <Loader2 className="h-4 w-4 animate-spin text-amber-500" />}
+                    {syncStatus === 'stale' && <Clock className="h-4 w-4 text-amber-500" />}
                     {syncStatus === 'success' && <CheckCircle2 className="h-4 w-4" />}
                     {syncStatus === 'error' && <AlertCircle className="h-4 w-4" />}
                     {syncStatus === 'idle' && <RefreshCcw className="h-4 w-4 text-blue-600 dark:text-blue-400" />}
                     {syncStatus === 'syncing' ? 'Sincronizando...' :
                         syncStatus === 'queued' ? 'En cola...' :
-                            syncStatus === 'success' ? '¡Actualizado!' :
-                                syncStatus === 'error' ? 'Error. Reintentar' : 'Sincronizar Datos'}
+                            syncStatus === 'stale' ? 'Sigue en cola' :
+                                syncStatus === 'success' ? '¡Actualizado!' :
+                                    syncStatus === 'error' ? 'Error. Reintentar' : 'Sincronizar Datos'}
                 </Button>
 
-                {syncStatus === 'queued' && syncMessage && (
-                    <div className="mt-1 text-[10px] text-amber-600 dark:text-amber-400 text-right max-w-[240px]">
+                {/* Mensaje contextual: cola, aviso de éxito parcial/sin datos, o error. */}
+                {syncMessage && (syncStatus === 'queued' || syncStatus === 'stale' || syncStatus === 'success' || syncStatus === 'error') && (
+                    <div className={`text-[10px] text-right max-w-[260px] ${
+                        syncStatus === 'error' ? 'text-red-600 dark:text-red-400'
+                            : syncStatus === 'success' ? 'text-amber-600 dark:text-amber-400'
+                                : 'text-amber-600 dark:text-amber-400'
+                    }`}>
                         {syncMessage}
                     </div>
                 )}
 
-                {syncStatus === 'success' && syncLogs && (
-                    <div className="flex gap-2 mt-1 text-[10px] font-mono justify-end w-full">
-                        {syncLogs.meta && <span className={syncLogs.meta.includes('Saltado') ? 'text-muted-foreground/70' : 'text-green-500/80'}>M:{syncLogs.meta.includes('Saltado') ? 'Skip' : 'OK'}</span>}
-                        {syncLogs.hotmart && <span className={syncLogs.hotmart.includes('Saltado') ? 'text-muted-foreground/70' : 'text-green-500/80'}>H:{syncLogs.hotmart.includes('Saltado') ? 'Skip' : 'OK'}</span>}
-                        {syncLogs.ga4 && <span className={syncLogs.ga4.includes('Saltado') ? 'text-muted-foreground/70' : 'text-green-500/80'}>G:{syncLogs.ga4.includes('Saltado') ? 'Skip' : 'OK'}</span>}
+                {/* Estado por plataforma tras un sync directo. 'Error'/'Fallo'/'Auth' → rojo. */}
+                {syncStatus === 'success' && !syncMessage && (syncLogs.meta || syncLogs.hotmart || syncLogs.ga4) && (
+                    <div className="flex gap-2 text-[10px] font-mono justify-end w-full">
+                        {syncLogs.meta && <PlatformChip label="M" estado={syncLogs.meta} />}
+                        {syncLogs.hotmart && <PlatformChip label="H" estado={syncLogs.hotmart} />}
+                        {syncLogs.ga4 && <PlatformChip label="G" estado={syncLogs.ga4} />}
                     </div>
                 )}
+
+                {clientId && !isPublic && <SyncFreshnessBadge clienteId={clientId} refreshKey={freshKey} />}
             </div>
         </div>
     )

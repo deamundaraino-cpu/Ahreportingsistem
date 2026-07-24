@@ -1,7 +1,9 @@
 import { createClient } from '@supabase/supabase-js'
 import { NextResponse } from 'next/server'
+import { requireCronAuth } from '@/lib/cron-auth'
 import { runJobs } from '@/lib/sync/runner'
 import { queueStats } from '@/lib/sync/queue'
+import { ensurePlanDiario } from '@/lib/sync/planner'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -18,10 +20,8 @@ export const maxDuration = 60
  *   GET|POST /api/worker/run-jobs   (Bearer CRON_SECRET)
  */
 async function run(request: Request) {
-    const authHeader = request.headers.get('authorization')
-    if (process.env.CRON_SECRET && authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
-        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
+    const authError = requireCronAuth(request)
+    if (authError) return authError
 
     if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
         return NextResponse.json({ error: 'SUPABASE_SERVICE_ROLE_KEY requerido' }, { status: 500 })
@@ -31,6 +31,18 @@ async function run(request: Request) {
     const appUrl = process.env.NEXT_PUBLIC_APP_URL
     if (!appUrl) {
         return NextResponse.json({ error: 'NEXT_PUBLIC_APP_URL requerido para invocar los endpoints de sync' }, { status: 500 })
+    }
+
+    // Respaldo de planning: si el VPS no encoló el plan de esta franja, lo hace
+    // este drenador antes de drenar. Best-effort: un fallo aquí no debe impedir
+    // que se procese lo que ya haya en la cola.
+    let plan: Awaited<ReturnType<typeof ensurePlanDiario>> | { error: string } | null = null
+    try {
+        plan = await ensurePlanDiario(db)
+    } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e)
+        console.error('[run-jobs] ensurePlanDiario falló', msg)
+        plan = { error: msg }
     }
 
     const result = await runJobs(db, {
@@ -46,7 +58,7 @@ async function run(request: Request) {
         requestTimeoutMs: 55_000,
     })
 
-    return NextResponse.json({ ok: true, ...result, cola: await queueStats(db) })
+    return NextResponse.json({ ok: true, plan, ...result, cola: await queueStats(db) })
 }
 
 export async function GET(request: Request) { return run(request) }

@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js'
 import { NextResponse } from 'next/server'
+import { requireCronAuth } from '@/lib/cron-auth'
 import { createClient as createSSRClient } from '@/utils/supabase/server'
 import { notifyUsers } from '@/lib/notifications/notify'
 
@@ -16,10 +17,8 @@ const REFRESH_THRESHOLD_MS = 30 * 60 * 1000 // 30 min
 // El modo "pegar credenciales" (Basic / client_credentials) NO necesita refresh:
 // el worker genera el token en cada corrida.
 export async function GET(request: Request) {
-  const authHeader = request.headers.get('authorization')
-  if (process.env.CRON_SECRET && authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
+  const authError = requireCronAuth(request)
+  if (authError) return authError
 
   const appClientId = process.env.HOTMART_APP_CLIENT_ID
   const appClientSecret = process.env.HOTMART_APP_CLIENT_SECRET

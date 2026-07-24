@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js'
 import { NextResponse } from 'next/server'
+import { requireCronAuth } from '@/lib/cron-auth'
 import { metaFetch, tiktokFetch, setRetryDeadline } from '@/lib/rate-limit'
 import {
     construirResumen,
@@ -184,10 +185,8 @@ async function fetchAdvertiserSpend(
 }
 
 async function run(request: Request) {
-    const authHeader = request.headers.get('authorization')
-    if (process.env.CRON_SECRET && authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
-        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
+    const authError = requireCronAuth(request)
+    if (authError) return authError
     if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
         return NextResponse.json({ error: 'SUPABASE_SERVICE_ROLE_KEY requerido' }, { status: 500 })
     }

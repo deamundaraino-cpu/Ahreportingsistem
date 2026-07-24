@@ -15,6 +15,11 @@ name: Sync fallback (cola)
 env:
   APP_URL: https://reportes.adshouse.cloud
 
+# issues:write permite abrir una incidencia cuando el pipeline está caído.
+permissions:
+  contents: read
+  issues: write
+
 on:
   schedule:
     # Cada 30 min, desplazado a :07 y :37 a propósito: el planificador de GitHub
@@ -68,9 +73,49 @@ jobs:
             fi
 
             # Si no quedó nada por hacer, no gastamos las pasadas restantes.
-            claimed=$(echo "$body" | python3 -c "import json,sys; print(json.load(sys.stdin).get('claimed',0))" 2>/dev/null || echo 0)
+            claimed=$(echo "$body" | jq -r '.claimed // 0')
             if [ "$claimed" = "0" ]; then
               echo "Cola vacía — nada más que procesar."
               break
             fi
           done
+
+      - name: Healthcheck del pipeline
+        run: |
+          # Verifica que el pipeline haya sincronizado con éxito recientemente.
+          # Si está "stale", falla el job para que GitHub avise (email + issue).
+          response=$(curl -sS -w "\n%{http_code}" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "${{ env.APP_URL }}/api/worker/health")
+          status=$(echo "$response" | tail -n1)
+          body=$(echo "$response" | sed '$d')
+          echo "HTTP $status"
+          echo "$body"
+
+          if [ "$status" != "200" ]; then
+            echo "❌ health devolvió $status"
+            exit 1
+          fi
+
+          stale=$(echo "$body" | jq -r '.stale // false')
+          if [ "$stale" = "true" ]; then
+            echo "❌ Pipeline sin sincronizaciones OK recientes (stale)."
+            exit 1
+          fi
+          echo "✓ Pipeline saludable."
+
+      - name: Abrir issue si el pipeline falló
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Evita duplicar issues: solo abre una si no hay ya una abierta.
+          existing=$(gh issue list --state open --search 'Sync pipeline caído in:title' --json number --jq 'length' 2>/dev/null || echo 0)
+          if [ "$existing" = "0" ]; then
+            gh issue create \
+              --title "Sync pipeline caído" \
+              --body "El workflow de respaldo de sincronización falló (run ${{ github.run_id }}). Revisa el worker del VPS, la alineación de CRON_SECRET y el panel /admin/sync.\n\nRun: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+              || echo "No se pudo crear la issue (¿permisos?)."
+          else
+            echo "Ya existe una issue abierta para este problema."
+          fi

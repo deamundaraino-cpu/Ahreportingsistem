@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js'
 import { NextResponse } from 'next/server'
+import { requireCronAuth } from '@/lib/cron-auth'
 import { createClient as createSSRClient } from '@/utils/supabase/server'
 import { notifyUsers } from '@/lib/notifications/notify'
 
@@ -13,10 +14,8 @@ const REFRESH_THRESHOLD_DAYS = 10
 // de modo que la conexión rueda indefinidamente sin re-login del cliente.
 // Protegido por CRON_SECRET (mismo patrón que /api/worker).
 export async function GET(request: Request) {
-  const authHeader = request.headers.get('authorization')
-  if (process.env.CRON_SECRET && authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
+  const authError = requireCronAuth(request)
+  if (authError) return authError
 
   const appId = process.env.META_APP_ID
   const appSecret = process.env.META_APP_SECRET

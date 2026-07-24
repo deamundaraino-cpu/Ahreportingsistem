@@ -3,7 +3,7 @@
  * Validates CRON_SECRET from request headers
  */
 
-import { NextRequest } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { ApiError } from './error-handler';
 
 /**
@@ -14,10 +14,15 @@ export function authenticateCron(request: NextRequest): void {
   const authHeader = request.headers.get('authorization');
   const cronSecret = process.env.CRON_SECRET;
 
-  // If no secret is configured, allow (for backward compatibility)
+  // Fallar cerrado: sin secreto configurado NO se atiende la petición. Antes se
+  // permitía "por compatibilidad", lo que dejaba los endpoints de cron abiertos
+  // si la env var faltaba en algún entorno.
   if (!cronSecret) {
-    console.warn('CRON_SECRET not configured. Cron requests will be allowed without authentication.');
-    return;
+    throw new ApiError(
+      'INVALID_CONFIG',
+      'CRON_SECRET no configurado en el servidor',
+      503
+    );
   }
 
   // Validate authorization header format
@@ -41,6 +46,29 @@ export function authenticateCron(request: NextRequest): void {
       401
     );
   }
+}
+
+/**
+ * Variante sin throw para route handlers: devuelve la respuesta de error
+ * (503 si falta el secreto, 401 si el Bearer no coincide) o `null` si la
+ * petición está autenticada. Reemplaza el patrón inline permisivo
+ * `if (process.env.CRON_SECRET && authHeader !== ...)`, que dejaba el endpoint
+ * abierto cuando la env var no estaba definida.
+ */
+export function requireCronAuth(request: Request): NextResponse | null {
+  const cronSecret = process.env.CRON_SECRET;
+  if (!cronSecret) {
+    return NextResponse.json(
+      { error: 'CRON_SECRET no configurado en el servidor' },
+      { status: 503 }
+    );
+  }
+  const authHeader = request.headers.get('authorization');
+  const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : '';
+  if (!token || !constantTimeCompare(token, cronSecret)) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+  return null;
 }
 
 /**

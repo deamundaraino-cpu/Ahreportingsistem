@@ -8,6 +8,7 @@
 // Protegido por CRON_SECRET (mismo patrón que los demás crons).
 
 import { NextResponse } from 'next/server'
+import { requireCronAuth } from '@/lib/cron-auth'
 import { createAdminClient } from '@/utils/supabase/server'
 import { computePeriod, matchesSchedule, type ReportFrequency } from '@/lib/report-utm/report-periods'
 import { deliverReport, type DeliverReportResult } from '@/lib/report-utm/report-delivery'
@@ -35,10 +36,8 @@ function baseUrl(request: Request): string {
 }
 
 export async function GET(request: Request) {
-    const authHeader = request.headers.get('authorization')
-    if (process.env.CRON_SECRET && authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
-        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
+    const authError = requireCronAuth(request)
+    if (authError) return authError
 
     // `?force=1` ignora la comprobación de hora/día (para probar a mano). El
     // dedup por período sigue activo: no reenvía un período ya entregado.

@@ -1,5 +1,6 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import { NextResponse } from 'next/server'
+import { requireCronAuth } from '@/lib/cron-auth'
 import { createClient as createSSRClient } from '@/utils/supabase/server'
 import { syncMetaLeadsForCliente, type MetaLeadsSyncSummary } from '@/lib/report-utm/meta-leads'
 
@@ -21,10 +22,8 @@ export const maxDuration = 60
  */
 
 async function run(request: Request) {
-    const authHeader = request.headers.get('authorization')
-    if (process.env.CRON_SECRET && authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
-        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
+    const authError = requireCronAuth(request)
+    if (authError) return authError
 
     let supabase: SupabaseClient
     if (process.env.SUPABASE_SERVICE_ROLE_KEY) {

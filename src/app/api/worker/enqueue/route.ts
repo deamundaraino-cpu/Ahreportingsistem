@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js'
 import { NextResponse } from 'next/server'
+import { requireCronAuth } from '@/lib/cron-auth'
 import { enqueueRange, enqueueJob, queueStats, type SyncJobTipo } from '@/lib/sync/queue'
 import { planDiario, planIntradia, planCierreMes, planReconciliacion, limpiarHistorial, PRIORIDAD } from '@/lib/sync/planner'
 
@@ -20,10 +21,8 @@ export const maxDuration = 60
  * como respaldo), y el dashboard para el sync manual.
  */
 export async function POST(request: Request) {
-    const authHeader = request.headers.get('authorization')
-    if (process.env.CRON_SECRET && authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
-        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
+    const authError = requireCronAuth(request)
+    if (authError) return authError
     if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
         return NextResponse.json({ error: 'SUPABASE_SERVICE_ROLE_KEY requerido' }, { status: 500 })
     }

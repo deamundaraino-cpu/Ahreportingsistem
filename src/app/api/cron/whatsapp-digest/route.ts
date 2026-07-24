@@ -6,6 +6,7 @@
 // CRON_SECRET (mismo patrón que /api/cron/refresh-meta-tokens).
 
 import { NextResponse } from 'next/server';
+import { requireCronAuth } from '@/lib/cron-auth';
 import { createAdminClient } from '@/utils/supabase/server';
 import { sendWhatsAppNotification } from '@/lib/whatsapp/notify';
 import { colombiaYesterday } from '@/lib/date-utils';
@@ -44,10 +45,8 @@ function buildMessage(nombre: string, fecha: string, r: DailyRow): string {
 }
 
 export async function GET(request: Request) {
-  const authHeader = request.headers.get('authorization');
-  if (process.env.CRON_SECRET && authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const authError = requireCronAuth(request);
+  if (authError) return authError;
 
   const supabase = await createAdminClient();
   const fecha = colombiaYesterday(); // "ayer" en hora Colombia (UTC-5)

@@ -16,6 +16,8 @@
   "include": [
     "src/**/*.ts",
     "../src/lib/sync/queue.ts",
-    "../src/lib/sync/runner.ts"
+    "../src/lib/sync/runner.ts",
+    "../src/lib/notifications/notify.ts",
+    "../src/lib/notifications/types.ts"
   ]
 }
