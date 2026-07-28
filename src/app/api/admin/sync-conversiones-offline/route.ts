@@ -5,6 +5,10 @@ import {
   normalizeSheetConfigs,
 } from '@/lib/integrations/google-sheets-conversiones'
 
+// Releer un documento entero y recalcular los campos no cabe en el timeout por
+// defecto: sin esto la petición moría a mitad y el cliente no se enteraba.
+export const maxDuration = 60
+
 /**
  * Sync manual de conversiones offline desde Google Sheets.
  * POST /api/admin/sync-conversiones-offline

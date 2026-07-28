@@ -1651,6 +1651,9 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                     clienteId={cliente.id}
                     tabId={activeTabId}
                     conversionesCatalogo={conversionesCatalogo}
+                    googleSheetsConversiones={cliente.config_api?.google_sheets_conversiones}
+                    sheetCampos={data.sheetCampos || []}
+                    sheetVistas={data.sheetVistas || []}
                     campaignGroups={data.campaignGroups || []}
                     campaignNames={allCampaignNames}
                     tiktokAccounts={tiktokAccounts}

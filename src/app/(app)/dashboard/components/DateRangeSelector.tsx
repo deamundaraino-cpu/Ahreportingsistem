@@ -11,7 +11,7 @@ import { es } from 'date-fns/locale'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Loader2, RefreshCcw, CheckCircle2, AlertCircle, ChevronDown, CalendarDays, Clock } from 'lucide-react'
-import { triggerWorkerSync, getSyncProgress } from '../_actions'
+import { triggerWorkerSync, triggerSheetsSync, getSyncProgress } from '../_actions'
 import { SyncFreshnessBadge } from './SyncFreshnessBadge'
 
 const fmt = (d: Date) => format(d, 'yyyy-MM-dd')
@@ -90,7 +90,7 @@ export function DateRangeSelector({ basePath = '/dashboard', isPublic = false }:
     const fromParam = searchParams.get('from') || fmt(subDays(hoyColombia(), 29))
     const toParam = searchParams.get('to') || fmt(hoyColombia())
 
-    const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'success' | 'error' | 'queued' | 'stale'>('idle')
+    const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'syncing_sheets' | 'success' | 'error' | 'queued' | 'stale'>('idle')
     const [syncLogs, setSyncLogs] = useState<{ meta?: string; hotmart?: string; ga4?: string }>({})
     const [syncMessage, setSyncMessage] = useState<string | null>(null)
     // Se incrementa tras cada sync completado para forzar el refresco del semáforo.
@@ -187,6 +187,21 @@ export function DateRangeSelector({ basePath = '/dashboard', isPublic = false }:
         }, 4000)
     }
 
+    /**
+     * Sincroniza los Google Sheets del cliente después de las métricas.
+     *
+     * Un fallo aquí NO es un error del sync: las métricas ya entraron. Se avisa
+     * y se sigue, porque marcarlo en rojo haría pensar que no se actualizó nada.
+     * Devuelve el aviso a mostrar, si lo hay.
+     */
+    const sincronizarSheets = async (): Promise<string | null> => {
+        setSyncStatus('syncing_sheets')
+        const res = await triggerSheetsSync(clientId!)
+        if (!res.configured) return null      // el cliente no tiene Sheets
+        if (!res.ok) return `Métricas actualizadas. El Sheet falló: ${res.error}`
+        return res.warnings?.[0] ?? null
+    }
+
     const handleSync = async () => {
         if (!clientId || isPublic) return
         stopPolling()
@@ -198,17 +213,21 @@ export function DateRangeSelector({ basePath = '/dashboard', isPublic = false }:
             const result = await triggerWorkerSync(clientId, syncFrom, toParam)
             if (!result.ok) throw new Error(result.error || 'Failed to sync')
 
+            // El Sheet se sincroniza en las dos ramas: su job es independiente
+            // del de métricas, así que no depende de si el rango se encoló.
+            const avisoSheets = await sincronizarSheets()
+
             if (result.queued) {
                 // Rango largo: quedó en cola. Sondeamos hasta que termine de verdad.
                 setSyncStatus('queued')
-                setSyncMessage(result.message ?? 'Sincronizando en segundo plano…')
+                setSyncMessage(avisoSheets ?? result.message ?? 'Sincronizando en segundo plano…')
                 const r = result.range ?? { from: syncFrom, to: toParam }
                 startPolling(r.from, r.to)
                 return
             }
 
             // Rango corto (directo): puede traer un aviso ("sin datos") o ser parcial.
-            const warning = result.warning
+            const warning = avisoSheets ?? result.warning
             setSyncLogs(result.platform_status ?? {})
             if (warning) {
                 setSyncStatus('success')
@@ -320,21 +339,22 @@ export function DateRangeSelector({ basePath = '/dashboard', isPublic = false }:
                     onClick={handleSync}
                     variant="outline"
                     size="sm"
-                    disabled={syncStatus === 'syncing' || syncStatus === 'queued' || !clientId}
+                    disabled={syncStatus === 'syncing' || syncStatus === 'syncing_sheets' || syncStatus === 'queued' || !clientId}
                     className={`mt-4 sm:mt-0 h-8 gap-2 border-border bg-background text-foreground/90 transition-colors
                         ${syncStatus === 'success' ? 'text-green-400 border-green-500/50 hover:bg-green-500/10 hover:text-green-300' : ''}
                         ${syncStatus === 'error' ? 'text-red-600 dark:text-red-400 border-red-500/50 hover:bg-red-500/10 hover:text-red-300' : ''}
                         ${(syncStatus === 'queued' || syncStatus === 'stale') ? 'text-amber-600 dark:text-amber-400 border-amber-500/50 hover:bg-amber-500/10' : ''}
-                        ${syncStatus === 'idle' || syncStatus === 'syncing' ? 'hover:bg-accent' : ''}
+                        ${syncStatus === 'idle' || syncStatus === 'syncing' || syncStatus === 'syncing_sheets' ? 'hover:bg-accent' : ''}
                     `}
                 >
-                    {syncStatus === 'syncing' && <Loader2 className="h-4 w-4 animate-spin text-blue-600 dark:text-blue-400" />}
+                    {(syncStatus === 'syncing' || syncStatus === 'syncing_sheets') && <Loader2 className="h-4 w-4 animate-spin text-blue-600 dark:text-blue-400" />}
                     {syncStatus === 'queued' && <Loader2 className="h-4 w-4 animate-spin text-amber-500" />}
                     {syncStatus === 'stale' && <Clock className="h-4 w-4 text-amber-500" />}
                     {syncStatus === 'success' && <CheckCircle2 className="h-4 w-4" />}
                     {syncStatus === 'error' && <AlertCircle className="h-4 w-4" />}
                     {syncStatus === 'idle' && <RefreshCcw className="h-4 w-4 text-blue-600 dark:text-blue-400" />}
                     {syncStatus === 'syncing' ? 'Sincronizando...' :
+                        syncStatus === 'syncing_sheets' ? 'Sincronizando Sheets…' :
                         syncStatus === 'queued' ? 'En cola...' :
                             syncStatus === 'stale' ? 'Sigue en cola' :
                                 syncStatus === 'success' ? '¡Actualizado!' :

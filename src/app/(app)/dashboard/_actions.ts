@@ -10,8 +10,34 @@ import { format, addDays } from 'date-fns';
 import { headers } from 'next/headers';
 import { after } from 'next/server';
 import { loadCamposCliente } from '@/lib/sheets/campos-db';
-import { agregarDiarios, vistaIncluyeValor } from '@/lib/sheets/campos';
-import type { CampoValorDiario } from '@/lib/sheets/campos';
+import { agregarDiarios, vistaIncluyeValor, clavesPlanasDelDia } from '@/lib/sheets/campos';
+import type { CampoValorDiario, CampoAgg, CampoFormato } from '@/lib/sheets/campos';
+import { mergeMetricasDelRango, agruparOfflinePorFecha } from '@/lib/dashboard/merge-metrics';
+import { fetchAllRows } from '@/lib/supabase-paginate';
+import { normalizeSheetConfigs } from '@/lib/integrations/google-sheets-conversiones';
+
+/** Un campo de Sheet tal como lo necesita la UI del dashboard. */
+export interface SheetCampoResumen {
+  clave: string
+  nombre: string
+  agregacion: CampoAgg
+  formato: CampoFormato
+}
+/** Una vista guardada, con su formato propio. */
+export interface SheetVistaResumen {
+  clave: string
+  nombre: string
+  agregacion: CampoAgg
+  formato: 'number' | 'currency' | 'percent'
+}
+
+interface SheetCamposDelDia {
+  porFecha: Map<string, Record<string, number>>
+  /** Las 4 métricas legacy de leads, derivadas del campo de calidad migrado. */
+  leadsLegacy: Map<string, Record<string, number>>
+  campos: SheetCampoResumen[]
+  vistas: SheetVistaResumen[]
+}
 
 /** Días por debajo de los cuales el sync se ejecuta al momento en vez de encolarse. */
 const SYNC_DIRECTO_MAX_DIAS = 7;
@@ -31,6 +57,76 @@ export type SyncResult = {
   platform_status: { meta?: string; hotmart?: string; ga4?: string } | null;
 };
 
+/** Resultado del sync de Google Sheets, que va aparte del de métricas. */
+export type SheetsSyncResult = {
+  ok: boolean
+  /** El cliente no tiene Sheets configurados: no es un error, no hay nada que hacer. */
+  configured: boolean
+  filas?: number
+  camposRecalculados?: number
+  warnings?: string[]
+  error?: string
+}
+
+/**
+ * Sincroniza los Google Sheets del cliente y recalcula sus campos.
+ *
+ * Va aparte de `triggerWorkerSync` por dos razones: el worker de métricas ya
+ * consume casi todo el presupuesto de tiempo de una función de Vercel, y
+ * separarlas permite que el botón informe de en qué fase está en vez de quedarse
+ * mudo. El endpoint que llama encadena `syncClienteConversiones` →
+ * `recalcularCamposCliente`, que es lo único que repuebla el desglose diario.
+ */
+export async function triggerSheetsSync(clientId: string): Promise<SheetsSyncResult> {
+  if (!clientId) return { ok: false, configured: false, error: 'Cliente inválido' }
+
+  try {
+    const supabase = await createAdminClient()
+    const { data: cliente } = await supabase
+      .from('clientes').select('config_api').eq('id', clientId).maybeSingle()
+
+    const sheets = normalizeSheetConfigs((cliente as any)?.config_api?.google_sheets_conversiones)
+      .filter(s => s.enabled && s.sheet_url)
+    if (sheets.length === 0) return { ok: true, configured: false }
+
+    const headersList = await headers()
+    const host = headersList.get('host') || 'localhost:3001'
+    const protocol = host.includes('localhost') ? 'http' : 'https'
+
+    const res = await fetch(`${protocol}://${host}/api/admin/sync-conversiones-offline`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ clientId }),
+      cache: 'no-store',
+      // Un punto por debajo del maxDuration de la ruta, para devolver un error
+      // legible en vez de que la petición muera sin más.
+      signal: AbortSignal.timeout(58_000),
+    })
+
+    const data = await res.json()
+    if (!res.ok) {
+      return { ok: false, configured: true, error: data.error || 'Error al sincronizar el Sheet' }
+    }
+
+    return {
+      ok: true,
+      configured: true,
+      filas: data.totalFilas ?? 0,
+      camposRecalculados: data.camposRecalculados ?? 0,
+      warnings: data.warnings ?? [],
+    }
+  } catch (e: any) {
+    const timeout = e?.name === 'TimeoutError' || e?.name === 'AbortError'
+    return {
+      ok: false,
+      configured: true,
+      error: timeout
+        ? 'El Sheet tardó demasiado. Sincronízalo desde Ajustes del cliente.'
+        : (e?.message || 'Error al sincronizar el Sheet'),
+    }
+  }
+}
+
 /**
  * Lanza la sincronización de un cliente para un rango.
  *
@@ -38,6 +134,8 @@ export type SyncResult = {
  * Los largos se encolan en `sync_jobs`: Hotmart y GA4 se consultan día a día, así
  * que un rango de meses no cabe en los 60s de una función de Vercel — antes la
  * petición simplemente moría y el usuario no se enteraba de que faltaban datos.
+ *
+ * Solo trae `metricas_diarias`. Los Google Sheets van por `triggerSheetsSync`.
  */
 export async function triggerWorkerSync(clientId: string, from: string, to: string): Promise<SyncResult> {
   if (!clientId || !from || !to) {
@@ -300,14 +398,8 @@ async function getSheetCamposDelDia(
   clienteId: string,
   startStr: string,
   endStr: string
-): Promise<{
-  porFecha: Map<string, Record<string, number>>
-  /** Las 4 métricas legacy de leads, derivadas del campo de calidad migrado. */
-  leadsLegacy: Map<string, Record<string, number>>
-  campos: { clave: string; nombre: string }[]
-  vistas: { clave: string; nombre: string }[]
-}> {
-  const vacio = {
+): Promise<SheetCamposDelDia> {
+  const vacio: SheetCamposDelDia = {
     porFecha: new Map<string, Record<string, number>>(),
     leadsLegacy: new Map<string, Record<string, number>>(),
     campos: [],
@@ -317,17 +409,27 @@ async function getSheetCamposDelDia(
     const { campos, vistas } = await loadCamposCliente(supabase, clienteId, { soloActivos: true });
     if (campos.length === 0) return vacio;
 
-    let q = supabase
-      .from('sheet_campo_valores_diarios')
-      .select('campo_id, fecha, valor, filas, suma, n_num, minimo, maximo')
-      .eq('cliente_id', clienteId)
-      .lte('fecha', endStr);
-    if (startStr !== 'all') q = q.gte('fecha', startStr);
+    const resumen = () => ({
+      campos: campos.map(c => ({
+        clave: c.clave, nombre: c.nombre, agregacion: c.agregacion, formato: c.formato,
+      })),
+      vistas: vistas.map(v => ({
+        clave: v.clave, nombre: v.nombre, agregacion: v.agregacion, formato: v.formato,
+      })),
+    });
 
-    const { data, error } = await q;
-    if (error || !data) {
-      return { ...vacio, campos: campos.map(c => ({ clave: c.clave, nombre: c.nombre })) };
-    }
+    // Paginado: PostgREST corta en ~1000 filas y un cliente con varios campos ×
+    // muchos valores × 90 días se truncaba en silencio, dejando el dashboard con
+    // cifras de menos que no cuadraban con el BI.
+    const data = await fetchAllRows(() => {
+      let q = supabase
+        .from('sheet_campo_valores_diarios')
+        .select('id, campo_id, fecha, valor, filas, suma, n_num, minimo, maximo')
+        .eq('cliente_id', clienteId)
+        .lte('fecha', endStr);
+      if (startStr !== 'all') q = q.gte('fecha', startStr);
+      return q;
+    });
 
     // Desglose agrupado por (fecha, campo) para agregar cada día por separado.
     const porFechaCampo = new Map<string, CampoValorDiario[]>();
@@ -347,11 +449,6 @@ async function getSheetCamposDelDia(
 
     const porFecha = new Map<string, Record<string, number>>();
     const leadsLegacy = new Map<string, Record<string, number>>();
-    const anota = (fecha: string, clave: string, valor: number) => {
-      const fila = porFecha.get(fecha) ?? {};
-      fila[clave] = valor;
-      porFecha.set(fecha, fila);
-    };
 
     // Campo y vista que dejó la migración del legacy de leads, si existen.
     const campoCalidad = campos.find(c => c.clave === CAMPO_CALIDAD_LEAD);
@@ -362,14 +459,12 @@ async function getSheetCamposDelDia(
       const campo = campos.find(c => c.id === campoId);
       if (!campo) continue;
 
-      anota(fecha, `sf_${campo.clave}`, agregarDiarios(filas, campo.agregacion));
-      for (const vista of vistas) {
-        if (vista.campo_id !== campo.id) continue;
-        anota(fecha, `sv_${vista.clave}`, agregarDiarios(
-          filas.filter(f => vistaIncluyeValor(vista, f.valor)),
-          vista.agregacion
-        ));
-      }
+      // Incluye los sumandos (`__num`/`__den`/`__min`/`__max`) cuando la
+      // agregación no es aditiva, para que agrupar por semana o mes salga bien.
+      porFecha.set(fecha, {
+        ...(porFecha.get(fecha) ?? {}),
+        ...clavesPlanasDelDia(campo, vistas, filas),
+      });
 
       // Las 4 métricas del legacy de leads, reconstruidas desde el campo de
       // calidad migrado. Se conservan los NOMBRES para que ningún layout ya
@@ -389,15 +484,67 @@ async function getSheetCamposDelDia(
       }
     }
 
-    return {
-      porFecha,
-      leadsLegacy,
-      campos: campos.map(c => ({ clave: c.clave, nombre: c.nombre })),
-      vistas: vistas.map(v => ({ clave: v.clave, nombre: v.nombre })),
-    };
+    return { porFecha, leadsLegacy, ...resumen() };
   } catch (err) {
     console.error('[dashboard] campos de Sheet no disponibles:', err);
     return vacio;
+  }
+}
+
+/**
+ * Carga las filas de métricas de un rango YA enriquecidas (leads, conversiones
+ * offline y campos de Sheet).
+ *
+ * Es el único camino: lo usan el dashboard, el espejo público, el archivo de
+ * pestañas y el periodo anterior de los comparativos. Antes cada uno tenía su
+ * propia copia del merge —o ninguna—, y por eso una tarjeta con un campo de
+ * Sheet funcionaba en el dashboard y salía vacía en el enlace público.
+ */
+async function cargarMetricasEnriquecidas(
+  supabase: any,
+  clienteId: string,
+  startStr: string,
+  endStr: string,
+  opts?: { incluirFilasOffline?: boolean }
+): Promise<{
+  metrics: any[]
+  leadsRaw: any[]
+  conversionesOfflineRaw: any[]
+  sheetCampos: SheetCampoResumen[]
+  sheetVistas: SheetVistaResumen[]
+}> {
+  // Todas paginadas por keyset: sin esto PostgREST corta en ~1000 filas. Para
+  // `metricas_diarias` es 1 fila/día (solo se nota en el archivo, que abarca
+  // años), pero `conversiones_offline` puede traer miles por día y se estaba
+  // truncando en silencio, dejando los totales offline por debajo de lo real.
+  const enRango = (q: any, col: string) =>
+    startStr === 'all' ? q.lte(col, endStr) : q.gte(col, startStr).lte(col, endStr)
+
+  const [metricas, leads, offline, sheetData] = await Promise.all([
+    fetchAllRows(() => enRango(
+      supabase.from('metricas_diarias').select('*').eq('cliente_id', clienteId), 'fecha')),
+    fetchAllRows(() => enRango(
+      supabase.from('leads_diarios').select('*').eq('client_id', clienteId), 'date')),
+    fetchAllRows(() => enRango(
+      supabase.from('conversiones_offline').select('*').eq('cliente_id', clienteId), 'fecha')),
+    getSheetCamposDelDia(supabase, clienteId, startStr, endStr),
+  ])
+
+  const metrics = mergeMetricasDelRango({
+    metricas,
+    leads,
+    offlinePorFecha: agruparOfflinePorFecha(offline),
+    sheetPorFecha: sheetData.porFecha,
+    leadsLegacyPorFecha: sheetData.leadsLegacy,
+    incluirFilasOffline: opts?.incluirFilasOffline,
+  })
+
+  return {
+    metrics,
+    leadsRaw: leads,
+    conversionesOfflineRaw: offline,
+    sheetCampos: sheetData.campos,
+    sheetVistas: sheetData.vistas,
   }
 }
 
@@ -456,102 +603,31 @@ export async function getDashboardData(clientId: string, startStr: string, endSt
   // Priority: client-specific layout → global assigned layout → null (classic)
   const layout = clienteLayoutRes.data || cliente.global_layout || null;
 
-  // Fetch all metrics + leads for that range
-  let metricsQuery = supabase.from('metricas_diarias').select('*').eq('cliente_id', cliente.id);
-  if (startStr !== 'all') metricsQuery = metricsQuery.gte('fecha', startStr);
-  metricsQuery = metricsQuery.lte('fecha', endStr).order('fecha', { ascending: true });
-
-  let leadsQuery = supabase.from('leads_diarios').select('*').eq('client_id', cliente.id);
-  if (startStr !== 'all') leadsQuery = leadsQuery.gte('date', startStr);
-  leadsQuery = leadsQuery.lte('date', endStr);
-
-  let convOfflineQuery = supabase.from('conversiones_offline').select('*').eq('cliente_id', cliente.id);
-  if (startStr !== 'all') convOfflineQuery = convOfflineQuery.gte('fecha', startStr);
-  convOfflineQuery = convOfflineQuery.lte('fecha', endStr);
-
-  // Campos de Sheet: el desglose diario por valor + sus definiciones. Se
-  // aplanan en cada fila como `sf_<clave>` / `sv_<clave>` para que el motor de
-  // fórmulas y el Layout Builder los traten como una métrica más.
-  const sheetCamposPromise = getSheetCamposDelDia(supabase, cliente.id, startStr, endStr);
-
-  // Previous period for delta calculation (same duration, ending one day before startStr)
-  const prevMetricsPromise: Promise<{ data: any[] | null; error: any }> = startStr !== 'all'
+  // Periodo anterior para los deltas: misma duración, terminando un día antes.
+  const rangoPrevio = startStr !== 'all'
     ? (() => {
-        const startMs  = new Date(startStr + 'T00:00:00').getTime()
-        const endMs    = new Date(endStr   + 'T00:00:00').getTime()
+        const startMs = new Date(startStr + 'T00:00:00').getTime()
+        const endMs   = new Date(endStr   + 'T00:00:00').getTime()
         const prevEndMs   = startMs - 86400000
         const prevStartMs = prevEndMs - (endMs - startMs)
-        const prevStartStr = new Date(prevStartMs).toISOString().split('T')[0]
-        const prevEndStr   = new Date(prevEndMs).toISOString().split('T')[0]
-        return supabase
-          .from('metricas_diarias').select('*')
-          .eq('cliente_id', cliente.id)
-          .gte('fecha', prevStartStr)
-          .lte('fecha', prevEndStr)
-          .order('fecha', { ascending: true }) as unknown as Promise<{ data: any[] | null; error: any }>
+        return {
+          desde: new Date(prevStartMs).toISOString().split('T')[0],
+          hasta: new Date(prevEndMs).toISOString().split('T')[0],
+        }
       })()
-    : Promise.resolve({ data: [] as any[], error: null })
+    : null
 
-  const [metricsRes, leadsRes, convOfflineRes, prevMetricsRes, sheetCamposData] = await Promise.all([
-    metricsQuery,
-    leadsQuery,
-    convOfflineQuery,
-    prevMetricsPromise,
-    sheetCamposPromise,
+  // El periodo anterior pasa por el MISMO enriquecimiento: si no, las tarjetas
+  // con campos de Sheet, offline o leads se quedaban sin comparativo en silencio.
+  const [actual, previo] = await Promise.all([
+    cargarMetricasEnriquecidas(supabase, cliente.id, startStr, endStr),
+    rangoPrevio
+      ? cargarMetricasEnriquecidas(supabase, cliente.id, rangoPrevio.desde, rangoPrevio.hasta,
+          { incluirFilasOffline: false })
+      : Promise.resolve(null),
   ]);
 
-  // Aggregate individual conversiones_offline rows by date
-  const convOfflineByDate = new Map<string, { summary: Record<string, number>; rows: any[] }>();
-  for (const row of convOfflineRes.data || []) {
-    const dayData = convOfflineByDate.get(row.fecha) || {
-      summary: { offline_leads: 0, offline_ventas: 0, offline_revenue: 0, offline_total: 0 },
-      rows: []
-    };
-    const cantidad = row.cantidad || 0;
-    const valor    = Number(row.valor) || 0;
-    if (row.tipo === 'lead')  dayData.summary.offline_leads  += cantidad;
-    if (row.tipo === 'venta') dayData.summary.offline_ventas += cantidad;
-    dayData.summary.offline_revenue += valor;
-    dayData.summary.offline_total   += cantidad;
-    // Flatten numeric custom_fields into summary with prefix sheet_
-    for (const [k, v] of Object.entries((row.custom_fields as Record<string, any>) || {})) {
-      if (typeof v === 'number') {
-        const key = `sheet_${k}`;
-        dayData.summary[key] = (dayData.summary[key] ?? 0) + Number(v);
-      }
-    }
-    dayData.rows.push(row);
-    convOfflineByDate.set(row.fecha, dayData);
-  }
-
-  // Merge leads data into metrics by date
-  const leadsMap = new Map((leadsRes.data || []).map((l: any) => [l.date, l]));
-  const metrics = (metricsRes.data || []).map((m: any) => {
-    const leadDay = leadsMap.get(m.fecha);
-    const offlineDay = convOfflineByDate.get(m.fecha);
-    // Leads: el histórico de `leads_diarios` (integración retirada en la
-    // migración 059) manda donde exista, porque son las cifras que el cliente
-    // ya validó; las fechas posteriores las cubre el campo de calidad migrado.
-    // Así la serie no tiene escalón el día del cambio.
-    const leadsDelDia = leadDay
-      ? {
-        leads_totales: leadDay.leads_totales,
-        leads_calificados: leadDay.leads_calificados,
-        leads_no_calificados: leadDay.leads_no_calificados,
-        tasa_calificacion: leadDay.tasa_calificacion,
-      }
-      : sheetCamposData.leadsLegacy.get(m.fecha) ?? {};
-
-    return {
-      ...m,
-      ...leadsDelDia,
-      ...(offlineDay ? {
-        ...offlineDay.summary,
-        offline_rows: offlineDay.rows,
-      } : { offline_rows: [] }),
-      ...(sheetCamposData.porFecha.get(m.fecha) ?? {}),
-    };
-  });
+  const { metrics, leadsRaw, conversionesOfflineRaw, sheetCampos, sheetVistas } = actual;
 
   const effectiveStart = startStr === 'all' ? '2020-01-01' : startStr;
   const weeks = getWeeksInRange(effectiveStart, endStr);
@@ -559,11 +635,11 @@ export async function getDashboardData(clientId: string, startStr: string, endSt
   return {
     cliente,
     metrics: metrics || [],
-    prevMetrics: (prevMetricsRes.data || []) as any[],
-    sheetCampos: sheetCamposData.campos,
-    sheetVistas: sheetCamposData.vistas,
-    leadsRaw: leadsRes.data || [],
-    conversionesOfflineRaw: convOfflineRes.data || [],
+    prevMetrics: (previo?.metrics ?? []) as any[],
+    sheetCampos,
+    sheetVistas,
+    leadsRaw,
+    conversionesOfflineRaw,
     weeks,
     layout,
     allLayouts: allLayoutsRes.data || [],
@@ -1380,26 +1456,11 @@ export async function getMirrorDashboardData(token: string, from?: string, to?: 
     from || activeTabObj?.fecha_inicio || format(addDays(new Date(), -30), 'yyyy-MM-dd');
   const endStr = to || activeTabObj?.fecha_finalizacion || format(new Date(), 'yyyy-MM-dd');
 
-  // Fetch all metrics + leads for that range (identical to getDashboardData)
-  let mirrorMetricsQuery = supabase
-    .from('metricas_diarias')
-    .select('*')
-    .eq('cliente_id', cliente.id);
-  if (startStr !== 'all') mirrorMetricsQuery = mirrorMetricsQuery.gte('fecha', startStr);
-  mirrorMetricsQuery = mirrorMetricsQuery.lte('fecha', endStr).order('fecha', { ascending: true });
-
-  let mirrorLeadsQuery = supabase.from('leads_diarios').select('*').eq('client_id', cliente.id);
-  if (startStr !== 'all') mirrorLeadsQuery = mirrorLeadsQuery.gte('date', startStr);
-  mirrorLeadsQuery = mirrorLeadsQuery.lte('date', endStr);
-
-  let mirrorConvOfflineQuery = supabase.from('conversiones_offline').select('*').eq('cliente_id', cliente.id);
-  if (startStr !== 'all') mirrorConvOfflineQuery = mirrorConvOfflineQuery.gte('fecha', startStr);
-  mirrorConvOfflineQuery = mirrorConvOfflineQuery.lte('fecha', endStr);
-
-  const [metricsRes, leadsRes, conversionesRes, campaignGroupsRes, tabsRes, allLayoutsRes, mirrorConvOfflineRes] =
+  // Mismo enriquecimiento que el dashboard interno: sin esto, una tarjeta con un
+  // campo de Sheet salía en blanco en el enlace público del cliente.
+  const [enriquecido, conversionesRes, campaignGroupsRes, tabsRes, allLayoutsRes] =
     await Promise.all([
-      mirrorMetricsQuery,
-      mirrorLeadsQuery,
+      cargarMetricasEnriquecidas(supabase, cliente.id, startStr, endStr),
       supabase
         .from('meta_conversiones_catalogo')
         .select('conversion_key, label, field_id')
@@ -1421,43 +1482,9 @@ export async function getMirrorDashboardData(token: string, from?: string, to?: 
         .eq('cliente_id', cliente.id)
         .order('position', { ascending: true }),
       supabase.from('layouts_reporte').select('*').order('nombre'),
-      mirrorConvOfflineQuery,
     ]);
 
-  const mirrorConvOfflineByDate = new Map<string, { summary: Record<string, number>; rows: any[] }>();
-  for (const row of mirrorConvOfflineRes.data || []) {
-    const dayData = mirrorConvOfflineByDate.get(row.fecha) || {
-      summary: { offline_leads: 0, offline_ventas: 0, offline_revenue: 0, offline_total: 0 },
-      rows: []
-    };
-    const cantidad = row.cantidad || 0;
-    const valor    = Number(row.valor) || 0;
-    if (row.tipo === 'lead')  dayData.summary.offline_leads  += cantidad;
-    if (row.tipo === 'venta') dayData.summary.offline_ventas += cantidad;
-    dayData.summary.offline_revenue += valor;
-    dayData.summary.offline_total   += cantidad;
-    for (const [k, v] of Object.entries((row.custom_fields as Record<string, any>) || {})) {
-      if (typeof v === 'number') {
-        const key = `sheet_${k}`;
-        dayData.summary[key] = (dayData.summary[key] ?? 0) + Number(v);
-      }
-    }
-    dayData.rows.push(row);
-    mirrorConvOfflineByDate.set(row.fecha, dayData);
-  }
-
-  const leadsMap = new Map((leadsRes.data || []).map((l: any) => [l.date, l]));
-  const metrics = (metricsRes.data || []).map((m: any) => {
-    const leadDay = leadsMap.get(m.fecha);
-    const offlineDay = mirrorConvOfflineByDate.get(m.fecha);
-    return {
-      ...(leadDay ? { ...m, ...leadDay } : m),
-      ...(offlineDay ? {
-        ...offlineDay.summary,
-        offline_rows: offlineDay.rows,
-      } : { offline_rows: [] }),
-    };
-  });
+  const { metrics, conversionesOfflineRaw, sheetCampos, sheetVistas } = enriquecido;
 
   const effectiveStart = startStr === 'all' ? '2020-01-01' : startStr;
   const weeks = getWeeksInRange(effectiveStart, endStr);
@@ -1486,6 +1513,9 @@ export async function getMirrorDashboardData(token: string, from?: string, to?: 
     data: {
       cliente,
       metrics: metrics || [],
+      conversionesOfflineRaw,
+      sheetCampos,
+      sheetVistas,
       weeks,
       layout,
       tabs: allTabs,
@@ -1578,41 +1608,24 @@ export async function getOrCreatePublicToken(id: string, type: 'client' | 'tab')
   return { token: newToken };
 }
 
+/**
+ * Historia completa del cliente para el archivo de pestañas.
+ *
+ * Pasa por el mismo enriquecimiento que el dashboard: sus tarjetas evalúan las
+ * mismas fórmulas, así que sin esto las que usaban campos de Sheet u offline
+ * mostraban 0. Sin `offline_rows`: el archivo no filtra por Sheet y cargarlas
+ * sería traer decenas de miles de objetos para nada.
+ */
 export async function getArchiveMetrics(clientId: string): Promise<{ metrics: any[] } | null> {
   const supabase = await createAdminClient();
-
-  const [metricsRes, leadsRes] = await Promise.all([
-    supabase
-      .from('metricas_diarias')
-      .select('*')
-      .eq('cliente_id', clientId)
-      .gte('fecha', '2020-01-01')
-      .order('fecha', { ascending: true })
-      .range(0, 9999),
-    supabase
-      .from('leads_diarios')
-      .select('*')
-      .eq('client_id', clientId)
-      .gte('date', '2020-01-01')
-      .range(0, 9999),
-  ]);
-
-  if (metricsRes.error || leadsRes.error) return null;
-
-  const leadsMap = new Map((leadsRes.data || []).map((l: any) => [l.date, l]));
-  const metrics = (metricsRes.data || []).map((m: any) => {
-    const leadDay = leadsMap.get(m.fecha);
-    if (leadDay) {
-      return {
-        ...m,
-        leads_totales: leadDay.leads_totales,
-        leads_calificados: leadDay.leads_calificados,
-        leads_no_calificados: leadDay.leads_no_calificados,
-        tasa_calificacion: leadDay.tasa_calificacion,
-      };
-    }
-    return m;
-  });
-
-  return { metrics };
+  try {
+    const hoy = new Date().toISOString().split('T')[0];
+    const { metrics } = await cargarMetricasEnriquecidas(
+      supabase, clientId, '2020-01-01', hoy, { incluirFilasOffline: false }
+    );
+    return { metrics };
+  } catch (err) {
+    console.error('[dashboard] no se pudo cargar el archivo:', err);
+    return null;
+  }
 }

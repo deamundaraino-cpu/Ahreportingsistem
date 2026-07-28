@@ -14,11 +14,15 @@ import {
     normalizarValorCrudo, bucketDeValor, valoresDeCampoEnFila,
     computeCampoValoresDiarios, evaluarVista, agregarDiarios, vistaIncluyeValor,
     esAgregacionAditiva, slugCampo, sanitizarColumna, parseNumeroSheet,
-    firmaDeValor, sugerirAgrupacion, BUCKET_OTROS,
+    firmaDeValor, sugerirAgrupacion, BUCKET_OTROS, clavesPlanasDelDia,
 } from '../src/lib/sheets/campos'
 import type {
-    SheetCampoDef, SheetCampoVistaDef, SheetRawRow, CampoValorCrudo,
+    SheetCampoDef, SheetCampoVistaDef, SheetRawRow, CampoValorCrudo, CampoValorDiario,
 } from '../src/lib/sheets/campos'
+import { aggregateFormula, evaluateFormula } from '../src/lib/formula-engine'
+import { mergeMetricasDelRango, agruparOfflinePorFecha } from '../src/lib/dashboard/merge-metrics'
+import { buildAvailableMetrics, buildMetricFormats, applyMetricType } from '../src/lib/dashboard/metric-catalog'
+import type { MetricType } from '../src/lib/dashboard/metric-catalog'
 import {
     makeSheetDim, makeSheetMetric, makeSheetView,
     parseSheetDim, parseSheetMetric, parseSheetView,
@@ -451,6 +455,277 @@ sec('Migración 059 — las 4 métricas de leads salen del campo de calidad')
     const raro = { leads_totales: 2, leads_calificados: 5 }
     check('no_calificados nunca es negativo',
         Math.max(0, raro.leads_totales - raro.leads_calificados) === 0)
+}
+
+// ─── Agrupación por fechas en el dashboard clásico ──────────────────────────
+// `aggregateFormula` suma toda clave numérica de la fila, que es correcto para
+// conteos e importes pero no para un promedio. Los campos de Sheet llevan sus
+// sumandos dentro de la fila para que se puedan reagregar bien.
+
+sec('clavesPlanasDelDia — sumandos solo cuando hacen falta')
+
+function diario(over: Partial<CampoValorDiario> = {}): CampoValorDiario {
+    return {
+        campo_id: 'campo-1', fecha: '2026-07-01', valor: 'x',
+        filas: 1, suma: 0, n_num: 0, minimo: null, maximo: null,
+        ...over,
+    }
+}
+
+{
+    const filas = [
+        diario({ valor: 'a', filas: 3, suma: 30, n_num: 3, minimo: 5, maximo: 20 }),
+        diario({ valor: 'b', filas: 2, suma: 20, n_num: 2, minimo: 2, maximo: 30 }),
+    ]
+
+    const conteo = clavesPlanasDelDia(campo({ agregacion: 'count' }), [], filas)
+    check('un conteo no lleva sumandos',
+        Object.keys(conteo).join(',') === 'sf_rango_ingresos', Object.keys(conteo).join(','))
+    check('el conteo suma las filas', conteo.sf_rango_ingresos === 5)
+
+    const suma = clavesPlanasDelDia(campo({ agregacion: 'sum' }), [], filas)
+    check('una suma tampoco lleva sumandos', Object.keys(suma).length === 1)
+
+    const prom = clavesPlanasDelDia(campo({ agregacion: 'avg' }), [], filas)
+    check('el promedio lleva numerador y denominador',
+        prom.sf_rango_ingresos__num === 50 && prom.sf_rango_ingresos__den === 5,
+        `${prom.sf_rango_ingresos__num}/${prom.sf_rango_ingresos__den}`)
+    check('y el valor del día es su cociente', prom.sf_rango_ingresos === 10)
+
+    const min = clavesPlanasDelDia(campo({ agregacion: 'min' }), [], filas)
+    check('el mínimo lleva su sufijo', min.sf_rango_ingresos__min === 2 && min.sf_rango_ingresos === 2)
+
+    const max = clavesPlanasDelDia(campo({ agregacion: 'max' }), [], filas)
+    check('el máximo lleva su sufijo', max.sf_rango_ingresos__max === 30)
+}
+
+{
+    // Una vista usa su propia agregación y su propio filtro de valores.
+    const c = campo({ agregacion: 'count' })
+    const vista: SheetCampoVistaDef = {
+        id: 'v1', cliente_id: 'cli-1', campo_id: c.id, campo_clave: c.clave,
+        clave: 'solo_a', nombre: 'Solo A', agregacion: 'avg',
+        operador: 'in', valores: ['a'], formato: 'number', activo: true, orden: 0,
+    }
+    const filas = [
+        diario({ valor: 'a', filas: 2, suma: 40, n_num: 2 }),
+        diario({ valor: 'b', filas: 8, suma: 800, n_num: 8 }),
+    ]
+    const claves = clavesPlanasDelDia(c, [vista], filas)
+    check('la vista solo cuenta sus valores', claves.sv_solo_a === 20, String(claves.sv_solo_a))
+    check('la vista lleva sus propios sumandos',
+        claves.sv_solo_a__num === 40 && claves.sv_solo_a__den === 2)
+    check('el campo padre mantiene su agregación', claves.sf_rango_ingresos === 10)
+    // Una vista de otro campo no se cuela.
+    const otra = clavesPlanasDelDia(c, [{ ...vista, campo_id: 'otro' }], filas)
+    check('una vista de otro campo no aporta claves', otra.sv_solo_a === undefined)
+}
+
+sec('aggregateFormula — reagregación al agrupar por semana o mes')
+
+{
+    // El caso que motiva todo: promedio de 10 el día 1 (3 filas) y de 50 el
+    // día 2 (2 filas). El promedio del periodo es 130/5 = 26, NO 60.
+    const d1 = { fecha: '2026-07-01', sf_x: 10, sf_x__num: 30, sf_x__den: 3 }
+    const d2 = { fecha: '2026-07-02', sf_x: 50, sf_x__num: 100, sf_x__den: 2 }
+
+    check('el promedio del periodo usa Σnum/Σden, no la suma de promedios',
+        aggregateFormula('sf_x', [d1, d2]) === 26, String(aggregateFormula('sf_x', [d1, d2])))
+
+    // Invariante: con una sola fila, agregar y evaluar tienen que coincidir.
+    check('agregar una sola fila === evaluarla',
+        aggregateFormula('sf_x', [d1]) === evaluateFormula('sf_x', d1))
+
+    // Las fórmulas compuestas usan el valor YA recalculado.
+    check('una fórmula compuesta usa el valor reagregado',
+        aggregateFormula('sf_x * 2', [d1, d2]) === 52, String(aggregateFormula('sf_x * 2', [d1, d2])))
+
+    // Un día sin datos no puede dividir por cero ni devolver NaN.
+    const vacios = [{ fecha: '2026-07-01', sf_x: 0, sf_x__num: 0, sf_x__den: 0 }]
+    const r = aggregateFormula('sf_x', vacios)
+    check('denominador 0 da 0, no NaN', r === 0 && Number.isFinite(r as number), String(r))
+}
+
+{
+    // Extremos: se pliegan, no se suman. Y un día sin el dato no arrastra el
+    // mínimo a 0, que sería el error clásico.
+    const filas = [
+        { fecha: '2026-07-01', sf_t: 5, sf_t__min: 5 },
+        { fecha: '2026-07-02', sf_t: 2, sf_t__min: 2 },
+        { fecha: '2026-07-03' },
+    ]
+    check('el mínimo del periodo es el menor, no la suma',
+        aggregateFormula('sf_t', filas) === 2, String(aggregateFormula('sf_t', filas)))
+
+    const maxs = [
+        { fecha: '2026-07-01', sf_t: 5, sf_t__max: 5 },
+        { fecha: '2026-07-02', sf_t: 30, sf_t__max: 30 },
+    ]
+    check('el máximo del periodo es el mayor', aggregateFormula('sf_t', maxs) === 30)
+}
+
+{
+    // REQUISITO DURO de esta fase: las métricas existentes NO cambian de
+    // comportamiento. `meta_frequency`, `ga_bounce_rate` y
+    // `ga_avg_session_duration` hoy se suman al agrupar (es un bug conocido),
+    // pero corregirlo alteraría cifras que los clientes ya validaron. Si alguien
+    // lo "arregla" de paso, esta comprobación falla.
+    const filas = [
+        { fecha: '2026-07-01', meta_frequency: 1.5, ga_bounce_rate: 40, ga_avg_session_duration: 60 },
+        { fecha: '2026-07-02', meta_frequency: 2.5, ga_bounce_rate: 20, ga_avg_session_duration: 40 },
+    ]
+    check('meta_frequency sigue sumándose (comportamiento intacto)',
+        aggregateFormula('meta_frequency', filas) === 4, String(aggregateFormula('meta_frequency', filas)))
+    check('ga_bounce_rate sigue sumándose', aggregateFormula('ga_bounce_rate', filas) === 60)
+    check('ga_avg_session_duration sigue sumándose', aggregateFormula('ga_avg_session_duration', filas) === 100)
+
+    // Y la reagregación no toca claves ajenas aunque lleven los sufijos.
+    const ajenas = [
+        { fecha: '2026-07-01', sheet_algo: 5, sheet_algo__min: 5 },
+        { fecha: '2026-07-02', sheet_algo: 2, sheet_algo__min: 2 },
+    ]
+    check('una clave que no es de campo de Sheet se sigue sumando',
+        aggregateFormula('sheet_algo', ajenas) === 7, String(aggregateFormula('sheet_algo', ajenas)))
+}
+
+// ─── Merge de filas del dashboard ───────────────────────────────────────────
+// Una sola definición de qué claves ve una fórmula, compartida por el dashboard,
+// el espejo público, el archivo y el periodo anterior.
+
+sec('mergeMetricasDelRango — enriquecimiento compartido')
+
+{
+    const base = {
+        metricas: [
+            { id: 'm1', fecha: '2026-07-01', meta_spend: 100 },
+            { id: 'm2', fecha: '2026-07-02', meta_spend: 200 },
+        ],
+        leads: [{ date: '2026-07-01', leads_totales: 9, leads_calificados: 4, leads_no_calificados: 5, tasa_calificacion: 44.44 }],
+        offlinePorFecha: agruparOfflinePorFecha([
+            { fecha: '2026-07-01', tipo: 'lead', cantidad: 3, valor: 0, custom_fields: { citas: 2 } },
+            { fecha: '2026-07-01', tipo: 'venta', cantidad: 1, valor: 500, custom_fields: {} },
+        ]),
+        sheetPorFecha: new Map([['2026-07-02', { sf_x: 7 }]]),
+        leadsLegacyPorFecha: new Map([['2026-07-02', {
+            leads_totales: 12, leads_calificados: 3, leads_no_calificados: 9, tasa_calificacion: 25,
+        }]]),
+    }
+
+    const filas = mergeMetricasDelRango(base)
+
+    check('no pierde ni inventa filas de métricas', filas.length === 2, String(filas.length))
+    check('conserva las claves de metricas_diarias', filas[0].meta_spend === 100)
+    check('agrega las conversiones offline del día',
+        filas[0].offline_leads === 3 && filas[0].offline_ventas === 1 && filas[0].offline_revenue === 500)
+    check('aplana custom_fields con prefijo sheet_', filas[0].sheet_citas === 2)
+    // El histórico validado manda donde existe; el resto lo cubre el campo migrado.
+    check('leads_diarios gana donde existe', filas[0].leads_totales === 9, String(filas[0].leads_totales))
+    check('el legacy migrado cubre las fechas posteriores', filas[1].leads_totales === 12)
+    check('los campos de Sheet entran en su fecha', filas[1].sf_x === 7)
+    check('un día sin datos de Sheet no inventa la clave', filas[0].sf_x === undefined)
+    check('offline_rows va por defecto', Array.isArray(filas[0].offline_rows))
+
+    const sinFilas = mergeMetricasDelRango({ ...base, incluirFilasOffline: false })
+    check('incluirFilasOffline:false no adjunta las filas crudas',
+        sinFilas[0].offline_rows === undefined)
+}
+
+{
+    // Una fecha con datos de Sheet y sin fila en metricas_diarias existe de
+    // verdad (un sábado con leads y sin inversión): antes se perdía y las
+    // tarjetas contaban de menos.
+    const filas = mergeMetricasDelRango({
+        metricas: [{ id: 'm1', fecha: '2026-07-01', meta_spend: 100 }],
+        leads: [],
+        offlinePorFecha: new Map(),
+        sheetPorFecha: new Map([['2026-07-05', { sf_x: 4 }]]),
+        leadsLegacyPorFecha: new Map(),
+    })
+    check('crea fila sintética para una fecha solo de Sheet', filas.length === 2, String(filas.length))
+    check('la fila sintética lleva su fecha y su valor',
+        filas[1].fecha === '2026-07-05' && filas[1].sf_x === 4)
+    check('las filas salen ordenadas por fecha',
+        filas.map(f => f.fecha).join(',') === '2026-07-01,2026-07-05')
+
+    // Pero NO para una fecha que solo tiene conversiones offline: eso cambiaría
+    // cifras de dashboards que ya están en uso.
+    const soloOffline = mergeMetricasDelRango({
+        metricas: [{ id: 'm1', fecha: '2026-07-01', meta_spend: 100 }],
+        leads: [],
+        offlinePorFecha: agruparOfflinePorFecha([
+            { fecha: '2026-07-09', tipo: 'lead', cantidad: 5, valor: 0, custom_fields: {} },
+        ]),
+        sheetPorFecha: new Map(),
+        leadsLegacyPorFecha: new Map(),
+    })
+    check('una fecha solo con offline NO crea fila sintética',
+        soloOffline.length === 1, String(soloOffline.length))
+}
+
+// ─── Catálogo de métricas del dashboard clásico ─────────────────────────────
+
+sec('buildAvailableMetrics / buildMetricFormats')
+
+{
+    const campos = [
+        { clave: 'rango_ingresos', nombre: 'Rango de ingresos', agregacion: 'count' as const, formato: 'number' as const },
+        { clave: 'ticket', nombre: 'Ticket promedio', agregacion: 'avg' as const, formato: 'currency' as const },
+        { clave: 'texto', nombre: 'Campo de texto', agregacion: 'count' as const, formato: 'text' as const },
+    ]
+    const vistas = [
+        { clave: 'leads_alto', nombre: 'Leads alto ingreso', agregacion: 'count' as const, formato: 'number' as const },
+        { clave: 'ticket_alto', nombre: 'Ticket alto', agregacion: 'avg' as const, formato: 'currency' as const },
+    ]
+
+    const formatos = buildMetricFormats(campos, vistas)
+    // Un conteo de filas es un número aunque la columna sea de dinero.
+    check('un conteo es número aunque el campo sea de moneda', formatos.sf_rango_ingresos === 'number')
+    check('un promedio de moneda es moneda', formatos.sf_ticket === 'currency')
+    check('un campo de texto se trata como número', formatos.sf_texto === 'number')
+    check('las vistas también declaran formato',
+        formatos.sv_leads_alto === 'number' && formatos.sv_ticket_alto === 'currency')
+
+    const metricas = buildAvailableMetrics([], [], campos, vistas)
+    const ids = metricas.map(m => m.id)
+    check('el catálogo incluye los campos', ids.includes('sf_rango_ingresos') && ids.includes('sf_ticket'))
+    check('el catálogo incluye las vistas', ids.includes('sv_leads_alto'))
+    check('usa el nombre que puso el analista',
+        metricas.find(m => m.id === 'sf_ticket')?.label === 'Ticket promedio')
+    check('la métrica lleva su formato para prerrellenar el bloque',
+        metricas.find(m => m.id === 'sf_ticket')?.format === 'currency')
+    // Los sumandos internos no son métricas elegibles.
+    check('no expone claves con sufijo interno', ids.every(id => !id.includes('__')))
+    check('no duplica ids', ids.length === new Set(ids).size)
+    check('conserva las métricas de siempre', ids.includes('meta_spend'))
+}
+
+{
+    // Insertar una métrica en una fórmula VACÍA dispara dos actualizaciones del
+    // bloque: la de la fórmula y la del formato. Si la segunda se reconstruye
+    // desde el objeto del render anterior, borra la métrica recién puesta y el
+    // clic parece no hacer nada. Por eso la fórmula viaja en el mismo aviso.
+    interface Bloque { formula: string; prefix?: string; suffix?: string; decimals?: number }
+    const simularInsercion = (bloqueInicial: Bloque, metricId: string, format?: MetricType) => {
+        let bloque = bloqueInicial
+        const onUpdate = (siguiente: Bloque) => { bloque = siguiente }
+
+        // Lo que hace FormulaInput.insertMetric con el campo vacío.
+        const nuevaFormula = `${metricId} `
+        onUpdate({ ...bloque, formula: nuevaFormula.trim() })
+        if (format) {
+            onUpdate({ ...bloque, formula: nuevaFormula.trim(), ...applyMetricType(format) })
+        }
+        return bloque
+    }
+
+    const conFormato = simularInsercion({ formula: '' }, 'sv_calificado_1_6', 'currency')
+    check('insertar en una fórmula vacía conserva la métrica',
+        conFormato.formula === 'sv_calificado_1_6', JSON.stringify(conFormato.formula))
+    check('y aplica el formato declarado', conFormato.prefix === '$')
+
+    const sinFormato = simularInsercion({ formula: '' }, 'sf_rango_de_ingresos', undefined)
+    check('sin formato declarado también conserva la métrica',
+        sinFormato.formula === 'sf_rango_de_ingresos')
 }
 
 // ─── Tokens del BI ──────────────────────────────────────────────────────────

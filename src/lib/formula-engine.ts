@@ -513,8 +513,59 @@ export function aggregateFormula(
         totalRow[field] = rows.reduce((sum, r) => sum + (parseFloat(r[field] ?? '0') || 0), 0)
     }
 
+    // Sumar no vale para promedios ni extremos: se recalculan sobre sus sumandos.
+    reagregarNoAditivas(totalRow, rows)
+
     // Evaluate the formula once exactly on the aggregated totals
     return evaluateFormula(formula, totalRow, context, sourceMapping, availablePlatforms, customMetrics)
+}
+
+/**
+ * Reescribe en `totalRow` las métricas que NO se pueden sumar entre días.
+ *
+ * El bucle de arriba suma toda clave numérica, que es correcto para conteos e
+ * importes pero no para un promedio (30, 32, 28 → 90 en vez de 30). Los campos
+ * de Sheet resuelven esto llevando sus sumandos dentro de la propia fila
+ * (`sf_x__num` / `sf_x__den`, o `__min` / `__max`), así que aquí basta con
+ * detectarlos por el nombre y recalcular.
+ *
+ * Deliberadamente acotado a `sf_`/`sv_`: cualquier otra métrica queda EXACTAMENTE
+ * como estaba. Eso incluye `meta_frequency`, `ga_bounce_rate` y
+ * `ga_avg_session_duration`, que hoy también se suman mal — corregirlas cambiaría
+ * cifras de dashboards que los clientes ya dieron por buenas, y es una decisión
+ * aparte.
+ */
+export function reagregarNoAditivas(
+    totalRow: Record<string, number>,
+    rows: Record<string, unknown>[]
+): void {
+    const esCampoDeSheet = (base: string) => base.startsWith('sf_') || base.startsWith('sv_')
+
+    for (const clave of Object.keys(totalRow)) {
+        // Promedio: Σnumerador / Σdenominador, correcto a cualquier grano.
+        if (clave.endsWith('__den')) {
+            const base = clave.slice(0, -'__den'.length)
+            if (!esCampoDeSheet(base)) continue
+            const den = totalRow[clave]
+            totalRow[base] = den > 0 ? (totalRow[base + '__num'] ?? 0) / den : 0
+            continue
+        }
+
+        // Extremos: se pliegan sobre las filas, no se suman.
+        const esMin = clave.endsWith('__min')
+        if (esMin || clave.endsWith('__max')) {
+            const base = clave.slice(0, -'__min'.length)
+            if (!esCampoDeSheet(base)) continue
+            // Solo las filas que TIENEN el dato: un día sin valor no debe
+            // arrastrar el mínimo a 0.
+            const vals = rows
+                .map(r => Number(r[clave]))
+                .filter(n => Number.isFinite(n))
+            totalRow[base] = vals.length > 0
+                ? (esMin ? Math.min(...vals) : Math.max(...vals))
+                : 0
+        }
+    }
 }
 
 

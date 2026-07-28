@@ -1,11 +1,11 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { createLayout, updateLayout, deleteLayout } from '../settings/_actions'
+import { createLayout, updateLayout, deleteLayout, getSheetCamposCatalogo } from '../settings/_actions'
 import { Plus, Trash2, Save, GripVertical, LayoutDashboard, Loader2, PenSquare, X, ChevronDown, ChevronUp, Search, Database } from 'lucide-react'
 import { SEMANTIC_ALIASES } from '@/lib/formula-engine'
 
@@ -241,12 +241,17 @@ const FORMULA_PRESETS = [
 ]
 
 // ─── Buscador / Catálogo de métricas ─────────────────────────────────────────
-function MetricCatalog({ onInsert }: { onInsert: (id: string) => void }) {
+function MetricCatalog({ onInsert, extraCategories = [] }: {
+    onInsert: (id: string) => void
+    /** Categorías dependientes del cliente (campos de Sheet). */
+    extraCategories?: { category: string; color: string; metrics: { id: string; label: string; desc: string }[] }[]
+}) {
     const [query, setQuery] = useState('')
     const [expanded, setExpanded] = useState(false)
 
+    const catalogo = [...METRIC_CATALOG, ...extraCategories]
     const filtered = query.trim()
-        ? METRIC_CATALOG.map(cat => ({
+        ? catalogo.map(cat => ({
             ...cat,
             metrics: cat.metrics.filter(m =>
                 m.label.toLowerCase().includes(query.toLowerCase()) ||
@@ -254,7 +259,7 @@ function MetricCatalog({ onInsert }: { onInsert: (id: string) => void }) {
                 m.desc.toLowerCase().includes(query.toLowerCase())
             )
           })).filter(cat => cat.metrics.length > 0)
-        : METRIC_CATALOG
+        : catalogo
 
     return (
         <div className="border border-border rounded-lg bg-muted/40 overflow-hidden">
@@ -352,9 +357,60 @@ function FieldRow({ item, onChange, onRemove }: { item: any; onChange: (v: any) 
 }
 
 // ─── Layout Editor ────────────────────────────────────────────────────────────
-function LayoutEditor({ initial, onSave, onCancel }: { initial: any; onSave: (l: any) => Promise<void>; onCancel: () => void }) {
+function LayoutEditor({ initial, onSave, onCancel, clientes = [] }: {
+    initial: any
+    onSave: (l: any) => Promise<void>
+    onCancel: () => void
+    clientes?: { id: string; nombre: string }[]
+}) {
     const [layout, setLayout] = useState(initial)
     const [saving, setSaving] = useState(false)
+
+    // ── Campos de Sheet ───────────────────────────────────────────────────────
+    // Una plantilla global se edita sin cliente, pero un campo de Sheet es por
+    // cliente. Se elige uno como referencia solo para poblar el catálogo; lo que
+    // se guarda es la clave, que resolverá en los clientes que tengan ese campo.
+    const [previewClienteId, setPreviewClienteId] = useState('')
+    const [camposSheet, setCamposSheet] = useState<{
+        campos: { clave: string; nombre: string; agregacion: string }[]
+        vistas: { clave: string; nombre: string; agregacion: string }[]
+    }>({ campos: [], vistas: [] })
+
+    useEffect(() => {
+        let vivo = true
+        void (async () => {
+            if (!previewClienteId) { if (vivo) setCamposSheet({ campos: [], vistas: [] }); return }
+            const res = await getSheetCamposCatalogo(previewClienteId)
+            if (!vivo) return
+            setCamposSheet('error' in res ? { campos: [], vistas: [] } : res)
+        })()
+        return () => { vivo = false }
+    }, [previewClienteId])
+
+    const nombreCliente = clientes.find(c => c.id === previewClienteId)?.nombre ?? ''
+    const AGG_LABEL: Record<string, string> = {
+        count: 'Conteo', sum: 'Suma', avg: 'Promedio', min: 'Mínimo', max: 'Máximo',
+    }
+    const extraCategories = camposSheet.campos.length + camposSheet.vistas.length > 0
+        ? [
+            ...(camposSheet.campos.length > 0 ? [{
+                category: `Campos de Sheet · ${nombreCliente}`,
+                color: 'purple',
+                metrics: camposSheet.campos.map(c => ({
+                    id: `sf_${c.clave}`, label: c.nombre,
+                    desc: `${AGG_LABEL[c.agregacion] ?? c.agregacion} — solo en clientes con este campo`,
+                })),
+            }] : []),
+            ...(camposSheet.vistas.length > 0 ? [{
+                category: `Vistas de Sheet · ${nombreCliente}`,
+                color: 'purple',
+                metrics: camposSheet.vistas.map(v => ({
+                    id: `sv_${v.clave}`, label: v.nombre,
+                    desc: `${AGG_LABEL[v.agregacion] ?? v.agregacion} — solo en clientes con esta vista`,
+                })),
+            }] : []),
+        ]
+        : []
     // Tracks which field row is "active" for metric insertion: { section: 'col'|'card', idx: number }
     const [activeField, setActiveField] = useState<{ section: 'col' | 'card'; idx: number } | null>(null)
 
@@ -426,8 +482,27 @@ function LayoutEditor({ initial, onSave, onCancel }: { initial: any; onSave: (l:
                 </CardContent>
             </Card>
 
+            {/* Campos de Sheet: se eligen contra un cliente de referencia */}
+            {clientes.length > 0 && (
+                <div className="flex flex-wrap items-center gap-2 text-xs">
+                    <Label className="text-foreground/90 shrink-0">Campos de Sheet de:</Label>
+                    <select
+                        value={previewClienteId}
+                        onChange={e => setPreviewClienteId(e.target.value)}
+                        className="h-8 rounded-md border border-input bg-background px-2 text-foreground focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    >
+                        <option value="">— Ninguno —</option>
+                        {clientes.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+                    </select>
+                    <span className="text-muted-foreground/70">
+                        Los campos de Sheet son propios de cada cliente: una plantilla que use uno
+                        solo mostrará datos en los clientes que lo tengan.
+                    </span>
+                </div>
+            )}
+
             {/* Catálogo de métricas */}
-            <MetricCatalog onInsert={handleInsertMetric} />
+            <MetricCatalog onInsert={handleInsertMetric} extraCategories={extraCategories} />
             {activeField && (
                 <p className="text-[11px] text-indigo-600 dark:text-indigo-400 text-center -mt-3">
                     Insertando en: <span className="font-mono font-semibold">
@@ -584,7 +659,12 @@ function LayoutEditor({ initial, onSave, onCancel }: { initial: any; onSave: (l:
 }
 
 // ─── Main Builder Client ──────────────────────────────────────────────────────
-export function LayoutBuilderClient({ layouts: initial, isAdmin = false }: { layouts: any[]; isAdmin?: boolean }) {
+export function LayoutBuilderClient({ layouts: initial, isAdmin = false, clientes = [] }: {
+    layouts: any[]
+    isAdmin?: boolean
+    /** Para elegir de qué cliente se listan los campos de Sheet en el catálogo. */
+    clientes?: { id: string; nombre: string }[]
+}) {
     const [layouts, setLayouts] = useState(initial)
     const [editing, setEditing] = useState<any | null>(null)
     const [isNew, setIsNew] = useState(false)
@@ -611,7 +691,7 @@ export function LayoutBuilderClient({ layouts: initial, isAdmin = false }: { lay
     }
 
     if (editing) {
-        return <LayoutEditor initial={editing} onSave={handleSave} onCancel={() => { setEditing(null); setIsNew(false) }} />
+        return <LayoutEditor initial={editing} onSave={handleSave} onCancel={() => { setEditing(null); setIsNew(false) }} clientes={clientes} />
     }
 
     return (

@@ -472,6 +472,72 @@ export function evaluarVista(
   return { total: agregarDiarios(propias, vista.agregacion), porFecha }
 }
 
+// ── Claves planas para el dashboard clásico ───────────────────────────────────
+
+/** Prefijo de un campo en las fórmulas del dashboard clásico. */
+export const CAMPO_FLAT_PREFIX = 'sf_'
+/** Prefijo de una vista guardada. */
+export const VISTA_FLAT_PREFIX = 'sv_'
+
+// Sufijos internos: los sumandos que permiten reagregar una métrica que no se
+// puede sumar entre días. Son seguros por construcción — `sanitizarColumna`
+// colapsa cualquier racha de símbolos en UN solo `_`, así que ninguna clave de
+// campo puede contener `__` y no hay forma de que choquen.
+export const SUFIJO_NUM = '__num'
+export const SUFIJO_DEN = '__den'
+export const SUFIJO_MIN = '__min'
+export const SUFIJO_MAX = '__max'
+
+/**
+ * Claves planas de UN día para el dashboard clásico.
+ *
+ * Devuelve `sf_<clave>` (el campo con su agregación) y `sv_<clave>` (cada vista)
+ * y, **solo cuando esa agregación no es aditiva**, los sumandos que permiten
+ * reagregarla a semana o mes sin inventar un número.
+ *
+ * El porqué: el motor de fórmulas del dashboard suma toda clave numérica de la
+ * fila al agrupar por periodo. Para un conteo o una suma eso es correcto; para
+ * un promedio no —tres días de 30, 32 y 28 darían 90—. Llevando el numerador y
+ * el denominador dentro de la propia fila, la reagregación sale bien sin que
+ * ningún componente tenga que enterarse de nada.
+ */
+export function clavesPlanasDelDia(
+  campo: SheetCampoDef,
+  vistas: SheetCampoVistaDef[],
+  filasDelDia: CampoValorDiario[]
+): Record<string, number> {
+  const out: Record<string, number> = {}
+
+  const anotar = (clave: string, agg: CampoAgg, filas: CampoValorDiario[]) => {
+    out[clave] = agregarDiarios(filas, agg)
+    if (esAgregacionAditiva(agg)) return
+
+    if (agg === 'avg') {
+      // El promedio se reconstruye como Σnumerador / Σdenominador, que es lo
+      // mismo que hace el BI y lo único correcto a cualquier grano.
+      out[clave + SUFIJO_NUM] = filas.reduce((s, f) => s + f.suma, 0)
+      out[clave + SUFIJO_DEN] = filas.reduce((s, f) => s + f.n_num, 0)
+    } else if (agg === 'min') {
+      out[clave + SUFIJO_MIN] = out[clave]
+    } else if (agg === 'max') {
+      out[clave + SUFIJO_MAX] = out[clave]
+    }
+  }
+
+  anotar(CAMPO_FLAT_PREFIX + campo.clave, campo.agregacion, filasDelDia)
+
+  for (const vista of vistas) {
+    if (vista.campo_id !== campo.id) continue
+    anotar(
+      VISTA_FLAT_PREFIX + vista.clave,
+      vista.agregacion,
+      filasDelDia.filter(f => vistaIncluyeValor(vista, f.valor))
+    )
+  }
+
+  return out
+}
+
 // ── Ayuda para el agrupador de la UI ──────────────────────────────────────────
 
 /**

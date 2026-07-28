@@ -11,6 +11,7 @@ import type {
 import type { GA4Property } from '@/lib/integrations/google-analytics'
 import type { SheetCampoDef, SheetCampoVistaDef, CampoValorCrudo } from '@/lib/sheets/campos'
 import type { FuenteColumnas } from '@/lib/sheets/campos-db'
+import { loadCamposCliente as loadCamposClienteServer } from '@/lib/sheets/campos-db'
 
 export async function getClientes() {
     const supabase = await createClient()
@@ -963,6 +964,30 @@ export async function recalcularSheetCampos(clienteId: string, campoId?: string)
         return data as { campos: number; dias: number; valores: number; avisos: string[] }
     } catch (e: any) {
         return { error: e.message || 'Error al recalcular' }
+    }
+}
+
+/**
+ * Campos y vistas de un cliente para el constructor de plantillas globales.
+ *
+ * Las plantillas de `/admin/layouts` se editan sin cliente seleccionado, así que
+ * el catálogo se puebla eligiendo uno como referencia. Lo que se guarda es la
+ * clave (`sf_<clave>`), que solo resuelve en los clientes que tengan ese campo.
+ */
+export async function getSheetCamposCatalogo(clienteId: string) {
+    try {
+        const db = await createAdminClient()
+        const { campos, vistas } = await loadCamposClienteServer(db, clienteId, { soloActivos: true })
+        return {
+            campos: campos.map(c => ({
+                clave: c.clave, nombre: c.nombre, agregacion: c.agregacion, formato: c.formato,
+            })),
+            vistas: vistas.map(v => ({
+                clave: v.clave, nombre: v.nombre, agregacion: v.agregacion, formato: v.formato,
+            })),
+        }
+    } catch (e: any) {
+        return { error: e.message || 'Error al leer los campos del cliente' }
     }
 }
 

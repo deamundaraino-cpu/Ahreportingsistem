@@ -278,6 +278,29 @@ dinámica. El editor avisa de los tres casos.
 Las etapas de embudo con vistas de Sheet quedan pendientes: `runFunnelQuery`
 consulta tres fuentes fijas y añadir una cuarta es trabajo aparte.
 
+### En el dashboard clásico
+
+Las claves planas `sf_<clave>` / `sv_<clave>` las inyecta
+`cargarMetricasEnriquecidas` (`dashboard/_actions.ts`), el único camino que
+comparten el dashboard, el espejo público por token, el archivo de pestañas y el
+periodo anterior de los comparativos. El merge en sí es puro y vive en
+`src/lib/dashboard/merge-metrics.ts`.
+
+**Agregación por fechas.** Un campo con agregación no aditiva (promedio, mínimo,
+máximo) lleva sus sumandos dentro de la propia fila (`sf_x__num` / `sf_x__den`, o
+`__min` / `__max`, ver `clavesPlanasDelDia`). `aggregateFormula` los detecta por
+el nombre y recalcula en vez de sumar. El convenio es libre de colisiones por
+construcción: `sanitizarColumna` colapsa cualquier racha de símbolos en un solo
+`_`, así que ninguna clave puede contener `__`.
+
+El guard está acotado a `sf_`/`sv_` a propósito: `meta_frequency`,
+`ga_bounce_rate` y `ga_avg_session_duration` también se suman mal al agrupar,
+pero corregirlo cambiaría cifras de dashboards que los clientes ya validaron.
+Hay una comprobación que falla si alguien lo "arregla" de paso.
+
+El catálogo de métricas del dashboard vive en `src/lib/dashboard/metric-catalog.ts`
+(puro, comprobable sin React); `LayoutConfigModal` lo reexporta.
+
 ---
 
 ## WhatsApp (notificaciones a grupos · Baileys)

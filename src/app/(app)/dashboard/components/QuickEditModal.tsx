@@ -14,6 +14,8 @@ import {
 import type {
     ReportLayout, CardDef, ChartDef, TextBlockDef, RankingTableDef, ColDef,
 } from '@/lib/layout-types'
+import type { MetricOption } from '@/lib/dashboard/metric-catalog'
+import type { SheetCampoResumen, SheetVistaResumen } from '../_actions'
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
@@ -29,7 +31,7 @@ export type QuickEditTarget =
 function CardEditor({ card, onChange, availableMetrics, campaignGroups, campaignNames, tiktokAccounts = [] }: {
     card: CardDef
     onChange: (card: CardDef) => void
-    availableMetrics: { id: string; label: string }[]
+    availableMetrics: MetricOption[]
     campaignGroups: { id: string; nombre: string }[]
     campaignNames: string[]
     tiktokAccounts?: { id: string; label: string; advertiser_id: string }[]
@@ -89,7 +91,7 @@ function CardEditor({ card, onChange, availableMetrics, campaignGroups, campaign
 function ChartEditor({ chart, onChange, availableMetrics, campaignGroups, campaignNames, tiktokAccounts = [] }: {
     chart: ChartDef
     onChange: (chart: ChartDef) => void
-    availableMetrics: { id: string; label: string }[]
+    availableMetrics: MetricOption[]
     campaignGroups: { id: string; nombre: string }[]
     campaignNames: string[]
     tiktokAccounts?: { id: string; label: string; advertiser_id: string }[]
@@ -353,7 +355,7 @@ function TextEditor({ block, onChange }: {
 function RankingEditor({ ranking, onChange, availableMetrics, campaignGroups, campaignNames, tiktokAccounts = [] }: {
     ranking: RankingTableDef
     onChange: (r: RankingTableDef) => void
-    availableMetrics: { id: string; label: string }[]
+    availableMetrics: MetricOption[]
     campaignGroups: { id: string; nombre: string }[]
     campaignNames: string[]
     tiktokAccounts?: { id: string; label: string; advertiser_id: string }[]
@@ -525,7 +527,7 @@ function RankingEditor({ ranking, onChange, availableMetrics, campaignGroups, ca
 function TableColumnsEditor({ columns, onChange, availableMetrics, campaignGroups, campaignNames }: {
     columns: ColDef[]
     onChange: (cols: ColDef[]) => void
-    availableMetrics: { id: string; label: string }[]
+    availableMetrics: MetricOption[]
     campaignGroups: { id: string; nombre: string }[]
     campaignNames: string[]
 }) {
@@ -608,6 +610,9 @@ export function QuickEditModal({
     campaignGroups = [],
     campaignNames = [],
     conversionesCatalogo = [],
+    googleSheetsConversiones = [],
+    sheetCampos = [],
+    sheetVistas = [],
     tiktokAccounts = [],
     onClose,
     onLayoutApplied,
@@ -619,11 +624,19 @@ export function QuickEditModal({
     campaignGroups?: { id: string; nombre: string }[]
     campaignNames?: string[]
     conversionesCatalogo?: { conversion_key: string; label: string; field_id: string }[]
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    googleSheetsConversiones?: any[]
+    /** Campos de Sheet del cliente: la edición rápida ofrece las mismas métricas
+     *  que el Layout Builder, o el mismo bloque tendría dos catálogos distintos. */
+    sheetCampos?: SheetCampoResumen[]
+    sheetVistas?: SheetVistaResumen[]
     tiktokAccounts?: { id: string; label: string; advertiser_id: string }[]
     onClose: () => void
     onLayoutApplied: (layout: ReportLayout) => void
 }) {
-    const availableMetrics = buildAvailableMetrics(conversionesCatalogo)
+    const availableMetrics = buildAvailableMetrics(
+        conversionesCatalogo, googleSheetsConversiones, sheetCampos, sheetVistas
+    )
     const [loading, setLoading] = useState(false)
     const [saved, setSaved] = useState(false)
 

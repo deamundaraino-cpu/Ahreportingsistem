@@ -19,7 +19,13 @@ export default async function LayoutsPage() {
     const role = profile?.role ?? 'viewer'
     const isAdmin = ['superadmin', 'admin'].includes(role)
 
-    const [layouts, tabTemplatesRes] = await Promise.all([getLayouts(), listTabTemplates()])
+    // Los clientes solo se usan para elegir de cuál listar los campos de Sheet
+    // en el catálogo de métricas: una plantilla global no pertenece a ninguno.
+    const [layouts, tabTemplatesRes, clientesRes] = await Promise.all([
+        getLayouts(),
+        listTabTemplates(),
+        supabase.from('clientes').select('id, nombre').order('nombre'),
+    ])
 
     return (
         <div className="space-y-6">
@@ -27,7 +33,7 @@ export default async function LayoutsPage() {
                 <h2 className="text-2xl font-bold tracking-tight text-foreground">Constructor de Layouts</h2>
                 <p className="text-muted-foreground">Crea y edita plantillas de métricas para asignarlas a tus clientes.</p>
             </div>
-            <LayoutBuilderClient layouts={layouts} isAdmin={isAdmin} />
+            <LayoutBuilderClient layouts={layouts} isAdmin={isAdmin} clientes={clientesRes.data || []} />
             <TabTemplatesManager templates={tabTemplatesRes.data || []} isAdmin={isAdmin} />
         </div>
     )

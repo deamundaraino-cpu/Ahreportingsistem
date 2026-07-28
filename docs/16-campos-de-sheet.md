@@ -181,8 +181,30 @@ No requiere recálculo: se evalúa sobre el desglose que el campo ya dejó guard
 
 ### En el dashboard del cliente
 
-Los campos aparecen en el Layout Builder con su nombre. En fórmulas son
-`sf_<clave>` (el campo) y `sv_<clave>` (una vista).
+Los campos aparecen con su nombre en **todos** los sitios donde se elige una
+métrica: el Layout personalizado, la edición rápida de un bloque y las plantillas
+globales de `/admin/layouts` (ahí eliges de qué cliente listar los campos, porque
+una plantilla no pertenece a ninguno).
+
+En fórmulas son `sf_<clave>` (el campo) y `sv_<clave>` (una vista). Al insertar
+uno en una fórmula vacía se prerrellena su formato: un campo de moneda entra ya
+con `$`.
+
+Funcionan igual en el enlace público del cliente, en el archivo de pestañas y en
+los comparativos (el "vs. periodo anterior" de las tarjetas).
+
+**Agrupar por fechas.** La tabla y los gráficos agrupan por día, semana, mes o
+año. Un campo de conteo o de suma se suma; uno de **promedio** se recalcula sobre
+el total del periodo, no se suma —tres días de 30, 32 y 28 dan 30, no 90—, y los
+mínimos y máximos se pliegan. Es la misma aritmética que el BI, así que las dos
+vistas del mismo dato coinciden.
+
+### El botón "Sincronizar Datos"
+
+Sincroniza las métricas de campaña **y** los Google Sheets del cliente, en ese
+orden, mostrando en qué fase va. Si el cliente no tiene Sheets, esa fase ni
+aparece. Si el Sheet falla, las métricas sí se guardan y se avisa en ámbar en vez
+de marcar todo el sync como error.
 
 ---
 
