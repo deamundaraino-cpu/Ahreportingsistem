@@ -3,11 +3,15 @@
 import { useState, useEffect } from 'react'
 import { X, Plus, Search, AlertTriangle } from 'lucide-react'
 import type { BiWidget, WidgetType, WidgetConfig, CalculatedField, ConditionalRule, ValueFilter, ScorecardVariant } from './BiTypes'
-import type { BiMetric, BiDimension, ValueOp, FieldAgg, FormFieldMeta, OfflineFieldMeta, AdvancedFilter, FilterOp } from '@/lib/report-utm/bi-metadata'
+import type {
+    BiMetric, BiDimension, ValueOp, FieldAgg, FormFieldMeta, OfflineFieldMeta,
+    AdvancedFilter, FilterOp, SheetFieldMeta, SheetViewMeta, SheetCampoAgg,
+} from '@/lib/report-utm/bi-metadata'
 import {
     METRIC_META, DIMENSION_META, VALUE_OPS, FIELD_AGGS, FILTERABLE_BASE_DIMS, FILTER_OPS,
     makeFieldDim, makeFieldMetric, humanizeFieldKey, fieldDimLabel, fieldMetricLabel,
     makeOfflineFieldMetric, offlineFieldLabel,
+    makeSheetDim, makeSheetMetric, makeSheetView, sheetFieldLabel, isSheetDim, isSheetToken,
     advancedFilterHasConditions, supportsPivot, PIVOT_METRICS,
     FUNNEL_STAGE_METRICS, DEFAULT_FUNNEL_STAGES, evaluateExpression,
 } from '@/lib/report-utm/bi-metadata'
@@ -82,6 +86,8 @@ export function BiWidgetEditor({ widget, calculatedFields = [], clienteId, dateF
     const [dim2,   setDim2]   = useState<string>(widget?.config?.dimension2 ?? 'none')
     const [formFields, setFormFields] = useState<FormFieldMeta[]>([])
     const [offlineFields, setOfflineFields] = useState<OfflineFieldMeta[]>([])
+    const [sheetFields, setSheetFields] = useState<SheetFieldMeta[]>([])
+    const [sheetViews, setSheetViews] = useState<SheetViewMeta[]>([])
     const [grouping, setGrouping] = useState<'day' | 'week' | 'month'>(widget?.config?.date_grouping ?? 'day')
     const [colSpan, setColSpan] = useState(widget?.w ?? 2)
     const [rowSpan, setRowSpan] = useState(widget?.h ?? 1)
@@ -146,6 +152,21 @@ export function BiWidgetEditor({ widget, calculatedFields = [], clienteId, dateF
             .then(r => r.json())
             .then(json => { if (!cancelled) setOfflineFields(json.data ?? []) })
             .catch(() => { if (!cancelled) setOfflineFields([]) })
+        return () => { cancelled = true }
+    }, [clienteId])
+
+    // Campos de Sheet del cliente → métricas, dimensiones y filtros del BI.
+    useEffect(() => {
+        if (!clienteId) { setSheetFields([]); setSheetViews([]); return }
+        let cancelled = false
+        fetch(`/api/report-utm/bi/sheet-fields?cliente_id=${encodeURIComponent(clienteId)}`)
+            .then(r => r.json())
+            .then(json => {
+                if (cancelled) return
+                setSheetFields(json.data?.fields ?? [])
+                setSheetViews(json.data?.views ?? [])
+            })
+            .catch(() => { if (!cancelled) { setSheetFields([]); setSheetViews([]) } })
         return () => { cancelled = true }
     }, [clienteId])
 
@@ -224,11 +245,36 @@ export function BiWidgetEditor({ widget, calculatedFields = [], clienteId, dateF
             label: `${FIELD_AGG_LABEL[agg]} · ${humanizeFieldKey(f.label)}`,
         }))
     )
-    // Dimensiones base + de campo (para los selectores de dimensión y slicer).
-    const dimOptions: { value: string; label: string }[] = [...ALL_DIMS, ...fieldDimOptions]
+    // ── Campos de Sheet ───────────────────────────────────────────────────
+    // Un campo de alta cardinalidad (apuntado a un correo o un id) sigue
+    // valiendo como métrica agregada, pero no como algo por lo que agrupar:
+    // produciría un eje con miles de categorías.
+    const sheetDimOptions = sheetFields
+        .filter(f => f.rol !== 'metrica' && !f.alta_cardinalidad)
+        .map(f => ({ value: makeSheetDim(f.clave), label: f.nombre }))
+
+    // Se ofrece la agregación que definió el analista y, para los campos
+    // numéricos, también el conteo de filas: son las dos lecturas naturales.
+    const sheetMetricOptions = sheetFields.flatMap(f => {
+        const aggs: SheetCampoAgg[] = f.agregacion === 'count' ? ['count'] : ['count', f.agregacion]
+        return aggs.map(agg => ({
+            value: makeSheetMetric(agg, f.clave),
+            label: sheetFieldLabel(makeSheetMetric(agg, f.clave), sheetFields, sheetViews) ?? f.nombre,
+        }))
+    })
+
+    const sheetViewOptions = sheetViews.map(v => ({
+        value: makeSheetView(v.clave),
+        label: v.nombre,
+    }))
+
+    // Dimensiones base + de campo de formulario + de campo de Sheet.
+    const dimOptions: { value: string; label: string }[] = [...ALL_DIMS, ...fieldDimOptions, ...sheetDimOptions]
     // Campos filtrables (para el constructor de filtro del widget): dimensiones
     // base de filtro (UTMs, país, formulario…) + campos de formulario del cliente.
-    const filterFieldOptions: { value: string; label: string }[] = [...FILTERABLE_BASE_DIMS, ...fieldDimOptions]
+    const filterFieldOptions: { value: string; label: string }[] = [
+        ...FILTERABLE_BASE_DIMS, ...fieldDimOptions, ...sheetDimOptions,
+    ]
 
     // Columnas adicionales de los Sheets offline → métricas "offfield:<clave>".
     const offlineMetricOptions = offlineFields.map(f => ({
@@ -236,14 +282,20 @@ export function BiWidgetEditor({ widget, calculatedFields = [], clienteId, dateF
         label: `${f.label} (Sheet)`,
     }))
 
-    // Etiquetas que resuelven también tokens de campo.
+    // Etiquetas que resuelven también tokens de campo. Encadenar aquí
+    // `sheetFieldLabel` es lo que hace que el nombre que el analista le puso al
+    // campo aparezca en el selector, en los títulos y en las columnas de tabla.
     const resolveMetricLabel = (k: string) =>
         METRIC_META[k as BiMetric]?.label
         ?? fieldMetricLabel(k)
         ?? offlineFieldLabel(k, offlineFields)
+        ?? sheetFieldLabel(k, sheetFields, sheetViews)
         ?? calculatedFields.find(c => c.name === k)?.name ?? k
     const resolveDimLabel = (d: string) =>
-        DIMENSION_META[d as BiDimension]?.label ?? fieldDimLabel(d) ?? d
+        DIMENSION_META[d as BiDimension]?.label
+        ?? fieldDimLabel(d)
+        ?? sheetFieldLabel(d, sheetFields, sheetViews)
+        ?? d
 
     // Métricas disponibles = base + campos calculados. Los campos calculados se
     // pueden usar en tablas, scorecards y gráficas (no en funnel/slicer).
@@ -254,8 +306,9 @@ export function BiWidgetEditor({ widget, calculatedFields = [], clienteId, dateF
     const allowFormula = type === 'scorecard' || isChart
     // Las métricas de campo (sum/avg/… de raw_fields) se usan igual que las calc.
     const metricOptions = (allowCalc
-        ? [...ALL_METRICS, ...calcAsMetrics, ...fieldMetricOptions, ...offlineMetricOptions]
-        : [...ALL_METRICS, ...offlineMetricOptions])
+        ? [...ALL_METRICS, ...calcAsMetrics, ...fieldMetricOptions, ...offlineMetricOptions,
+           ...sheetViewOptions, ...sheetMetricOptions]
+        : [...ALL_METRICS, ...offlineMetricOptions, ...sheetViewOptions, ...sheetMetricOptions])
         .filter(m => !metricSearch || m.label.toLowerCase().includes(metricSearch.toLowerCase()))
 
     // Columnas de tabla (multi-columna): el config.metric guarda la lista separada por coma.
@@ -279,6 +332,17 @@ export function BiWidgetEditor({ widget, calculatedFields = [], clienteId, dateF
         type !== 'scorecard' && type !== 'funnel' && type !== 'slicer' &&
         dim !== 'none' && dim !== 'date' && dim !== 'campaign' &&
         selectedMetrics.some(isAdMetric)
+
+    // Un campo de Sheet vive en su propia tabla y no cruza con leads/ventas/gasto.
+    // Los dos avisos que hacen falta:
+    //   • métrica de Sheet agrupada por una dimensión de lead → caería en (total)
+    //   • dimensión de Sheet con métricas de otra fuente → esas saldrían en cero
+    const isCrossDim = dim !== 'none' && dim !== 'date' && !isSheetDim(dim)
+    const showSheetMetricDimWarning =
+        type !== 'scorecard' && type !== 'funnel' && type !== 'slicer' &&
+        isCrossDim && selectedMetrics.some(isSheetToken)
+    const sheetDimNoSheetMetric =
+        isSheetDim(dim) && selectedMetrics.length > 0 && !selectedMetrics.some(isSheetToken)
 
     // Métricas que se pueden usar para filtrar filas por valor (las que el widget trae)
     const metricLabelOf = resolveMetricLabel
@@ -681,6 +745,8 @@ export function BiWidgetEditor({ widget, calculatedFields = [], clienteId, dateF
                                             onChange={setFormula}
                                             formFields={formFields}
                                             offlineFields={offlineFields}
+                                            sheetFields={sheetFields}
+                                            sheetViews={sheetViews}
                                         />
                                         <div className="grid grid-cols-2 gap-2">
                                             <div>
@@ -808,6 +874,25 @@ export function BiWidgetEditor({ widget, calculatedFields = [], clienteId, dateF
                                             <p className="text-[11px] text-amber-700 dark:text-amber-300 leading-snug">
                                                 El gasto y las métricas de campaña no se desglosan por <strong>{resolveDimLabel(dim)}</strong> (caerían en una fila “(total)”).
                                                 Para ver gasto / CPL por campaña usa la dimensión <strong>Campaña (cruzada)</strong>; o usa <strong>Fecha</strong> para la evolución.
+                                            </p>
+                                        </div>
+                                    )}
+                                    {showSheetMetricDimWarning && (
+                                        <div className="mt-2 flex items-start gap-2 rounded-lg border border-amber-300/60 dark:border-amber-500/30 bg-amber-50/60 dark:bg-amber-500/10 px-3 py-2">
+                                            <AlertTriangle className="h-3.5 w-3.5 text-amber-500 shrink-0 mt-0.5" />
+                                            <p className="text-[11px] text-amber-700 dark:text-amber-300 leading-snug">
+                                                Los campos de Sheet no se desglosan por <strong>{resolveDimLabel(dim)}</strong>: el Sheet no
+                                                guarda a qué lead corresponde cada fila. Usa <strong>Fecha</strong> para la evolución, o el
+                                                propio campo como dimensión para ver el reparto por sus valores.
+                                            </p>
+                                        </div>
+                                    )}
+                                    {sheetDimNoSheetMetric && (
+                                        <div className="mt-2 flex items-start gap-2 rounded-lg border border-amber-300/60 dark:border-amber-500/30 bg-amber-50/60 dark:bg-amber-500/10 px-3 py-2">
+                                            <AlertTriangle className="h-3.5 w-3.5 text-amber-500 shrink-0 mt-0.5" />
+                                            <p className="text-[11px] text-amber-700 dark:text-amber-300 leading-snug">
+                                                Al agrupar por <strong>{resolveDimLabel(dim)}</strong> solo se pueden medir campos de Sheet.
+                                                Las demás métricas saldrían en cero.
                                             </p>
                                         </div>
                                     )}

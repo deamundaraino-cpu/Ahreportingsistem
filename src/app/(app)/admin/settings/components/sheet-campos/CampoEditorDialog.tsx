@@ -58,7 +58,10 @@ export function CampoEditorDialog({
 
     return (
         <Dialog open={open} onOpenChange={(v) => { if (!v) onClose() }}>
-            <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
+            {/* Ancho generoso a propósito: el mapeo de columnas y el agrupador de
+                valores son dos listas lado a lado con nombres largos, y en un
+                diálogo estrecho todo sale truncado. */}
+            <DialogContent className="max-w-5xl w-[min(96vw,72rem)] max-h-[90vh] overflow-y-auto">
                 <DialogHeader>
                     <DialogTitle>{esNuevo ? 'Nuevo campo de Sheet' : `Editar “${campo?.nombre}”`}</DialogTitle>
                 </DialogHeader>

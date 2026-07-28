@@ -12,13 +12,22 @@
 
 import {
     normalizarValorCrudo, bucketDeValor, valoresDeCampoEnFila,
-    computeCampoValoresDiarios, evaluarVista, agregarDiarios,
+    computeCampoValoresDiarios, evaluarVista, agregarDiarios, vistaIncluyeValor,
     esAgregacionAditiva, slugCampo, sanitizarColumna, parseNumeroSheet,
     firmaDeValor, sugerirAgrupacion, BUCKET_OTROS,
 } from '../src/lib/sheets/campos'
 import type {
     SheetCampoDef, SheetCampoVistaDef, SheetRawRow, CampoValorCrudo,
 } from '../src/lib/sheets/campos'
+import {
+    makeSheetDim, makeSheetMetric, makeSheetView,
+    parseSheetDim, parseSheetMetric, parseSheetView,
+    isSheetDim, isSheetMetric, isSheetView, isSheetToken,
+    sheetFieldAlias, sheetViewAlias, extractSheetAliases,
+    sheetFieldLabel, sheetFieldFormat, isAdditiveMetric,
+    hasNonAttributableFilter, evaluateExpression,
+} from '../src/lib/report-utm/bi-metadata'
+import type { SheetFieldMeta, SheetViewMeta } from '../src/lib/report-utm/bi-metadata'
 
 let pasadas = 0
 let fallidas = 0
@@ -135,6 +144,31 @@ sec('valoresDeCampoEnFila — mapeo N pestañas × N columnas')
 
     const concat = campo({ origenes: [{ sheet_id: '*', tab_name: '*', columnas: ['col_b', 'col_c'], combinar: 'concat' }] })
     check('"concat" aporta un valor por columna', valoresDeCampoEnFila(concat, f).join(',') === '10,5')
+}
+
+{
+    // Con UNA sola columna, `combinar` no aplica: el valor se toma tal cual.
+    // Antes se aplicaba igualmente y un origen de una columna marcado como
+    // "suma" convertía "más_de_$4.000.000" en 4000000, dejando el campo con
+    // números que no se parecían en nada a los de su columna.
+    const texto = fila({ valores: { rango: 'más_de_$4.000.000' } })
+    for (const combinar of ['primero', 'suma', 'concat'] as const) {
+        const c = campo({ origenes: [{ sheet_id: '*', tab_name: '*', columnas: ['rango'], combinar }] })
+        check(`una sola columna con "${combinar}" conserva el texto`,
+            valoresDeCampoEnFila(c, texto).join(',') === 'más_de_$4.000.000',
+            valoresDeCampoEnFila(c, texto).join(','))
+    }
+
+    // Y el bucket resultante sigue siendo el valor legible, no un número.
+    const c = campo({ origenes: [{ sheet_id: '*', tab_name: '*', columnas: ['rango'], combinar: 'suma' }] })
+    const { crudos } = computeCampoValoresDiarios([
+        texto,
+        fila({ valores: { rango: 'entre_$1.300.000_y_$1.600.000' } }),
+    ], [c])
+    check('el catálogo muestra los valores de la columna, no sus números',
+        (crudos.get(c.id) ?? []).map(v => v.valor_crudo).sort().join('|')
+        === 'entre_$1.300.000_y_$1.600.000|más_de_$4.000.000',
+        (crudos.get(c.id) ?? []).map(v => v.valor_crudo).join('|'))
 }
 
 // ─── Desglose diario ────────────────────────────────────────────────────────
@@ -344,6 +378,218 @@ sec('sugerirAgrupacion — el botón de auto-agrupar')
     check('propone el bucket más frecuente como nombre', sugerido['20-100'] === '20 a 100', sugerido['20-100'])
     check('agrupa las dos variantes', sugerido['20 a 100'] === '20 a 100' && sugerido['20-100'] === '20 a 100')
     check('no propone nada para un valor sin variantes', sugerido['1 a 10'] === undefined)
+}
+
+// ─── Métricas legacy de leads (migración 059) ───────────────────────────────
+// La integración "Google Sheets — Leads" se retiró, pero sus cuatro nombres de
+// métrica se conservan: hay layouts guardados que los usan. Se reconstruyen
+// desde el campo "calidad_lead" y la vista "leads_calificados" que deja el
+// script de migración. Esta sección fija esa aritmética.
+
+sec('Migración 059 — las 4 métricas de leads salen del campo de calidad')
+
+{
+    // Reproduce el caso real: una hoja de leads de Meta donde cada fila es un
+    // lead y una columna dice si calificó.
+    const calidad = campo({
+        clave: 'calidad_lead', nombre: 'Calidad del lead',
+        origenes: [{ sheet_id: 'migrado', tab_name: '*', columnas: ['califica'] }],
+    })
+    const vistaCalificados: SheetCampoVistaDef = {
+        id: 'v-cal', cliente_id: 'cli-1', campo_id: calidad.id, campo_clave: calidad.clave,
+        clave: 'leads_calificados', nombre: 'Leads calificados', agregacion: 'count',
+        operador: 'in', valores: ['sí'], formato: 'number', activo: true, orden: 0,
+    }
+
+    const filas = [
+        fila({ sheet_id: 'migrado', valores: { califica: 'Sí' } }),
+        fila({ sheet_id: 'migrado', valores: { califica: 'sí' } }),   // misma respuesta, otra caja
+        fila({ sheet_id: 'migrado', valores: { califica: 'No' } }),
+        fila({ sheet_id: 'migrado', valores: { califica: 'No' } }),
+        fila({ sheet_id: 'migrado', fecha: '2026-07-02', valores: { califica: 'Sí' } }),
+    ]
+    const { diarios } = computeCampoValoresDiarios(filas, [calidad])
+
+    /** Misma aritmética que getSheetCamposDelDia en el dashboard. */
+    const cuarteto = (delDia: typeof diarios) => {
+        const totales = agregarDiarios(delDia, 'count')
+        const calificados = agregarDiarios(delDia.filter(d => vistaIncluyeValor(vistaCalificados, d.valor)), 'count')
+        return {
+            leads_totales: totales,
+            leads_calificados: calificados,
+            leads_no_calificados: Math.max(0, totales - calificados),
+            tasa_calificacion: totales > 0 ? Math.round((calificados / totales) * 10000) / 100 : 0,
+        }
+    }
+
+    const d1 = cuarteto(diarios.filter(d => d.fecha === '2026-07-01'))
+    check('leads_totales cuenta todas las filas del día', d1.leads_totales === 4, String(d1.leads_totales))
+    check('"Sí" y "sí" cuentan como el mismo valor', d1.leads_calificados === 2, String(d1.leads_calificados))
+    check('leads_no_calificados es la resta', d1.leads_no_calificados === 2)
+    check('tasa_calificacion en porcentaje', d1.tasa_calificacion === 50, String(d1.tasa_calificacion))
+
+    const d2 = cuarteto(diarios.filter(d => d.fecha === '2026-07-02'))
+    check('el segundo día se calcula aparte', d2.leads_totales === 1 && d2.tasa_calificacion === 100)
+
+    // Un día sin leads no puede dar NaN ni dividir por cero: la tarjeta mostraría
+    // "NaN%" en el dashboard del cliente.
+    const vacio = cuarteto([])
+    check('un día sin leads da ceros, no NaN',
+        vacio.leads_totales === 0 && vacio.tasa_calificacion === 0 &&
+        Number.isFinite(vacio.tasa_calificacion))
+
+    // La tasa se redondea a 2 decimales: 1 de 3 son 33.33, no 33.333333.
+    const tercio = cuarteto(diarios.filter(d => d.fecha === '2026-07-01').map(d =>
+        d.valor === 'sí' ? { ...d, filas: 1 } : d))
+    check('la tasa se redondea a 2 decimales',
+        Number.isFinite(tercio.tasa_calificacion) &&
+        String(tercio.tasa_calificacion).replace(/^\d+\.?/, '').length <= 2,
+        String(tercio.tasa_calificacion))
+
+    // El total nunca puede quedar por debajo de los calificados (no_calificados
+    // negativo se leería como un dato corrupto en la tarjeta).
+    const raro = { leads_totales: 2, leads_calificados: 5 }
+    check('no_calificados nunca es negativo',
+        Math.max(0, raro.leads_totales - raro.leads_calificados) === 0)
+}
+
+// ─── Tokens del BI ──────────────────────────────────────────────────────────
+// Los tres tokens que exponen un campo en el BI. La agregación viaja dentro del
+// token de métrica para que un widget ya guardado siga midiendo lo mismo aunque
+// después se cambie la agregación por defecto del campo.
+
+sec('bi-metadata — tokens sheetdim / sheetagg / sheetview')
+
+{
+    const dim = makeSheetDim('rango_ingresos')
+    check('token de dimensión', dim === 'sheetdim:rango_ingresos', dim)
+    check('se reconoce como dimensión', isSheetDim(dim) && !isSheetMetric(dim) && !isSheetView(dim))
+    check('parsea la clave', parseSheetDim(dim) === 'rango_ingresos')
+
+    const met = makeSheetMetric('avg', 'ticket')
+    check('token de métrica', met === 'sheetagg:avg:ticket', met)
+    check('parsea agregación y clave',
+        parseSheetMetric(met)?.agg === 'avg' && parseSheetMetric(met)?.clave === 'ticket')
+    check('rechaza una agregación desconocida', parseSheetMetric('sheetagg:raro:x') === null)
+
+    const vista = makeSheetView('leads_20_100')
+    check('token de vista', vista === 'sheetview:leads_20_100', vista)
+    check('parsea la clave de la vista', parseSheetView(vista) === 'leads_20_100')
+
+    check('isSheetToken cubre los tres', isSheetToken(dim) && isSheetToken(met) && isSheetToken(vista))
+    // Lo importante: no confundirse con las métricas normales ni con los tokens
+    // offfield:* de la integración anterior, que siguen vivos.
+    check('no confunde métricas normales',
+        !isSheetToken('offline_leads') && !isSheetToken('spend') && parseSheetDim('spend') === null)
+    check('no confunde tokens offfield', !isSheetToken('offfield:currency:ticket'))
+}
+
+{
+    const fields: SheetFieldMeta[] = [
+        { clave: 'rango_ingresos', nombre: 'Rango de ingresos', rol: 'dimension', formato: 'number',
+          agregacion: 'count', valores: [], alta_cardinalidad: false, sources: [] },
+        { clave: 'ticket', nombre: 'Ticket promedio', rol: 'metrica', formato: 'currency',
+          agregacion: 'avg', valores: [], alta_cardinalidad: false, sources: [] },
+    ]
+    const views: SheetViewMeta[] = [
+        { clave: 'leads_20_100', nombre: 'Leads 20-100', campo_clave: 'rango_ingresos',
+          agregacion: 'count', formato: 'number' },
+    ]
+
+    // El nombre que puso el analista es el que se ve en todas partes.
+    check('la etiqueta usa el nombre del campo',
+        sheetFieldLabel(makeSheetDim('rango_ingresos'), fields, views) === 'Rango de ingresos')
+    check('la etiqueta de la vista usa su nombre',
+        sheetFieldLabel(makeSheetView('leads_20_100'), fields, views) === 'Leads 20-100')
+    // El conteo es la lectura por defecto: decir "Conteo · X" sería ruido.
+    check('el conteo no ensucia la etiqueta',
+        sheetFieldLabel(makeSheetMetric('count', 'rango_ingresos'), fields, views) === 'Rango de ingresos')
+    check('las demás agregaciones sí se nombran',
+        sheetFieldLabel(makeSheetMetric('avg', 'ticket'), fields, views) === 'Promedio · Ticket promedio',
+        String(sheetFieldLabel(makeSheetMetric('avg', 'ticket'), fields, views)))
+    // Un widget guardado de otro cliente no tiene catálogo: no debe quedarse en blanco.
+    check('sin catálogo humaniza la clave',
+        sheetFieldLabel(makeSheetDim('rango_ingresos')) === 'Rango ingresos',
+        String(sheetFieldLabel(makeSheetDim('rango_ingresos'))))
+    check('etiqueta null para no-tokens', sheetFieldLabel('spend', fields, views) === null)
+
+    check('formato de moneda', sheetFieldFormat(makeSheetMetric('avg', 'ticket'), fields, views) === 'currency')
+    // Contar filas devuelve un número aunque la columna sea de dinero.
+    check('un conteo es número, no moneda',
+        sheetFieldFormat(makeSheetMetric('count', 'ticket'), fields, views) === 'number')
+    check('formato null para no-tokens', sheetFieldFormat('spend', fields, views) === null)
+
+    // La fila "Total" de una tabla solo puede sumar lo que es sumable.
+    check('count y sum son aditivos',
+        isAdditiveMetric(makeSheetMetric('count', 'x')) && isAdditiveMetric(makeSheetMetric('sum', 'x')))
+    check('avg, min y max no lo son',
+        !isAdditiveMetric(makeSheetMetric('avg', 'x')) &&
+        !isAdditiveMetric(makeSheetMetric('min', 'x')) &&
+        !isAdditiveMetric(makeSheetMetric('max', 'x')))
+    check('una vista de conteo es aditiva', isAdditiveMetric(makeSheetView('leads_20_100')))
+    check('las métricas normales no cambian', isAdditiveMetric('leads_count') && !isAdditiveMetric('cpl'))
+}
+
+{
+    const alias = sheetFieldAlias('rango_ingresos')
+    check('alias de campo', alias === 'sf__rango_ingresos', alias)
+    check('alias de vista', sheetViewAlias('leads_20_100') === 'sv__leads_20_100')
+
+    const found = extractSheetAliases('meta_spend / sv__leads_20_100 + sf__ticket')
+    check('extrae los dos alias', found.length === 2, String(found.length))
+    check('distingue campo de vista',
+        found.find(f => f.clave === 'ticket')?.kind === 'campo' &&
+        found.find(f => f.clave === 'leads_20_100')?.kind === 'vista')
+    check('no extrae identificadores normales', extractSheetAliases('spend / leads_count').length === 0)
+    // Los alias de la integración anterior conviven sin pisarse.
+    check('no confunde alias off__', extractSheetAliases('off__citas + spend').length === 0)
+}
+
+// ─── Filtro no atribuible ───────────────────────────────────────────────────
+// Filtrar por un campo de Sheet recorta los leads pero no el gasto (el gasto
+// solo se cruza con UTM por el nombre de campaña), así que el motor tiene que
+// saber que el CPL de ese widget no sería real.
+
+sec('hasNonAttributableFilter — el gasto no se puede recortar por campo de Sheet')
+
+{
+    check('un filtro por campo de Sheet no es atribuible',
+        hasNonAttributableFilter({ [makeSheetDim('rango_ingresos')]: '20-100' }, undefined))
+    check('un filtro por UTM sí lo es',
+        !hasNonAttributableFilter({ utm_source: 'facebook' }, undefined))
+    check('también lo detecta en el filtro avanzado',
+        hasNonAttributableFilter(undefined, {
+            groups: [{ conditions: [{ field: makeSheetDim('ciudad'), op: 'eq', value: 'Cali' }] }],
+        }))
+    check('un filtro vacío no cuenta',
+        !hasNonAttributableFilter({ [makeSheetDim('rango_ingresos')]: '' }, undefined))
+}
+
+// ─── Evaluación de expresiones sin new Function ─────────────────────────────
+// La CSP de producción no permite 'unsafe-eval', así que el evaluador del BI no
+// puede usar `new Function`: en el navegador lanzaba siempre y el validador del
+// editor daba toda fórmula por inválida.
+
+sec('evaluateExpression — parser sin eval')
+
+{
+    check('aritmética básica', evaluateExpression('2 + 3 * 4', {}) === 14)
+    check('precedencia con paréntesis', evaluateExpression('(2 + 3) * 4', {}) === 20)
+    check('negativo unario', evaluateExpression('-5 + 2', {}) === -3)
+    check('sustituye identificadores', evaluateExpression('spend / leads', { spend: 100, leads: 4 }) === 25)
+    check('identificador ausente vale 0', evaluateExpression('spend + otro', { spend: 10 }) === 10)
+    check('división por cero devuelve null', evaluateExpression('spend / leads', { spend: 10, leads: 0 }) === null)
+    check('redondea a 2 decimales', evaluateExpression('10 / 3', {}) === 3.33)
+    check('expresión mal formada devuelve null', evaluateExpression('2 +', {}) === null)
+    check('rechaza caracteres no permitidos', evaluateExpression('2; alert(1)', {}) === null)
+
+    // El caso real de la feature: cruzar gasto con una vista de Sheet.
+    const conAlias = evaluateExpression('meta_spend / sv__leads_20_100', {
+        meta_spend: 500, sv__leads_20_100: 5,
+    })
+    check('fórmula con alias de vista de Sheet', conAlias === 100, String(conAlias))
+    check('fórmula con alias de campo de Sheet',
+        evaluateExpression('sf__ticket * 2', { sf__ticket: 12.5 }) === 25)
 }
 
 // ─── Resumen ────────────────────────────────────────────────────────────────

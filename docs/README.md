@@ -25,6 +25,7 @@ Plataforma multi-cliente para agencias de publicidad que **consolida métricas d
 | 13 | [MCP y tokens de API](./13-mcp-y-tokens-api.md) | Servidor MCP y gestión de tokens programáticos |
 | 14 | [Cron jobs y workers](./14-cron-y-workers.md) | Sincronizaciones automáticas y tareas programadas |
 | 15 | [Despliegue y operación](./15-despliegue.md) | Vercel, crons, headers de seguridad y monitoreo |
+| 16 | [Campos de Sheet](./16-campos-de-sheet.md) | Guía paso a paso: conectar un Google Sheet y convertir sus columnas en métricas |
 
 ---
 

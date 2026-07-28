@@ -105,9 +105,6 @@ Requieren `Authorization: Bearer $CRON_SECRET`. Programación en [doc 14](./14-c
 ### `GET /api/worker`
 Sincronizador principal (Meta, TikTok, Hotmart, GA4). Params: `date` | (`start`+`end`) | `client_id`. `maxDuration` 300s. Hace `upsert` en `metricas_diarias` con desgloses JSONB. Devuelve un resumen por cliente.
 
-### `GET /api/worker/google-sheets`
-Importa leads desde Google Sheets de cada cliente. Param `client_id` opcional. Upserta `leads` y `leads_diarios`.
-
 ### `GET /api/worker/backfill-campaign-ids`
 Utilidad para rellenar `campaign_id` faltantes en métricas históricas. Params: `client_id` (req.), `days` (def. 90). Delega en `/api/worker`.
 
@@ -132,9 +129,6 @@ Recibe ventas de Hotmart. Valida firma (HMAC o hottok), parsea el payload (`hotm
 ---
 
 ## Reportes y datos (sesión)
-
-### `POST /api/admin/sync-google-sheets`
-Sincroniza leads manualmente. Body `{ clientId }`. `GET ?clientId=` devuelve el estado de configuración.
 
 ### `POST /api/layouts/reorder`
 Reordena tabs/bloques. Body `{ clienteId, tabOrder: [{ id, position }] }`.
@@ -168,19 +162,18 @@ Resuelve el slug de tracking → destino con UTMs. Setea cookies de atribución 
 | `/api/auth/meta` `/callback` | GET | OAuth |
 | `/api/auth/tiktok` `/callback` | GET | OAuth |
 | `/api/worker` | GET | CRON_SECRET |
-| `/api/worker/google-sheets` | GET | CRON_SECRET |
 | `/api/worker/backfill-campaign-ids` | GET | CRON_SECRET |
 | `/api/cron/refresh-meta-tokens` | GET | CRON_SECRET |
 | `/api/cron/report-utm/aggregate` | GET/POST | CRON_SECRET |
 | `/api/report-utm/pixel/event` | POST/OPTIONS | público |
 | `/api/report-utm/webhooks/hotmart/[clienteId]` | GET/POST | HMAC/hottok |
-| `/api/admin/sync-google-sheets` | GET/POST | sesión |
 | `/api/admin/sync-conversiones-offline` | GET/POST | sesión |
 | `/api/admin/sheet-campos` | GET/POST/DELETE | sesión |
 | `/api/admin/sheet-campos/vistas` | POST/DELETE | sesión |
 | `/api/admin/sheet-campos/valores` | GET | sesión |
 | `/api/admin/sheet-campos/recalcular` | POST | sesión |
 | `/api/admin/sheet-columnas` | GET | sesión |
+| `/api/report-utm/bi/sheet-fields` | GET | sesión |
 | `/api/layouts/reorder` | POST | sesión |
 | `/api/backfill-forms` | POST | sesión |
 | `/api/health` | GET/POST | público |

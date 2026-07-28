@@ -583,7 +583,10 @@ export async function syncClienteMetrics(clienteId: string, startDate: string, e
 
         if (errorLog) return { error: errorLog }
 
-        // ── También sincronizar Google Sheets si el cliente lo tiene configurado ──
+        // ── También sincronizar los Google Sheets del cliente ─────────────────
+        // Antes esto disparaba el sync legacy de leads; desde la migración 059
+        // todas las hojas (incluida la que era de leads) van por el módulo
+        // unificado, que además recalcula los campos de Sheet al terminar.
         const supabase = await createAdminClient()
         const { data: cliente } = await supabase
             .from('clientes')
@@ -591,10 +594,13 @@ export async function syncClienteMetrics(clienteId: string, startDate: string, e
             .eq('id', clienteId)
             .single()
 
-        const gsConfig = cliente?.config_api?.google_sheets
-        if (gsConfig?.sheet_url) {
+        const sheets = cliente?.config_api?.google_sheets_conversiones
+        const haySheets = Array.isArray(sheets)
+            ? sheets.some((s: { enabled?: boolean; sheet_url?: string }) => s?.enabled && s?.sheet_url)
+            : !!sheets?.sheet_url
+        if (haySheets) {
             try {
-                await fetch(`${baseUrl}/api/admin/sync-google-sheets`, {
+                await fetch(`${baseUrl}/api/admin/sync-conversiones-offline`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ clientId: clienteId }),
@@ -602,7 +608,7 @@ export async function syncClienteMetrics(clienteId: string, startDate: string, e
                 })
             } catch (gsErr) {
                 console.error('[syncClienteMetrics] Google Sheets sync error:', gsErr)
-                // No bloqueamos el resultado principal si falla GSheets
+                // No bloqueamos el resultado principal si falla el sync de Sheets.
             }
         }
 
@@ -693,36 +699,6 @@ export async function getActiveAlerts(): Promise<ActiveAlert[]> {
     level: row.alert_sent_at_100 ? 100 : 90,
     sentAt: row.alert_sent_at_100 ?? row.alert_sent_at_90,
   }))
-}
-
-export async function syncGoogleSheets(clienteId: string) {
-    try {
-        const headersList = await headers()
-        const host = headersList.get('host') || 'localhost:3001'
-        const protocol = host.includes('localhost') ? 'http' : 'https'
-        const baseUrl = `${protocol}://${host}`
-
-        const res = await fetch(`${baseUrl}/api/admin/sync-google-sheets`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ clientId: clienteId }),
-            cache: 'no-store',
-        })
-
-        const data = await res.json()
-
-        if (!res.ok) {
-            return { error: data.error || 'Error al sincronizar Google Sheets' }
-        }
-
-        revalidatePath(`/admin/settings/${clienteId}`)
-        return { success: true, ...data }
-    } catch (e: any) {
-        console.error('Google Sheets sync error:', e)
-        return { error: e.message || 'Error al sincronizar Google Sheets' }
-    }
 }
 
 // ─── Google OAuth (conexión a nivel agencia) ─────────────────────────────────

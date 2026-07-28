@@ -9,8 +9,13 @@
 
 import { useRef, useState } from 'react'
 import { Search, Plus, X } from 'lucide-react'
-import { METRIC_META, humanizeFieldKey, fieldMetricAlias, offlineFieldAlias } from '@/lib/report-utm/bi-metadata'
-import type { BiMetric, FormFieldMeta, OfflineFieldMeta } from '@/lib/report-utm/bi-metadata'
+import {
+    METRIC_META, humanizeFieldKey, fieldMetricAlias, offlineFieldAlias,
+    sheetFieldAlias, sheetViewAlias,
+} from '@/lib/report-utm/bi-metadata'
+import type {
+    BiMetric, FormFieldMeta, OfflineFieldMeta, SheetFieldMeta, SheetViewMeta,
+} from '@/lib/report-utm/bi-metadata'
 
 interface Props {
     value: string
@@ -19,13 +24,22 @@ interface Props {
     formFields?: FormFieldMeta[]
     /** Columnas adicionales de los Sheets offline, con sus alias off__. */
     offlineFields?: OfflineFieldMeta[]
+    /** Campos de Sheet del cliente, con sus alias sf__. */
+    sheetFields?: SheetFieldMeta[]
+    /** Vistas guardadas de esos campos, con sus alias sv__. */
+    sheetViews?: SheetViewMeta[]
     placeholder?: string
 }
 
 interface MetricOption { key: string; label: string }
 
 /** Agrupa el catálogo por origen, para que la lista sea navegable. */
-function buildGroups(formFields: FormFieldMeta[], offlineFields: OfflineFieldMeta[]): { title: string; items: MetricOption[] }[] {
+function buildGroups(
+    formFields: FormFieldMeta[],
+    offlineFields: OfflineFieldMeta[],
+    sheetFields: SheetFieldMeta[],
+    sheetViews: SheetViewMeta[]
+): { title: string; items: MetricOption[] }[] {
     const of = (keys: string[]): MetricOption[] =>
         keys.filter(k => METRIC_META[k as BiMetric])
             .map(k => ({ key: k, label: METRIC_META[k as BiMetric].label }))
@@ -64,24 +78,42 @@ function buildGroups(formFields: FormFieldMeta[], offlineFields: OfflineFieldMet
         label: `${f.label} (Sheet)`,
     }))
 
+    // Campos de Sheet (alias sf__<clave>): el alias agrega con la agregación por
+    // defecto del campo, que es la lectura natural al escribir una fórmula.
+    const camposSheet: MetricOption[] = sheetFields.map(f => ({
+        key: sheetFieldAlias(f.clave),
+        label: f.nombre,
+    }))
+
+    // Vistas guardadas (alias sv__<clave>): "Leads 20-100" y compañía.
+    const vistasSheet: MetricOption[] = sheetViews.map(v => ({
+        key: sheetViewAlias(v.clave),
+        label: v.nombre,
+    }))
+
     return [
         { title: 'Núcleo', items: nucleo },
         { title: 'Campaña (Meta / TikTok)', items: campana },
         { title: 'Hotmart', items: hotmart },
         { title: 'Google Analytics', items: ga },
         { title: 'Offline', items: offline },
+        { title: 'Campos de Sheet', items: camposSheet },
+        { title: 'Vistas de Sheet', items: vistasSheet },
         { title: 'Columnas de Sheets', items: columnasSheet },
         { title: 'Suscripciones', items: subs },
         { title: 'Campos del formulario', items: campos },
     ].filter(g => g.items.length > 0)
 }
 
-export function BiFormulaInput({ value, onChange, formFields = [], offlineFields = [], placeholder }: Props) {
+export function BiFormulaInput({
+    value, onChange, formFields = [], offlineFields = [],
+    sheetFields = [], sheetViews = [], placeholder,
+}: Props) {
     const inputRef = useRef<HTMLInputElement>(null)
     const [open, setOpen] = useState(false)
     const [search, setSearch] = useState('')
 
-    const groups = buildGroups(formFields, offlineFields)
+    const groups = buildGroups(formFields, offlineFields, sheetFields, sheetViews)
     const q = search.trim().toLowerCase()
     const filtered = q
         ? groups

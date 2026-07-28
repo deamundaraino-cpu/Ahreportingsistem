@@ -136,7 +136,7 @@ export function ValoresAgrupador({ campo, valores, totalDistintos, onChange }: {
                     <p className="text-xs text-muted-foreground/60 px-1">
                         Valores en los Sheets ({visibles.length})
                     </p>
-                    <div className="rounded-md border border-input bg-background max-h-64 overflow-y-auto p-1.5 space-y-0.5">
+                    <div className="rounded-md border border-input bg-background max-h-80 overflow-y-auto p-1.5 space-y-0.5">
                         {visibles.map(v => {
                             const bucket = bucketDeValor(campo, v.valor_crudo)
                             const agrupado = campo.valores_map[normalizarValorCrudo(v.valor_crudo)]
@@ -152,11 +152,13 @@ export function ValoresAgrupador({ campo, valores, totalDistintos, onChange }: {
                                         className="mt-0.5 rounded border-input bg-background text-indigo-500 focus:ring-indigo-500"
                                     />
                                     <span className="min-w-0 flex-1">
-                                        <span className="flex items-center gap-1.5">
-                                            <span className="text-xs text-foreground truncate">{v.valor_crudo}</span>
-                                            <span className="text-[10px] text-muted-foreground/60 shrink-0">{v.filas}</span>
+                                        <span className="flex items-start gap-1.5">
+                                            {/* Sin truncar: los valores largos ("entre_$1.300.000_a_$1.600.000")
+                                                solo se distinguen por el final. */}
+                                            <span className="text-xs text-foreground break-words leading-snug">{v.valor_crudo}</span>
+                                            <span className="text-[10px] text-muted-foreground/60 shrink-0 ml-auto">{v.filas}</span>
                                         </span>
-                                        <span className="block text-[10px] text-muted-foreground/60 truncate">
+                                        <span className="block text-[10px] text-muted-foreground/60 break-words">
                                             {v.origenes.join(', ')}
                                             {agrupado && <span className="text-indigo-400"> → {agrupado}</span>}
                                             {!agrupado && bucket === null && <span className="text-amber-500"> · se ignora</span>}
@@ -192,18 +194,18 @@ export function ValoresAgrupador({ campo, valores, totalDistintos, onChange }: {
                     <p className="text-xs text-muted-foreground/60 px-1">
                         Así queda el campo ({buckets.length} valores)
                     </p>
-                    <div className="rounded-md border border-input bg-background max-h-64 overflow-y-auto p-1.5 space-y-0.5">
+                    <div className="rounded-md border border-input bg-background max-h-80 overflow-y-auto p-1.5 space-y-0.5">
                         {buckets.map(b => {
                             const esGrupo = b.crudos.length > 1
                             return (
                                 <div key={b.bucket} className="flex items-start gap-2 px-1 py-1 rounded hover:bg-muted/40">
                                     <span className="min-w-0 flex-1">
-                                        <span className="flex items-center gap-1.5">
-                                            <span className="text-xs text-foreground truncate">{b.bucket}</span>
-                                            <span className="text-[10px] text-muted-foreground/60 shrink-0">{b.filas}</span>
+                                        <span className="flex items-start gap-1.5">
+                                            <span className="text-xs text-foreground break-words leading-snug">{b.bucket}</span>
+                                            <span className="text-[10px] text-muted-foreground/60 shrink-0 ml-auto">{b.filas}</span>
                                         </span>
                                         {esGrupo && (
-                                            <span className="block text-[10px] text-muted-foreground/60 truncate">
+                                            <span className="block text-[10px] text-muted-foreground/60 break-words">
                                                 une: {b.crudos.join(' · ')}
                                             </span>
                                         )}

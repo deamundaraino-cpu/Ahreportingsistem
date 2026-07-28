@@ -264,44 +264,66 @@ export interface FuenteColumnas {
   /** Hasta 3 valores de ejemplo por columna, para reconocerla de un vistazo. */
   muestras: Record<string, string[]>
   filas: number
+  /**
+   * Por qué la pestaña no tiene columnas que ofrecer, cuando es el caso. Se
+   * muestra en vez de omitirla: una pestaña que desaparece del selector sin
+   * explicación parece un fallo de la app, cuando el problema suele estar en el
+   * mapeo del Sheet (columna de fecha mal escrita, por ejemplo).
+   */
+  aviso?: string
 }
 
 /**
- * Columnas disponibles por sheet y pestaña, derivadas de `sheet_filas`. No llama
- * a Google: es lo que puebla el selector de "qué columna es este campo en cada
- * pestaña", y tiene que abrirse al instante.
+ * Pestañas que tienen filas sincronizadas, sacadas del log de sync.
  *
- * Se muestrean las filas más recientes en vez de recorrerlas todas: para saber
- * qué columnas existe y cómo se ven, mirar las últimas basta y evita traer
- * decenas de miles de JSONB solo para abrir un desplegable.
+ * El log guarda el título REAL de cada pestaña leída (`sheet.title`), que es
+ * exactamente lo que se graba en `sheet_filas.tab_name`. Sirve de índice: sin él
+ * habría que recorrer `sheet_filas` entera solo para saber qué pestañas existen.
  */
-export async function listarColumnasDisponibles(
-  db: any,
-  clienteId: string,
-  muestraFilas = 1500
-): Promise<FuenteColumnas[]> {
-  const { data, error } = await db.from('sheet_filas')
-    .select('sheet_id, tab_name, valores')
+interface PestanaSync {
+  sheet_id: string
+  tab_name: string
+  /** Avisos del último sync de esa pestaña (columna ausente, filas descartadas…). */
+  warnings: string[]
+}
+
+async function pestanasSincronizadas(db: any, clienteId: string): Promise<PestanaSync[]> {
+  const { data, error } = await db.from('conversiones_offline_sync_log')
+    .select('sheet_id, run_at, detalle')
     .eq('cliente_id', clienteId)
-    .order('fecha', { ascending: false })
-    .limit(muestraFilas)
+    .order('run_at', { ascending: false })
+    .limit(200)
 
   if (error || !data) return []
 
-  const porFuente = new Map<string, FuenteColumnas>()
-
-  for (const row of data as any[]) {
-    const sheetId = String(row.sheet_id ?? '')
-    const tabName = String(row.tab_name ?? '')
-    const key = `${sheetId} ${tabName}`
-
-    let fuente = porFuente.get(key)
-    if (!fuente) {
-      fuente = { sheet_id: sheetId, tab_name: tabName, columnas: [], muestras: {}, filas: 0 }
-      porFuente.set(key, fuente)
+  // Los logs vienen del más reciente al más antiguo, así que la primera vez que
+  // se ve una pestaña es su último sync: es el estado que interesa.
+  const pares = new Map<string, PestanaSync>()
+  for (const log of data as any[]) {
+    const sheetId = String(log.sheet_id ?? '')
+    for (const q of (log.detalle?.por_pestana ?? []) as any[]) {
+      const tabName = String(q?.tab_name ?? '')
+      if (!sheetId || !tabName) continue
+      const key = `${sheetId} ${tabName}`
+      if (pares.has(key)) continue
+      pares.set(key, {
+        sheet_id: sheetId,
+        tab_name: tabName,
+        warnings: Array.isArray(q?.warnings) ? q.warnings.map(String) : [],
+      })
     }
-    fuente.filas++
+  }
+  return Array.from(pares.values())
+}
 
+/** Deriva columnas y valores de ejemplo de un puñado de filas. */
+function columnasDeFilas(sheetId: string, tabName: string, filas: any[]): FuenteColumnas {
+  const fuente: FuenteColumnas = {
+    sheet_id: sheetId, tab_name: tabName, columnas: [], muestras: {}, filas: 0,
+  }
+
+  for (const row of filas) {
+    fuente.filas++
     for (const [col, val] of Object.entries((row.valores ?? {}) as Record<string, string>)) {
       if (!fuente.muestras[col]) {
         fuente.muestras[col] = []
@@ -314,9 +336,79 @@ export async function listarColumnasDisponibles(
     }
   }
 
-  for (const f of porFuente.values()) f.columnas.sort()
-  return Array.from(porFuente.values())
-    .sort((a, b) => a.sheet_id.localeCompare(b.sheet_id) || a.tab_name.localeCompare(b.tab_name))
+  fuente.columnas.sort()
+  return fuente
+}
+
+/**
+ * Columnas disponibles por sheet y pestaña, derivadas de `sheet_filas`. No llama
+ * a Google: es lo que puebla el selector de "qué columna es este campo en cada
+ * pestaña", y tiene que abrirse al instante.
+ *
+ * Se muestrea **por pestaña**, no sobre el cliente entero. Antes se leían las N
+ * filas más recientes de todo el cliente y se agrupaban después: la pestaña con
+ * los datos más nuevos se comía la muestra completa y las demás no llegaban a
+ * aparecer en el selector, aunque estuvieran sincronizadas.
+ */
+export async function listarColumnasDisponibles(
+  db: any,
+  clienteId: string,
+  muestraPorPestana = 300
+): Promise<FuenteColumnas[]> {
+  const ordenar = (a: FuenteColumnas, b: FuenteColumnas) =>
+    a.sheet_id.localeCompare(b.sheet_id) || a.tab_name.localeCompare(b.tab_name)
+
+  const pares = await pestanasSincronizadas(db, clienteId)
+
+  // Sin log utilizable (nunca se sincronizó con esta versión) se cae al muestreo
+  // global: incompleto, pero mejor que un selector vacío.
+  if (pares.length === 0) {
+    const { data } = await db.from('sheet_filas')
+      .select('sheet_id, tab_name, valores')
+      .eq('cliente_id', clienteId)
+      .order('fecha', { ascending: false })
+      .limit(1500)
+
+    const porFuente = new Map<string, any[]>()
+    for (const row of (data ?? []) as any[]) {
+      const key = `${row.sheet_id ?? ''}\u0000${row.tab_name ?? ''}`
+      const lista = porFuente.get(key)
+      if (lista) lista.push(row)
+      else porFuente.set(key, [row])
+    }
+    return Array.from(porFuente.entries())
+      .map(([key, filas]) => {
+        const [sheetId, tabName] = key.split('\u0000')
+        return columnasDeFilas(sheetId, tabName, filas)
+      })
+      .filter(f => f.columnas.length > 0)
+      .sort(ordenar)
+  }
+
+  // Una consulta acotada POR pestaña. Son pocas (una por hoja del documento) y
+  // así cada una aporta sus columnas aunque otra tenga mil veces más filas.
+  const fuentes = await Promise.all(pares.map(async ({ sheet_id, tab_name, warnings }) => {
+    const { data } = await db.from('sheet_filas')
+      .select('valores')
+      .eq('cliente_id', clienteId)
+      .eq('sheet_id', sheet_id)
+      .eq('tab_name', tab_name)
+      .order('fecha', { ascending: false })
+      .limit(muestraPorPestana)
+
+    const fuente = columnasDeFilas(sheet_id, tab_name, (data ?? []) as any[])
+
+    // Una pestaña sin columnas se devuelve igualmente, con el motivo del último
+    // sync. Omitirla la hacía desaparecer del selector sin decir por qué, que es
+    // justo cuando hace falta saberlo.
+    if (fuente.columnas.length === 0) {
+      fuente.aviso = warnings[0]
+        ?? 'No importó ninguna fila en el último sync. Revisa el mapeo de la pestaña.'
+    }
+    return fuente
+  }))
+
+  return fuentes.sort(ordenar)
 }
 
 /**

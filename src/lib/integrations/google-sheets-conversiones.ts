@@ -748,9 +748,19 @@ export async function saveConversionesSheetToDb(
 ): Promise<{ rowsProcessed: number; daysProcessed: number; rawProcessed: number; rawError?: string }> {
   const batchId = randomUUID()
 
-  /** Deshace el lote a medias para no dejar duplicados junto a los datos viejos. */
+  /**
+   * Deshace el lote a medias para no dejar duplicados junto a los datos viejos.
+   *
+   * NO toca `conversiones_offline_diarias` a propósito. Esa tabla se escribe con
+   * upsert, así que una fila sobrescrita ya lleva el `sync_batch_id` nuevo:
+   * borrarla por lote se llevaría por delante el agregado anterior, que era dato
+   * bueno. Y no hace falta — cada fila es el agregado COMPLETO de su
+   * (sheet, día, tipo, fuente), no una suma parcial, así que una mezcla de dos
+   * ejecuciones sigue siendo coherente; a lo sumo queda algún día desactualizado
+   * hasta el siguiente sync.
+   */
   const rollback = async () => {
-    for (const t of ['conversiones_offline', 'conversiones_offline_diarias', 'sheet_filas']) {
+    for (const t of ['conversiones_offline', 'sheet_filas']) {
       await supabase.from(t).delete().eq('sync_batch_id', batchId)
     }
   }
@@ -777,8 +787,18 @@ export async function saveConversionesSheetToDb(
       total_cantidad: a.total_cantidad, total_valor: a.total_valor,
       custom_fields: a.custom_fields, sync_batch_id: batchId, sheet_id: sheetId,
     }))
+    // UPSERT, no insert: `uq_conv_diarias_origen` es único por
+    // (cliente_id, sheet_id, fecha, tipo, fuente) y el lote anterior sigue en la
+    // tabla hasta el replace de abajo, así que un insert chocaba con él a partir
+    // del segundo sync de cada sheet ("Error insertando agregados").
+    //
+    // El upsert es además lo correcto semánticamente: el agregado de un
+    // (sheet, día, tipo, fuente) es único por definición. Al sobrescribirlo se
+    // actualiza también su `sync_batch_id`, de modo que el borrado posterior
+    // sigue retirando solo las filas que este sync ya no produce.
     for (let i = 0; i < toInsert.length; i += 500) {
-      const { error } = await supabase.from('conversiones_offline_diarias').insert(toInsert.slice(i, i + 500))
+      const { error } = await supabase.from('conversiones_offline_diarias')
+        .upsert(toInsert.slice(i, i + 500), { onConflict: 'cliente_id,sheet_id,fecha,tipo,fuente' })
       if (error) {
         await rollback()
         throw new Error(`Error insertando agregados: ${error.message}`)
@@ -1008,9 +1028,10 @@ export async function syncClienteConversiones(
     const { recalcularCamposCliente } = await import('../sheets/campos-db')
     campos = await recalcularCamposCliente(supabase, clienteId)
     if (campos.error) console.error(`[conversiones] recálculo de campos: ${campos.error}`)
-  } catch (err: any) {
-    console.error('[conversiones] no se pudieron recalcular los campos de Sheet:', err?.message ?? err)
-    campos = { campos: 0, dias: 0, valores: 0, avisos: [], error: err?.message ?? 'Error al recalcular los campos' }
+  } catch (err: unknown) {
+    const motivo = err instanceof Error ? err.message : 'Error al recalcular los campos'
+    console.error('[conversiones] no se pudieron recalcular los campos de Sheet:', motivo)
+    campos = { campos: 0, dias: 0, valores: 0, avisos: [], error: motivo }
   }
 
   return { results, rows: allRows, campos }

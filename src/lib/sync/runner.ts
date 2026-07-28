@@ -85,8 +85,9 @@ function buildRequest(job: SyncJob, appUrl: string): { url: string; method: 'GET
     switch (job.tipo) {
         case 'metricas':
             return { url: `${base}/api/worker?${qs}`, method: 'GET' }
+        // Un job `sheets_leads` histórico (anterior a la migración 059) se enruta
+        // al worker unificado: su hoja ya vive en google_sheets_conversiones.
         case 'sheets_leads':
-            return { url: `${base}/api/worker/google-sheets?${qs}`, method: 'GET' }
         case 'sheets_conversiones':
             return { url: `${base}/api/worker/google-sheets-conversiones?${qs}`, method: 'GET' }
         case 'meta_leads': {

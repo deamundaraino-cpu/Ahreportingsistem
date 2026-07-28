@@ -14,8 +14,10 @@ import { createAdminClient } from '@/utils/supabase/server'
 import {
     METRIC_META, AD_JSONB_METRICS, AD_SCALAR_METRICS, MANUAL_JSONB_METRICS,
     OFFLINE_METRICS, SUBS_METRICS, makeOfflineFieldMetric, isOfflineFieldMetric,
+    makeSheetDim, makeSheetMetric, makeSheetView, isSheetToken,
 } from './bi-metadata'
 import type { BiMetric } from './bi-metadata'
+import { loadCamposCliente } from '@/lib/sheets/campos-db'
 
 export interface AvailabilityParams {
     cliente_id?: string
@@ -134,6 +136,49 @@ export async function getMetricAvailability(params: AvailabilityParams): Promise
             }
         }
     }
+    // ── Campos de Sheet ──────────────────────────────────────────────────
+    // A diferencia de los offfield:*, aquí el desglose diario dice la verdad
+    // sobre si hay datos, así que no hace falta marcar variantes a ciegas: se
+    // marca exactamente el token que existe.
+    if (publicClienteId) {
+        const { campos, vistas } = await loadCamposCliente(db, publicClienteId, { soloActivos: true })
+        if (campos.length > 0) {
+            const { data: desglose } = await db.from('sheet_campo_valores_diarios')
+                .select('campo_id, valor, filas, suma')
+                .eq('cliente_id', publicClienteId)
+                .gte('fecha', dateFrom).lte('fecha', dateTo)
+
+            const filasPorCampo = new Map<string, number>()
+            const valoresPorCampo = new Map<string, Set<string>>()
+            for (const r of (desglose ?? []) as unknown as Record<string, unknown>[]) {
+                const id = String(r.campo_id)
+                filasPorCampo.set(id, (filasPorCampo.get(id) ?? 0) + num(r.filas))
+                const set = valoresPorCampo.get(id) ?? new Set<string>()
+                set.add(String(r.valor ?? ''))
+                valoresPorCampo.set(id, set)
+            }
+
+            for (const campo of campos) {
+                const filas = filasPorCampo.get(campo.id) ?? 0
+                bump(makeSheetDim(campo.clave), filas)
+                for (const agg of ['count', 'sum', 'avg', 'min', 'max'] as const) {
+                    bump(makeSheetMetric(agg, campo.clave), filas)
+                }
+            }
+            for (const vista of vistas) {
+                // Una vista solo está disponible si alguno de sus valores existe en
+                // el rango: si no, mostraría un 0 que se lee como "no hubo", cuando
+                // lo que pasa es que ese bucket ya no aparece en los datos.
+                const valores = valoresPorCampo.get(vista.campo_id)
+                const hayAlguno = !valores ? false
+                    : vista.operador === 'not_in'
+                        ? Array.from(valores).some(v => !vista.valores.includes(v))
+                        : vista.valores.some(v => valores.has(v))
+                bump(makeSheetView(vista.clave), hayAlguno ? 1 : 0)
+            }
+        }
+    }
+
     const subs = (subsRes.data ?? [])[0] as Record<string, unknown> | undefined
     if (subs) {
         bump('subs_active', num(subs.active_count))
@@ -166,9 +211,10 @@ export async function getMetricAvailability(params: AvailabilityParams): Promise
     }
     // Se declaran explícitamente para no depender del orden del switch.
     for (const k of [...OFFLINE_METRICS, ...SUBS_METRICS]) out[k] = has(k)
-    // Tokens dinámicos de columnas de Sheet (offfield:*) vistos en el rango.
+    // Tokens dinámicos: columnas de Sheet (offfield:*) y campos de Sheet
+    // (sheetdim:/sheetagg:/sheetview:) vistos en el rango.
     for (const k of Object.keys(totals)) {
-        if (isOfflineFieldMetric(k)) out[k] = has(k)
+        if (isOfflineFieldMetric(k) || isSheetToken(k)) out[k] = has(k)
     }
 
     return out

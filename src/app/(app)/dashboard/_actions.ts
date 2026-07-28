@@ -9,6 +9,9 @@ import { revalidatePath } from 'next/cache';
 import { format, addDays } from 'date-fns';
 import { headers } from 'next/headers';
 import { after } from 'next/server';
+import { loadCamposCliente } from '@/lib/sheets/campos-db';
+import { agregarDiarios, vistaIncluyeValor } from '@/lib/sheets/campos';
+import type { CampoValorDiario } from '@/lib/sheets/campos';
 
 /** Días por debajo de los cuales el sync se ejecuta al momento en vez de encolarse. */
 const SYNC_DIRECTO_MAX_DIAS = 7;
@@ -269,6 +272,135 @@ export async function getConversionesOfflineDiarias(clientId: string) {
   return { data, error: null };
 }
 
+/**
+ * Claves reservadas que crea la migración del legacy "Google Sheets — Leads"
+ * (`scripts/migracion-leads-legacy.ts campos`). Son el contrato que permite
+ * seguir sirviendo `leads_totales` y compañía sin que ningún layout guardado
+ * necesite edición: la `clave` de un campo es inmutable, así que sirve de ancla.
+ */
+const CAMPO_CALIDAD_LEAD = 'calidad_lead';
+const VISTA_LEADS_CALIFICADOS = 'leads_calificados';
+
+/**
+ * Campos de Sheet de un cliente, aplanados por fecha para el dashboard clásico.
+ *
+ * Devuelve `sf_<clave>` (el campo con su agregación) y `sv_<clave>` (cada vista
+ * guardada). Esos prefijos son deliberadamente distintos de `sheet_`, que ya lo
+ * produce el aplanado de `custom_fields`: una colisión cambiaría en silencio los
+ * valores de layouts que ya existen.
+ *
+ * El motor de fórmulas no necesita cambios — `evaluateFormula` ya registra
+ * cualquier clave numérica de la fila y `aggregateFormula` las suma.
+ *
+ * Nunca lanza: si faltan las tablas del módulo (migración 058), el dashboard
+ * tiene que seguir cargando igual que antes de esta feature.
+ */
+async function getSheetCamposDelDia(
+  supabase: any,
+  clienteId: string,
+  startStr: string,
+  endStr: string
+): Promise<{
+  porFecha: Map<string, Record<string, number>>
+  /** Las 4 métricas legacy de leads, derivadas del campo de calidad migrado. */
+  leadsLegacy: Map<string, Record<string, number>>
+  campos: { clave: string; nombre: string }[]
+  vistas: { clave: string; nombre: string }[]
+}> {
+  const vacio = {
+    porFecha: new Map<string, Record<string, number>>(),
+    leadsLegacy: new Map<string, Record<string, number>>(),
+    campos: [],
+    vistas: [],
+  };
+  try {
+    const { campos, vistas } = await loadCamposCliente(supabase, clienteId, { soloActivos: true });
+    if (campos.length === 0) return vacio;
+
+    let q = supabase
+      .from('sheet_campo_valores_diarios')
+      .select('campo_id, fecha, valor, filas, suma, n_num, minimo, maximo')
+      .eq('cliente_id', clienteId)
+      .lte('fecha', endStr);
+    if (startStr !== 'all') q = q.gte('fecha', startStr);
+
+    const { data, error } = await q;
+    if (error || !data) {
+      return { ...vacio, campos: campos.map(c => ({ clave: c.clave, nombre: c.nombre })) };
+    }
+
+    // Desglose agrupado por (fecha, campo) para agregar cada día por separado.
+    const porFechaCampo = new Map<string, CampoValorDiario[]>();
+    for (const r of data as any[]) {
+      const fecha = String(r.fecha ?? '').slice(0, 10);
+      const key = `${fecha} ${r.campo_id}`;
+      const fila: CampoValorDiario = {
+        campo_id: String(r.campo_id), fecha, valor: String(r.valor ?? ''),
+        filas: Number(r.filas ?? 0), suma: Number(r.suma ?? 0), n_num: Number(r.n_num ?? 0),
+        minimo: r.minimo === null ? null : Number(r.minimo),
+        maximo: r.maximo === null ? null : Number(r.maximo),
+      };
+      const lista = porFechaCampo.get(key);
+      if (lista) lista.push(fila);
+      else porFechaCampo.set(key, [fila]);
+    }
+
+    const porFecha = new Map<string, Record<string, number>>();
+    const leadsLegacy = new Map<string, Record<string, number>>();
+    const anota = (fecha: string, clave: string, valor: number) => {
+      const fila = porFecha.get(fecha) ?? {};
+      fila[clave] = valor;
+      porFecha.set(fecha, fila);
+    };
+
+    // Campo y vista que dejó la migración del legacy de leads, si existen.
+    const campoCalidad = campos.find(c => c.clave === CAMPO_CALIDAD_LEAD);
+    const vistaCalificados = vistas.find(v => v.clave === VISTA_LEADS_CALIFICADOS);
+
+    for (const [key, filas] of porFechaCampo) {
+      const [fecha, campoId] = key.split(' ');
+      const campo = campos.find(c => c.id === campoId);
+      if (!campo) continue;
+
+      anota(fecha, `sf_${campo.clave}`, agregarDiarios(filas, campo.agregacion));
+      for (const vista of vistas) {
+        if (vista.campo_id !== campo.id) continue;
+        anota(fecha, `sv_${vista.clave}`, agregarDiarios(
+          filas.filter(f => vistaIncluyeValor(vista, f.valor)),
+          vista.agregacion
+        ));
+      }
+
+      // Las 4 métricas del legacy de leads, reconstruidas desde el campo de
+      // calidad migrado. Se conservan los NOMBRES para que ningún layout ya
+      // guardado necesite edición: un `leads_calificados` escrito hace meses
+      // en una tarjeta sigue resolviendo al mismo número.
+      if (campoCalidad && campo.id === campoCalidad.id) {
+        const totales = agregarDiarios(filas, 'count');
+        const calificados = vistaCalificados
+          ? agregarDiarios(filas.filter(f => vistaIncluyeValor(vistaCalificados, f.valor)), 'count')
+          : 0;
+        leadsLegacy.set(fecha, {
+          leads_totales: totales,
+          leads_calificados: calificados,
+          leads_no_calificados: Math.max(0, totales - calificados),
+          tasa_calificacion: totales > 0 ? Math.round((calificados / totales) * 10000) / 100 : 0,
+        });
+      }
+    }
+
+    return {
+      porFecha,
+      leadsLegacy,
+      campos: campos.map(c => ({ clave: c.clave, nombre: c.nombre })),
+      vistas: vistas.map(v => ({ clave: v.clave, nombre: v.nombre })),
+    };
+  } catch (err) {
+    console.error('[dashboard] campos de Sheet no disponibles:', err);
+    return vacio;
+  }
+}
+
 export async function getDashboardData(clientId: string, startStr: string, endStr: string) {
   const supabase = await createAdminClient();
 
@@ -337,6 +469,11 @@ export async function getDashboardData(clientId: string, startStr: string, endSt
   if (startStr !== 'all') convOfflineQuery = convOfflineQuery.gte('fecha', startStr);
   convOfflineQuery = convOfflineQuery.lte('fecha', endStr);
 
+  // Campos de Sheet: el desglose diario por valor + sus definiciones. Se
+  // aplanan en cada fila como `sf_<clave>` / `sv_<clave>` para que el motor de
+  // fórmulas y el Layout Builder los traten como una métrica más.
+  const sheetCamposPromise = getSheetCamposDelDia(supabase, cliente.id, startStr, endStr);
+
   // Previous period for delta calculation (same duration, ending one day before startStr)
   const prevMetricsPromise: Promise<{ data: any[] | null; error: any }> = startStr !== 'all'
     ? (() => {
@@ -355,11 +492,12 @@ export async function getDashboardData(clientId: string, startStr: string, endSt
       })()
     : Promise.resolve({ data: [] as any[], error: null })
 
-  const [metricsRes, leadsRes, convOfflineRes, prevMetricsRes] = await Promise.all([
+  const [metricsRes, leadsRes, convOfflineRes, prevMetricsRes, sheetCamposData] = await Promise.all([
     metricsQuery,
     leadsQuery,
     convOfflineQuery,
     prevMetricsPromise,
+    sheetCamposPromise,
   ]);
 
   // Aggregate individual conversiones_offline rows by date
@@ -391,18 +529,27 @@ export async function getDashboardData(clientId: string, startStr: string, endSt
   const metrics = (metricsRes.data || []).map((m: any) => {
     const leadDay = leadsMap.get(m.fecha);
     const offlineDay = convOfflineByDate.get(m.fecha);
-    return {
-      ...m,
-      ...(leadDay ? {
+    // Leads: el histórico de `leads_diarios` (integración retirada en la
+    // migración 059) manda donde exista, porque son las cifras que el cliente
+    // ya validó; las fechas posteriores las cubre el campo de calidad migrado.
+    // Así la serie no tiene escalón el día del cambio.
+    const leadsDelDia = leadDay
+      ? {
         leads_totales: leadDay.leads_totales,
         leads_calificados: leadDay.leads_calificados,
         leads_no_calificados: leadDay.leads_no_calificados,
         tasa_calificacion: leadDay.tasa_calificacion,
-      } : {}),
+      }
+      : sheetCamposData.leadsLegacy.get(m.fecha) ?? {};
+
+    return {
+      ...m,
+      ...leadsDelDia,
       ...(offlineDay ? {
         ...offlineDay.summary,
         offline_rows: offlineDay.rows,
       } : { offline_rows: [] }),
+      ...(sheetCamposData.porFecha.get(m.fecha) ?? {}),
     };
   });
 
@@ -413,6 +560,8 @@ export async function getDashboardData(clientId: string, startStr: string, endSt
     cliente,
     metrics: metrics || [],
     prevMetrics: (prevMetricsRes.data || []) as any[],
+    sheetCampos: sheetCamposData.campos,
+    sheetVistas: sheetCamposData.vistas,
     leadsRaw: leadsRes.data || [],
     conversionesOfflineRaw: convOfflineRes.data || [],
     weeks,

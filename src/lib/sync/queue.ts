@@ -12,6 +12,11 @@
 
 export type SyncJobTipo =
     | 'metricas'
+    /**
+     * LEGACY (migración 059): la integración "Google Sheets — Leads" se retiró y
+     * su hoja se sincroniza por `sheets_conversiones`. El valor se conserva en el
+     * tipo porque `sync_jobs` puede tener filas históricas con él.
+     */
     | 'sheets_leads'
     | 'sheets_conversiones'
     | 'meta_leads'

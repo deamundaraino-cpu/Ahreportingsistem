@@ -160,6 +160,8 @@ export const ADDITIVE_METRICS: ReadonlySet<string> = new Set<string>([
 
 /** ¿La fila "Total" de una tabla puede sumar esta métrica directamente? */
 export function isAdditiveMetric(metric: string): boolean {
+    // Los campos de Sheet lo deciden por su agregación (ver isAdditiveSheetToken).
+    if (isSheetToken(metric)) return isAdditiveSheetToken(metric)
     return ADDITIVE_METRICS.has(metric)
 }
 
@@ -644,6 +646,197 @@ export function offlineFieldFormat(token: string): 'number' | 'currency' | 'perc
     return parsed.type === 'currency' ? 'currency' : parsed.type === 'percentage' ? 'percent' : 'number'
 }
 
+// ── Campos de Sheet (tablas sheet_campos / sheet_campo_valores_diarios) ──
+// Un "campo" unifica columnas equivalentes de varias pestañas bajo un nombre
+// visible propio y guarda un desglose diario POR VALOR. Eso permite las tres
+// cosas a la vez, cada una con su token:
+//   • Dimensión (agrupar y filtrar por él): "sheetdim:<clave>"
+//   • Métrica del campo:                    "sheetagg:<agg>:<clave>"
+//   • Vista guardada ("Leads 20-100"):      "sheetview:<clave>"
+//
+// La agregación viaja en el token de métrica para que los widgets ya guardados
+// sigan midiendo lo mismo aunque después se cambie la agregación por defecto del
+// campo. En expresiones calc se usan los alias "sf__<clave>" y "sv__<clave>".
+//
+// Los prefijos planos del dashboard clásico son `sf_` y `sv_`, deliberadamente
+// distintos de `sheet_`: ese ya lo produce el aplanado de custom_fields en
+// getDashboardData, y una colisión cambiaría valores de layouts existentes en
+// silencio.
+
+export type SheetCampoAgg = 'count' | 'sum' | 'avg' | 'min' | 'max'
+
+export const SHEET_DIM_PREFIX = 'sheetdim:'
+export const SHEET_METRIC_PREFIX = 'sheetagg:'
+export const SHEET_VIEW_PREFIX = 'sheetview:'
+
+const SHEET_AGGS = new Set<string>(['count', 'sum', 'avg', 'min', 'max'])
+
+export function makeSheetDim(clave: string): string {
+    return `${SHEET_DIM_PREFIX}${clave}`
+}
+export function isSheetDim(token: string): boolean {
+    return typeof token === 'string' && token.startsWith(SHEET_DIM_PREFIX)
+}
+export function parseSheetDim(token: string): string | null {
+    if (!isSheetDim(token)) return null
+    const clave = token.slice(SHEET_DIM_PREFIX.length)
+    return clave || null
+}
+
+export function makeSheetMetric(agg: SheetCampoAgg, clave: string): string {
+    return `${SHEET_METRIC_PREFIX}${agg}:${clave}`
+}
+export function isSheetMetric(token: string): boolean {
+    return typeof token === 'string' && token.startsWith(SHEET_METRIC_PREFIX)
+}
+export function parseSheetMetric(token: string): { agg: SheetCampoAgg; clave: string } | null {
+    if (!isSheetMetric(token)) return null
+    const rest = token.slice(SHEET_METRIC_PREFIX.length)
+    const idx = rest.indexOf(':')
+    if (idx <= 0) return null
+    const agg = rest.slice(0, idx)
+    const clave = rest.slice(idx + 1)
+    if (!SHEET_AGGS.has(agg) || !clave) return null
+    return { agg: agg as SheetCampoAgg, clave }
+}
+
+export function makeSheetView(clave: string): string {
+    return `${SHEET_VIEW_PREFIX}${clave}`
+}
+export function isSheetView(token: string): boolean {
+    return typeof token === 'string' && token.startsWith(SHEET_VIEW_PREFIX)
+}
+export function parseSheetView(token: string): string | null {
+    if (!isSheetView(token)) return null
+    const clave = token.slice(SHEET_VIEW_PREFIX.length)
+    return clave || null
+}
+
+/** ¿El token es de campos de Sheet, de cualquiera de los tres tipos? */
+export function isSheetToken(token: string): boolean {
+    return isSheetDim(token) || isSheetMetric(token) || isSheetView(token)
+}
+
+/** Alias identificador-safe de un campo, para expresiones calc. */
+export function sheetFieldAlias(clave: string): string {
+    return `sf__${clave.toLowerCase().replace(/[^a-z0-9_]/g, '_')}`
+}
+/** Alias identificador-safe de una vista, para expresiones calc. */
+export function sheetViewAlias(clave: string): string {
+    return `sv__${clave.toLowerCase().replace(/[^a-z0-9_]/g, '_')}`
+}
+
+/** Extrae de una expresión calc los campos y vistas de Sheet referenciados. */
+export function extractSheetAliases(
+    expression: string
+): { kind: 'campo' | 'vista'; clave: string; alias: string }[] {
+    const out: { kind: 'campo' | 'vista'; clave: string; alias: string }[] = []
+    const re = /\bs(f|v)__([a-z0-9_]+)\b/gi
+    let m: RegExpExecArray | null
+    while ((m = re.exec(expression)) !== null) {
+        const kind = m[1].toLowerCase() === 'f' ? 'campo' : 'vista'
+        const clave = m[2].toLowerCase()
+        out.push({ kind, clave, alias: `s${kind === 'campo' ? 'f' : 'v'}__${clave}` })
+    }
+    return out
+}
+
+/** Metadata de un campo de Sheet expuesta al editor (client-safe). */
+export interface SheetFieldMeta {
+    clave: string
+    nombre: string
+    rol: 'dimension' | 'metrica' | 'ambos'
+    formato: 'number' | 'currency' | 'percent' | 'text'
+    agregacion: SheetCampoAgg
+    /** Valores (buckets) que produce, para ofrecerlos en filtros sin consultar. */
+    valores: string[]
+    alta_cardinalidad: boolean
+    /** "Sheet › Pestaña" de donde sale, para el tooltip del editor. */
+    sources: string[]
+}
+
+/** Metadata de una vista guardada. */
+export interface SheetViewMeta {
+    clave: string
+    nombre: string
+    campo_clave: string
+    agregacion: SheetCampoAgg
+    formato: 'number' | 'currency' | 'percent'
+}
+
+const SHEET_AGG_LABEL: Record<SheetCampoAgg, string> = {
+    count: 'Conteo', sum: 'Suma', avg: 'Promedio', min: 'Mínimo', max: 'Máximo',
+}
+
+/**
+ * Etiqueta legible de un token de campo de Sheet. null si no lo es.
+ * Con el catálogo del cliente usa el nombre que puso el analista — que es lo que
+ * hace que ese nombre aparezca en todas partes; sin él (widget ya guardado de
+ * otro cliente) humaniza la clave.
+ */
+export function sheetFieldLabel(
+    token: string,
+    fields: SheetFieldMeta[] = [],
+    views: SheetViewMeta[] = []
+): string | null {
+    const dim = parseSheetDim(token)
+    if (dim) return fields.find(f => f.clave === dim)?.nombre ?? humanizeFieldKey(dim)
+
+    const met = parseSheetMetric(token)
+    if (met) {
+        const nombre = fields.find(f => f.clave === met.clave)?.nombre ?? humanizeFieldKey(met.clave)
+        // El conteo es la lectura por defecto de un campo: no hace falta decirlo.
+        return met.agg === 'count' ? nombre : `${SHEET_AGG_LABEL[met.agg]} · ${nombre}`
+    }
+
+    const vista = parseSheetView(token)
+    if (vista) return views.find(v => v.clave === vista)?.nombre ?? humanizeFieldKey(vista)
+
+    return null
+}
+
+/** Formato de visualización de un token de campo de Sheet. null si no lo es. */
+export function sheetFieldFormat(
+    token: string,
+    fields: SheetFieldMeta[] = [],
+    views: SheetViewMeta[] = []
+): 'number' | 'currency' | 'percent' | null {
+    const met = parseSheetMetric(token)
+    if (met) {
+        // Un conteo de filas es siempre un número, aunque la columna sea de dinero.
+        if (met.agg === 'count') return 'number'
+        const f = fields.find(x => x.clave === met.clave)?.formato
+        return f === 'currency' || f === 'percent' ? f : 'number'
+    }
+
+    const vista = parseSheetView(token)
+    if (vista) {
+        const v = views.find(x => x.clave === vista)
+        if (v?.agregacion === 'count') return 'number'
+        return v?.formato ?? 'number'
+    }
+
+    return null
+}
+
+/**
+ * ¿El token de Sheet se puede sumar entre filas? Solo los conteos y las sumas:
+ * un promedio o un extremo agregados fila a fila darían un número inventado.
+ */
+export function isAdditiveSheetToken(token: string, views: SheetViewMeta[] = []): boolean {
+    const met = parseSheetMetric(token)
+    if (met) return met.agg === 'count' || met.agg === 'sum'
+
+    const vista = parseSheetView(token)
+    if (vista) {
+        const agg = views.find(v => v.clave === vista)?.agregacion
+        // Sin catálogo se asume conteo, que es la agregación por defecto de una vista.
+        return agg === undefined || agg === 'count' || agg === 'sum'
+    }
+
+    return false
+}
+
 /** 'producto_interes' → 'Producto interes'. */
 export function humanizeFieldKey(key: string): string {
     const s = key.replace(/[_-]+/g, ' ').trim()
@@ -768,14 +961,75 @@ export function evaluateExpression(
     })
     // Tras el reemplazo solo deben quedar números y operadores.
     if (!/^[0-9+\-*/().\s]+$/.test(replaced)) return null
-    try {
-        // eslint-disable-next-line no-new-func
-        const result = Function(`"use strict"; return (${replaced});`)()
-        if (typeof result !== 'number' || !Number.isFinite(result)) return null
-        return Math.round(result * 100) / 100
-    } catch {
-        return null
+    const result = safeEvalArithmetic(replaced)
+    if (!Number.isFinite(result)) return null
+    return Math.round(result * 100) / 100
+}
+
+/**
+ * Evalúa una expresión aritmética pura (dígitos, espacios, + - * / . paréntesis).
+ *
+ * Sustituye a `new Function`: la CSP de producción no incluye 'unsafe-eval'
+ * (`next.config.ts`), así que en el navegador aquello lanzaba siempre — el
+ * validador del editor de fórmulas daba toda expresión por inválida y la vista
+ * previa de campos calculados nunca aparecía. En servidor funcionaba, de ahí que
+ * los informes guardados sí calcularan bien.
+ *
+ * Parser de descenso recursivo con la precedencia estándar y unarios +/-. El
+ * llamador debe haber saneado la entrada al juego de caracteres permitido.
+ * Devuelve NaN si la expresión está mal formada.
+ *
+ * Es el mismo enfoque que `safeEvalArithmetic` en `lib/formula-engine.ts`, que
+ * ya había tenido que resolver esto para el dashboard clásico.
+ */
+function safeEvalArithmetic(input: string): number {
+    const s = input
+    let i = 0
+    const skipWs = () => { while (i < s.length && (s[i] === ' ' || s[i] === '\t')) i++ }
+
+    const parseExpression = (): number => {
+        let left = parseTerm()
+        skipWs()
+        while (i < s.length && (s[i] === '+' || s[i] === '-')) {
+            const op = s[i++]
+            const right = parseTerm()
+            left = op === '+' ? left + right : left - right
+            skipWs()
+        }
+        return left
     }
+    const parseTerm = (): number => {
+        let left = parseFactor()
+        skipWs()
+        while (i < s.length && (s[i] === '*' || s[i] === '/')) {
+            const op = s[i++]
+            const right = parseFactor()
+            left = op === '*' ? left * right : left / right
+            skipWs()
+        }
+        return left
+    }
+    const parseFactor = (): number => {
+        skipWs()
+        if (s[i] === '+') { i++; return parseFactor() }
+        if (s[i] === '-') { i++; return -parseFactor() }
+        if (s[i] === '(') {
+            i++
+            const val = parseExpression()
+            skipWs()
+            if (s[i] === ')') i++
+            return val
+        }
+        const start = i
+        while (i < s.length && ((s[i] >= '0' && s[i] <= '9') || s[i] === '.')) i++
+        if (i === start) return NaN
+        return parseFloat(s.slice(start, i))
+    }
+
+    const result = parseExpression()
+    skipWs()
+    if (i !== s.length) return NaN   // sobra texto sin parsear → mal formada
+    return result
 }
 
 // ── Filtro avanzado guardado (Y de O) ─────────────────────────────────
@@ -997,13 +1251,17 @@ export function hasNonAttributableFilter(
     filters: Record<string, string | undefined> | undefined,
     advancedFilter: AdvancedFilter | undefined
 ): boolean {
+    // Los campos de Sheet tampoco son atribuibles: el gasto solo se cruza con UTM
+    // por el nombre de campaña, así que filtrar por "rango de ingresos" recortaría
+    // los leads pero dejaría el gasto entero y el CPL saldría inventado.
     for (const [k, v] of Object.entries(filters ?? {})) {
         if (!v || !String(v).trim()) continue
-        if (NON_ATTRIBUTABLE_FIELDS.has(k) || isFieldDim(k)) return true
+        if (NON_ATTRIBUTABLE_FIELDS.has(k) || isFieldDim(k) || isSheetDim(k)) return true
     }
     return !!advancedFilter?.groups?.some((g) =>
         g.conditions?.some(
-            (c) => c.value && c.value.trim() && (NON_ATTRIBUTABLE_FIELDS.has(c.field) || isFieldDim(c.field))
+            (c) => c.value && c.value.trim() &&
+                (NON_ATTRIBUTABLE_FIELDS.has(c.field) || isFieldDim(c.field) || isSheetDim(c.field))
         )
     )
 }

@@ -168,7 +168,9 @@ export const AVAILABLE_METRICS = [
 /** Build dynamic metric list merging static + catalog custom conversions */
 export function buildAvailableMetrics(
     conversionesCatalogo: { conversion_key: string; label: string; field_id: string }[] = [],
-    googleSheetsConversiones?: any[]
+    googleSheetsConversiones?: any[],
+    sheetCampos: { clave: string; nombre: string }[] = [],
+    sheetVistas: { clave: string; nombre: string }[] = []
 ) {
     const dynamic = (conversionesCatalogo || []).map(c => ({ id: c.field_id, label: `Meta: ${c.label}` }))
 
@@ -184,26 +186,44 @@ export function buildAvailableMetrics(
         { id: 'total_cpl',            label: 'Offline: CPL Real' },
     ]
 
+    // Columnas adicionales de los Sheets. Se recorren TAMBIÉN las de cada pestaña:
+    // la UI actual las escribe en `tabs[].custom_columns` y aquí solo se miraba el
+    // `custom_columns` plano del formato anterior, así que las columnas de
+    // cualquier config nueva no llegaban a aparecer en el selector.
     const sheetCustomMetrics: { id: string; label: string }[] = []
-    if (googleSheetsConversiones && Array.isArray(googleSheetsConversiones)) {
+    const vistas = new Set<string>()
+    const absorbCols = (cols: Record<string, any> | undefined) => {
+        for (const [sanitized, col] of Object.entries(cols ?? {})) {
+            if (!col?.include || col.type === 'date' || col.type === 'text') continue
+            const id = `sheet_${sanitized}`
+            if (vistas.has(id)) continue
+            vistas.add(id)
+            sheetCustomMetrics.push({ id, label: `GSheets: ${col.label || sanitized}` })
+        }
+    }
+    if (Array.isArray(googleSheetsConversiones)) {
         for (const config of googleSheetsConversiones) {
-            if (!config.enabled || !config.custom_columns) continue
-            for (const [sanitized, col] of Object.entries(config.custom_columns as Record<string, any>)) {
-                if (col.include && col.type !== 'date' && col.type !== 'text') {
-                    sheetCustomMetrics.push({
-                        id: `sheet_${sanitized}`,
-                        label: `GSheets: ${col.label}`
-                    })
-                }
+            if (!config?.enabled) continue
+            absorbCols(config.custom_columns)
+            for (const tab of config.tabs ?? []) {
+                if (tab?.enabled === false) continue
+                absorbCols(tab.custom_columns)
             }
         }
     }
+
+    // Campos de Sheet (módulo de campos): el nombre que puso el analista es el
+    // que se ve, y la clave plana `sf_`/`sv_` es la variable de las fórmulas.
+    const camposMetrics = sheetCampos.map(c => ({ id: `sf_${c.clave}`, label: c.nombre }))
+    const vistasMetrics = sheetVistas.map(v => ({ id: `sv_${v.clave}`, label: v.nombre }))
 
     const existing = new Set(AVAILABLE_METRICS.map(m => m.id))
     const extras = [
         ...dynamic,
         ...offlineMetrics,
-        ...sheetCustomMetrics
+        ...sheetCustomMetrics,
+        ...camposMetrics,
+        ...vistasMetrics,
     ].filter(d => !existing.has(d.id))
 
     return [...AVAILABLE_METRICS, ...extras]
@@ -1402,17 +1422,31 @@ export function SheetFilterPicker({
                     <option value="notas">Notas</option>
                 </optgroup>
                 <optgroup label="Campos del Sheet">
-                    {googleSheetsConversiones.map(config => {
-                        if (!config.enabled || !config.custom_columns) return null
-                        return Object.entries(config.custom_columns).map(([sanitized, col]: [string, any]) => {
-                            if (!col.include) return null
-                            return (
-                                <option key={sanitized} value={`sheet_${sanitized}`}>
-                                    {col.label}
-                                </option>
-                            )
-                        })
-                    })}
+                    {/* Se recorren también las columnas por pestaña (`tabs[]`): es
+                        donde la UI actual las guarda, y mirar solo el
+                        `custom_columns` plano dejaba fuera toda config nueva. */}
+                    {(() => {
+                        const opts: { key: string; label: string }[] = []
+                        const vistos = new Set<string>()
+                        const absorb = (cols: Record<string, any> | undefined) => {
+                            for (const [sanitized, col] of Object.entries(cols ?? {})) {
+                                if (!col?.include || vistos.has(sanitized)) continue
+                                vistos.add(sanitized)
+                                opts.push({ key: sanitized, label: col.label || sanitized })
+                            }
+                        }
+                        for (const config of googleSheetsConversiones) {
+                            if (!config?.enabled) continue
+                            absorb(config.custom_columns)
+                            for (const tab of config.tabs ?? []) {
+                                if (tab?.enabled === false) continue
+                                absorb(tab.custom_columns)
+                            }
+                        }
+                        return opts.map(o => (
+                            <option key={o.key} value={`sheet_${o.key}`}>{o.label}</option>
+                        ))
+                    })()}
                 </optgroup>
             </select>
 
@@ -1478,6 +1512,8 @@ export function LayoutConfigModal({
     conversionesCatalogo = [],
     googleSheetsConversiones = [],
     conversionesOfflineRaw = [],
+    sheetCampos = [],
+    sheetVistas = [],
     campaignGroups = [],
     campaignNames = [],
     tiktokAccounts = [],
@@ -1492,11 +1528,17 @@ export function LayoutConfigModal({
     conversionesCatalogo?: { conversion_key: string; label: string; field_id: string }[]
     googleSheetsConversiones?: any[]
     conversionesOfflineRaw?: any[]
+    /** Campos de Sheet del cliente: se ofrecen como métricas `sf_<clave>`. */
+    sheetCampos?: { clave: string; nombre: string }[]
+    /** Vistas guardadas de esos campos: métricas `sv_<clave>`. */
+    sheetVistas?: { clave: string; nombre: string }[]
     campaignGroups?: { id: string; nombre: string }[]
     campaignNames?: string[]
     tiktokAccounts?: { id: string; label: string; advertiser_id: string }[]
 }) {
-    const availableMetrics = buildAvailableMetrics(conversionesCatalogo, googleSheetsConversiones)
+    const availableMetrics = buildAvailableMetrics(
+        conversionesCatalogo, googleSheetsConversiones, sheetCampos, sheetVistas
+    )
     const [step, setStep] = useState<'select' | 'edit'>(currentLayout ? 'edit' : 'select')
     const [workingLayout, setWorkingLayout] = useState<ReportLayout | null>(currentLayout)
     const [loading, setLoading] = useState(false)

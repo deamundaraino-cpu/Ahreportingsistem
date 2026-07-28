@@ -10,7 +10,11 @@ import {
     parseOfflineFieldMetric, extractOfflineFieldAliases,
     advancedFilterHasConditions, matchFilterCondition,
     campaignNameFilterPredicate, hasCampaignFilter, hasNonAttributableFilter,
+    isSheetDim, parseSheetDim, parseSheetMetric, parseSheetView, extractSheetAliases,
+    sheetFieldAlias, sheetViewAlias,
 } from './bi-metadata'
+import { loadCamposCliente } from '@/lib/sheets/campos-db'
+import { agregarDiarios, vistaIncluyeValor } from '@/lib/sheets/campos'
 
 // Dimensiones que SOLO existen en sales_events (no en lead_events). Al agrupar
 // por ellas, la query de leads se omite (no tienen esas columnas).
@@ -74,16 +78,38 @@ export async function runBiQuery(params: BiQueryParams): Promise<BiQueryRow[]> {
     }
     const offlineFields = Array.from(offlineFieldReqs.values())
 
+    // ── Campos de Sheet (sheet_campo_valores_diarios) ─────────────────
+    // Tres tokens sobre la misma tabla: métrica del campo, vista guardada y
+    // dimensión. En expresiones calc llegan por alias sf__/sv__.
+    const sheetDimClave = parseSheetDim(params.dimension)
+    const sheetReqs = new Map<string, SheetReq>()
+    for (const m of params.metrics) {
+        const met = parseSheetMetric(m)
+        if (met) { sheetReqs.set(m, { kind: 'campo', campoClave: met.clave, clave: met.clave, outKey: m }); continue }
+        const vista = parseSheetView(m)
+        if (vista) sheetReqs.set(m, { kind: 'vista', campoClave: '', clave: vista, outKey: m })
+    }
+    for (const cf of params.calculated ?? []) {
+        for (const a of extractSheetAliases(cf.expression)) {
+            if (sheetReqs.has(a.alias)) continue
+            sheetReqs.set(a.alias, a.kind === 'campo'
+                ? { kind: 'campo', campoClave: a.clave, clave: a.clave, outKey: a.alias }
+                : { kind: 'vista', campoClave: '', clave: a.clave, outKey: a.alias })
+        }
+    }
+    const sheetFields = Array.from(sheetReqs.values())
+    const isSheetDimQuery = sheetDimClave !== null
+
     const isSalesOnlyDim = SALES_ONLY_DIMS.has(params.dimension)
     const isAdsOnlyDim   = ADS_ONLY_DIMS.has(params.dimension)
     // Los leads no tienen columnas de producto/tipo/país ni desglose por anuncio →
     // se omite la query de leads al agrupar por esas dimensiones.
-    const needsLeads = (requires(['leads_count', 'leads_total', 'cpl', 'conversion_rate']) || isFieldDimQuery || fieldMetrics.length > 0) && !isSalesOnlyDim && !isAdsOnlyDim
+    const needsLeads = (requires(['leads_count', 'leads_total', 'cpl', 'conversion_rate']) || isFieldDimQuery || fieldMetrics.length > 0) && !isSalesOnlyDim && !isAdsOnlyDim && !isSheetDimQuery
     // Las ventas y el gasto no se pueden desglosar por un campo de formulario
     // (sales_events / metricas_diarias no tienen raw_fields) → se omiten cuando
     // se agrupa por campo para no romper el select ni inventar una fila "(total)".
-    const needsSales = !isFieldDimQuery && !isAdsOnlyDim && requires(['sales_count', 'revenue', 'cpa', 'roas', 'conversion_rate'])
-    const needsAds   = !isFieldDimQuery && requires([
+    const needsSales = !isFieldDimQuery && !isAdsOnlyDim && !isSheetDimQuery && requires(['sales_count', 'revenue', 'cpa', 'roas', 'conversion_rate'])
+    const needsAds   = !isFieldDimQuery && !isSheetDimQuery && requires([
         'spend', 'meta_spend', 'tiktok_spend', 'cpl', 'cpa', 'roas', 'clicks', 'impressions', 'cpc', 'cpm', 'frequency', 'ctr',
         ...AD_JSONB_METRICS, ...AD_SCALAR_METRICS, ...AD_RATE_METRICS,
         ...MANUAL_JSONB_METRICS.map(m => m.metric),
@@ -91,9 +117,13 @@ export async function runBiQuery(params: BiQueryParams): Promise<BiQueryRow[]> {
     ])
     // Offline (día×cliente) y suscripciones (snapshot) son globales/por fecha,
     // no cruzan por dimensiones de lead/venta/anuncio.
-    const isBreakdownDim = isSalesOnlyDim || isAdsOnlyDim || isFieldDimQuery
+    const isBreakdownDim = isSalesOnlyDim || isAdsOnlyDim || isFieldDimQuery || isSheetDimQuery
     const needsOffline = !isBreakdownDim && (requires([...OFFLINE_METRICS]) || offlineFields.length > 0)
     const needsSubs    = !isBreakdownDim && requires([...SUBS_METRICS])
+    // Los campos de Sheet sí se desglosan por su propia dimensión, pero no por las
+    // de lead/venta/anuncio: su desglose diario no cruza con esas tablas.
+    const needsSheet = (sheetFields.length > 0 || isSheetDimQuery) &&
+        !isSalesOnlyDim && !isAdsOnlyDim && !isFieldDimQuery
 
     const dateFrom = params.date_from ?? new Date(Date.now() - 30 * 86400_000).toISOString().slice(0, 10)
     const dateTo   = params.date_to   ?? new Date().toISOString().slice(0, 10)
@@ -131,8 +161,17 @@ export async function runBiQuery(params: BiQueryParams): Promise<BiQueryRow[]> {
         subsData = await querySubsLatest(params, dateFrom, dateTo)
     }
 
+    // ── CAMPOS DE SHEET (sheet_campo_valores_diarios) ─────────────────
+    let sheetData: SheetRow[] = []
+    if (needsSheet) {
+        sheetData = await querySheetFieldsDirect(params, dateFrom, dateTo, sheetFields, sheetDimClave)
+    }
+
     // ── Merge results ─────────────────────────────────────────────────
-    return mergeResults(params, leadsData, salesData, adsData, fieldMetrics, offlineData, subsData, offlineFields)
+    return mergeResults(
+        params, leadsData, salesData, adsData, fieldMetrics, offlineData, subsData, offlineFields,
+        sheetData, sheetFields
+    )
 }
 
 // ── Campos de formulario: tipos de agregación ─────────────────────────
@@ -677,6 +716,153 @@ async function queryOfflineDirect(
     return Array.from(map.values())
 }
 
+// ── Campos de Sheet (sheet_campo_valores_diarios) ─────────────────────
+/**
+ * Un campo de Sheet unifica columnas equivalentes de varias pestañas y guarda un
+ * desglose diario POR VALOR. Eso permite servir las tres lecturas desde la misma
+ * tabla ya materializada, sin tocar las filas crudas:
+ *
+ *   • métrica  — `sheetagg:<agg>:<clave>`, agregando el desglose
+ *   • vista    — `sheetview:<clave>`, sumando solo sus buckets
+ *   • dimensión — `sheetdim:<clave>`, usando el bucket como valor de la fila
+ */
+interface SheetReq {
+    kind: 'campo' | 'vista'
+    /**
+     * Clave del campo. Para una vista llega vacía —el token no la lleva— y se
+     * resuelve contra el catálogo del cliente dentro de la consulta.
+     */
+    campoClave: string
+    /** Clave propia del token (campo o vista). */
+    clave: string
+    outKey: string
+}
+
+interface SheetRow {
+    dim: string
+    values: Record<string, number>
+}
+
+async function querySheetFieldsDirect(
+    params: BiQueryParams,
+    dateFrom: string,
+    dateTo: string,
+    reqs: SheetReq[],
+    sheetDimClave: string | null
+): Promise<SheetRow[]> {
+    if (!params.cliente_id) return []
+    const publicId = await resolvePublicClienteId(params.cliente_id)
+    if (!publicId) return []
+
+    const db = await createAdminClient()
+    const { campos, vistas } = await loadCamposCliente(db, publicId, { soloActivos: true })
+    if (campos.length === 0) return []
+
+    const campoPorClave = new Map(campos.map(c => [c.clave, c]))
+    const vistaPorClave = new Map(vistas.map(v => [v.clave, v]))
+
+    /** Campo del que depende un token: el suyo, o el padre si es una vista. */
+    const campoDeReq = (r: SheetReq) =>
+        r.kind === 'vista'
+            ? campoPorClave.get(vistaPorClave.get(r.clave)?.campo_clave ?? '')
+            : campoPorClave.get(r.campoClave)
+
+    // Campos implicados: los de las métricas pedidas, los de sus vistas y el de la
+    // dimensión. Se consulta solo lo necesario.
+    const campoIds = new Set<string>()
+    for (const r of reqs) {
+        const c = campoDeReq(r)
+        if (c) campoIds.add(c.id)
+    }
+    const dimCampo = sheetDimClave ? campoPorClave.get(sheetDimClave) : undefined
+    if (dimCampo) campoIds.add(dimCampo.id)
+    if (campoIds.size === 0) return []
+
+    const { data, error } = await db.from('sheet_campo_valores_diarios')
+        .select('campo_id,fecha,valor,filas,suma,n_num,minimo,maximo')
+        .eq('cliente_id', publicId)
+        .in('campo_id', Array.from(campoIds))
+        .gte('fecha', dateFrom).lte('fecha', dateTo)
+    if (error || !data) return []
+
+    const grouping = params.date_grouping ?? 'day'
+
+    // Filtro por valores del campo, si el informe lo trae. Solo aplica al campo
+    // filtrado: el desglose está pre-agregado por campo, así que una condición
+    // sobre OTRO campo no se puede resolver aquí (se ignora, igual que el resto
+    // del motor ignora los cruces que la tabla no soporta).
+    const filtroPorCampo = new Map<string, Set<string>>()
+    for (const [k, v] of Object.entries(params.filters ?? {})) {
+        const clave = parseSheetDim(k)
+        if (!clave || !v || !String(v).trim()) continue
+        const valores = String(v).split(',').map(s => s.trim()).filter(Boolean)
+        const campo = campoPorClave.get(clave)
+        if (campo && valores.length) filtroPorCampo.set(campo.id, new Set(valores))
+    }
+
+    const filas = (data as unknown as Record<string, unknown>[])
+        .map(r => ({
+            campo_id: String(r.campo_id),
+            fecha: String(r.fecha ?? '').slice(0, 10),
+            valor: String(r.valor ?? ''),
+            filas: Number(r.filas ?? 0),
+            suma: Number(r.suma ?? 0),
+            n_num: Number(r.n_num ?? 0),
+            minimo: r.minimo === null || r.minimo === undefined ? null : Number(r.minimo),
+            maximo: r.maximo === null || r.maximo === undefined ? null : Number(r.maximo),
+        }))
+        .filter(r => {
+            const permitidos = filtroPorCampo.get(r.campo_id)
+            return !permitidos || permitidos.has(r.valor)
+        })
+
+    /** Clave de agrupación de una fila del desglose. */
+    const dimDe = (r: { fecha: string; valor: string; campo_id: string }): string => {
+        if (sheetDimClave) {
+            // Al agrupar POR un campo, solo ese campo se desglosa por valor. Los
+            // demás no tienen forma de repartirse entre sus buckets.
+            return dimCampo && r.campo_id === dimCampo.id ? r.valor : 'total'
+        }
+        return params.dimension === 'date' ? truncateDate(r.fecha, grouping) : 'total'
+    }
+
+    const porDim = new Map<string, typeof filas>()
+    for (const r of filas) {
+        const dim = dimDe(r)
+        const lista = porDim.get(dim)
+        if (lista) lista.push(r)
+        else porDim.set(dim, [r])
+    }
+
+    const out: SheetRow[] = []
+    for (const [dim, rows] of porDim) {
+        const values: Record<string, number> = {}
+
+        for (const req of reqs) {
+            const campo = campoDeReq(req)
+            if (!campo) { values[req.outKey] = 0; continue }
+
+            const propias = rows.filter(r => r.campo_id === campo.id)
+
+            if (req.kind === 'vista') {
+                const vista = vistaPorClave.get(req.clave)
+                if (!vista) { values[req.outKey] = 0; continue }
+                values[req.outKey] = round2(agregarDiarios(
+                    propias.filter(r => vistaIncluyeValor(vista, r.valor)),
+                    vista.agregacion
+                ))
+            } else {
+                const agg = parseSheetMetric(req.outKey)?.agg ?? campo.agregacion
+                values[req.outKey] = round2(agregarDiarios(propias, agg))
+            }
+        }
+
+        out.push({ dim, values })
+    }
+
+    return out
+}
+
 // ── Suscripciones (último snapshot de hotmart_subscriptions_snapshot) ──
 
 /**
@@ -715,13 +901,16 @@ function mergeResults(
     fieldMetrics: FieldMetricReq[],
     offlineData: OfflineRow[] = [],
     subsData: Record<string, number> | null = null,
-    offlineFields: OfflineFieldReq[] = []
+    offlineFields: OfflineFieldReq[] = [],
+    sheetData: SheetRow[] = [],
+    sheetFields: SheetReq[] = []
 ): BiQueryRow[] {
     const keys = new Set<string>()
     leadsData.forEach(r => keys.add(r.dim ?? 'total'))
     salesData.forEach(r => keys.add(r.dim ?? 'total'))
     adsData.forEach(r => keys.add(r.dim ?? 'total'))
     offlineData.forEach(r => keys.add(r.dim ?? 'total'))
+    sheetData.forEach(r => keys.add(r.dim))
     if (subsData) keys.add('total')   // snapshot: solo a nivel global
 
     if (keys.size === 0) {
@@ -815,6 +1004,15 @@ function mergeResults(
             offlineFieldValues[of.outKey] = v
             if ((params.metrics as string[]).includes(of.outKey)) row[of.outKey] = v
         }
+        // Campos de Sheet: mismo patrón que las columnas offline — se emiten por
+        // su token y quedan disponibles por alias para los campos calculados.
+        const sheet = sheetData.find(r => r.dim === key)
+        const sheetValues: Record<string, number> = {}
+        for (const sf of sheetFields) {
+            const v = sheet?.values[sf.outKey] ?? 0
+            sheetValues[sf.outKey] = v
+            if ((params.metrics as string[]).includes(sf.outKey)) row[sf.outKey] = v
+        }
         // Suscripciones (snapshot): solo en la fila global "(total)"
         if (subsData && key === 'total') {
             for (const k of SUBS_METRICS) {
@@ -860,6 +1058,13 @@ function mergeResults(
             baseValues.offline_revenue = round2(off?.offline_revenue ?? 0)
             baseValues.offline_total   = off?.offline_total   ?? 0
             Object.assign(baseValues, offlineFieldValues)   // alias off__<clave>
+            // Alias sf__<clave> (campo) y sv__<clave> (vista): es lo que permite
+            // escribir "meta_spend / sv__leads_20_100" en un campo calculado.
+            for (const sf of sheetFields) {
+                baseValues[sf.outKey] = sheetValues[sf.outKey] ?? 0
+                const alias = sf.kind === 'campo' ? sheetFieldAlias(sf.clave) : sheetViewAlias(sf.clave)
+                baseValues[alias] = sheetValues[sf.outKey] ?? 0
+            }
             if (subsData && key === 'total') for (const k of SUBS_METRICS) baseValues[k] = subsData[k] ?? 0
             for (const cf of params.calculated) {
                 row[cf.name] = evaluateExpression(cf.expression, baseValues)
@@ -1150,6 +1355,39 @@ export async function runDistinctValues(params: {
     const dateFrom = params.date_from ?? new Date(Date.now() - 90 * 86400_000).toISOString().slice(0, 10)
     const dateTo   = params.date_to   ?? new Date().toISOString().slice(0, 10)
     const table = params.source === 'sales' ? 'sales_events' : 'lead_events'
+
+    // Dimensión de campo de Sheet: los valores salen del desglose ya
+    // materializado, que está acotado por `max_valores`. No hace falta escanear
+    // las filas crudas ni deduplicar nada.
+    const sheetClave = parseSheetDim(dim)
+    if (sheetClave !== null) {
+        if (!params.cliente_id) return []
+        const publicId = await resolvePublicClienteId(params.cliente_id)
+        if (!publicId) return []
+
+        const { campos } = await loadCamposCliente(supabase, publicId, { soloActivos: true })
+        const campo = campos.find(c => c.clave === sheetClave)
+        if (!campo) return []
+
+        const { data } = await supabase.from('sheet_campo_valores_diarios')
+            .select('valor')
+            .eq('campo_id', campo.id)
+            .gte('fecha', dateFrom).lte('fecha', dateTo)
+
+        const set = new Set<string>()
+        for (const r of (data ?? []) as Record<string, unknown>[]) {
+            const v = String(r.valor ?? '').trim()
+            if (v) set.add(v)
+        }
+
+        // El orden que definió el analista manda; lo que no esté en él va detrás,
+        // alfabético. Así "1-10, 11-20, 20-100" no sale ordenado como texto.
+        const orden = campo.valores_orden ?? []
+        const pos = (v: string) => { const i = orden.indexOf(v); return i === -1 ? orden.length : i }
+        return Array.from(set)
+            .sort((a, b) => pos(a) - pos(b) || a.localeCompare(b))
+            .slice(0, 500)
+    }
 
     // Dimensión de campo de formulario (raw_fields): las ventas no tienen
     // raw_fields → los valores distintos siempre salen de lead_events.

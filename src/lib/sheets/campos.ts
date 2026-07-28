@@ -232,6 +232,15 @@ export function valoresDeCampoEnFila(campo: SheetCampoDef, fila: SheetRawRow): s
       .filter(Boolean)
     if (brutos.length === 0) continue
 
+    // `combinar` solo decide qué hacer cuando hay VARIAS columnas con dato: con
+    // una sola el valor se toma tal cual. Aplicarlo igualmente rompía el campo en
+    // silencio — un origen de una columna marcado como 'suma' convertía
+    // "más_de_$4.000.000" en 4000000 y el campo dejaba de parecerse a su columna.
+    if (brutos.length === 1) {
+      out.push(brutos[0])
+      continue
+    }
+
     const combinar = origen.combinar ?? 'primero'
     if (combinar === 'primero') {
       out.push(brutos[0])
@@ -261,7 +270,7 @@ interface Acc {
 }
 
 function accKey(campoId: string, fecha: string, valor: string) {
-  return `${campoId} ${fecha} ${valor}`
+  return `${campoId}\u0000${fecha}\u0000${valor}`
 }
 
 function acumular(mapa: Map<string, Acc>, campoId: string, fecha: string, valor: string, n: number | null) {

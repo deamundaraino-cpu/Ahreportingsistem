@@ -1,7 +1,6 @@
 import { getDashboardData } from "../_actions"
 import { DateRangeSelector } from "../components/DateRangeSelector"
 import { DashboardClient } from "../components/DashboardClient"
-import { GoogleSheetsLeadsCard } from "../components/GoogleSheetsLeadsCard"
 import { ConversionesOfflineCard } from "../components/ConversionesOfflineCard"
 import { PublicLinkButton } from "../components/PublicLinkButton"
 import { BitacorasSidebar } from "../components/BitacorasSidebar"
@@ -106,13 +105,9 @@ export default async function DashboardPage(props: {
                 />
             </div>
 
-            {/* Google Sheets Leads Section — only show if enabled */}
-            {dashboardData?.cliente?.config_api?.google_sheets?.enabled && (
-                <div className="pt-6 border-t border-border">
-                    <h3 className="text-lg font-semibold text-foreground mb-4">Leads desde Google Sheets</h3>
-                    <GoogleSheetsLeadsCard dailyData={dashboardData.leadsRaw || []} error={null} />
-                </div>
-            )}
+            {/* La card de "Leads desde Google Sheets" se retiró en la migración 059:
+                esa hoja se sincroniza ahora por el módulo unificado y sus leads
+                aparecen en Conversiones Offline y en los campos de Sheet. */}
 
             {/* Conversiones Offline Section — show if at least one sheet is enabled */}
             {(() => {

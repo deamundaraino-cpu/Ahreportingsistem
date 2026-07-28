@@ -51,7 +51,9 @@ export async function planDiario(db: any, opts?: { triggeredBy?: string }): Prom
     detalle.metricas = total
 
     // Estos tres iteran clientes internamente: un job global por tipo basta.
-    const globales: SyncJobTipo[] = ['sheets_leads', 'sheets_conversiones', 'meta_leads', 'utm_aggregate']
+    // `sheets_leads` se retiró en la migración 059: su hoja pasó a sincronizarse
+    // por `sheets_conversiones`, como el resto de Google Sheets.
+    const globales: SyncJobTipo[] = ['sheets_conversiones', 'meta_leads', 'utm_aggregate']
     for (const tipo of globales) {
         const job = await enqueueJob(db, {
             tipo,

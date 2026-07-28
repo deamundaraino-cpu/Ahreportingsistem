@@ -6,8 +6,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter }
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Button } from '@/components/ui/button'
-import { updateClienteConfig, deleteCliente, assignLayoutToCliente, testMetaConnection, testHotmartConnection, refreshMetaCustomConversions, testTikTokConnection, syncClienteMetrics, testGA4Connection, syncGoogleSheets, syncConversionesOffline, detectConversionesColumns, listConversionesTabs, getConversionesSyncStatus, listDriveSheets, listGa4Properties, fetchMetaAdAccounts, fetchTikTokAdAccounts } from '../_actions'
-import type { CustomColumnDef, CustomColumnType, ConversionesConfig, DriveSheet, SheetTabConfig, SheetTabInfo, SheetSyncStatus } from '@/lib/integrations/google-sheets-conversiones'
+import { updateClienteConfig, deleteCliente, assignLayoutToCliente, testMetaConnection, testHotmartConnection, refreshMetaCustomConversions, testTikTokConnection, syncClienteMetrics, testGA4Connection, syncConversionesOffline, detectConversionesColumns, listConversionesTabs, getConversionesSyncStatus, listDriveSheets, listGa4Properties, fetchMetaAdAccounts, fetchTikTokAdAccounts } from '../_actions'
+import type { ConversionesConfig, DriveSheet, SheetTabConfig, SheetTabInfo, SheetSyncStatus } from '@/lib/integrations/google-sheets-conversiones'
 import type { GA4Property } from '@/lib/integrations/google-analytics'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { SheetCamposSection } from './sheet-campos/SheetCamposSection'
@@ -235,8 +235,9 @@ export function ClientConfigForm({ cliente, layouts = [], isAdmin = false, googl
 const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean, success?: boolean, error?: string, message?: string } }>({})
     const [layoutSaving, setLayoutSaving] = useState(false)
     // ── Conversiones Offline multi-sheet UI state ────────────────────────────
-    // Por pestaña: clave `${sheetId}:${tabId}` → estado de "Detectar columnas".
-    const [sheetUI, setSheetUI] = useState<Record<string, { detectingCols: boolean; detectColsError: string | null; headers?: string[] }>>({})
+    // Por pestaña: clave `${sheetId}:${tabId}` → encabezados leídos del Sheet al
+    // validar, para autocompletar el mapeo de columnas.
+    const [sheetUI, setSheetUI] = useState<Record<string, { headers?: string[] }>>({})
     // Por sheet: pestañas reales descubiertas en el documento.
     const [tabsUI, setTabsUI] = useState<Record<string, { loading: boolean; error: string | null; available: SheetTabInfo[] }>>({})
     // Por sheet: resultado de "Validar configuración".
@@ -526,34 +527,6 @@ const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean
         }
         setLoading(false)
         return { success, error: updateError }
-    }
-
-    const handleGoogleSheetsJSONUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-        const file = e.target.files?.[0]
-        if (!file) return
-
-        const reader = new FileReader()
-        reader.onload = (event) => {
-            try {
-                const json = JSON.parse(event.target?.result as string)
-                if (json.client_email && json.private_key) {
-                    setConfig((prev: any) => ({
-                        ...prev,
-                        google_sheets: {
-                            ...prev.google_sheets,
-                            client_email: json.client_email,
-                            private_key: json.private_key.replace(/\\n/g, '\n'),
-                        }
-                    }))
-                    alert('Credenciales de Google Sheets extraídas correctamente.')
-                } else {
-                    alert('El archivo JSON no parece ser una cuenta de servicio válida (faltan client_email o private_key).')
-                }
-            } catch (err) {
-                alert('Error al parsear el archivo JSON.')
-            }
-        }
-        reader.readAsText(file)
     }
 
     const handleGA4JSONUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1254,182 +1227,6 @@ const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean
                 </CardContent>
             </Card>
 
-            {/* ─── Google Sheets (Leads) ────────────────────────────────────── */}
-            <Card className="bg-card border-border">
-                <CardHeader>
-                    <CardTitle>Google Sheets — Leads</CardTitle>
-                    <CardDescription>
-                        Conecta un Google Sheet de Meta Leads para calcular leads calificados automáticamente cada día a las 8 AM (hora Colombia).
-                    </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                    <div className="flex items-center gap-3">
-                        <input
-                            type="checkbox"
-                            id="gs_enabled"
-                            checked={config.google_sheets?.enabled || false}
-                            onChange={(e) => setConfig({
-                                ...config,
-                                google_sheets: { ...config.google_sheets, enabled: e.target.checked }
-                            })}
-                            className="rounded border-input bg-background text-indigo-500 focus:ring-indigo-500"
-                        />
-                        <Label htmlFor="gs_enabled" className="text-foreground/90 cursor-pointer">Activar integración de Google Sheets</Label>
-                    </div>
-
-                    {config.google_sheets?.enabled && (
-                        <>
-                            <p className="text-xs text-emerald-700 dark:text-emerald-400/80 bg-emerald-500/5 border border-emerald-500/20 rounded p-2">
-                                Si conectaste la cuenta de Google de la agencia (en Ajustes → Conexión Google), solo necesitas
-                                la URL del Sheet. Las credenciales de Service Account de abajo son opcionales (modo legacy).
-                            </p>
-                            {/* ── Credenciales de Autenticación (JSON upload) ── */}
-                            <div className="bg-muted/40 border border-border p-4 rounded-lg space-y-4 relative overflow-hidden">
-                                <div className="absolute top-0 left-0 w-1 h-full bg-green-500/50"></div>
-
-                                <div className="flex items-center gap-3">
-                                    <div className="w-10 h-10 rounded-full bg-green-500/10 flex items-center justify-center shrink-0">
-                                        <DownloadCloud className="w-5 h-5 text-green-600 dark:text-green-400" />
-                                    </div>
-                                    <div>
-                                        <h4 className="text-sm font-medium text-foreground">Credenciales de Autenticación</h4>
-                                        <p className="text-xs text-muted-foreground/70 mt-0.5">Sube el archivo JSON de tu Service Account de Google Cloud. Automáticamente extraeremos el Email y la Private Key aplicando el formato correcto.</p>
-                                    </div>
-                                </div>
-
-                                <div className="mt-3">
-                                    <Label className="cursor-pointer">
-                                        <div className="border border-dashed border-input hover:border-green-500/50 bg-muted/50 hover:bg-muted transition-colors p-4 rounded-lg text-center flex flex-col items-center justify-center gap-2">
-                                            <DatabaseZap className="w-6 h-6 text-muted-foreground/70" />
-                                            <span className="text-sm text-muted-foreground">Seleccionar o arrastrar archivo <strong>.json</strong></span>
-                                        </div>
-                                        <input
-                                            type="file"
-                                            accept=".json,application/json"
-                                            onChange={handleGoogleSheetsJSONUpload}
-                                            className="hidden"
-                                        />
-                                    </Label>
-                                </div>
-
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
-                                    <div className="space-y-2">
-                                        <Label className="text-muted-foreground text-xs">Client Email (Auto-extraído)</Label>
-                                        <Input
-                                            value={config.google_sheets?.client_email || ''}
-                                            readOnly
-                                            className="bg-muted/50 border-border text-muted-foreground/70 text-xs focus-visible:ring-0"
-                                        />
-                                    </div>
-                                    <div className="space-y-2">
-                                        <Label className="text-muted-foreground text-xs">Private Key (Auto-extraída)</Label>
-                                        <textarea
-                                            value={config.google_sheets?.private_key ? '•••••••••••••••••••••••••••• PRIVATE KEY LOADED ••••••••••••••••••••••••••••' : ''}
-                                            readOnly
-                                            className="w-full h-9 rounded-md bg-muted/50 border border-border px-3 py-2 text-xs text-muted-foreground/70 resize-none focus-visible:outline-none focus-visible:ring-0"
-                                        />
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div className="space-y-2">
-                                <Label htmlFor="gs_url" className="text-foreground/90">URL del Google Sheet</Label>
-                                <Input
-                                    id="gs_url"
-                                    placeholder="https://docs.google.com/spreadsheets/d/..."
-                                    value={config.google_sheets?.sheet_url || ''}
-                                    onChange={(e) => setConfig({
-                                        ...config,
-                                        google_sheets: { ...config.google_sheets, sheet_url: e.target.value }
-                                    })}
-                                    className="bg-background border-input"
-                                />
-                                <p className="text-xs text-muted-foreground/70">Asegúrate de compartir el Sheet con la cuenta de servicio de Google.</p>
-                            </div>
-
-                            <div className="space-y-2">
-                                <Label className="text-foreground/90">Hojas a leer (pestañas del documento)</Label>
-                                <p className="text-xs text-muted-foreground/70 mb-2">Escribe el nombre exacto de cada pestaña, una por línea. Si dejas vacío, leerá la primera hoja. Los datos de todas las hojas se combinan.</p>
-                                <textarea
-                                    value={(config.google_sheets?.sheet_names || []).join('\n')}
-                                    onChange={(e) => {
-                                        const names = e.target.value.split('\n').filter((v: string) => v.trim())
-                                        setConfig({
-                                            ...config,
-                                            google_sheets: { ...config.google_sheets, sheet_names: names }
-                                        })
-                                    }}
-                                    placeholder={"Mes enero\nform filtro logico"}
-                                    rows={3}
-                                    className="w-full rounded-md bg-background border border-input px-3 py-2 text-sm text-foreground resize-none focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-indigo-500"
-                                />
-                                <p className="text-xs text-muted-foreground/70">Ejemplo: <span className="text-muted-foreground font-mono">Mes enero</span>, <span className="text-muted-foreground font-mono">form filtro logico</span></p>
-                            </div>
-
-                            <div className="space-y-2">
-                                <Label htmlFor="gs_quality_field" className="text-foreground/90">Campo de calidad (columna del Sheet)</Label>
-                                <Input
-                                    id="gs_quality_field"
-                                    placeholder="cual_es_tu_rango_de_ingresos"
-                                    value={config.google_sheets?.quality_field || ''}
-                                    onChange={(e) => setConfig({
-                                        ...config,
-                                        google_sheets: { ...config.google_sheets, quality_field: e.target.value }
-                                    })}
-                                    className="bg-background border-input"
-                                />
-                            </div>
-
-                            <div className="space-y-2">
-                                <Label className="text-foreground/90">Valores que califican como &quot;Lead Calificado&quot;</Label>
-                                <p className="text-xs text-muted-foreground/70 mb-2">Separar valores por línea. Un lead se considera calificado si su respuesta coincide con alguno de estos valores.</p>
-                                <textarea
-                                    value={(config.google_sheets?.qualified_values || []).join('\n')}
-                                    onChange={(e) => {
-                                        const values = e.target.value.split('\n').filter((v: string) => v.trim())
-                                        setConfig({
-                                            ...config,
-                                            google_sheets: { ...config.google_sheets, qualified_values: values }
-                                        })
-                                    }}
-                                    placeholder={"$5,000 - $20,000 USD\n$20,000+ USD\nMás de $50,000 USD"}
-                                    rows={4}
-                                    className="w-full rounded-md bg-background border border-input px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground/70 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                                />
-                            </div>
-
-                            <div className="pt-4 border-t border-border">
-                                <div className="flex gap-2 items-center">
-                                    <Button
-                                        variant="outline"
-                                        size="sm"
-                                        onClick={() => runTest('googleSheets', () => syncGoogleSheets(cliente.id))}
-                                        disabled={testStatus['googleSheets']?.loading || !config.google_sheets?.sheet_url}
-                                        className="h-8 text-xs"
-                                    >
-                                        {testStatus['googleSheets']?.loading
-                                            ? <RefreshCw className="w-3 h-3 animate-spin mr-2" />
-                                            : <DownloadCloud className="w-3 h-3 mr-2" />
-                                        }
-                                        Sincronizar ahora
-                                    </Button>
-                                    {testStatus['googleSheets']?.success && (
-                                        <span className="text-green-600 dark:text-green-500 text-xs flex items-center gap-1">
-                                            <CheckCircle2 className="w-3 h-3" /> {testStatus['googleSheets']?.message || 'Sincronizado'}
-                                        </span>
-                                    )}
-                                    {testStatus['googleSheets']?.error && (
-                                        <span className="text-red-500 text-xs flex items-center gap-1">
-                                            <AlertCircle className="w-3 h-3" /> {testStatus['googleSheets']?.error}
-                                        </span>
-                                    )}
-                                </div>
-                            </div>
-                        </>
-                    )}
-                </CardContent>
-            </Card>
-
             {/* ─── Google Sheets (Conversiones Offline) ────────────────────── */}
             {(() => {
                 const convSheets: ConversionesConfig[] = config.google_sheets_conversiones || []
@@ -1543,35 +1340,6 @@ const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean
                     else addTab(idx, title)
                 }
 
-                const detectColumns = async (idx: number, tabId: string) => {
-                    const sheet = convSheets[idx]
-                    const tab = tabsOf(sheet).find(t => t.id === tabId)
-                    if (!tab) return
-                    const key = `${sheet.id ?? idx}:${tabId}`
-                    setSheetUI(prev => ({ ...prev, [key]: { detectingCols: true, detectColsError: null, headers: prev[key]?.headers } }))
-                    const res = await detectConversionesColumns(sheet, tab)
-                    if ('error' in res && res.error) {
-                        setSheetUI(prev => ({ ...prev, [key]: { detectingCols: false, detectColsError: res.error! } }))
-                    } else {
-                        const merged: Record<string, CustomColumnDef> = { ...(tab.custom_columns || {}) }
-                        for (const col of (res.columns ?? [])) {
-                            if (!merged[col.sanitized_name]) {
-                                merged[col.sanitized_name] = {
-                                    col_name: col.col_name,
-                                    type: col.proposed_type,
-                                    label: col.label,
-                                    include: col.proposed_type !== 'date' && col.proposed_type !== 'text',
-                                }
-                            }
-                        }
-                        updateTab(idx, tabId, { custom_columns: merged })
-                        setSheetUI(prev => ({
-                            ...prev,
-                            [key]: { detectingCols: false, detectColsError: null, headers: res.headers ?? [] },
-                        }))
-                    }
-                }
-
                 // Comprueba acceso al doc, existencia de la pestaña y de las
                 // columnas mapeadas. No bloquea el guardado: solo informa.
                 const validateSheet = async (idx: number) => {
@@ -1586,6 +1354,15 @@ const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean
                             out.push({ tab: label, ok: false, message: res.error })
                             continue
                         }
+                        // Los encabezados alimentan el autocompletado del mapeo de
+                        // columnas. Antes los traía "Detectar columnas", que se retiró
+                        // junto con las columnas adicionales; validar cumple la misma
+                        // función y además es lo que se hace antes de sincronizar.
+                        setSheetUI(prev => ({
+                            ...prev,
+                            [`${sid}:${tab.id}`]: { headers: res.headers ?? [] },
+                        }))
+
                         const heads = (res.headers ?? []).map(h => h.toLowerCase().trim())
                         const mapped: [string, string][] = [
                             ['fecha',    tab.col_fecha    || 'fecha'],
@@ -1800,9 +1577,7 @@ const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean
                                                     {/* Una sub-tarjeta por pestaña, con su mapeo propio */}
                                                     {tabs.map((tab) => {
                                                         const tabKey = `${sid}:${tab.id}`
-                                                        const ui = sheetUI[tabKey] || { detectingCols: false, detectColsError: null }
-                                                        const headerOpts = ui.headers ?? []
-                                                        const customCols = tab.custom_columns || {}
+                                                        const headerOpts = sheetUI[tabKey]?.headers ?? []
                                                         const listId = `headers-${tabKey}`
 
                                                         return (
@@ -1908,93 +1683,6 @@ const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean
                                                                                 </span>
                                                                             </div>
                                                                         </div>
-                                                                    </div>
-
-                                                                    {/* Columnas adicionales de esta pestaña */}
-                                                                    <div className="bg-muted/40 border border-border p-3 rounded-lg space-y-3 relative overflow-hidden">
-                                                                        <div className="absolute top-0 left-0 w-1 h-full bg-indigo-500/50" />
-                                                                        <div className="flex items-center justify-between">
-                                                                            <div>
-                                                                                <h4 className="text-sm font-medium text-foreground">Columnas adicionales</h4>
-                                                                                <p className="text-xs text-muted-foreground/70 mt-0.5">Campos extra para usar como variables en fórmulas y en el BI.</p>
-                                                                            </div>
-                                                                            <Button
-                                                                                variant="outline"
-                                                                                size="sm"
-                                                                                className="h-7 text-xs shrink-0"
-                                                                                disabled={ui.detectingCols || !sheet.sheet_url}
-                                                                                onClick={() => detectColumns(idx, tab.id)}
-                                                                            >
-                                                                                {ui.detectingCols
-                                                                                    ? <RefreshCw className="w-3 h-3 animate-spin mr-1" />
-                                                                                    : <DatabaseZap className="w-3 h-3 mr-1" />}
-                                                                                Detectar columnas
-                                                                            </Button>
-                                                                        </div>
-
-                                                                        {ui.detectColsError && (
-                                                                            <p className="text-xs text-red-500 flex items-center gap-1">
-                                                                                <AlertCircle className="w-3 h-3" /> {ui.detectColsError}
-                                                                            </p>
-                                                                        )}
-
-                                                                        {Object.keys(customCols).length > 0 ? (
-                                                                            <div className="space-y-2">
-                                                                                <div className="grid grid-cols-[1fr_120px_1fr_32px] gap-2 px-1">
-                                                                                    <span className="text-xs text-muted-foreground/60">Columna en Sheet</span>
-                                                                                    <span className="text-xs text-muted-foreground/60">Tipo</span>
-                                                                                    <span className="text-xs text-muted-foreground/60">Label</span>
-                                                                                    <span className="text-xs text-muted-foreground/60">Usar</span>
-                                                                                </div>
-                                                                                {Object.entries(customCols).map(([sanitized, def]) => (
-                                                                                    <div key={sanitized} className="grid grid-cols-[1fr_120px_1fr_32px] gap-2 items-center">
-                                                                                        <span className="text-xs text-muted-foreground font-mono truncate" title={def.col_name}>{def.col_name}</span>
-                                                                                        <select
-                                                                                            value={def.type}
-                                                                                            onChange={(e) => {
-                                                                                                const updated = { ...customCols, [sanitized]: { ...def, type: e.target.value as CustomColumnType } }
-                                                                                                updateTab(idx, tab.id, { custom_columns: updated })
-                                                                                            }}
-                                                                                            className="h-7 text-xs rounded-md border border-input bg-background px-2 text-foreground focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                                                                                        >
-                                                                                            <option value="count">Cantidad</option>
-                                                                                            <option value="currency">Moneda</option>
-                                                                                            <option value="percentage">Porcentaje</option>
-                                                                                            <option value="date">Fecha</option>
-                                                                                            <option value="text">Texto</option>
-                                                                                        </select>
-                                                                                        <Input
-                                                                                            value={def.label}
-                                                                                            onChange={(e) => {
-                                                                                                const updated = { ...customCols, [sanitized]: { ...def, label: e.target.value } }
-                                                                                                updateTab(idx, tab.id, { custom_columns: updated })
-                                                                                            }}
-                                                                                            className="h-7 text-xs bg-background border-input"
-                                                                                            placeholder="Nombre visible"
-                                                                                        />
-                                                                                        <input
-                                                                                            type="checkbox"
-                                                                                            checked={def.include}
-                                                                                            title={def.include ? 'Incluir en sync' : 'Excluir del sync'}
-                                                                                            onChange={(e) => {
-                                                                                                const updated = { ...customCols, [sanitized]: { ...def, include: e.target.checked } }
-                                                                                                updateTab(idx, tab.id, { custom_columns: updated })
-                                                                                            }}
-                                                                                            className="rounded border-input bg-background text-indigo-500 focus:ring-indigo-500 justify-self-center"
-                                                                                        />
-                                                                                    </div>
-                                                                                ))}
-                                                                                <p className="text-xs text-muted-foreground/60 pt-1">
-                                                                                    Variable en fórmulas: <span className="font-mono">sheet_</span> + nombre sanitizado. Ej: <span className="font-mono text-indigo-400">sheet_{Object.keys(customCols)[0] || 'columna'}</span>
-                                                                                </p>
-                                                                            </div>
-                                                                        ) : (
-                                                                            !ui.detectingCols && (
-                                                                                <p className="text-xs text-muted-foreground/50 text-center py-2">
-                                                                                    Haz clic en &quot;Detectar columnas&quot; para identificar campos extra.
-                                                                                </p>
-                                                                            )
-                                                                        )}
                                                                     </div>
                                                                 </div>
                                                             </div>

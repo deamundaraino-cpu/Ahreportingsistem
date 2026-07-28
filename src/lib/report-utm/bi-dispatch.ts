@@ -6,7 +6,7 @@
 
 import { runBiQuery, runFunnelQuery, runComparison, runPivotQuery, runDistinctValues } from './bi-query'
 import { runCampaignQuery } from './campaign-data'
-import { supportsPivot, PIVOT_METRICS, METRIC_META } from './bi-metadata'
+import { supportsPivot, PIVOT_METRICS, METRIC_META, isSheetDim } from './bi-metadata'
 import type { ParsedBiQuery } from './bi-query-params'
 
 export interface DispatchResult {
@@ -62,6 +62,16 @@ export async function dispatchBiQuery(p: ParsedBiQuery): Promise<DispatchResult>
         // El pivot agrupa filas de lead_events/sales_events: solo puede contar filas
         // o sumar `amount`. Con cualquier otra métrica devolvería un conteo de filas
         // disfrazado de gasto/alcance, así que se rechaza explícitamente.
+        // Un campo de Sheet no puede ser eje de una tabla dinámica: su desglose
+        // vive en su propia tabla y no cruza con las filas de leads/ventas que
+        // agrupa el pivot. Se dice explícitamente en vez de devolver ceros.
+        if (isSheetDim(p.dimension) || isSheetDim(p.dimension2)) {
+            return {
+                error: 'Un campo de Sheet no se puede usar como eje de una tabla dinámica. ' +
+                    'Úsalo como dimensión principal en una tabla o una gráfica.',
+                status: 400,
+            }
+        }
         if (!supportsPivot(p.metrics[0])) {
             const validas = PIVOT_METRICS.map(m => METRIC_META[m]?.label ?? m).join(', ')
             return {

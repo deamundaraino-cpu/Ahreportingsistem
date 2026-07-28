@@ -1623,6 +1623,8 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                     conversionesCatalogo={conversionesCatalogo}
                     googleSheetsConversiones={cliente.config_api?.google_sheets_conversiones}
                     conversionesOfflineRaw={data.conversionesOfflineRaw || []}
+                    sheetCampos={data.sheetCampos || []}
+                    sheetVistas={data.sheetVistas || []}
                     campaignGroups={data.campaignGroups || []}
                     campaignNames={allCampaignNames}
                     onClose={() => setShowModal(false)}

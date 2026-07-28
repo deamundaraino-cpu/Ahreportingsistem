@@ -86,8 +86,10 @@ Estados: `pending` → `running` → `done` | `error`. Un fallo con intentos
 restantes vuelve a `pending`; al agotar `max_intentos` queda en `error` y genera
 notificación.
 
-Tipos de job: `metricas`, `sheets_leads`, `sheets_conversiones`, `meta_leads`,
-`utm_aggregate`, `cierre_mes`, `reconciliar`.
+Tipos de job: `metricas`, `sheets_conversiones`, `meta_leads`, `utm_aggregate`,
+`cierre_mes`, `reconciliar`. El tipo `sheets_leads` ya no se encola (migración
+059) pero sigue reconocido: `sync_jobs` puede tener filas históricas con él y el
+runner las enruta al worker de conversiones.
 
 ## Workers
 
@@ -110,10 +112,6 @@ Sin params sincroniza "ayer" en hora Colombia.
 datos, los campos de esa fuente se **omiten** del upsert en lugar de escribir
 ceros. Aplica a las cuatro fuentes (antes solo a Meta y TikTok, así que un fallo
 de Hotmart o GA4 borraba ventas y sesiones reales).
-
-### `/api/worker/google-sheets` — leads
-Importa leads desde las Google Sheets de cada cliente hacia `leads` y
-`leads_diarios`.
 
 ### `/api/worker/google-sheets-conversiones` — conversiones offline
 Sincroniza conversiones offline hacia `conversiones_offline` y

@@ -12,6 +12,7 @@ import {
     fieldMetricLabel, fieldMetricFormat, fieldDimLabel, isFieldMetric, parseFieldMetric,
     isAdditiveMetric,
     isOfflineFieldMetric, parseOfflineFieldMetric, offlineFieldLabel, offlineFieldFormat,
+    isSheetToken, sheetFieldLabel, sheetFieldFormat,
 } from '@/lib/report-utm/bi-metadata'
 import { useBiQueryBase } from '../BiQueryContext'
 
@@ -68,12 +69,15 @@ export function TableWidget({ title, config, filters, calculatedFields = [], h =
     const fieldMetricCols = colKeys.filter(isFieldMetric)
     // Columnas adicionales de Sheets offline (offfield:<tipo>:<clave>).
     const offlineFieldCols = colKeys.filter(isOfflineFieldMetric)
+    // Campos y vistas de Sheet (sheetagg:/sheetview:).
+    const sheetCols = colKeys.filter(isSheetToken)
     const usedCalc = colKeys.filter(k => calcMap.has(k)).map(k => calcMap.get(k)!)
 
     function colLabel(key: string): string {
         return METRIC_META[key as BiMetric]?.label
             ?? fieldMetricLabel(key)
             ?? offlineFieldLabel(key)
+            ?? sheetFieldLabel(key)
             ?? calcMap.get(key)?.name ?? key
     }
     function colFormat(key: string): ColFormat {
@@ -81,6 +85,7 @@ export function TableWidget({ title, config, filters, calculatedFields = [], h =
             ?? calcMap.get(key)?.format
             ?? fieldMetricFormat(key)
             ?? offlineFieldFormat(key)
+            ?? sheetFieldFormat(key)
             ?? 'number') as ColFormat
     }
 
@@ -177,6 +182,13 @@ export function TableWidget({ title, config, filters, calculatedFields = [], h =
         // Columnas de Sheet: conteos e importes suman; los porcentajes no.
         for (const key of offlineFieldCols) {
             if (parseOfflineFieldMetric(key)?.type !== 'percentage') {
+                t[key] = round2(filteredRows.reduce((s, r) => s + Number(r[key] ?? 0), 0))
+            }
+        }
+        // Campos de Sheet: solo los conteos y las sumas se pueden totalizar; un
+        // promedio o un extremo sumados fila a fila darían un número inventado.
+        for (const key of sheetCols) {
+            if (isAdditiveMetric(key)) {
                 t[key] = round2(filteredRows.reduce((s, r) => s + Number(r[key] ?? 0), 0))
             }
         }

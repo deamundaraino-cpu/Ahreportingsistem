@@ -3,8 +3,8 @@
 import { useState, useEffect } from 'react'
 import { Filter, RefreshCw, SlidersHorizontal, ChevronDown, X, Lock, Plus, Save, Check } from 'lucide-react'
 import type { BiFilters } from './BiTypes'
-import type { AdvancedFilter, FilterCondition, FilterOp, FormFieldMeta } from '@/lib/report-utm/bi-metadata'
-import { FILTER_OPS, FILTERABLE_BASE_DIMS, makeFieldDim, humanizeFieldKey, ADVANCED_FILTER_KEY } from '@/lib/report-utm/bi-metadata'
+import type { AdvancedFilter, FilterCondition, FilterOp, FormFieldMeta, SheetFieldMeta } from '@/lib/report-utm/bi-metadata'
+import { FILTER_OPS, FILTERABLE_BASE_DIMS, makeFieldDim, humanizeFieldKey, ADVANCED_FILTER_KEY, makeSheetDim } from '@/lib/report-utm/bi-metadata'
 import { HelpTip } from './HelpTip'
 
 interface Cliente {
@@ -127,9 +127,31 @@ export function BiGlobalFilters({
         return () => { cancelled = true }
     }, [readonly, clienteId, dateFrom, dateTo])
 
+    // Campos de Sheet del cliente → también filtrables desde el informe.
+    const [sheetFields, setSheetFields] = useState<SheetFieldMeta[]>([])
+    useEffect(() => {
+        let cancelled = false
+        void (async () => {
+            // En la vista pública el visitante no tiene sesión (el endpoint daría
+            // 401) y además el constructor de filtros no se puede editar.
+            if (readonly || !clienteId) { if (!cancelled) setSheetFields([]); return }
+            try {
+                const res = await fetch(`/api/report-utm/bi/sheet-fields?cliente_id=${encodeURIComponent(clienteId)}`)
+                const json = await res.json()
+                if (!cancelled) setSheetFields(json.data?.fields ?? [])
+            } catch {
+                if (!cancelled) setSheetFields([])
+            }
+        })()
+        return () => { cancelled = true }
+    }, [readonly, clienteId])
+
     const fieldOptions: { value: string; label: string }[] = [
         ...FILTERABLE_BASE_DIMS,
         ...formFields.map(f => ({ value: makeFieldDim(f.key), label: humanizeFieldKey(f.label) })),
+        ...sheetFields
+            .filter(f => f.rol !== 'metrica' && !f.alta_cardinalidad)
+            .map(f => ({ value: makeSheetDim(f.clave), label: f.nombre })),
     ]
     const labelOf = (field: string) => fieldOptions.find(o => o.value === field)?.label ?? field
 

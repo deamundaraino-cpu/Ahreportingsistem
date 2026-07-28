@@ -82,33 +82,46 @@ Se consolidan en:
 
 ---
 
-## Google Sheets (importación de leads)
+## Google Sheets — Leads (RETIRADA, migración 059)
 
-**Librerías**: `google-spreadsheet`, `google-auth-library` (JWT). Código en `src/lib/integrations/google-sheets.ts`.
+Existía una segunda integración de Google Sheets, separada de la de conversiones
+offline: pedía un JSON de cuenta de servicio, importaba una hoja de leads de Meta
+a `leads` / `leads_diarios` y calculaba una tasa de calificación. **Se retiró**:
+su hoja se sincroniza ahora por el módulo unificado
+(`config_api.google_sheets_conversiones`, con `count_rows: true` y
+`tipo_fijo: 'lead'`), y su `quality_field` pasó a ser un campo de Sheet con una
+vista.
 
-### Configuración (por cliente)
-En `config_api.google_sheets`:
-```jsonc
-{
-  "sheet_url": "https://docs.google.com/spreadsheets/d/…",
-  "quality_field": "rango_de_ingresos",          // campo que define calificación
-  "qualified_values": ["$5,000 - $20,000 USD"],  // valores que cuentan como calificado
-  "enabled": true,
-  "client_email": "…",   // opcional: credenciales por cliente
-  "private_key": "…",
-  "sheet_names": ["Hoja1"]
-}
+Qué se borró: `src/lib/integrations/google-sheets.ts`,
+`/api/worker/google-sheets`, `/api/admin/sync-google-sheets`,
+`GoogleSheetsLeadsCard`, la card del formulario de cliente y la acción
+`syncGoogleSheets`.
+
+**Qué NO se borró, y por qué:**
+
+- Los cuatro nombres de métrica —`leads_totales`, `leads_calificados`,
+  `leads_no_calificados`, `tasa_calificacion`— siguen en `formula-engine` y en
+  los catálogos de layouts. Hay tarjetas y columnas guardadas que los usan, así
+  que ningún layout necesita edición: `getSheetCamposDelDia` los reconstruye
+  desde el campo reservado `calidad_lead` y la vista `leads_calificados`.
+- Las tablas `leads` y `leads_diarios`. El dashboard las sigue leyendo para las
+  fechas anteriores a la migración —tienen **prioridad** sobre el pipeline
+  nuevo—, de modo que la serie no da un escalón el día del cambio. Son además la
+  referencia contra la que se cuadra.
+- El tipo de job `sheets_leads`, porque `sync_jobs` puede tener filas históricas
+  con ese valor; el runner las enruta al worker unificado.
+
+**Cómo se migra un cliente:**
+
+```bash
+npx tsx scripts/migracion-leads-legacy.ts inventario   # quién la usa y con qué datos
+# aplicar migrations/059 y sincronizar el sheet migrado desde /admin/settings
+npx tsx scripts/migracion-leads-legacy.ts campos       # crea campo + vista y recalcula
+npx tsx scripts/migracion-leads-legacy.ts cuadre 30    # GATE: legacy vs pipeline nuevo
 ```
-Si no hay credenciales por cliente, se usa la cuenta de servicio global (`GOOGLE_SERVICE_ACCOUNT_EMAIL` / `GOOGLE_SERVICE_ACCOUNT_KEY`).
 
-### Flujo
-`fetchLeadsFromSheet` → `filterQualifiedLeads` (compara `quality_field` contra `qualified_values`, case-insensitive) → `computeDailyAggregates` (agrupa por fecha, calcula tasa de calificación) → `saveLeadsToDb` (upsert por lotes a `leads` y `leads_diarios`).
-
-### Disparadores
-- **Automático**: `GET /api/worker/google-sheets` (cron diario).
-- **Manual**: `POST /api/admin/sync-google-sheets` desde la UI.
-
-En el dashboard, los leads se muestran en `GoogleSheetsLeadsCard`.
+El modo `campos` es idempotente y aborta solo si falta la migración 059. El
+`cuadre` sale con código 1 mientras haya días que no coincidan.
 
 ---
 
@@ -137,7 +150,7 @@ sus **pestañas**:
     "enabled": true,
     "col_fecha": "Fecha", "col_tipo": "Tipo", "col_cantidad": "Cantidad",
     "col_valor": "Valor", "col_fuente": "Fuente", "col_notas": "Notas",
-    "custom_columns": {         // columnas extra de ESTA pestaña
+    "custom_columns": {         // LEGACY, sin UI (ver abajo)
       "citas_agendadas": { "col_name": "Citas Agendadas", "type": "count", "label": "Citas", "include": true }
     },
     "raw_mode": "all",          // capa cruda: 'all' (defecto) | 'declared' | 'none'
@@ -149,6 +162,18 @@ sus **pestañas**:
 Las configs anteriores (mapeo plano a nivel de sheet, una sola pestaña) siguen
 funcionando: `normalizeTabs` las convierte en una pestaña única al leerlas, y la
 UI las guarda en formato `tabs` la primera vez que se editan.
+
+> **`custom_columns` es legacy y ya no se puede editar.** Era el sistema de "una
+> columna = una métrica" (bloque "Columnas adicionales" del formulario), que los
+> **campos de Sheet** reemplazan: un campo une columnas equivalentes de varias
+> pestañas, agrupa sus valores y se puede filtrar. Tener las dos formas a la vista
+> confundía, así que se retiró el bloque de la UI.
+>
+> Lo que sigue vivo, para no romper lo ya construido: el sync respeta las
+> `custom_columns` existentes, los tokens `offfield:*` siguen resolviéndose en el
+> BI y las variables `sheet_*` en el dashboard. Simplemente no se pueden crear
+> nuevas. `POST /api/admin/detect-sheet-columns` se conserva porque la validación
+> del sheet lo usa para leer encabezados.
 
 ### Flujo
 `syncClienteConversiones` → por sheet: `fetchConversionesFromSheet` (abre el doc
@@ -178,7 +203,8 @@ están guardadas y el motivo queda como aviso en el log de sync.
 - **Automático**: `GET /api/worker/google-sheets-conversiones` (job `sheets_conversiones`).
 - **Manual**: `POST /api/admin/sync-conversiones-offline` desde la UI.
 - **Descubrimiento**: `POST /api/admin/list-sheet-tabs` (pestañas del doc) y
-  `POST /api/admin/detect-sheet-columns` (encabezados + columnas extra de una pestaña).
+  `POST /api/admin/detect-sheet-columns` (encabezados de una pestaña; lo usa la
+  validación del sheet para avisar de columnas mapeadas que no existen).
 
 ### Campos de Sheet
 
@@ -223,6 +249,34 @@ conversiones ya están guardadas y el recálculo se puede repetir solo).
 - BI builder e informes programados: las mismas cuatro métricas más las columnas
   extra como `offfield:<tipo>:<clave>` (alias `off__<clave>` en campos
   calculados). El catálogo lo sirve `/api/report-utm/bi/offline-fields`.
+
+### Tokens de los campos de Sheet
+
+| Uso | Token del BI | Alias en fórmulas | Clave en el dashboard clásico |
+|---|---|---|---|
+| Dimensión (agrupar / filtrar) | `sheetdim:<clave>` | — | — |
+| Métrica del campo | `sheetagg:<agg>:<clave>` | `sf__<clave>` | `sf_<clave>` |
+| Vista guardada | `sheetview:<clave>` | `sv__<clave>` | `sv_<clave>` |
+
+La agregación viaja dentro del token de métrica para que un widget ya guardado
+siga midiendo lo mismo aunque después se cambie la agregación por defecto del
+campo. Los prefijos planos son `sf_`/`sv_` y **no** `sheet_`, que ya lo produce
+el aplanado de `custom_fields`: una colisión cambiaría en silencio los valores
+de layouts existentes.
+
+El catálogo lo sirve `/api/report-utm/bi/sheet-fields`; la disponibilidad sale
+del propio desglose diario, así que dice la verdad sobre si hay datos.
+
+**Lo que un campo de Sheet no puede hacer**, y por qué: el Sheet no guarda a qué
+lead corresponde cada fila, así que su desglose no cruza con `lead_events` /
+`sales_events` / `metricas_diarias`. En consecuencia, al agrupar por un campo de
+Sheet las métricas de otras fuentes salen en cero (mismo criterio que ya seguía
+el motor con las dimensiones de anuncio), un filtro por campo de Sheet cuenta
+como **no atribuible** y anula el gasto, y no se admite como eje de tabla
+dinámica. El editor avisa de los tres casos.
+
+Las etapas de embudo con vistas de Sheet quedan pendientes: `runFunnelQuery`
+consulta tres fuentes fijas y añadir una cuarta es trabajo aparte.
 
 ---
 
@@ -290,7 +344,8 @@ disparador de ventas no cambian. Mapeo de endpoints en `src/lib/whatsapp/provide
 | TikTok Ads | OAuth (env app + token por cliente) | `/admin/settings/[id]` | `tiktok_*`, `tiktok_campaigns/ads/adgroups` |
 | GA4 | Cuenta de servicio por cliente | `config_api.ga_*` | `ga_sessions` |
 | Hotmart (reporting) | Basic/API key por cliente | `config_api.hotmart_*` + funnel por tab | `ventas_*`, `hotmart_funnel_data` |
-| Google Sheets (leads) | Cuenta de servicio (global o por cliente) | `config_api.google_sheets` | `leads`, `leads_diarios` |
+| Google Sheets — Leads | RETIRADA (migración 059) | `config_api.google_sheets` (respaldo) | `leads`, `leads_diarios` (solo lectura) |
+| Campos de Sheet | — (capa sobre lo anterior) | `sheet_campos`, `sheet_campo_vistas` | `sheet_campo_valores_diarios` |
 | Google Sheets (conversiones offline) | OAuth de la agencia (o cuenta de servicio) | `config_api.google_sheets_conversiones[].tabs[]` | `conversiones_offline`, `conversiones_offline_diarias`, `conversiones_offline_sync_log` |
 | Hotmart (Report-UTM) | Webhook HMAC | `report_utm.integrations` | `report_utm.sales_events` |
 | WhatsApp | Gateway Baileys (Bearer) **o** Evolution API (apikey), según `WHATSAPP_PROVIDER` | `/admin/whatsapp` + envs del proveedor | `whatsapp_groups/routes/messages` (+ `session` solo en baileys) |
