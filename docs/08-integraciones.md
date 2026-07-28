@@ -139,7 +139,9 @@ sus **pestañas**:
     "col_valor": "Valor", "col_fuente": "Fuente", "col_notas": "Notas",
     "custom_columns": {         // columnas extra de ESTA pestaña
       "citas_agendadas": { "col_name": "Citas Agendadas", "type": "count", "label": "Citas", "include": true }
-    }
+    },
+    "raw_mode": "all",          // capa cruda: 'all' (defecto) | 'declared' | 'none'
+    "raw_exclude": ["email"]    // columnas que nunca se guardan en crudo (PII)
   }]
 }]
 ```
@@ -154,11 +156,66 @@ una vez e itera sus pestañas habilitadas, cada una con su mapeo) →
 `computeConversionesAggregates` → `saveConversionesSheetToDb` (replace por sheet)
 → `logSyncResult`. Al final, `cleanupOrphanConversiones`.
 
+### Las dos capas del sync
+`parseTabPayload` recorre cada pestaña una sola vez y produce dos cosas:
+
+| Capa | Tabla | Qué entra |
+|---|---|---|
+| Interpretada | `conversiones_offline` (+ `_diarias`) | El modelo de siempre: fecha/tipo/cantidad/valor/fuente/notas y las `custom_columns` ya tipadas. Solo filas con `cantidad > 0`. |
+| Cruda | `sheet_filas` | La fila tal cual, con todas sus columnas sin convertir. Se guarda **aunque no sea conversión** (`cantidad <= 0`), porque igual tiene valores de campo. |
+
+La capa cruda es la base de los **campos de Sheet**: permite definir un campo que
+une columnas equivalentes de varias pestañas y recalcularlo leyendo solo de la
+base, sin volver a llamar a Google. Qué columnas se guardan lo controla
+`raw_mode` / `raw_exclude` por pestaña; `detectSheetColumns` marca las columnas
+de PII o alta cardinalidad con `sensible: true` para proponerlas excluidas.
+
+La fecha sigue siendo obligatoria en ambas capas: es el eje temporal del módulo.
+Un fallo al escribir `sheet_filas` **no** tumba el sheet — las conversiones ya
+están guardadas y el motivo queda como aviso en el log de sync.
+
 ### Disparadores
 - **Automático**: `GET /api/worker/google-sheets-conversiones` (job `sheets_conversiones`).
 - **Manual**: `POST /api/admin/sync-conversiones-offline` desde la UI.
 - **Descubrimiento**: `POST /api/admin/list-sheet-tabs` (pestañas del doc) y
   `POST /api/admin/detect-sheet-columns` (encabezados + columnas extra de una pestaña).
+
+### Campos de Sheet
+
+Sobre la capa cruda se definen los **campos**: el problema que resuelven es que
+la misma pregunta se llama `rango de ingresos` en un formulario y
+`cuál es tu rango de ingresos` en otro, y sus respuestas se escriben `20 a 100`
+en una hoja y `20-100` en la otra.
+
+Un campo se define por cliente (tabla `sheet_campos`, no en `config_api`) con:
+
+- **nombre visible** — el que se ve en el BI, el Layout Builder y las tablas. La
+  `clave` es un slug **inmutable**: renombrar el campo no rompe informes.
+- **orígenes** — N pestañas × N columnas equivalentes, con `*` como comodín y una
+  regla `combinar` (`primero` / `suma` / `concat`) cuando hay varias columnas.
+- **mapa de valores** — junta las formas distintas de escribir lo mismo en un
+  bucket con nombre propio.
+- **agregación** — `count` / `sum` / `avg` / `min` / `max`.
+
+El resultado es un **desglose diario por valor** (`sheet_campo_valores_diarios`),
+que es lo que permite las tres cosas a la vez: usar el campo como métrica,
+agrupar y graficar **por** él como dimensión, y filtrar por sus valores desde
+cualquier widget. Encima se guardan **vistas** con nombre propio
+(`sheet_campo_vistas`) del estilo "Leads 20-100", que se comportan como una
+métrica sumable más.
+
+**Flujo:** UI (`admin/settings/components/sheet-campos/`) → server actions →
+`/api/admin/sheet-campos*` → `recalcularCamposCliente` (`lib/sheets/campos-db.ts`)
+→ `computeCampoValoresDiarios` (`lib/sheets/campos.ts`, puro y client-safe).
+
+Esa función pura es la única que sabe calcular un campo: la usan por igual el
+recálculo bajo demanda, el sync diario y la vista previa del agrupador, así que
+los tres no pueden dar números distintos.
+
+**El recálculo nunca llama a Google.** Lee de `sheet_filas`, así que crear o
+editar un campo y ver el resultado tarda un segundo. El sync diario lo dispara al
+final, con la capa cruda ya reemplazada; si falla, no tumba el sync (las
+conversiones ya están guardadas y el recálculo se puede repetir solo).
 
 ### Dónde se usan los datos
 - Dashboard y motor de fórmulas: `offline_leads/ventas/revenue/total` y las

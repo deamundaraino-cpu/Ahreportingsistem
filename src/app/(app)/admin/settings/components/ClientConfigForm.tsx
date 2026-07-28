@@ -10,6 +10,7 @@ import { updateClienteConfig, deleteCliente, assignLayoutToCliente, testMetaConn
 import type { CustomColumnDef, CustomColumnType, ConversionesConfig, DriveSheet, SheetTabConfig, SheetTabInfo, SheetSyncStatus } from '@/lib/integrations/google-sheets-conversiones'
 import type { GA4Property } from '@/lib/integrations/google-analytics'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { SheetCamposSection } from './sheet-campos/SheetCamposSection'
 import { Loader2, ArrowLeft, Save, Trash2, CheckCircle2, AlertCircle, RefreshCw, LayoutDashboard, DownloadCloud, DatabaseZap, Plus, FolderSearch, FileSpreadsheet, Search, BarChart3, ChevronDown } from 'lucide-react'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -2154,6 +2155,12 @@ const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean
                     </>
                 )
             })()}
+
+            {/* ─── Campos de Sheet ──────────────────────────────────────────── */}
+            {/* La card de arriba define la CONEXIÓN (documento, pestañas, fecha);
+                esta define QUÉ SE MIDE. Va aparte porque un campo cruza varias
+                pestañas y puede cruzar varios documentos. */}
+            <SheetCamposSection clienteId={cliente.id} />
 
             {/* ─── Filtros de Dashboard ─────────────────────────────────────── */}
             <Card className="bg-card border-border">

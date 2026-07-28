@@ -9,6 +9,8 @@ import type {
     DetectedColumn, SheetSyncStatus,
 } from '@/lib/integrations/google-sheets-conversiones'
 import type { GA4Property } from '@/lib/integrations/google-analytics'
+import type { SheetCampoDef, SheetCampoVistaDef, CampoValorCrudo } from '@/lib/sheets/campos'
+import type { FuenteColumnas } from '@/lib/sheets/campos-db'
 
 export async function getClientes() {
     const supabase = await createClient()
@@ -852,6 +854,154 @@ export async function listGa4Properties() {
         return { properties: data.properties as GA4Property[] }
     } catch (e: any) {
         return { error: e.message || 'Error al listar propiedades de GA4' }
+    }
+}
+
+// ─── Campos de Sheet ─────────────────────────────────────────────────────────
+// Definiciones por cliente que unifican columnas equivalentes de varias
+// pestañas. Todo pasa por /api/admin/sheet-campos*, que usa el service role.
+
+async function baseUrl() {
+    const headersList = await headers()
+    const host = headersList.get('host') || 'localhost:3001'
+    const protocol = host.includes('localhost') ? 'http' : 'https'
+    return `${protocol}://${host}`
+}
+
+export interface SheetCamposPayload {
+    campos: SheetCampoDef[]
+    vistas: SheetCampoVistaDef[]
+}
+
+export async function listSheetCampos(clienteId: string) {
+    try {
+        const res = await fetch(
+            `${await baseUrl()}/api/admin/sheet-campos?cliente_id=${encodeURIComponent(clienteId)}`,
+            { cache: 'no-store' }
+        )
+        const data = await res.json()
+        if (!res.ok) return { error: data.error || 'Error al leer los campos' }
+        return { campos: (data.campos ?? []) as SheetCampoDef[], vistas: (data.vistas ?? []) as SheetCampoVistaDef[] }
+    } catch (e: any) {
+        return { error: e.message || 'Error al leer los campos' }
+    }
+}
+
+/** Guarda el campo y devuelve el catálogo ya recalculado (el POST recalcula). */
+export async function saveSheetCampo(clienteId: string, campo: Partial<SheetCampoDef>) {
+    try {
+        const res = await fetch(`${await baseUrl()}/api/admin/sheet-campos`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ...campo, cliente_id: clienteId }),
+            cache: 'no-store',
+        })
+        const data = await res.json()
+        if (!res.ok) return { error: data.error || 'Error al guardar el campo' }
+        revalidatePath(`/admin/settings/${clienteId}`)
+        return {
+            campo: data.campo as SheetCampoDef | null,
+            campos: (data.campos ?? []) as SheetCampoDef[],
+            vistas: (data.vistas ?? []) as SheetCampoVistaDef[],
+            recalculo: data.recalculo as { campos: number; dias: number; valores: number; avisos: string[] },
+        }
+    } catch (e: any) {
+        return { error: e.message || 'Error al guardar el campo' }
+    }
+}
+
+export async function deleteSheetCampo(clienteId: string, campoId: string) {
+    try {
+        const url = `${await baseUrl()}/api/admin/sheet-campos` +
+            `?id=${encodeURIComponent(campoId)}&cliente_id=${encodeURIComponent(clienteId)}`
+        const res = await fetch(url, { method: 'DELETE', cache: 'no-store' })
+        const data = await res.json()
+        if (!res.ok) return { error: data.error || 'Error al borrar el campo' }
+        revalidatePath(`/admin/settings/${clienteId}`)
+        return { success: true }
+    } catch (e: any) {
+        return { error: e.message || 'Error al borrar el campo' }
+    }
+}
+
+export async function saveSheetVista(clienteId: string, vista: Partial<SheetCampoVistaDef>) {
+    try {
+        const res = await fetch(`${await baseUrl()}/api/admin/sheet-campos/vistas`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ...vista, cliente_id: clienteId }),
+            cache: 'no-store',
+        })
+        const data = await res.json()
+        if (!res.ok) return { error: data.error || 'Error al guardar la vista' }
+        revalidatePath(`/admin/settings/${clienteId}`)
+        return { campos: (data.campos ?? []) as SheetCampoDef[], vistas: (data.vistas ?? []) as SheetCampoVistaDef[] }
+    } catch (e: any) {
+        return { error: e.message || 'Error al guardar la vista' }
+    }
+}
+
+export async function deleteSheetVista(clienteId: string, vistaId: string) {
+    try {
+        const url = `${await baseUrl()}/api/admin/sheet-campos/vistas` +
+            `?id=${encodeURIComponent(vistaId)}&cliente_id=${encodeURIComponent(clienteId)}`
+        const res = await fetch(url, { method: 'DELETE', cache: 'no-store' })
+        const data = await res.json()
+        if (!res.ok) return { error: data.error || 'Error al borrar la vista' }
+        revalidatePath(`/admin/settings/${clienteId}`)
+        return { campos: (data.campos ?? []) as SheetCampoDef[], vistas: (data.vistas ?? []) as SheetCampoVistaDef[] }
+    } catch (e: any) {
+        return { error: e.message || 'Error al borrar la vista' }
+    }
+}
+
+/** Valores crudos detectados de un campo, para el agrupador. */
+export async function listCampoValores(clienteId: string, campoId: string, limite = 500) {
+    try {
+        const url = `${await baseUrl()}/api/admin/sheet-campos/valores` +
+            `?cliente_id=${encodeURIComponent(clienteId)}&campo_id=${encodeURIComponent(campoId)}&limite=${limite}`
+        const res = await fetch(url, { cache: 'no-store' })
+        const data = await res.json()
+        if (!res.ok) return { error: data.error || 'Error al leer los valores' }
+        return {
+            valores: (data.valores ?? []) as CampoValorCrudo[],
+            totalDistintos: (data.total_distintos ?? 0) as number,
+        }
+    } catch (e: any) {
+        return { error: e.message || 'Error al leer los valores' }
+    }
+}
+
+/** Recalcula desde `sheet_filas`. Nunca llama a Google. */
+export async function recalcularSheetCampos(clienteId: string, campoId?: string) {
+    try {
+        const res = await fetch(`${await baseUrl()}/api/admin/sheet-campos/recalcular`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ cliente_id: clienteId, campo_id: campoId }),
+            cache: 'no-store',
+        })
+        const data = await res.json()
+        if (!res.ok) return { error: data.error || 'Error al recalcular' }
+        revalidatePath(`/admin/settings/${clienteId}`)
+        return data as { campos: number; dias: number; valores: number; avisos: string[] }
+    } catch (e: any) {
+        return { error: e.message || 'Error al recalcular' }
+    }
+}
+
+/** Columnas por pestaña ya sincronizada, con muestras. No llama a Google. */
+export async function listSheetColumnas(clienteId: string) {
+    try {
+        const res = await fetch(
+            `${await baseUrl()}/api/admin/sheet-columnas?cliente_id=${encodeURIComponent(clienteId)}`,
+            { cache: 'no-store' }
+        )
+        const data = await res.json()
+        if (!res.ok) return { error: data.error || 'Error al leer las columnas' }
+        return { fuentes: (data.fuentes ?? []) as Array<FuenteColumnas & { sheet_nombre: string }> }
+    } catch (e: any) {
+        return { error: e.message || 'Error al leer las columnas' }
     }
 }
 

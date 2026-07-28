@@ -305,6 +305,51 @@ CREATE TABLE public.api_tokens (
 
 ---
 
+### Tablas de Google Sheets (migraciones 023-025, 037, 050, 056, 057)
+
+Ver [doc 08 · Integraciones](./08-integraciones.md#google-sheets--conversiones-offline) para el flujo completo.
+
+**`conversiones_offline`** — una fila por entrada interpretada del Sheet:
+`id`, `cliente_id`, `fecha`, `tipo` (`lead|venta|otro`), `cantidad`, `valor`, `fuente`, `notas`, `custom_fields` (JSONB, migr. 037), `sync_batch_id` (migr. 050), `sheet_id` + `tab_name` (migr. 056).
+
+**`conversiones_offline_diarias`** — agregado por `(cliente_id, sheet_id, fecha, tipo, fuente)` con `total_cantidad`, `total_valor` y `custom_fields` (JSONB, migr. 024). Las columnas `percentage` se promedian ponderando por `cantidad`; las `count`/`currency` se suman.
+
+**`conversiones_offline_sync_log`** (migr. 056) — últimos 20 resultados de sync por cliente+sheet: `status`, `rows_ok`, `rows_descartadas`, `detalle` (JSONB con la calidad por pestaña).
+
+**`sheet_filas`** (migr. 057) — **capa cruda**: la fila del Sheet tal cual, sin
+interpretar. `id`, `cliente_id`, `sheet_id`, `tab_name`, `fecha`, `fila_num`,
+`valores` (JSONB `{ columna_sanitizada: texto }`), `sync_batch_id`. Es la fuente
+de verdad para recalcular los campos de Sheet sin volver a llamar a Google.
+Incluye filas que no llegan a ser conversión (`cantidad <= 0`). Índice GIN
+`jsonb_path_ops` sobre `valores` para el filtrado por valor.
+
+Las cuatro se reemplazan **por sheet** (no por cliente): se inserta el lote nuevo
+con un `sync_batch_id` y solo entonces se borra el anterior de ese `sheet_id`, de
+modo que un sheet que falla conserva sus datos.
+
+---
+
+### Campos de Sheet (migración 058)
+
+Un **campo** unifica columnas equivalentes de varias pestañas bajo un nombre
+visible único. Se define por cliente y se calcula desde `sheet_filas`.
+
+**`sheet_campos`** — la definición: `clave` (slug **inmutable**, la parte pública de los tokens de informes y layouts), `nombre` (visible, renombrable sin romper nada), `rol` (`dimension|metrica|ambos`), `formato`, `agregacion` (`count|sum|avg|min|max`), `origenes` (JSONB: `[{sheet_id, tab_name, columnas[], combinar}]`, con `*` como comodín), `valores_map` (JSONB `{valor crudo normalizado: bucket}`), `valores_orden`, `sin_mapear` (`crudo|otros|ignorar`), `max_valores` + `alta_cardinalidad`, `legacy_offfield`, `recalculado_at`. `UNIQUE (cliente_id, clave)`.
+
+**`sheet_campo_vistas`** — recortes con nombre propio ("Leads 20-100"): `campo_id`, `clave`, `nombre`, `agregacion`, `operador` (`in|not_in`), `valores[]` (buckets). Se evalúan sobre el desglose, así que crearlas o cambiarlas **no requiere recálculo**.
+
+**`sheet_campo_valores`** — catálogo de valores crudos detectados (`valor_crudo`, `valor_norm`, `filas`, `origenes[]`, `ultima_fecha`). Alimenta el agrupador de la UI sin escanear `sheet_filas` en cada apertura del editor.
+
+**`sheet_campo_valores_diarios`** — **el desglose diario por valor**, grano `(cliente, campo, fecha, bucket)`: `filas`, `suma`, `n_num`, `minimo`, `maximo`.
+`suma` y `n_num` van separados a propósito: con ambos, un promedio agrega bien a cualquier grano (`sum(suma)/sum(n_num)`). Es lo que no ocurre con las columnas `percentage` de `conversiones_offline_diarias`, que guardan el promedio ya resuelto y acaban promediando promedios.
+
+A diferencia de las tablas de sync, estas dos últimas son **100% derivables**: el
+reemplazo es **por campo** (`delete where campo_id` + insert), no por sheet, así
+que editar un campo recalcula solo lo suyo y en un instante. Si algo falla a
+mitad, basta con volver a lanzar `recalcularCamposCliente`.
+
+---
+
 ### Tablas de layouts y tabs (en BD productiva)
 
 Estas tablas implementan el sistema de dashboards (ver [doc 10](./10-sistema-de-layouts.md)). Columnas inferidas del código:

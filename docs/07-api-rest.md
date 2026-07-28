@@ -175,6 +175,12 @@ Resuelve el slug de tracking → destino con UTMs. Setea cookies de atribución 
 | `/api/report-utm/pixel/event` | POST/OPTIONS | público |
 | `/api/report-utm/webhooks/hotmart/[clienteId]` | GET/POST | HMAC/hottok |
 | `/api/admin/sync-google-sheets` | GET/POST | sesión |
+| `/api/admin/sync-conversiones-offline` | GET/POST | sesión |
+| `/api/admin/sheet-campos` | GET/POST/DELETE | sesión |
+| `/api/admin/sheet-campos/vistas` | POST/DELETE | sesión |
+| `/api/admin/sheet-campos/valores` | GET | sesión |
+| `/api/admin/sheet-campos/recalcular` | POST | sesión |
+| `/api/admin/sheet-columnas` | GET | sesión |
 | `/api/layouts/reorder` | POST | sesión |
 | `/api/backfill-forms` | POST | sesión |
 | `/api/health` | GET/POST | público |

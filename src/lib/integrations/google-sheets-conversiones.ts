@@ -3,10 +3,20 @@ import { GoogleSpreadsheet } from 'google-spreadsheet'
 import type { GoogleSpreadsheetWorksheet } from 'google-spreadsheet'
 import { JWT, OAuth2Client } from 'google-auth-library'
 import { hasAgencyGoogleConnection, getAgencyAccessToken } from './google-auth'
+import { sanitizarColumna, parseNumeroSheet } from '../sheets/campos'
+import type { SheetRawRow } from '../sheets/campos'
+
+// La capa cruda del sync es la entrada del motor de campos: el tipo vive allí,
+// que es client-safe, y se reexporta para no romper a quien ya lo importa desde
+// esta librería.
+export type { SheetRawRow }
 
 // ── Tipos ─────────────────────────────────────────────────────────────────────
 
 export type CustomColumnType = 'count' | 'currency' | 'percentage' | 'date' | 'text'
+
+/** Qué columnas de una pestaña se guardan en crudo en `sheet_filas`. */
+export type SheetRawMode = 'all' | 'declared' | 'none'
 
 export interface CustomColumnDef {
   col_name: string          // nombre exacto en el Sheet (ej: "Citas Agendadas")
@@ -46,6 +56,20 @@ export interface SheetTabConfig {
   tipo_fijo?: string
   /** Columnas adicionales de ESTA pestaña definidas por el analista. */
   custom_columns?: Record<string, CustomColumnDef>
+  /**
+   * Qué se guarda en `sheet_filas` (la capa cruda sobre la que se definen los
+   * campos de Sheet):
+   *   'all'      → todas las columnas de la pestaña (por defecto)
+   *   'declared' → solo las declaradas en `custom_columns` con include
+   *   'none'     → nada; la pestaña solo alimenta conversiones_offline
+   */
+  raw_mode?: SheetRawMode
+  /**
+   * Columnas sanitizadas que NUNCA se guardan en crudo. `detectSheetColumns`
+   * las propone con una heurística de PII / alta cardinalidad (email, teléfono,
+   * documento…) y el analista confirma.
+   */
+  raw_exclude?: string[]
 }
 
 export interface ConversionesConfig {
@@ -174,6 +198,12 @@ export interface DetectedColumn {
   proposed_type: CustomColumnType
   label: string
   sample_values: string[]
+  /**
+   * La columna parece PII o de alta cardinalidad (un valor distinto por fila).
+   * La UI la propone marcada para `raw_exclude`: guardarla en crudo abulta la
+   * tabla sin servir como dimensión.
+   */
+  sensible: boolean
 }
 
 /** Resultado de leer UNA pestaña: cuántas filas entraron y cuáles se descartaron. */
@@ -182,6 +212,14 @@ export interface TabSyncQuality {
   rows_ok: number
   fecha_invalida: number
   cantidad_invalida: number
+  /**
+   * Filas que no entran como conversión (cantidad <= 0) pero sí se guardan en
+   * crudo. Antes desaparecían del todo; ahora siguen disponibles para los
+   * campos de Sheet, y el número lo hace visible en el log de sync.
+   */
+  solo_crudas?: number
+  /** Columnas guardadas en crudo para esta pestaña. */
+  columnas_crudas?: number
   warnings: string[]
 }
 
@@ -222,12 +260,9 @@ function resolveTab(doc: GoogleSpreadsheet, tabName: string): GoogleSpreadsheetW
   return sheet
 }
 
+/** Alias del sanitizador compartido con el motor de campos (`lib/sheets/campos`). */
 export function sanitizeColName(name: string): string {
-  return name
-    .toLowerCase()
-    .normalize('NFD').replace(/[̀-ͯ]/g, '')
-    .replace(/[^a-z0-9]+/g, '_')
-    .replace(/^_+|_+$/g, '')
+  return sanitizarColumna(name)
 }
 
 function inferType(name: string, samples: string[]): CustomColumnType {
@@ -242,6 +277,18 @@ function inferType(name: string, samples: string[]): CustomColumnType {
   }).length
   if (samples.length > 0 && numericCount < samples.length * 0.5) return 'text'
   return 'count'
+}
+
+/**
+ * Columnas que no conviene guardar en crudo: datos personales y campos con un
+ * valor distinto por fila (id, email, teléfono). No sirven como dimensión y son
+ * las que más abultan `sheet_filas`. Es una sugerencia: la UI las propone
+ * marcadas en `raw_exclude` y el analista puede desmarcarlas.
+ */
+export function esColumnaSensible(name: string): boolean {
+  const n = sanitizeColName(name)
+  return /(^|_)(id|ids)$/.test(n) ||
+    /email|correo|telefono|phone|whatsapp|celular|movil|nombre|apellido|documento|cedula|dni|nit|pasaporte|direccion|address/.test(n)
 }
 
 function parseDate(raw: string): string {
@@ -268,15 +315,7 @@ function parseDate(raw: string): string {
  * $1.200 entraba a la base como 1,2.
  */
 function toNumber(raw: string): number {
-  if (!raw) return 0
-  let s = raw.replace(/[^0-9.,-]/g, '')
-  if (!s) return 0
-  if (/^-?\d{1,3}(\.\d{3})+(,\d+)?$/.test(s))       s = s.replace(/\./g, '').replace(',', '.')  // 1.000,50
-  else if (/^-?\d{1,3}(,\d{3})+(\.\d+)?$/.test(s))  s = s.replace(/,/g, '')                     // 1,000.50
-  else if (/^-?\d+(,\d+)?$/.test(s))                s = s.replace(',', '.')                     // 12,5
-  else                                              s = s.replace(/,/g, '')                     // resto: coma = miles
-  const n = parseFloat(s)
-  return isNaN(n) ? 0 : n
+  return parseNumeroSheet(raw) ?? 0
 }
 
 /** Nombres de columna estándar de una pestaña (con sus valores por defecto). */
@@ -341,6 +380,7 @@ export async function detectSheetColumns(
       proposed_type:  existing?.type ?? inferType(col, samples),
       label:          existing?.label ?? col,
       sample_values:  samples,
+      sensible:       esColumnaSensible(col),
     }
   })
 
@@ -353,23 +393,72 @@ export interface SheetRowLike {
   get(column: string): any
 }
 
+/** Lo que produce una pestaña: conversiones, filas crudas y reporte de calidad. */
+export interface TabPayload {
+  conversiones: ConversionRow[]
+  crudas: SheetRawRow[]
+  quality: TabSyncQuality
+}
+
 /**
- * Convierte las filas crudas de una pestaña en conversiones, contando las que
- * se descartan y por qué. Pura: no toca red ni base, así que es la parte
- * verificable del sync (ver scripts/verify-conversiones-multitab.ts).
+ * Columnas que se guardan en crudo para una pestaña, según `raw_mode` y
+ * `raw_exclude`. Se deduplica por nombre sanitizado conservando la primera
+ * aparición: dos encabezados distintos pueden sanitizar igual ("Ciudad" y
+ * "ciudad.").
  */
-export function parseRowsForTab(
+function rawColsForTab(
+  headers: string[],
+  tab: SheetTabConfig
+): Array<{ header: string; sanitized: string }> {
+  const mode: SheetRawMode = tab.raw_mode ?? 'all'
+  if (mode === 'none') return []
+
+  const exclude = new Set((tab.raw_exclude ?? []).map(sanitizeColName))
+
+  const candidatas = mode === 'declared'
+    ? Object.entries(tab.custom_columns ?? {})
+        .filter(([, def]) => def.include)
+        .map(([sanitized, def]) => ({ header: def.col_name, sanitized }))
+    : headers.map(h => ({ header: h, sanitized: sanitizeColName(h) }))
+
+  const vistas = new Set<string>()
+  const out: Array<{ header: string; sanitized: string }> = []
+  for (const c of candidatas) {
+    if (!c.sanitized || exclude.has(c.sanitized) || vistas.has(c.sanitized)) continue
+    vistas.add(c.sanitized)
+    out.push(c)
+  }
+  return out
+}
+
+/**
+ * Recorre las filas de una pestaña UNA sola vez y produce las dos capas:
+ *
+ *   • `conversiones` — el modelo interpretado de siempre (fecha/tipo/cantidad/
+ *     valor/fuente/notas + columnas adicionales tipadas). Sin cambios.
+ *   • `crudas` — la fila tal cual, con todas sus columnas sin convertir. Es la
+ *     capa sobre la que se definen los campos de Sheet, y se emite AUNQUE la
+ *     fila no llegue a ser conversión (cantidad <= 0): una fila sin cantidad
+ *     sigue teniendo valores de campo. La fecha sí es obligatoria en ambas —
+ *     es el eje temporal de todo el módulo.
+ *
+ * Pura: no toca red ni base, así que es la parte verificable del sync
+ * (ver scripts/verify-conversiones-multitab.ts).
+ */
+export function parseTabPayload(
   headers: string[],
   rows: SheetRowLike[],
   tab: SheetTabConfig,
   sheetId: string,
   tabTitle: string
-): { rows: ConversionRow[]; quality: TabSyncQuality } {
+): TabPayload {
   const quality: TabSyncQuality = {
     tab_name: tabTitle,
     rows_ok: 0,
     fecha_invalida: 0,
     cantidad_invalida: 0,
+    solo_crudas: 0,
+    columnas_crudas: 0,
     warnings: [],
   }
 
@@ -415,15 +504,31 @@ export function parseRowsForTab(
       .map(h => ({ header: h, sanitized: sanitizeColName(h), type: 'count' as CustomColumnType }))
   }
 
-  const conversiones: ConversionRow[] = []
+  // Capa cruda: independiente del mapeo estándar, incluye también las columnas
+  // de fecha/tipo/cantidad… porque un campo de Sheet puede apuntar a cualquiera.
+  const rawCols = rawColsForTab(headers, tab)
+  quality.columnas_crudas = rawCols.length
 
-  for (const row of rows) {
+  const conversiones: ConversionRow[] = []
+  const crudas: SheetRawRow[] = []
+
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i]
     const fecha = parseDate((row.get(colFecha) || '').toString())
     if (!fecha || fecha.length !== 10) {
       // Fila totalmente vacía (relleno del Sheet): no es un error de datos.
       const isBlank = headers.every(h => !(row.get(h) || '').toString().trim())
       if (!isBlank) quality.fecha_invalida++
       continue
+    }
+
+    if (rawCols.length > 0) {
+      const valores: Record<string, string> = {}
+      for (const col of rawCols) {
+        const raw = (row.get(col.header) ?? '').toString().trim()
+        if (raw) valores[col.sanitized] = raw
+      }
+      crudas.push({ sheet_id: sheetId, tab_name: tabTitle, fecha, fila_num: i + 1, valores })
     }
 
     const rawTipo  = (row.get(colTipo) ?? '').toString().trim()
@@ -435,7 +540,9 @@ export function parseRowsForTab(
     const fuente   = (row.get(colFuente) || '').toString().trim()
     const notas    = (row.get(colNotas)  || '').toString().trim()
 
-    if (cantidad <= 0) { quality.cantidad_invalida++; continue }
+    // No es conversión, pero su fila cruda ya quedó guardada arriba: sigue
+    // sirviendo para los campos de Sheet.
+    if (cantidad <= 0) { quality.cantidad_invalida++; quality.solo_crudas!++; continue }
 
     const custom_fields: Record<string, any> = {}
     for (const col of extraColsToProcess) {
@@ -467,6 +574,22 @@ export function parseRowsForTab(
       ' — si el Sheet trae una conversión por fila, activa "Cada fila es una conversión"'
     )
   }
+  return { conversiones, crudas, quality }
+}
+
+/**
+ * Solo las conversiones de una pestaña. Se conserva porque es la firma que usan
+ * las comprobaciones del parser y porque el resto del sync de conversiones
+ * offline no necesita la capa cruda.
+ */
+export function parseRowsForTab(
+  headers: string[],
+  rows: SheetRowLike[],
+  tab: SheetTabConfig,
+  sheetId: string,
+  tabTitle: string
+): { rows: ConversionRow[]; quality: TabSyncQuality } {
+  const { conversiones, quality } = parseTabPayload(headers, rows, tab, sheetId, tabTitle)
   return { rows: conversiones, quality }
 }
 
@@ -475,9 +598,9 @@ async function parseTabRows(
   sheet: GoogleSpreadsheetWorksheet,
   tab: SheetTabConfig,
   sheetId: string
-): Promise<{ rows: ConversionRow[]; quality: TabSyncQuality }> {
+): Promise<TabPayload> {
   const rows = await sheet.getRows()
-  return parseRowsForTab(sheet.headerValues ?? [], rows, tab, sheetId, sheet.title)
+  return parseTabPayload(sheet.headerValues ?? [], rows, tab, sheetId, sheet.title)
 }
 
 /**
@@ -490,14 +613,15 @@ async function parseTabRows(
  */
 export async function fetchConversionesFromSheet(
   config: ConversionesConfig
-): Promise<{ rows: ConversionRow[]; quality: TabSyncQuality[] }> {
+): Promise<{ rows: ConversionRow[]; crudas: SheetRawRow[]; quality: TabSyncQuality[] }> {
   const sheetId = config.id || 'sheet_0'
   const tabs = normalizeTabs(config).filter(t => t.enabled)
-  if (tabs.length === 0) return { rows: [], quality: [] }
+  if (tabs.length === 0) return { rows: [], crudas: [], quality: [] }
 
   const doc = await loadDoc(config)
 
   const allRows: ConversionRow[] = []
+  const allCrudas: SheetRawRow[] = []
   const quality: TabSyncQuality[] = []
   let failed = 0
 
@@ -505,7 +629,8 @@ export async function fetchConversionesFromSheet(
     try {
       const sheet = resolveTab(doc, tab.sheet_name)
       const res = await parseTabRows(sheet, tab, sheetId)
-      allRows.push(...res.rows)
+      allRows.push(...res.conversiones)
+      allCrudas.push(...res.crudas)
       quality.push(res.quality)
     } catch (err: any) {
       failed++
@@ -521,7 +646,7 @@ export async function fetchConversionesFromSheet(
     throw new Error(quality.map(q => `${q.tab_name}: ${q.warnings.join('; ')}`).join(' | '))
   }
 
-  return { rows: allRows, quality }
+  return { rows: allRows, crudas: allCrudas, quality }
 }
 
 /**
@@ -618,9 +743,17 @@ export async function saveConversionesSheetToDb(
   clienteId: string,
   sheetId: string,
   rows: ConversionRow[],
-  aggregates: ConversionDiaria[]
-): Promise<{ rowsProcessed: number; daysProcessed: number }> {
+  aggregates: ConversionDiaria[],
+  crudas: SheetRawRow[] = []
+): Promise<{ rowsProcessed: number; daysProcessed: number; rawProcessed: number; rawError?: string }> {
   const batchId = randomUUID()
+
+  /** Deshace el lote a medias para no dejar duplicados junto a los datos viejos. */
+  const rollback = async () => {
+    for (const t of ['conversiones_offline', 'conversiones_offline_diarias', 'sheet_filas']) {
+      await supabase.from(t).delete().eq('sync_batch_id', batchId)
+    }
+  }
 
   if (rows.length > 0) {
     const toInsert = rows.map(r => ({
@@ -632,8 +765,7 @@ export async function saveConversionesSheetToDb(
     for (let i = 0; i < toInsert.length; i += 500) {
       const { error } = await supabase.from('conversiones_offline').insert(toInsert.slice(i, i + 500))
       if (error) {
-        // Limpiar el lote a medias para no dejar duplicados junto a los datos viejos.
-        await supabase.from('conversiones_offline').delete().eq('sync_batch_id', batchId)
+        await rollback()
         throw new Error(`Error insertando conversiones: ${error.message}`)
       }
     }
@@ -648,20 +780,54 @@ export async function saveConversionesSheetToDb(
     for (let i = 0; i < toInsert.length; i += 500) {
       const { error } = await supabase.from('conversiones_offline_diarias').insert(toInsert.slice(i, i + 500))
       if (error) {
-        await supabase.from('conversiones_offline').delete().eq('sync_batch_id', batchId)
-        await supabase.from('conversiones_offline_diarias').delete().eq('sync_batch_id', batchId)
+        await rollback()
         throw new Error(`Error insertando agregados: ${error.message}`)
       }
     }
   }
 
-  // El lote nuevo está completo: recién ahora se retira el anterior de este sheet.
-  await supabase.from('conversiones_offline')
-    .delete().eq('cliente_id', clienteId).eq('sheet_id', sheetId).neq('sync_batch_id', batchId)
-  await supabase.from('conversiones_offline_diarias')
-    .delete().eq('cliente_id', clienteId).eq('sheet_id', sheetId).neq('sync_batch_id', batchId)
+  // Capa cruda: mismo lote que las conversiones, para que el replace de abajo
+  // deje las tres tablas en el mismo estado.
+  //
+  // Un fallo aquí NO tumba el sheet: la capa cruda alimenta los campos de Sheet,
+  // pero las conversiones y sus agregados ya están guardados y son lo que ven
+  // hoy dashboards e informes. Si falla (p. ej. la migración 057 todavía no está
+  // aplicada), se retira solo el lote crudo a medias y se dejan intactas las
+  // filas crudas anteriores — mejor una capa cruda desactualizada que ninguna.
+  let rawOk = true
+  let rawError: string | null = null
 
-  return { rowsProcessed: rows.length, daysProcessed: aggregates.length }
+  if (crudas.length > 0) {
+    const toInsert = crudas.map(r => ({
+      cliente_id: clienteId, sheet_id: sheetId, tab_name: r.tab_name,
+      fecha: r.fecha, fila_num: r.fila_num, valores: r.valores,
+      sync_batch_id: batchId,
+    }))
+    for (let i = 0; i < toInsert.length && rawOk; i += 500) {
+      const { error } = await supabase.from('sheet_filas').insert(toInsert.slice(i, i + 500))
+      if (error) {
+        rawOk = false
+        rawError = error.message
+        await supabase.from('sheet_filas').delete().eq('sync_batch_id', batchId)
+        console.error(`[conversiones] sheet ${sheetId}: no se pudo guardar la capa cruda:`, error.message)
+      }
+    }
+  }
+
+  // El lote nuevo está completo: recién ahora se retira el anterior de este sheet.
+  const aReemplazar = ['conversiones_offline', 'conversiones_offline_diarias']
+  if (rawOk) aReemplazar.push('sheet_filas')
+  for (const t of aReemplazar) {
+    await supabase.from(t)
+      .delete().eq('cliente_id', clienteId).eq('sheet_id', sheetId).neq('sync_batch_id', batchId)
+  }
+
+  return {
+    rowsProcessed: rows.length,
+    daysProcessed: aggregates.length,
+    rawProcessed: rawOk ? crudas.length : 0,
+    ...(rawError ? { rawError } : {}),
+  }
 }
 
 /**
@@ -677,22 +843,27 @@ export async function cleanupOrphanConversiones(
 ): Promise<number> {
   let deleted = 0
 
-  for (const table of ['conversiones_offline', 'conversiones_offline_diarias']) {
+  // Lista para el filtro `not.in` de PostgREST. Se hace por negación en vez de
+  // listar primero los sheet_id existentes: aquel `select ... limit(5000)`
+  // dejaba de ver los sheets huérfanos en clientes con muchas filas, y
+  // `sheet_filas` es bastante más grande que las otras dos.
+  const validList = validSheetIds.length > 0
+    ? `(${validSheetIds.map(id => `"${String(id).replace(/"/g, '""')}"`).join(',')})`
+    : null
+
+  for (const table of ['conversiones_offline', 'conversiones_offline_diarias', 'sheet_filas']) {
+    // Filas anteriores a la trazabilidad por sheet. Van aparte porque en SQL
+    // `NULL NOT IN (...)` no es verdadero y el filtro de abajo no las alcanza.
     const { error: nullErr, count } = await supabase.from(table)
       .delete({ count: 'exact' }).eq('cliente_id', clienteId).is('sheet_id', null)
     if (!nullErr) deleted += count ?? 0
 
-    const { data } = await supabase.from(table)
-      .select('sheet_id').eq('cliente_id', clienteId).not('sheet_id', 'is', null).limit(5000)
-    const orphans = Array.from(new Set(
-      ((data ?? []) as { sheet_id: string }[]).map(r => r.sheet_id)
-    )).filter(id => !validSheetIds.includes(id))
+    let q = supabase.from(table)
+      .delete({ count: 'exact' }).eq('cliente_id', clienteId).not('sheet_id', 'is', null)
+    if (validList) q = q.not('sheet_id', 'in', validList)
 
-    if (orphans.length > 0) {
-      const { error, count: c } = await supabase.from(table)
-        .delete({ count: 'exact' }).eq('cliente_id', clienteId).in('sheet_id', orphans)
-      if (!error) deleted += c ?? 0
-    }
+    const { error, count: c } = await q
+    if (!error) deleted += c ?? 0
   }
 
   return deleted
@@ -761,6 +932,8 @@ export interface SheetSyncResult {
   rowsProcessed: number
   daysProcessed: number
   rowsDescartadas: number
+  /** Filas guardadas en crudo en `sheet_filas` (base de los campos de Sheet). */
+  rawProcessed: number
   quality: TabSyncQuality[]
   error?: string
 }
@@ -769,7 +942,11 @@ export async function syncClienteConversiones(
   supabase: any,
   clienteId: string,
   rawConfig: unknown
-): Promise<{ results: SheetSyncResult[]; rows: ConversionRow[] }> {
+): Promise<{
+  results: SheetSyncResult[]
+  rows: ConversionRow[]
+  campos?: { campos: number; dias: number; valores: number; avisos: string[]; error?: string }
+}> {
   const allSheets = normalizeSheetConfigs(rawConfig)
   const enabledSheets = allSheets.filter(s => s.enabled && s.sheet_url)
 
@@ -780,14 +957,20 @@ export async function syncClienteConversiones(
     const sheetId = sheetCfg.id!
     const label = sheetCfg.name || sheetCfg.sheet_url
     try {
-      const { rows, quality } = await fetchConversionesFromSheet(sheetCfg)
+      const { rows, crudas, quality } = await fetchConversionesFromSheet(sheetCfg)
       const customCols = mergeTabCustomColumns(normalizeTabs(sheetCfg))
       const aggregates = computeConversionesAggregates(
         rows,
         Object.keys(customCols).length > 0 ? customCols : undefined
       )
-      const saved = await saveConversionesSheetToDb(supabase, clienteId, sheetId, rows, aggregates)
+      const saved = await saveConversionesSheetToDb(supabase, clienteId, sheetId, rows, aggregates, crudas)
       allRows.push(...rows)
+
+      // La capa cruda es auxiliar: si falla, el sheet queda 'partial' con el
+      // motivo, pero sus conversiones y agregados sí quedaron guardados.
+      if (saved.rawError && quality.length > 0) {
+        quality[0].warnings.push(`No se pudo guardar la capa cruda: ${saved.rawError}`)
+      }
 
       const descartadas = quality.reduce((s, q) => s + q.fecha_invalida + q.cantidad_invalida, 0)
       const hasWarnings = quality.some(q => q.warnings.length > 0)
@@ -797,13 +980,13 @@ export async function syncClienteConversiones(
       results.push({
         sheet_id: sheetId, name: label, success: true,
         rowsProcessed: saved.rowsProcessed, daysProcessed: saved.daysProcessed,
-        rowsDescartadas: descartadas, quality,
+        rowsDescartadas: descartadas, rawProcessed: saved.rawProcessed, quality,
       })
     } catch (err: any) {
       await logSyncResult(supabase, clienteId, sheetId, 'error', [], err.message)
       results.push({
         sheet_id: sheetId, name: label, success: false,
-        rowsProcessed: 0, daysProcessed: 0, rowsDescartadas: 0,
+        rowsProcessed: 0, daysProcessed: 0, rowsDescartadas: 0, rawProcessed: 0,
         quality: [], error: err.message,
       })
     }
@@ -813,5 +996,22 @@ export async function syncClienteConversiones(
   // sheet) se limpian con la config ya leída correctamente.
   await cleanupOrphanConversiones(supabase, clienteId, enabledSheets.map(s => s.id!))
 
-  return { results, rows: allRows }
+  // Los campos de Sheet se derivan de la capa cruda, así que se recalculan al
+  // final, con `sheet_filas` ya reemplazada y sin los huérfanos.
+  //
+  // Un fallo aquí NO tumba el sync: las conversiones y la capa cruda ya están
+  // guardadas y el recálculo se puede repetir solo, sin volver a Google. El
+  // import es dinámico para no meter la capa de campos en el arranque de los
+  // workers que solo sincronizan conversiones.
+  let campos: { campos: number; dias: number; valores: number; avisos: string[]; error?: string } | undefined
+  try {
+    const { recalcularCamposCliente } = await import('../sheets/campos-db')
+    campos = await recalcularCamposCliente(supabase, clienteId)
+    if (campos.error) console.error(`[conversiones] recálculo de campos: ${campos.error}`)
+  } catch (err: any) {
+    console.error('[conversiones] no se pudieron recalcular los campos de Sheet:', err?.message ?? err)
+    campos = { campos: 0, dias: 0, valores: 0, avisos: [], error: err?.message ?? 'Error al recalcular los campos' }
+  }
+
+  return { results, rows: allRows, campos }
 }

@@ -44,7 +44,7 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    const { results, rows } = await syncClienteConversiones(supabase, cliente.id, rawConfig)
+    const { results, rows, campos } = await syncClienteConversiones(supabase, cliente.id, rawConfig)
 
     const porTipo = rows.reduce<Record<string, { cantidad: number; valor: number }>>((acc, r) => {
       if (!acc[r.tipo]) acc[r.tipo] = { cantidad: 0, valor: 0 }
@@ -58,6 +58,8 @@ export async function POST(request: NextRequest) {
       ...results.flatMap(r => r.quality.flatMap(q =>
         q.warnings.map(w => `${r.name} › ${q.tab_name}: ${w}`)
       )),
+      ...(campos?.error ? [`Campos de Sheet: ${campos.error}`] : []),
+      ...(campos?.avisos ?? []),
     ]
 
     return NextResponse.json({
@@ -66,12 +68,14 @@ export async function POST(request: NextRequest) {
       totalFilas:      rows.length,
       diasProcesados:  results.reduce((s, r) => s + r.daysProcessed, 0),
       filasDescartadas: results.reduce((s, r) => s + r.rowsDescartadas, 0),
+      filasCrudas:     results.reduce((s, r) => s + r.rawProcessed, 0),
       sheetsProcessed: results.length,
+      camposRecalculados: campos?.campos ?? 0,
       porTipo,
       sheets: results.map(r => ({
         sheet_id: r.sheet_id, name: r.name, success: r.success,
         filas: r.rowsProcessed, dias: r.daysProcessed,
-        descartadas: r.rowsDescartadas, quality: r.quality,
+        descartadas: r.rowsDescartadas, crudas: r.rawProcessed, quality: r.quality,
         ...(r.error ? { error: r.error } : {}),
       })),
       ...(warnings.length > 0 ? { warnings } : {}),

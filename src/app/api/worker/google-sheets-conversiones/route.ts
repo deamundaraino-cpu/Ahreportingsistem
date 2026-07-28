@@ -43,7 +43,7 @@ export async function GET(request: NextRequest) {
     try {
       // Cada sheet se guarda por separado: uno que falle no borra los datos de
       // los demás ni aborta el resto del cliente.
-      const { results: sheetResults } = await syncClienteConversiones(supabase, cliente.id, rawConfig)
+      const { results: sheetResults, campos } = await syncClienteConversiones(supabase, cliente.id, rawConfig)
 
       const failed = sheetResults.filter(r => !r.success)
       results[cliente.nombre] = {
@@ -52,6 +52,9 @@ export async function GET(request: NextRequest) {
         rowsProcessed: sheetResults.reduce((s, r) => s + r.rowsProcessed, 0),
         daysProcessed: sheetResults.reduce((s, r) => s + r.daysProcessed, 0),
         rowsDescartadas: sheetResults.reduce((s, r) => s + r.rowsDescartadas, 0),
+        rawProcessed: sheetResults.reduce((s, r) => s + r.rawProcessed, 0),
+        camposRecalculados: campos?.campos ?? 0,
+        ...(campos?.error ? { camposError: campos.error } : {}),
         ...(failed.length > 0
           ? { errors: failed.map(r => `${r.name}: ${r.error}`) }
           : {}),

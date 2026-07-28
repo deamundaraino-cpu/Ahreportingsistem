@@ -16,8 +16,10 @@ import {
     normalizeTabs,
     mergeTabCustomColumns,
     parseRowsForTab,
+    parseTabPayload,
     computeConversionesAggregates,
     sanitizeColName,
+    esColumnaSensible,
 } from '../src/lib/integrations/google-sheets-conversiones'
 import type {
     ConversionesConfig, SheetTabConfig, CustomColumnDef, SheetRowLike,
@@ -276,6 +278,86 @@ sec('computeConversionesAggregates — sumas y porcentajes ponderados')
     check('el agregado suma ambas pestañas', agg[0].total_cantidad === 5, String(agg[0].total_cantidad))
     check('las filas conservan su pestaña de origen',
         a[0].tab_name === 'A' && b[0].tab_name === 'B')
+}
+
+// ─── Capa cruda (sheet_filas) ───────────────────────────────────────────────
+// El sync guarda además la fila tal cual, con todas sus columnas: es la base
+// sobre la que se definen los campos de Sheet, y permite recalcularlos leyendo
+// solo de la base. Lo que no puede cambiar es lo que ya entra a conversiones.
+
+sec('parseTabPayload — filas crudas junto a las conversiones')
+
+{
+    const headers = ['fecha', 'tipo', 'cantidad', 'Rango de ingresos', 'email']
+    const rows = fakeRows(headers, [
+        ['2026-07-01', 'lead', '1', '20 a 100', 'ana@x.com'],
+        ['2026-07-01', 'lead', '0', '1 a 10', 'beto@x.com'],   // no es conversión
+        ['no-es-fecha', 'lead', '1', '11 a 20', 'cami@x.com'], // sin fecha: fuera de ambas capas
+    ])
+    const tab: SheetTabConfig = { id: 't', sheet_name: 'Form A', enabled: true }
+    const { conversiones, crudas, quality } = parseTabPayload(headers, rows, tab, 'sheet-a', 'Form A')
+
+    check('las conversiones no cambian', conversiones.length === 1, String(conversiones.length))
+    check('la fila sin cantidad sí se guarda en crudo', crudas.length === 2, String(crudas.length))
+    check('la fila sin fecha no llega a la capa cruda', crudas.every(c => c.fecha === '2026-07-01'))
+    check('solo_crudas cuenta las que no son conversión', quality.solo_crudas === 1, String(quality.solo_crudas))
+    check('guarda todas las columnas, también las estándar',
+        Object.keys(crudas[0].valores).sort().join(',') === 'cantidad,email,fecha,rango_de_ingresos,tipo',
+        Object.keys(crudas[0].valores).join(','))
+    check('el valor se guarda sin convertir', crudas[0].valores.rango_de_ingresos === '20 a 100', crudas[0].valores.rango_de_ingresos)
+    check('marca sheet y pestaña de origen',
+        crudas.every(c => c.sheet_id === 'sheet-a' && c.tab_name === 'Form A'))
+    check('fila_num es el número de fila de datos', crudas[0].fila_num === 1 && crudas[1].fila_num === 2,
+        crudas.map(c => c.fila_num).join(','))
+    check('columnas_crudas refleja lo guardado', quality.columnas_crudas === 5, String(quality.columnas_crudas))
+}
+
+{
+    // Regresión: parseRowsForTab debe devolver exactamente lo de siempre.
+    const headers = ['fecha', 'tipo', 'cantidad', 'valor', 'fuente', 'notas', 'Citas Agendadas']
+    const rows = () => fakeRows(headers, [
+        ['2026-07-01', 'Lead', '2', '100,50', 'whatsapp', 'ok', '3'],
+        ['2026-07-03', 'lead', '0', '10', 'x', '', '0'],
+    ])
+    const tab: SheetTabConfig = { id: 't1', sheet_name: 'Datos', enabled: true }
+    const viejo = parseRowsForTab(headers, rows(), tab, 'sheet-a', 'Datos')
+    const nuevo = parseTabPayload(headers, rows(), tab, 'sheet-a', 'Datos')
+    check('parseRowsForTab sigue devolviendo las mismas conversiones',
+        JSON.stringify(viejo.rows) === JSON.stringify(nuevo.conversiones))
+    check('los contadores de calidad no cambian',
+        viejo.quality.rows_ok === 1 && viejo.quality.cantidad_invalida === 1)
+}
+
+{
+    // raw_exclude / raw_mode acotan lo que se guarda: PII y alta cardinalidad.
+    const headers = ['fecha', 'cantidad', 'Ciudad', 'email']
+    const rows = () => fakeRows(headers, [['2026-07-01', '1', 'Bogotá', 'ana@x.com']])
+    const base: SheetTabConfig = { id: 't', sheet_name: 'F', enabled: true }
+
+    const excluido = parseTabPayload(headers, rows(), { ...base, raw_exclude: ['email'] }, 's', 'F')
+    check('raw_exclude omite la columna', excluido.crudas[0].valores.email === undefined)
+    check('raw_exclude no toca las demás', excluido.crudas[0].valores.ciudad === 'Bogotá')
+
+    const sinCrudas = parseTabPayload(headers, rows(), { ...base, raw_mode: 'none' }, 's', 'F')
+    check('raw_mode "none" no guarda nada en crudo', sinCrudas.crudas.length === 0)
+    check('raw_mode "none" no afecta a las conversiones', sinCrudas.conversiones.length === 1)
+
+    const declaradas = parseTabPayload(headers, rows(), {
+        ...base, raw_mode: 'declared',
+        custom_columns: {
+            ciudad: { col_name: 'Ciudad', type: 'text', label: 'Ciudad', include: true },
+            email:  { col_name: 'email',  type: 'text', label: 'Email',  include: false },
+        },
+    }, 's', 'F')
+    check('raw_mode "declared" solo guarda lo declarado con include',
+        Object.keys(declaradas.crudas[0].valores).join(',') === 'ciudad',
+        Object.keys(declaradas.crudas[0].valores).join(','))
+}
+
+{
+    check('detecta columnas de PII', esColumnaSensible('Correo electrónico') && esColumnaSensible('Teléfono'))
+    check('detecta identificadores', esColumnaSensible('lead_id') && esColumnaSensible('id'))
+    check('no marca columnas de negocio', !esColumnaSensible('Rango de ingresos') && !esColumnaSensible('Ciudad'))
 }
 
 // ─── Tokens de columnas de Sheet en el BI ───────────────────────────────────
