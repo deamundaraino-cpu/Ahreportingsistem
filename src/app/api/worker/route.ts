@@ -226,7 +226,17 @@ export async function GET(request: Request) {
         log(`[worker] Se omiten ${skippedFuture} fecha(s) futura(s) (> ${todayStr}): las APIs no tienen datos y solo crearían filas vacías.`)
     }
     if (allDatesToSync.length === 0) {
-        return NextResponse.json({ error: 'El rango pedido no incluye ninguna fecha pasada o de hoy.' }, { status: 400 })
+        // Todo el rango era futuro. NO es un fallo: no hay nada que pedir, y
+        // devolver 400 hacía que el job se reintentara 3 veces y acabara en rojo
+        // en /admin/sync (y en el semáforo del dashboard) sin nada que reparar.
+        log(`[worker] Nada que sincronizar: el rango pedido (${startDateStr} → ${endDateStr}) está por completo después de hoy (${todayStr}).`)
+        return NextResponse.json({
+            message: 'Sin fechas que sincronizar: el rango pedido está por completo en el futuro.',
+            skipped: 'rango_futuro',
+            partial: false,
+            results: [],
+            debugLogs,
+        })
     }
 
     // ─── Períodos congelados ────────────────────────────────────────────────

@@ -4,7 +4,7 @@ import { createAdminClient, createClient } from '@/utils/supabase/server';
 import { filterCampaignList, parseTabFilter } from '@/lib/campaign-filter';
 import { notifyUsers } from '@/lib/notifications/notify';
 import { sendWhatsAppNotification } from '@/lib/whatsapp/notify';
-import { getWeeksInRange } from '@/lib/date-utils';
+import { getWeeksInRange, clampRangeToToday, colombiaToday } from '@/lib/date-utils';
 import { revalidatePath } from 'next/cache';
 import { format, addDays } from 'date-fns';
 import { headers } from 'next/headers';
@@ -155,8 +155,26 @@ export async function triggerWorkerSync(clientId: string, from: string, to: stri
   }
   const base = `${proto}://${host}`;
 
+  // El selector permite mirar un rango que termina en el futuro (la ventana
+  // completa de un lanzamiento, p. ej.), pero sincronizarlo no tiene sentido: las
+  // APIs no tienen esos días. Antes se encolaba tal cual y el chunk futuro moría
+  // con "El rango pedido no incluye ninguna fecha pasada o de hoy" tras 3
+  // reintentos. Se recorta aquí, y la UI sondea el rango YA recortado.
+  const hoy = colombiaToday();
+  const rango = clampRangeToToday(from, to, hoy);
+  if (!rango) {
+    return {
+      ok: true,
+      queued: false,
+      warning: `El rango seleccionado empieza después de hoy (${hoy}); todavía no hay datos que sincronizar.`,
+      platform_status: null,
+    };
+  }
+  const desde = rango.start;
+  const hasta = rango.end;
+
   const dias = Math.floor(
-    (new Date(`${to}T00:00:00Z`).getTime() - new Date(`${from}T00:00:00Z`).getTime()) / 86_400_000
+    (new Date(`${hasta}T00:00:00Z`).getTime() - new Date(`${desde}T00:00:00Z`).getTime()) / 86_400_000
   ) + 1;
 
   // ─── Rango largo: a la cola ───
@@ -168,8 +186,8 @@ export async function triggerWorkerSync(clientId: string, from: string, to: stri
         body: JSON.stringify({
           tipo: 'metricas',
           cliente_id: clientId,
-          start: from,
-          end: to,
+          start: desde,
+          end: hasta,
           prioridad: 1,
           triggered_by: 'dashboard',
         }),
@@ -194,9 +212,10 @@ export async function triggerWorkerSync(clientId: string, from: string, to: stri
         ok: true,
         queued: true,
         jobs: data?.encolados ?? 0,
-        // El rango real que hay que vigilar en el polling (puede diferir del
-        // pedido si el índice único dedupe contra jobs ya pendientes).
-        range: { from, to },
+        // El rango real que hay que vigilar en el polling: el recortado contra
+        // hoy, no el que se pidió (puede diferir además si el índice único
+        // dedupe contra jobs ya pendientes).
+        range: { from: desde, to: hasta },
         platform_status: null,
         message: `${data?.encolados ?? 0} tarea(s) en cola — sincronizando en segundo plano…`,
       };
@@ -209,7 +228,7 @@ export async function triggerWorkerSync(clientId: string, from: string, to: stri
   }
 
   // ─── Rango corto: directo ───
-  const url = `${base}/api/worker?start=${encodeURIComponent(from)}&end=${encodeURIComponent(to)}&client_id=${encodeURIComponent(clientId)}`;
+  const url = `${base}/api/worker?start=${encodeURIComponent(desde)}&end=${encodeURIComponent(hasta)}&client_id=${encodeURIComponent(clientId)}`;
 
   try {
     const res = await fetch(url, {

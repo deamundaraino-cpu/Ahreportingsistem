@@ -25,9 +25,14 @@ const fmtDisplay = (d: Date) => format(d, 'd MMM yyyy', { locale: es })
  * sincronizado (nunca sincroniza el futuro) y el dashboard salía vacío. La
  * operación entera —crons, cortes de día, `is_partial`— trabaja en UTC-5, así
  * que los presets deben hacer lo mismo.
+ *
+ * Se devuelve la medianoche LOCAL del día colombiano, no el instante desplazado:
+ * `format()` de date-fns lee la hora local, así que devolver `now - 5h` a un
+ * navegador ya en UTC-5 restaba el desfase dos veces y "Hoy" era ayer hasta las
+ * 10:00 de la mañana.
  */
 const COLOMBIA_OFFSET_MS = 5 * 60 * 60 * 1000
-const hoyColombia = () => new Date(Date.now() - COLOMBIA_OFFSET_MS)
+const hoyColombia = () => parseISO(new Date(Date.now() - COLOMBIA_OFFSET_MS).toISOString().slice(0, 10))
 
 type Preset = { id: string; label: string; getRange: () => { from: string; to: string } }
 
@@ -134,9 +139,21 @@ export function DateRangeSelector({ basePath = '/dashboard', isPublic = false }:
         navigate(range.from, range.to)
     }
 
+    /**
+     * Aplica el rango personalizado recortando el futuro.
+     *
+     * Ningún día posterior a hoy existe en Meta/TikTok/Hotmart/GA4: elegirlo solo
+     * pintaba huecos en las gráficas y encolaba un job de sync condenado a fallar.
+     * Todos los presets terminan en "hoy"; el rango manual sigue la misma regla.
+     */
     const handleCustomApply = () => {
         setOpen(false)
-        navigate(customFrom, customTo)
+        const hoy = fmt(hoyColombia())
+        const desde = customFrom && customFrom > hoy ? hoy : customFrom
+        const hasta = customTo && customTo > hoy ? hoy : customTo
+        setCustomFrom(desde)
+        setCustomTo(hasta)
+        navigate(desde, hasta)
     }
 
     const stopPolling = () => {
@@ -306,6 +323,7 @@ export function DateRangeSelector({ basePath = '/dashboard', isPublic = false }:
                                 <span className="text-xs text-muted-foreground/70 ml-1">Desde</span>
                                 <input
                                     type="date"
+                                    max={fmt(hoyColombia())}
                                     value={customFrom === 'all' ? '' : customFrom}
                                     onChange={e => setCustomFrom(e.target.value)}
                                     className="bg-muted text-foreground border-none rounded p-1.5 text-sm focus:ring-1 focus:ring-ring cursor-pointer w-full"
@@ -315,10 +333,14 @@ export function DateRangeSelector({ basePath = '/dashboard', isPublic = false }:
                                 <span className="text-xs text-muted-foreground/70 ml-1">Hasta</span>
                                 <input
                                     type="date"
+                                    max={fmt(hoyColombia())}
                                     value={customTo}
                                     onChange={e => setCustomTo(e.target.value)}
                                     className="bg-muted text-foreground border-none rounded p-1.5 text-sm focus:ring-1 focus:ring-ring cursor-pointer w-full"
                                 />
+                                <span className="text-[10px] text-muted-foreground/60 ml-1">
+                                    Máximo hoy: aún no hay datos de días futuros.
+                                </span>
                             </div>
                             <Button
                                 onClick={handleCustomApply}

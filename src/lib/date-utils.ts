@@ -10,24 +10,17 @@ import {
 } from 'date-fns';
 
 // ────────────────────────────────────────────────────────────────
-// Zona horaria de la operación: Colombia = America/Bogota = UTC-5
-// fijo (Colombia NO usa horario de verano, así que el offset nunca
-// cambia). Estos helpers convierten "ahora" a la fecha de calendario
-// colombiana, para que los crons calculen el día correcto sin importar
-// a qué hora (o desde qué TZ de servidor) se disparen.
+// Zona horaria de la operación: Colombia = America/Bogota = UTC-5 fijo.
+// Los helpers viven en `colombia-date.ts` —sin dependencias, para que el worker
+// self-hosted los pueda compilar junto a la cola— y se re-exportan aquí porque
+// toda la app los importa desde `@/lib/date-utils`.
 // ────────────────────────────────────────────────────────────────
-export const COLOMBIA_UTC_OFFSET_MS = 5 * 60 * 60 * 1000;
-const DAY_MS = 24 * 60 * 60 * 1000;
-
-/** Fecha de "hoy" en hora Colombia (yyyy-MM-dd). */
-export function colombiaToday(now: Date = new Date()): string {
-    return new Date(now.getTime() - COLOMBIA_UTC_OFFSET_MS).toISOString().slice(0, 10);
-}
-
-/** Fecha de "ayer" en hora Colombia (yyyy-MM-dd). */
-export function colombiaYesterday(now: Date = new Date()): string {
-    return new Date(now.getTime() - COLOMBIA_UTC_OFFSET_MS - DAY_MS).toISOString().slice(0, 10);
-}
+export {
+    COLOMBIA_UTC_OFFSET_MS,
+    colombiaToday,
+    colombiaYesterday,
+    clampRangeToToday,
+} from './colombia-date';
 
 export function getMonthWeeks(year: number, month: number) {
     const date = new Date(year, month - 1, 1)

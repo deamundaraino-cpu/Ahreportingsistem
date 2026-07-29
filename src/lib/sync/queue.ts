@@ -10,6 +10,10 @@
  * mismo archivo.
  */
 
+// `colombia-date` en vez de `date-utils`: este archivo lo compila también el
+// worker del VPS, que no tiene `date-fns` instalado.
+import { clampRangeToToday } from '../colombia-date'
+
 export type SyncJobTipo =
     | 'metricas'
     /**
@@ -61,15 +65,42 @@ export type EnqueueInput = {
 }
 
 /**
+ * Tipos que piden datos día a día a una API externa: su rango NUNCA puede
+ * incluir el futuro. Los de Sheets quedan fuera a propósito — la hoja del
+ * cliente sí puede tener filas con fecha futura y ahí sí hay algo que leer.
+ */
+const TIPOS_SIN_FUTURO: SyncJobTipo[] = ['metricas', 'reconciliar']
+
+/**
+ * Recorta el futuro del rango de un job.
+ *
+ * Devuelve `null` cuando el rango entero es futuro: encolarlo garantizaba un job
+ * que fallaba 3 veces y quedaba en rojo en /admin/sync sin nada que reparar.
+ */
+function rangoSincronizable(input: EnqueueInput): { start: string | null; end: string | null } | null {
+    const start = input.start ?? null
+    const end = input.end ?? null
+    if (!start || !end || !TIPOS_SIN_FUTURO.includes(input.tipo)) return { start, end }
+    const recortado = clampRangeToToday(start, end)
+    return recortado ? { start: recortado.start, end: recortado.end } : null
+}
+
+/**
  * Encola un job. El índice único parcial de la migración impide duplicar un
  * trabajo que ya está pendiente o corriendo, así que reencolar es inofensivo.
+ *
+ * Devuelve `null` si no se creó nada: o era un duplicado, o el rango estaba por
+ * completo en el futuro.
  */
 export async function enqueueJob(db: any, input: EnqueueInput): Promise<SyncJob | null> {
+    const rango = rangoSincronizable(input)
+    if (!rango) return null
+
     const row = {
         tipo: input.tipo,
         cliente_id: input.clienteId ?? null,
-        fecha_inicio: input.start ?? null,
-        fecha_fin: input.end ?? null,
+        fecha_inicio: rango.start,
+        fecha_fin: rango.end,
         params: input.params ?? {},
         prioridad: input.prioridad ?? 5,
         triggered_by: input.triggeredBy ?? 'cron',
@@ -112,7 +143,12 @@ export async function enqueueRange(
     db: any,
     input: EnqueueInput & { start: string; end: string; chunkDays?: number },
 ): Promise<number> {
-    const chunks = splitRange(input.start, input.end, input.chunkDays ?? DEFAULT_CHUNK_DAYS)
+    // Se recorta ANTES de trocear: si no, un rango que termina en el futuro
+    // generaba chunks enteramente futuros que `enqueueJob` descartaba uno a uno.
+    const rango = rangoSincronizable(input)
+    if (!rango || !rango.start || !rango.end) return 0
+
+    const chunks = splitRange(rango.start, rango.end, input.chunkDays ?? DEFAULT_CHUNK_DAYS)
     let created = 0
     for (const c of chunks) {
         const job = await enqueueJob(db, { ...input, start: c.start, end: c.end })
