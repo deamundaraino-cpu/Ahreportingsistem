@@ -153,7 +153,9 @@ export default async function SaleDetailPage({
             {/* First & Last Touch */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <TouchCard label="First-touch" touch={sale.first_touch} accent="emerald" />
-                <TouchCard label="Last-touch" touch={sale.last_touch} accent="violet" />
+                {/* `last_touch` se guarda NULL cuando coincide con el first (ver
+                    dedupTouches en attribution-resolver): NULL significa "el mismo". */}
+                <TouchCard label="Last-touch" touch={sale.last_touch ?? sale.first_touch} accent="violet" />
             </div>
 
             {/* Visitor journey */}

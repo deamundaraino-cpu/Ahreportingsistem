@@ -42,7 +42,9 @@ export default async function LeadsPage({
     let leadsQuery = supabase
         .from('lead_events')
         .select(
-            'id, cliente_id, form_name, form_id, form_plugin, lead_name, lead_email, lead_phone, utm_source, utm_medium, utm_campaign, utm_content, utm_term, utm_id, click_id, visitor_id, page_url, ip_country, attribution_method, first_touch, last_touch, raw_fields, source, created_at',
+            // Sin `first_touch`/`last_touch`: LeadsView no los pinta y son las dos
+            // columnas más pesadas de la tabla (~836 B por fila).
+            'id, cliente_id, form_name, form_id, form_plugin, lead_name, lead_email, lead_phone, utm_source, utm_medium, utm_campaign, utm_content, utm_term, utm_id, click_id, visitor_id, page_url, ip_country, attribution_method, raw_fields, source, created_at',
             { count: 'exact' },
         )
     if (sp.clienteId) leadsQuery = leadsQuery.eq('cliente_id', sp.clienteId)

@@ -53,3 +53,6 @@ next-env.d.ts
 
 # supabase cli temp files
 supabase/.temp/
+
+# Respaldos locales (CSV de tablas retiradas) - no versionar
+/backups

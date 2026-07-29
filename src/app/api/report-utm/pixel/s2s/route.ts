@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/utils/supabase/server'
 import { verifyS2SSignature } from '@/lib/report-utm/s2s-auth'
-import { resolveAttribution, applyAttributionToSale } from '@/lib/report-utm/attribution-resolver'
+import { resolveAttribution, applyAttributionToSale, dedupTouches } from '@/lib/report-utm/attribution-resolver'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -248,8 +248,10 @@ export async function POST(req: NextRequest) {
                 await db
                     .from('lead_events')
                     .update({
-                        first_touch: attribution.first_touch as unknown as Record<string, unknown>,
-                        last_touch: attribution.last_touch as unknown as Record<string, unknown>,
+                        ...dedupTouches(
+                            attribution.first_touch as unknown as Record<string, unknown> | null,
+                            attribution.last_touch as unknown as Record<string, unknown> | null,
+                        ),
                         attribution_method: method,
                         attribution_resolved_at: now,
                         visitor_id: attribution.visitor_id ?? body.visitor_id ?? null,

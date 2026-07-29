@@ -191,17 +191,41 @@ export async function resolveAttribution(
     }
 }
 
+/**
+ * Deja `last_touch` en NULL cuando no aporta nada sobre `first_touch`.
+ *
+ * En la mayoría de las rutas de atribución ambos touches son literalmente el
+ * mismo objeto (ver la rama `utm_only` de arriba y meta-leads.ts): solo cuando se
+ * resuelve por pixel_events pueden diferir, tomando el primero y el último de la
+ * secuencia. Guardar la copia salía caro — los dos JSONB pesaban 39 MB en
+ * `lead_events`, el 44 % de la tabla, y 47.301 de 48.004 filas los tenían
+ * idénticos.
+ *
+ * Quien lea debe hacer `last_touch ?? first_touch`.
+ */
+export function dedupTouches<T>(
+    first: T | null,
+    last: T | null,
+): { first_touch: T | null; last_touch: T | null } {
+    const igual = first !== null && last !== null
+        && JSON.stringify(first) === JSON.stringify(last)
+    return { first_touch: first, last_touch: igual ? null : last }
+}
+
 export async function applyAttributionToSale(
     db: ResolverDb,
     saleId: string,
     result: AttributionResult,
 ): Promise<void> {
+    const touches = dedupTouches(
+        result.first_touch as unknown as Record<string, unknown> | null,
+        result.last_touch as unknown as Record<string, unknown> | null,
+    )
     await db
         .from('sales_events')
         .update({
             visitor_id: result.visitor_id,
-            first_touch: result.first_touch as unknown as Record<string, unknown> | null,
-            last_touch: result.last_touch as unknown as Record<string, unknown> | null,
+            ...touches,
             attribution_method: result.attribution_method,
             attribution_resolved_at: new Date().toISOString(),
         })

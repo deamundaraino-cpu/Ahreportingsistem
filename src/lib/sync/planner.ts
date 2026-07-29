@@ -253,4 +253,62 @@ export async function limpiarHistorial(db: any, dias = 30): Promise<void> {
     const corte = new Date(Date.now() - dias * 86_400_000).toISOString()
     await db.from('sync_jobs').delete().in('estado', ['done', 'cancelled']).lt('updated_at', corte)
     await db.from('sync_runs').delete().lt('started_at', corte)
+    await purgarPixelEvents(db)
+}
+
+/** Días de `pixel_events` que se conservan. */
+export const PIXEL_EVENTS_RETENCION_DIAS = 90
+
+/**
+ * Purga los `report_utm.pixel_events` antiguos.
+ *
+ * Es la única tabla del sistema que recibe una fila por pageview de todos los
+ * clientes y no tenía tope: crecía ~22 MB al mes sin que nada la recortara. Solo
+ * se lee para resolver la atribución de una venta, que mira eventos recientes, y
+ * para el journey de un visitante — nada necesita el histórico completo.
+ *
+ * Se borra por días sueltos, de más viejo a más nuevo: un solo DELETE por rango
+ * abierto podría no caber en el `statement_timeout` de 8 s de PostgREST, que es
+ * exactamente cómo se acumuló la basura de `sheet_filas`.
+ */
+export async function purgarPixelEvents(
+    db: any,
+    dias = PIXEL_EVENTS_RETENCION_DIAS,
+): Promise<number> {
+    const rutm = typeof db.schema === 'function' ? db.schema('report_utm') : db
+    const corteMs = Date.now() - dias * 86_400_000
+    let borrados = 0
+
+    // Tope de días por corrida: con la purga diaria basta 1, el resto es margen
+    // para ponerse al día la primera vez sin dejar la tabla a medias.
+    for (let i = 0; i < 120; i++) {
+        const { data, error } = await rutm
+            .from('pixel_events')
+            .select('created_at')
+            .lt('created_at', new Date(corteMs).toISOString())
+            .order('created_at', { ascending: true })
+            .limit(1)
+        if (error) {
+            console.error('[planner] purga de pixel_events:', error.message)
+            return borrados
+        }
+        if (!data || data.length === 0) return borrados
+
+        // Cierra el día del evento más viejo y borra solo esa ventana.
+        const masViejo = new Date(data[0].created_at as string)
+        const finDelDia = new Date(masViejo)
+        finDelDia.setUTCHours(24, 0, 0, 0)
+        const hasta = new Date(Math.min(finDelDia.getTime(), corteMs))
+
+        const { error: delError, count } = await rutm
+            .from('pixel_events')
+            .delete({ count: 'exact' })
+            .lt('created_at', hasta.toISOString())
+        if (delError) {
+            console.error('[planner] purga de pixel_events:', delError.message)
+            return borrados
+        }
+        borrados += count ?? 0
+    }
+    return borrados
 }

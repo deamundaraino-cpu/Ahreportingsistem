@@ -235,6 +235,35 @@ sec('parseRowsForTab — filas válidas y descartadas')
     check('el tipo lead permite que sume en offline_leads', agg.every(a => a.tipo === 'lead'))
 }
 
+// ─── Fechas que no existen en el calendario ─────────────────────────────────
+// Una hoja de cliente traía "31/02/2026": pasaba el regex de formato, llegaba a
+// Postgres como "2026-02-31" y reventaba con `date/time field value out of
+// range`. Como se inserta en lotes de 500, esa celda tumbaba el sheet ENTERO y
+// el cliente se quedaba sin ninguna conversión.
+sec('parseDate — descarta fechas imposibles')
+{
+    const headers = ['fecha', 'nombre']
+    const tab: SheetTabConfig = {
+        id: 't', sheet_name: 'F', enabled: true, count_rows: true, tipo_fijo: 'lead',
+    }
+    const parse = (f: string) =>
+        parseRowsForTab(headers, fakeRows(headers, [[f, 'X']]), tab, 's', 'F').rows
+
+    check('31 de febrero se descarta', parse('31/02/2026').length === 0)
+    check('30 de febrero se descarta', parse('2026-02-30').length === 0)
+    check('mes 13 se descarta', parse('2026-13-05').length === 0)
+    check('día 32 se descarta', parse('32/01/2026').length === 0)
+    check('29 de febrero bisiesto SÍ vale', parse('29/02/2024')[0]?.fecha === '2024-02-29', parse('29/02/2024')[0]?.fecha)
+    check('29 de febrero no bisiesto se descarta', parse('29/02/2026').length === 0)
+    check('una fecha normal sigue funcionando', parse('15/04/2026')[0]?.fecha === '2026-04-15', parse('15/04/2026')[0]?.fecha)
+    check('ISO normal sigue funcionando', parse('2026-04-15')[0]?.fecha === '2026-04-15', parse('2026-04-15')[0]?.fecha)
+    // Si leerla como dd/mm no da un día real pero como mm/dd sí, se reinterpreta
+    // en vez de perder la fila: "05/13" solo puede ser 13 de mayo.
+    check('ambigua: 05/13 se reinterpreta como mm/dd', parse('05/13/2026')[0]?.fecha === '2026-05-13', parse('05/13/2026')[0]?.fecha)
+    // Ninguna de las dos lecturas existe: se descarta.
+    check('02/31 no existe ni como dd/mm ni como mm/dd', parse('02/31/2026').length === 0)
+}
+
 // ─── Agregación diaria ──────────────────────────────────────────────────────
 
 sec('computeConversionesAggregates — sumas y porcentajes ponderados')

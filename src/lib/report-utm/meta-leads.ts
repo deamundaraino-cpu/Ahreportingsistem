@@ -510,8 +510,10 @@ function buildLeadRow(clienteId: string, lead: MetaLeadRecord, formName?: string
         click_id: utm.click_id,
         raw_fields,
         source: 'meta_lead_ads',
+        // `last_touch` va a NULL: aquí ambos touches son el mismo objeto y la copia
+        // duplicaba el campo más pesado de la fila. Quien lea usa `?? first_touch`.
         first_touch: touch,
-        last_touch: touch,
+        last_touch: null,
         attribution_method: hasSignal ? 'utm_only' : 'none',
         attribution_resolved_at: new Date().toISOString(),
     }

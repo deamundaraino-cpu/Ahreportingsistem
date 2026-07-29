@@ -291,18 +291,53 @@ export function esColumnaSensible(name: string): boolean {
     /email|correo|telefono|phone|whatsapp|celular|movil|nombre|apellido|documento|cedula|dni|nit|pasaporte|direccion|address/.test(n)
 }
 
+/**
+ * ¿Es una fecha que existe en el calendario? "2026-02-31" tiene forma válida pero
+ * no existe, y Postgres rechaza la sentencia entera al insertarla.
+ */
+function fechaExiste(iso: string): boolean {
+  const [a, m, d] = iso.split('-').map(Number)
+  if (!a || !m || !d) return false
+  const dt = new Date(Date.UTC(a, m - 1, d))
+  return dt.getUTCFullYear() === a && dt.getUTCMonth() === m - 1 && dt.getUTCDate() === d
+}
+
+/**
+ * Normaliza la celda de fecha a `YYYY-MM-DD`, o devuelve '' si no es una fecha
+ * real (la fila se descarta aguas arriba).
+ *
+ * La comprobación de que el día EXISTE no es teórica: una hoja de cliente traía
+ * un "31/02/2026" que pasaba el regex, llegaba a Postgres como "2026-02-31" y
+ * reventaba con `date/time field value out of range`. Como se inserta por lotes de
+ * 500, esa única celda tumbaba el sheet completo y el cliente se quedaba sin
+ * conversiones. Mejor descartar la fila que perderlas todas.
+ */
 function parseDate(raw: string): string {
   if (!raw) return ''
   const t = raw.trim()
   // Acepta fecha sola, ISO con T y "YYYY-MM-DD HH:MM:SS" (separador espacio, el
   // que usan los exports de formularios de Meta). Antes solo se cortaba por la
   // T, así que la variante con espacio se descartaba como fecha inválida.
-  if (/^\d{4}-\d{2}-\d{2}/.test(t)) return t.slice(0, 10)
-  const dmy = t.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})/)
-  if (dmy) return `${dmy[3]}-${dmy[2].padStart(2, '0')}-${dmy[1].padStart(2, '0')}`
-  const mdy = t.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/)
-  if (mdy) return `${mdy[3]}-${mdy[1].padStart(2, '0')}-${mdy[2].padStart(2, '0')}`
-  return ''
+  let iso = ''
+  if (/^\d{4}-\d{2}-\d{2}/.test(t)) {
+    iso = t.slice(0, 10)
+  } else {
+    const dmy = t.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})/)
+    if (dmy) {
+      iso = `${dmy[3]}-${dmy[2].padStart(2, '0')}-${dmy[1].padStart(2, '0')}`
+      // Con día ≤ 12 la fecha es ambigua (dd/mm vs mm/dd). Si leerla como dd/mm no
+      // da un día real, se prueba mm/dd antes de descartarla.
+      if (!fechaExiste(iso)) {
+        const alt = `${dmy[3]}-${dmy[1].padStart(2, '0')}-${dmy[2].padStart(2, '0')}`
+        iso = fechaExiste(alt) ? alt : iso
+      }
+    } else {
+      const mdy = t.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/)
+      if (mdy) iso = `${mdy[3]}-${mdy[1].padStart(2, '0')}-${mdy[2].padStart(2, '0')}`
+    }
+  }
+
+  return iso && fechaExiste(iso) ? iso : ''
 }
 
 /**
@@ -882,17 +917,72 @@ export async function saveConversionesSheetToDb(
   // El lote nuevo está completo: recién ahora se retira el anterior de este sheet.
   const aReemplazar = ['conversiones_offline', 'conversiones_offline_diarias']
   if (rawOk) aReemplazar.push('sheet_filas')
+  const replaceErrors: string[] = []
   for (const t of aReemplazar) {
-    await supabase.from(t)
-      .delete().eq('cliente_id', clienteId).eq('sheet_id', sheetId).neq('sync_batch_id', batchId)
+    const err = await borrarLotesAnteriores(supabase, t, clienteId, sheetId, batchId)
+    if (err) {
+      replaceErrors.push(`${t}: ${err}`)
+      console.error(`[conversiones] sheet ${sheetId}: no se pudo retirar el lote anterior de ${t}:`, err)
+    }
   }
+
+  // Un replace fallido deja una copia entera del sheet conviviendo con la nueva.
+  // Se propaga como `rawError` (lo único que llega al log de sync) porque durante
+  // meses este fallo fue invisible: el error del delete se descartaba y el sync
+  // reportaba éxito mientras `sheet_filas` acumulaba un duplicado por ejecución.
+  const replaceError = replaceErrors.length > 0
+    ? `No se retiraron lotes anteriores — hay filas duplicadas en ${replaceErrors.join('; ')}`
+    : null
 
   return {
     rowsProcessed: rows.length,
     daysProcessed: aggregates.length,
     rawProcessed: rawOk ? crudas.length : 0,
-    ...(rawError ? { rawError } : {}),
+    ...(rawError || replaceError
+      ? { rawError: [rawError, replaceError].filter(Boolean).join(' | ') }
+      : {}),
   }
+}
+
+/**
+ * Retira los lotes anteriores de un sheet, uno por `sync_batch_id`.
+ *
+ * Antes era un solo `.neq('sync_batch_id', batchId)`. El plan lo resolvía con un
+ * Index Scan por (cliente_id, sheet_id) y `sync_batch_id` como filtro, así que
+ * tocaba TODAS las filas del sheet de una vez: con ~80 mil filas y el índice GIN
+ * sobre `valores` no cabía en el `statement_timeout` de 8 s del rol de PostgREST.
+ * El delete moría, su error se descartaba y el lote viejo se quedaba.
+ *
+ * Borrando lote a lote cada sentencia usa `idx_sheet_filas_batch` de lleno y sólo
+ * toca las filas de ese lote. En régimen normal es un único lote.
+ */
+async function borrarLotesAnteriores(
+  supabase: any,
+  tabla: string,
+  clienteId: string,
+  sheetId: string,
+  batchId: string
+): Promise<string | null> {
+  // Se pide UN lote pendiente y se borra, hasta que no queden. No se listan todos
+  // de golpe a propósito: PostgREST corta el select en `max-rows`, y esas primeras
+  // filas pueden ser todas del mismo lote y ocultar el resto.
+  const MAX_LOTES = 50
+  for (let i = 0; i < MAX_LOTES; i++) {
+    const { data, error } = await supabase.from(tabla)
+      .select('sync_batch_id')
+      .eq('cliente_id', clienteId)
+      .eq('sheet_id', sheetId)
+      .neq('sync_batch_id', batchId)
+      .limit(1)
+    if (error) return error.message
+    if (!data || data.length === 0) return null
+
+    const lote = data[0].sync_batch_id
+    const { error: delError } = await supabase.from(tabla)
+      .delete().eq('cliente_id', clienteId).eq('sheet_id', sheetId).eq('sync_batch_id', lote)
+    if (delError) return delError.message
+  }
+  return `quedan lotes sin retirar tras ${MAX_LOTES} intentos`
 }
 
 /**
