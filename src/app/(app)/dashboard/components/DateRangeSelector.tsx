@@ -61,22 +61,6 @@ const PRESETS: Preset[] = [
     { id: 'all', label: 'Máximo', getRange: () => ({ from: 'all', to: fmt(hoyColombia()) }) },
 ]
 
-/**
- * Chip de estado por plataforma. Antes solo distinguía "Saltado" vs "OK", así que
- * un `Error Auth` o `Fallo Critico` del worker se pintaba en verde como si todo
- * hubiera ido bien. Ahora hay tres estados reales.
- */
-function PlatformChip({ label, estado }: { label: string; estado: string }) {
-    const s = estado.toLowerCase()
-    if (/error|fallo|auth/.test(s)) {
-        return <span className="text-red-500">{label}:FAIL</span>
-    }
-    if (s.includes('saltado')) {
-        return <span className="text-muted-foreground/70">{label}:Skip</span>
-    }
-    return <span className="text-green-500/80">{label}:OK</span>
-}
-
 function getActivePreset(from: string, to: string): string {
     for (const preset of PRESETS) {
         const range = preset.getRange()
@@ -96,7 +80,13 @@ export function DateRangeSelector({ basePath = '/dashboard', isPublic = false }:
     const toParam = searchParams.get('to') || fmt(hoyColombia())
 
     const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'syncing_sheets' | 'success' | 'error' | 'queued' | 'stale'>('idle')
-    const [syncLogs, setSyncLogs] = useState<{ meta?: string; hotmart?: string; ga4?: string }>({})
+    /**
+     * Detalle del último sync. NO se pinta en el dashboard: el botón solo dice en
+     * qué fase está. Los avisos por plataforma, los de los Sheets y los errores de
+     * la cola llenaban la cabecera de texto técnico que no es accionable ahí — su
+     * sitio es /admin/sync. Aquí queda como `title` del botón, para poder
+     * consultarlo pasando el ratón sin que ocupe la pantalla.
+     */
     const [syncMessage, setSyncMessage] = useState<string | null>(null)
     // Se incrementa tras cada sync completado para forzar el refresco del semáforo.
     const [freshKey, setFreshKey] = useState(0)
@@ -162,10 +152,18 @@ export function DateRangeSelector({ basePath = '/dashboard', isPublic = false }:
     // Limpia el intervalo si el componente se desmonta a mitad de un sync en cola.
     useEffect(() => () => stopPolling(), [])
 
-    const finishSuccess = () => {
+    /**
+     * Cierra el sync: refresca los datos y deja el botón en "¡Actualizado!".
+     *
+     * `router.refresh()` vuelve a ejecutar la página de servidor con la URL
+     * vigente —que ya lleva `from`/`to`—, así que lo que se repinta es el rango
+     * que el usuario tiene puesto, sin recargar ni perder la pestaña activa.
+     * `freshKey` fuerza además el refresco del semáforo de frescura.
+     */
+    const finishSuccess = (detalle?: string | null) => {
         stopPolling()
         setSyncStatus('success')
-        setSyncMessage(null)
+        setSyncMessage(detalle ?? null)
         setFreshKey(k => k + 1)
         router.refresh()
         setTimeout(() => { setSyncStatus('idle') }, 5000)
@@ -223,7 +221,6 @@ export function DateRangeSelector({ basePath = '/dashboard', isPublic = false }:
         if (!clientId || isPublic) return
         stopPolling()
         setSyncStatus('syncing')
-        setSyncLogs({})
         setSyncMessage(null)
         try {
             const syncFrom = fromParam === 'all' ? fmt(subDays(hoyColombia(), 365)) : fromParam
@@ -235,7 +232,8 @@ export function DateRangeSelector({ basePath = '/dashboard', isPublic = false }:
             const avisoSheets = await sincronizarSheets()
 
             if (result.queued) {
-                // Rango largo: quedó en cola. Sondeamos hasta que termine de verdad.
+                // Rango largo: quedó en cola. Sondeamos hasta que termine de verdad
+                // y solo entonces se refrescan los datos.
                 setSyncStatus('queued')
                 setSyncMessage(avisoSheets ?? result.message ?? 'Sincronizando en segundo plano…')
                 const r = result.range ?? { from: syncFrom, to: toParam }
@@ -243,19 +241,10 @@ export function DateRangeSelector({ basePath = '/dashboard', isPublic = false }:
                 return
             }
 
-            // Rango corto (directo): puede traer un aviso ("sin datos") o ser parcial.
-            const warning = avisoSheets ?? result.warning
-            setSyncLogs(result.platform_status ?? {})
-            if (warning) {
-                setSyncStatus('success')
-                setSyncMessage(warning)
-                setFreshKey(k => k + 1)
-                router.refresh()
-                setTimeout(() => { setSyncStatus('idle'); setSyncMessage(null) }, 8000)
-                return
-            }
-            setSyncMessage(result.message ?? null)
-            finishSuccess()
+            // Rango corto (directo): ya terminó. Un aviso ("sin datos", un Sheet
+            // que falló) no cambia lo que hay que hacer —refrescar con el rango
+            // puesto—, solo queda en el tooltip.
+            finishSuccess(avisoSheets ?? result.warning ?? result.message ?? null)
         } catch (err) {
             console.error('Error sincronizando', err)
             stopPolling()
@@ -361,6 +350,9 @@ export function DateRangeSelector({ basePath = '/dashboard', isPublic = false }:
                     onClick={handleSync}
                     variant="outline"
                     size="sm"
+                    // El detalle del sync vive aquí y solo aquí: visible al pasar el
+                    // ratón, invisible el resto del tiempo.
+                    title={syncMessage ?? undefined}
                     disabled={syncStatus === 'syncing' || syncStatus === 'syncing_sheets' || syncStatus === 'queued' || !clientId}
                     className={`mt-4 sm:mt-0 h-8 gap-2 border-border bg-background text-foreground/90 transition-colors
                         ${syncStatus === 'success' ? 'text-green-400 border-green-500/50 hover:bg-green-500/10 hover:text-green-300' : ''}
@@ -383,25 +375,10 @@ export function DateRangeSelector({ basePath = '/dashboard', isPublic = false }:
                                     syncStatus === 'error' ? 'Error. Reintentar' : 'Sincronizar Datos'}
                 </Button>
 
-                {/* Mensaje contextual: cola, aviso de éxito parcial/sin datos, o error. */}
-                {syncMessage && (syncStatus === 'queued' || syncStatus === 'stale' || syncStatus === 'success' || syncStatus === 'error') && (
-                    <div className={`text-[10px] text-right max-w-[260px] ${
-                        syncStatus === 'error' ? 'text-red-600 dark:text-red-400'
-                            : syncStatus === 'success' ? 'text-amber-600 dark:text-amber-400'
-                                : 'text-amber-600 dark:text-amber-400'
-                    }`}>
-                        {syncMessage}
-                    </div>
-                )}
-
-                {/* Estado por plataforma tras un sync directo. 'Error'/'Fallo'/'Auth' → rojo. */}
-                {syncStatus === 'success' && !syncMessage && (syncLogs.meta || syncLogs.hotmart || syncLogs.ga4) && (
-                    <div className="flex gap-2 text-[10px] font-mono justify-end w-full">
-                        {syncLogs.meta && <PlatformChip label="M" estado={syncLogs.meta} />}
-                        {syncLogs.hotmart && <PlatformChip label="H" estado={syncLogs.hotmart} />}
-                        {syncLogs.ga4 && <PlatformChip label="G" estado={syncLogs.ga4} />}
-                    </div>
-                )}
+                {/* Sin detalles del sync: el estado del botón es toda la información
+                    que el dashboard necesita dar. Los avisos por plataforma, los de
+                    los Sheets y el error concreto de la cola quedan en el `title` del
+                    botón y, completos, en /admin/sync. */}
 
                 {clientId && !isPublic && <SyncFreshnessBadge clienteId={clientId} refreshKey={freshKey} />}
             </div>

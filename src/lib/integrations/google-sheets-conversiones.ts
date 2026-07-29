@@ -330,6 +330,40 @@ function standardColNames(tab: SheetTabConfig) {
   }
 }
 
+/** Nombres que una columna de fecha suele llevar, en orden de preferencia. */
+const ALIAS_FECHA = ['fecha', 'date', 'created_time', 'fecha_hora', 'día', 'dia']
+
+/**
+ * Resuelve la columna de fecha de una pestaña.
+ *
+ * Con `col_fecha` configurada se respeta tal cual. Sin ella se busca entre las
+ * cabeceras: primero los alias habituales, luego la primera que contenga
+ * "fecha"/"date". La migración 059 creó las hojas de leads legacy SIN columna de
+ * fecha dando por hecho justo este fallback ("el parser ya resuelve fecha /
+ * date / created_time"), pero no existía: la hoja moría con "Columna de fecha
+ * «fecha» no encontrada" y no sincronizaba nada.
+ *
+ * `auto` marca que se adivinó, para avisarlo en el reporte de calidad: adivinar
+ * en silencio es peor que fallar — nadie revisaría si el eje temporal elegido es
+ * el que el cliente quería.
+ */
+function resolveColFecha(tab: SheetTabConfig, headers: string[]): { col: string; auto: boolean } {
+  const configurada = (tab.col_fecha ?? '').trim()
+  if (configurada) return { col: configurada, auto: false }
+
+  const norm = headers.map(h => h.toLowerCase().trim())
+  for (const alias of ALIAS_FECHA) {
+    const i = norm.indexOf(alias)
+    if (i >= 0) return { col: headers[i], auto: false }
+  }
+  const i = norm.findIndex(h => /fecha|date/.test(h))
+  if (i >= 0) return { col: headers[i], auto: true }
+
+  // Ninguna candidata: se devuelve el valor por defecto para que el llamador
+  // lance el error de siempre, con su lista de columnas disponibles.
+  return { col: 'fecha', auto: false }
+}
+
 // ── API pública ───────────────────────────────────────────────────────────────
 
 /**
@@ -362,6 +396,10 @@ export async function detectSheetColumns(
   const headers = sheet.headerValues ?? []
 
   const std = standardColNames(target)
+  // La de fecha se resuelve contra las cabeceras reales, igual que en el parser:
+  // si no, una columna auto-detectada («FECHA DE AGENDA») se ofrecería aquí como
+  // columna extra a la vez que el sync la usa de eje temporal.
+  std.colFecha = resolveColFecha(target, headers).col
   const standardCols = new Set(Object.values(std).map(c => c.toLowerCase().trim()))
   const extraHeaders = headers.filter(h => !standardCols.has(h.toLowerCase().trim()))
 
@@ -462,11 +500,18 @@ export function parseTabPayload(
     warnings: [],
   }
 
-  const { colFecha, colTipo, colCantidad, colValor, colFuente, colNotas } = standardColNames(tab)
+  const { colTipo, colCantidad, colValor, colFuente, colNotas } = standardColNames(tab)
+  const { col: colFecha, auto: fechaAdivinada } = resolveColFecha(tab, headers)
 
   const headersLower = headers.map(h => h.toLowerCase().trim())
   if (!headersLower.includes(colFecha.toLowerCase().trim())) {
     throw new Error(`Columna de fecha "${colFecha}" no encontrada. Disponibles: ${headers.join(', ')}`)
+  }
+  if (fechaAdivinada) {
+    quality.warnings.push(
+      `Sin columna de fecha configurada: se está usando "${colFecha}". ` +
+      `Confírmala en Ajustes del cliente → Google Sheets si no es el eje temporal que quieres.`
+    )
   }
   // Un nombre de columna mal escrito se leía como vacío sin aviso: ahora queda
   // registrado en el reporte de calidad del sync. Las columnas resueltas por

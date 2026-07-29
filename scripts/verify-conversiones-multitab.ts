@@ -360,6 +360,48 @@ sec('parseTabPayload — filas crudas junto a las conversiones')
     check('no marca columnas de negocio', !esColumnaSensible('Rango de ingresos') && !esColumnaSensible('Ciudad'))
 }
 
+// ─── Columna de fecha sin configurar ────────────────────────────────────────
+// La migración 059 creó las hojas de leads legacy sin `col_fecha` dando por
+// hecho un fallback que no existía: la hoja moría con "Columna de fecha «fecha»
+// no encontrada" y no sincronizaba nada (caso real: GESTION LEADS de Somos
+// rentable, cuyas columnas son FECHA DE AGENDA / FECHA DE INVERSIÓN).
+
+sec('parseTabPayload — resolución de la columna de fecha')
+
+{
+    const tab: SheetTabConfig = { id: 't', sheet_name: 'GESTION LEADS', enabled: true, count_rows: true, tipo_fijo: 'lead' }
+
+    const headersReales = ['FECHA DE AGENDA', 'NOMBRE', 'CANAL', 'FECHA DE INVERSIÓN']
+    const filas = fakeRows(headersReales, [['2026-07-01', 'Ana', 'AGENDAMIENTO DIRECTO', '2026-07-05']])
+    const r = parseTabPayload(headersReales, filas, tab, 's', 'GESTION LEADS')
+    check('adivina la columna cuando ninguna se llama "fecha"', r.conversiones.length === 1 && r.conversiones[0].fecha === '2026-07-01',
+        JSON.stringify(r.conversiones))
+    check('avisa de qué columna eligió',
+        r.quality.warnings.some(w => w.includes('FECHA DE AGENDA')), r.quality.warnings.join(' | '))
+    check('la fila entra como lead (count_rows + tipo_fijo)',
+        r.conversiones[0]?.tipo === 'lead' && r.conversiones[0]?.cantidad === 1,
+        JSON.stringify(r.conversiones[0]))
+
+    // Alias exactos: es lo que la migración prometía, así que no se avisa.
+    const conAlias = ['created_time', 'cantidad']
+    const rAlias = parseTabPayload(conAlias, fakeRows(conAlias, [['2026-07-02', '1']]), { id: 't2', sheet_name: 'F', enabled: true }, 's', 'F')
+    check('resuelve el alias "created_time" sin avisar',
+        rAlias.conversiones[0]?.fecha === '2026-07-02' && !rAlias.quality.warnings.some(w => w.includes('Sin columna de fecha')),
+        rAlias.quality.warnings.join(' | '))
+
+    // Configurada explícitamente: manda la config, no la adivinanza.
+    const rFijo = parseTabPayload(headersReales, filas, { ...tab, col_fecha: 'FECHA DE INVERSIÓN' }, 's', 'GESTION LEADS')
+    check('la columna configurada gana a la auto-detección', rFijo.conversiones[0]?.fecha === '2026-07-05',
+        JSON.stringify(rFijo.conversiones))
+
+    // Sin ninguna candidata sigue fallando fuerte: es un error de configuración.
+    let lanzo = false
+    try {
+        parseTabPayload(['nombre', 'canal'], fakeRows(['nombre', 'canal'], [['Ana', 'wa']]), tab, 's', 'F')
+    } catch { lanzo = true }
+    check('sin ninguna columna de fecha sigue lanzando error', lanzo)
+}
+
 // ─── Tokens de columnas de Sheet en el BI ───────────────────────────────────
 // El tipo viaja en el token para que los widgets formateen sin releer la config.
 
