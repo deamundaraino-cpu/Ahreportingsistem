@@ -567,6 +567,58 @@ export function extractFieldMetricAliases(
     return out
 }
 
+// ── Campos de lead del catálogo (report_utm.lead_campos) ──────────────
+// La dimensión `field:<clave>` de arriba lee una clave CRUDA de raw_fields, tal
+// como la escribió el formulario. Sirve para explorar, pero no para cruzar: la
+// misma pregunta llega con claves distintas según el formulario y el mismo valor
+// se escribe de varias formas (ver migración 060).
+//
+// Un "campo de lead" es la definición por cliente que unifica esas claves y esos
+// valores bajo un nombre propio, y se referencia con su propio token:
+//   • Dimensión / filtro:  "leadfield:<clave>"
+// El token guarda solo la `clave` (slug estable), así que renombrar el campo no
+// rompe los widgets ya guardados. En expresiones calc se usa el alias "lf__<clave>".
+
+export const LEAD_FIELD_PREFIX = 'leadfield:'
+
+export function makeLeadFieldDim(clave: string): string {
+    return `${LEAD_FIELD_PREFIX}${clave}`
+}
+export function isLeadFieldDim(token: string): boolean {
+    return typeof token === 'string' && token.startsWith(LEAD_FIELD_PREFIX)
+}
+export function parseLeadFieldDim(token: string): string | null {
+    if (!isLeadFieldDim(token)) return null
+    const clave = token.slice(LEAD_FIELD_PREFIX.length)
+    return clave || null
+}
+
+/**
+ * Etiqueta legible de un token de campo de lead. null si no lo es. Con el
+ * catálogo del cliente usa el nombre que puso el analista — que es lo que hace
+ * que ese nombre aparezca en el selector, en los chips de filtro y en las
+ * columnas; sin él (widget guardado de otro cliente) humaniza la clave.
+ */
+export function leadFieldLabel(token: string, campos: LeadFieldMeta[] = []): string | null {
+    const clave = parseLeadFieldDim(token)
+    if (clave === null) return null
+    return campos.find(c => c.clave === clave)?.nombre ?? humanizeFieldKey(clave)
+}
+
+/** Metadata de un campo de lead expuesta al navegador (editor y filtros). */
+export interface LeadFieldMeta {
+    clave: string
+    nombre: string
+    descripcion?: string | null
+    /** Buckets que produce, ya en el orden configurado. */
+    valores: string[]
+    /** Claves crudas que unifica, para el tooltip del editor. */
+    claves_origen: string[]
+    /** Leads del período que responden este campo. */
+    cobertura: number
+    alta_cardinalidad: boolean
+}
+
 // ── Columnas adicionales de Sheets offline (custom_fields JSONB) ──────
 // Cada cliente define en su config qué columnas extra de sus Google Sheets se
 // sincronizan (`custom_columns` por pestaña), y el sync las guarda en
@@ -890,22 +942,25 @@ export interface FormFieldMeta {
 }
 
 /**
- * Agrega al query los filtros de campo de formulario activos (claves "field:*"),
- * con la forma `filters[field:<clave>]=valor` que entiende el endpoint. Client-safe.
+ * Agrega al query los filtros de campo activos —tanto los de clave cruda
+ * ("field:*") como los del catálogo de campos de lead ("leadfield:*")—, con la
+ * forma `filters[<token>]=valor` que entiende el endpoint. Client-safe.
  */
 export function appendFieldFilters(
     params: URLSearchParams,
     filters: Record<string, string | undefined>
 ): void {
     for (const [k, v] of Object.entries(filters)) {
-        if (isFieldDim(k) && v && String(v).trim()) params.set(`filters[${k}]`, String(v).trim())
+        if ((isFieldDim(k) || isLeadFieldDim(k)) && v && String(v).trim()) {
+            params.set(`filters[${k}]`, String(v).trim())
+        }
     }
 }
 
 /** Firma estable de los filtros de campo activos, para deps de useEffect. */
 export function fieldFilterSignature(filters: Record<string, string | undefined>): string {
     return Object.keys(filters)
-        .filter(isFieldDim)
+        .filter((k) => isFieldDim(k) || isLeadFieldDim(k))
         .sort()
         .map((k) => `${k}=${filters[k] ?? ''}`)
         .join('|')
@@ -1040,7 +1095,7 @@ function safeEvalArithmetic(input: string): number {
 // sin migración) y se evalúa en memoria sobre leads/ventas en el motor.
 
 export interface FilterCondition {
-    field: string       // utm_* | ip_country | form_name | form_plugin | attribution_method | platform | field:<clave>
+    field: string       // utm_* | ip_country | form_name | form_plugin | attribution_method | platform | field:<clave> | leadfield:<clave>
     op: FilterOp
     value: string
 }
@@ -1256,12 +1311,13 @@ export function hasNonAttributableFilter(
     // los leads pero dejaría el gasto entero y el CPL saldría inventado.
     for (const [k, v] of Object.entries(filters ?? {})) {
         if (!v || !String(v).trim()) continue
-        if (NON_ATTRIBUTABLE_FIELDS.has(k) || isFieldDim(k) || isSheetDim(k)) return true
+        if (NON_ATTRIBUTABLE_FIELDS.has(k) || isFieldDim(k) || isLeadFieldDim(k) || isSheetDim(k)) return true
     }
     return !!advancedFilter?.groups?.some((g) =>
         g.conditions?.some(
             (c) => c.value && c.value.trim() &&
-                (NON_ATTRIBUTABLE_FIELDS.has(c.field) || isFieldDim(c.field) || isSheetDim(c.field))
+                (NON_ATTRIBUTABLE_FIELDS.has(c.field) || isFieldDim(c.field) ||
+                    isLeadFieldDim(c.field) || isSheetDim(c.field))
         )
     )
 }

@@ -6,7 +6,7 @@ import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import type { BiWidget, BiFilters, CalculatedField } from './BiTypes'
 import type { AdvancedFilter } from '@/lib/report-utm/bi-metadata'
-import { advancedFilterHasConditions, FILTERABLE_BASE_DIMS, FILTER_OPS, fieldDimLabel } from '@/lib/report-utm/bi-metadata'
+import { advancedFilterHasConditions, FILTERABLE_BASE_DIMS, FILTER_OPS, fieldDimLabel, leadFieldLabel } from '@/lib/report-utm/bi-metadata'
 import { ScorecardWidget } from './widgets/ScorecardWidget'
 import { ChartWidget }     from './widgets/ChartWidget'
 import { TableWidget }     from './widgets/TableWidget'
@@ -49,7 +49,7 @@ function describeWidgetFilter(af: AdvancedFilter): string {
     return (af.groups ?? [])
         .map(g => (g.conditions ?? [])
             .filter(c => c.field && c.value && c.value.trim())
-            .map(c => `${FILTER_FIELD_LABEL[c.field] ?? fieldDimLabel(c.field) ?? c.field} ${FILTER_OP_SHORT[c.op] ?? c.op} ${c.value}`)
+            .map(c => `${FILTER_FIELD_LABEL[c.field] ?? leadFieldLabel(c.field) ?? fieldDimLabel(c.field) ?? c.field} ${FILTER_OP_SHORT[c.op] ?? c.op} ${c.value}`)
             .join(' O '))
         .filter(s => s)
         .map(s => `(${s})`)

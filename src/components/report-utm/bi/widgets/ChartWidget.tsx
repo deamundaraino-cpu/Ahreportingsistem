@@ -19,7 +19,7 @@ import {
     METRIC_META, DIMENSION_META, appendUtmFilters, utmFilterSignature, applyValueFilters,
     appendFieldFilters, fieldFilterSignature, appendAdvancedFilter, advancedFilterSignature,
     appendDimFilters, dimFilterSignature, widgetAdvancedSignature, withCampaignFilter,
-    fieldMetricLabel, fieldMetricFormat, fieldDimLabel, isFieldMetric, metricGlossary,
+    fieldMetricLabel, fieldMetricFormat, fieldDimLabel, leadFieldLabel, isFieldMetric, metricGlossary,
     offlineFieldLabel, offlineFieldFormat, sheetFieldLabel, sheetFieldFormat,
     supportsPivot,
 } from '@/lib/report-utm/bi-metadata'
@@ -159,7 +159,7 @@ export function ChartWidget({ title, type, config, filters, calculatedFields = [
             .finally(() => setLoading(false))
     }, [queryBase, metric, formula, calcField?.expression, dimension, dimension2, usePivot, grouping, limit, sort, filters.cliente_id, filters.date_from, filters.date_to, utmFilterSignature(filters), fieldFilterSignature(filters), dimFilterSignature(filters), advancedFilterSignature(filters), widgetAdvancedSignature(withCampaignFilter(config.advanced_filter, config.campaign_filter))])
 
-    const dimLabel = DIMENSION_META[dimension]?.label ?? fieldDimLabel(dimension) ?? dimension
+    const dimLabel = DIMENSION_META[dimension]?.label ?? leadFieldLabel(dimension) ?? fieldDimLabel(dimension) ?? dimension
     const metLabel = formula ? formula : (METRIC_META[metric as BiMetric]?.label ?? fieldMetricLabel(metric) ?? offlineFieldLabel(metric) ?? sheetFieldLabel(metric) ?? calcField?.name ?? metric)
 
     const chartData = applyValueFilters(rows, config.value_filters).map(r => ({
@@ -181,7 +181,7 @@ export function ChartWidget({ title, type, config, filters, calculatedFields = [
                     )}
                 </p>
                 <span className="text-[10px] text-muted-foreground font-mono">
-                    {dimLabel}{dimension2 ? ` × ${DIMENSION_META[dimension2 as BiDimension]?.label ?? fieldDimLabel(dimension2) ?? dimension2}` : ''} · {metLabel}
+                    {dimLabel}{dimension2 ? ` × ${DIMENSION_META[dimension2 as BiDimension]?.label ?? leadFieldLabel(dimension2) ?? fieldDimLabel(dimension2) ?? dimension2}` : ''} · {metLabel}
                 </span>
             </div>
 

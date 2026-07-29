@@ -9,7 +9,7 @@ import {
     METRIC_META, DIMENSION_META, appendUtmFilters, utmFilterSignature, applyValueFilters,
     appendFieldFilters, fieldFilterSignature, appendAdvancedFilter, advancedFilterSignature,
     appendDimFilters, dimFilterSignature, widgetAdvancedSignature, withCampaignFilter,
-    fieldMetricLabel, fieldMetricFormat, fieldDimLabel, isFieldMetric, parseFieldMetric,
+    fieldMetricLabel, fieldMetricFormat, fieldDimLabel, leadFieldLabel, isFieldMetric, parseFieldMetric,
     isAdditiveMetric,
     isOfflineFieldMetric, parseOfflineFieldMetric, offlineFieldLabel, offlineFieldFormat,
     isSheetToken, sheetFieldLabel, sheetFieldFormat,
@@ -207,7 +207,7 @@ export function TableWidget({ title, config, filters, calculatedFields = [], h =
         return 'text-amber-600 dark:text-amber-400 font-semibold'
     }
 
-    const dimLabel = DIMENSION_META[dimension as BiDimension]?.label ?? fieldDimLabel(dimension) ?? dimension
+    const dimLabel = DIMENSION_META[dimension as BiDimension]?.label ?? leadFieldLabel(dimension) ?? fieldDimLabel(dimension) ?? dimension
 
     return (
         <div className="rounded-2xl border border-border bg-card overflow-hidden flex flex-col h-full">

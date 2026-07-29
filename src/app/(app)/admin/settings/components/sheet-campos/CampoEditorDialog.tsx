@@ -12,7 +12,7 @@ import type {
     CampoRol, CampoFormato, CampoAgg, CampoSinMapear,
 } from '@/lib/sheets/campos'
 import { OrigenesEditor, type Fuente } from './OrigenesEditor'
-import { ValoresAgrupador } from './ValoresAgrupador'
+import { ValoresAgrupador } from '@/components/campos/ValoresAgrupador'
 import { VistasEditor } from './VistasEditor'
 
 /**

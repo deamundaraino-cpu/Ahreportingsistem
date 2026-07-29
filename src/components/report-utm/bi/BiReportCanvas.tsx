@@ -10,7 +10,7 @@ import { HelpTip } from './HelpTip'
 import type { CalculatedField } from './BiTypes'
 import type { AdvancedFilter } from '@/lib/report-utm/bi-metadata'
 import {
-    isFieldDim, fieldDimLabel,
+    isFieldDim, fieldDimLabel, isLeadFieldDim, leadFieldLabel,
     ADVANCED_FILTER_KEY, parseAdvancedFilter, serializeAdvancedFilter, advancedFilterHasConditions,
     hasNonAttributableFilter, parseFilterValue, matchFilterCondition,
 } from '@/lib/report-utm/bi-metadata'
@@ -142,7 +142,7 @@ function isDimensionFilterKey(k: string): boolean {
     return k.startsWith('utm_')
         || k === 'ip_country' || k === 'form_name' || k === 'form_plugin'
         || k === 'attribution_method' || k === 'platform'
-        || isFieldDim(k)
+        || isFieldDim(k) || isLeadFieldDim(k)
 }
 
 export function BiReportCanvas({ report: initialReport, readonly, lockedDates, publicToken }: Props) {
@@ -478,7 +478,9 @@ export function BiReportCanvas({ report: initialReport, readonly, lockedDates, p
     }
 
     const activeDrills = Object.entries(filters).filter(([k, v]) => v && isDimensionFilterKey(k))
-    const drillLabel = (k: string) => fieldDimLabel(k) ?? k.replace('utm_', '')
+    // El chip de un campo de lead se etiqueta desde su clave (un slug legible):
+    // el canvas no carga el catálogo del cliente solo para pintar el chip.
+    const drillLabel = (k: string) => leadFieldLabel(k) ?? fieldDimLabel(k) ?? k.replace('utm_', '')
 
     // ¿Los filtros de dimensión activos difieren de los guardados en el informe?
     // Si difieren, se ofrece consolidarlos (o consolidar su baja) sin tener que

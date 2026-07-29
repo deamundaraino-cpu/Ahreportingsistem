@@ -5,12 +5,13 @@ import { X, Plus, Search, AlertTriangle } from 'lucide-react'
 import type { BiWidget, WidgetType, WidgetConfig, CalculatedField, ConditionalRule, ValueFilter, ScorecardVariant } from './BiTypes'
 import type {
     BiMetric, BiDimension, ValueOp, FieldAgg, FormFieldMeta, OfflineFieldMeta,
-    AdvancedFilter, FilterOp, SheetFieldMeta, SheetViewMeta, SheetCampoAgg,
+    AdvancedFilter, FilterOp, SheetFieldMeta, SheetViewMeta, SheetCampoAgg, LeadFieldMeta,
 } from '@/lib/report-utm/bi-metadata'
 import {
     METRIC_META, DIMENSION_META, VALUE_OPS, FIELD_AGGS, FILTERABLE_BASE_DIMS, FILTER_OPS,
     makeFieldDim, makeFieldMetric, humanizeFieldKey, fieldDimLabel, fieldMetricLabel,
     makeOfflineFieldMetric, offlineFieldLabel,
+    makeLeadFieldDim, leadFieldLabel,
     makeSheetDim, makeSheetMetric, makeSheetView, sheetFieldLabel, isSheetDim, isSheetToken,
     advancedFilterHasConditions, supportsPivot, PIVOT_METRICS,
     FUNNEL_STAGE_METRICS, DEFAULT_FUNNEL_STAGES, evaluateExpression,
@@ -85,6 +86,7 @@ export function BiWidgetEditor({ widget, calculatedFields = [], clienteId, dateF
     const [dim,    setDim]    = useState<string>(widget?.config?.dimension ?? 'utm_source')
     const [dim2,   setDim2]   = useState<string>(widget?.config?.dimension2 ?? 'none')
     const [formFields, setFormFields] = useState<FormFieldMeta[]>([])
+    const [leadFields, setLeadFields] = useState<LeadFieldMeta[]>([])
     const [offlineFields, setOfflineFields] = useState<OfflineFieldMeta[]>([])
     const [sheetFields, setSheetFields] = useState<SheetFieldMeta[]>([])
     const [sheetViews, setSheetViews] = useState<SheetViewMeta[]>([])
@@ -141,6 +143,22 @@ export function BiWidgetEditor({ widget, calculatedFields = [], clienteId, dateF
             .then(r => r.json())
             .then(json => { if (!cancelled) setFormFields(json.data ?? []) })
             .catch(() => { if (!cancelled) setFormFields([]) })
+        return () => { cancelled = true }
+    }, [clienteId, dateFrom, dateTo])
+
+    // Campos de lead del catálogo del cliente → dimensiones y filtros del BI.
+    // Son los que unifican las claves equivalentes y las variantes de escritura,
+    // así que van por delante de las claves crudas de `form-fields`.
+    useEffect(() => {
+        if (!clienteId) { setLeadFields([]); return }
+        const params = new URLSearchParams({ cliente_id: clienteId })
+        if (dateFrom) params.set('date_from', dateFrom)
+        if (dateTo)   params.set('date_to', dateTo)
+        let cancelled = false
+        fetch(`/api/report-utm/bi/lead-fields?${params}`)
+            .then(r => r.json())
+            .then(json => { if (!cancelled) setLeadFields(json.data ?? []) })
+            .catch(() => { if (!cancelled) setLeadFields([]) })
         return () => { cancelled = true }
     }, [clienteId, dateFrom, dateTo])
 
@@ -239,6 +257,12 @@ export function BiWidgetEditor({ widget, calculatedFields = [], clienteId, dateF
 
     // Opciones derivadas de los campos de formulario descubiertos.
     const fieldDimOptions = formFields.map(f => ({ value: makeFieldDim(f.key), label: humanizeFieldKey(f.label) }))
+    // Campos del catálogo: un campo por pregunta, ya unificado. Se ofrecen antes
+    // que las claves crudas porque son los que dan un conteo correcto cuando la
+    // misma pregunta llega con dos nombres distintos.
+    const leadFieldDimOptions = leadFields
+        .filter(f => !f.alta_cardinalidad)
+        .map(f => ({ value: makeLeadFieldDim(f.clave), label: f.nombre }))
     const fieldMetricOptions = formFields.flatMap(f =>
         AGGS_FOR(f.type).map(agg => ({
             value: makeFieldMetric(agg, f.key),
@@ -268,12 +292,14 @@ export function BiWidgetEditor({ widget, calculatedFields = [], clienteId, dateF
         label: v.nombre,
     }))
 
-    // Dimensiones base + de campo de formulario + de campo de Sheet.
-    const dimOptions: { value: string; label: string }[] = [...ALL_DIMS, ...fieldDimOptions, ...sheetDimOptions]
+    // Dimensiones base + de campo de lead + de clave cruda + de campo de Sheet.
+    const dimOptions: { value: string; label: string }[] = [
+        ...ALL_DIMS, ...leadFieldDimOptions, ...fieldDimOptions, ...sheetDimOptions,
+    ]
     // Campos filtrables (para el constructor de filtro del widget): dimensiones
     // base de filtro (UTMs, país, formulario…) + campos de formulario del cliente.
     const filterFieldOptions: { value: string; label: string }[] = [
-        ...FILTERABLE_BASE_DIMS, ...fieldDimOptions, ...sheetDimOptions,
+        ...FILTERABLE_BASE_DIMS, ...leadFieldDimOptions, ...fieldDimOptions, ...sheetDimOptions,
     ]
 
     // Columnas adicionales de los Sheets offline → métricas "offfield:<clave>".
@@ -293,6 +319,7 @@ export function BiWidgetEditor({ widget, calculatedFields = [], clienteId, dateF
         ?? calculatedFields.find(c => c.name === k)?.name ?? k
     const resolveDimLabel = (d: string) =>
         DIMENSION_META[d as BiDimension]?.label
+        ?? leadFieldLabel(d, leadFields)
         ?? fieldDimLabel(d)
         ?? sheetFieldLabel(d, sheetFields, sheetViews)
         ?? d

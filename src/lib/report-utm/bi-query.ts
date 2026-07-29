@@ -12,9 +12,13 @@ import {
     campaignNameFilterPredicate, hasCampaignFilter, hasNonAttributableFilter,
     isSheetDim, parseSheetDim, parseSheetMetric, parseSheetView, extractSheetAliases,
     sheetFieldAlias, sheetViewAlias,
+    isLeadFieldDim, parseLeadFieldDim,
 } from './bi-metadata'
 import { loadCamposCliente } from '@/lib/sheets/campos-db'
 import { agregarDiarios, vistaIncluyeValor } from '@/lib/sheets/campos'
+import { loadLeadCampos } from './lead-campos-db'
+import { bucketDeLeadRaw, ordenarBuckets } from './lead-campos'
+import type { LeadCampoDef } from './lead-campos'
 
 // Dimensiones que SOLO existen en sales_events (no en lead_events). Al agrupar
 // por ellas, la query de leads se omite (no tienen esas columnas).
@@ -31,6 +35,13 @@ export { METRIC_META, DIMENSION_META } from './bi-metadata'
 
 export async function runBiQuery(params: BiQueryParams): Promise<BiQueryRow[]> {
     const supabase = await createAdminClient()
+
+    // ── Campos de lead del catálogo ───────────────────────────────────
+    // Se cargan antes que nada porque deciden cómo se agrupa y se filtra, y los
+    // filtros planos se pasan al avanzado para que el motor tenga un solo camino.
+    const leadCampos = await loadLeadCamposSiHaceFalta(supabase, params)
+    params = liftLeadFieldFilters(params)
+    const leadFieldClave = parseLeadFieldDim(params.dimension)
 
     // Tokens requeridos = métricas pedidas ∪ identificadores referenciados en las
     // expresiones de campos calculados. Así un scorecard/gráfica cuyo único "metric"
@@ -59,7 +70,10 @@ export async function runBiQuery(params: BiQueryParams): Promise<BiQueryRow[]> {
         }
     }
     const fieldMetrics = Array.from(fieldMetricReqs.values())
-    const isFieldDimQuery = fieldDimKey !== null
+    // Agrupar por un campo de lead del catálogo tiene las mismas consecuencias
+    // que agrupar por una clave cruda: ventas y gasto no se desglosan por la
+    // respuesta de un formulario, así que ambas se tratan igual aguas abajo.
+    const isFieldDimQuery = fieldDimKey !== null || leadFieldClave !== null
 
     // ── Columnas adicionales de Sheets offline (custom_fields JSONB) ───
     // Mismo patrón que los campos de formulario: token "offfield:<clave>" en
@@ -134,7 +148,7 @@ export async function runBiQuery(params: BiQueryParams): Promise<BiQueryRow[]> {
     // El Top-N (params.limit) se aplica luego en mergeResults, no al traer filas.
     let leadsData: LeadAgg[] = []
     if (needsLeads) {
-        leadsData = await queryLeadsDirect(supabase, params, dateFrom, dateTo, fieldMetrics)
+        leadsData = await queryLeadsDirect(supabase, params, dateFrom, dateTo, fieldMetrics, leadCampos)
     }
 
     // ── SALES query ───────────────────────────────────────────────────
@@ -170,7 +184,7 @@ export async function runBiQuery(params: BiQueryParams): Promise<BiQueryRow[]> {
     // ── Merge results ─────────────────────────────────────────────────
     return mergeResults(
         params, leadsData, salesData, adsData, fieldMetrics, offlineData, subsData, offlineFields,
-        sheetData, sheetFields
+        sheetData, sheetFields, leadCampos
     )
 }
 
@@ -210,6 +224,81 @@ function fieldAggValue(acc: FieldAcc | undefined, agg: FieldAgg): number {
     }
 }
 
+// ── Campos de lead del catálogo (leadfield:<clave>) ───────────────────
+// Un campo del catálogo no se puede filtrar ni agrupar en SQL: une VARIAS claves
+// de `raw_fields` y funde valores escritos distinto bajo un mismo bucket, y eso
+// vive en la definición del campo, no en la fila. Así que se resuelve en memoria.
+//
+// Para no repetir esa evaluación en cada punto de entrada (tabla, pivot, slicer,
+// embudo), los filtros planos `filters['leadfield:x']` se PASAN al filtro
+// avanzado antes de consultar: a partir de ahí el único sitio que entiende de
+// campos de lead es `advCellValue`, que ya se evalúa sobre las filas traídas.
+
+/** Claves de campo de lead referenciadas por una consulta (dimensiones + filtros). */
+function collectLeadFieldClaves(params: {
+    dimension?: string
+    dimension2?: string
+    filters?: Record<string, string>
+    advancedFilter?: AdvancedFilter
+}): string[] {
+    const out = new Set<string>()
+    for (const d of [params.dimension, params.dimension2]) {
+        const c = d ? parseLeadFieldDim(d) : null
+        if (c) out.add(c)
+    }
+    for (const k of Object.keys(params.filters ?? {})) {
+        const c = parseLeadFieldDim(k)
+        if (c) out.add(c)
+    }
+    for (const g of params.advancedFilter?.groups ?? []) {
+        for (const cond of g.conditions ?? []) {
+            const c = parseLeadFieldDim(cond.field)
+            if (c) out.add(c)
+        }
+    }
+    return Array.from(out)
+}
+
+/**
+ * Carga el catálogo de campos de lead del cliente si la consulta lo necesita.
+ * Sin cliente o sin referencias devuelve lista vacía sin tocar la base: la
+ * inmensa mayoría de los widgets no usan campos de lead y no deben pagar por
+ * esta feature.
+ */
+async function loadLeadCamposSiHaceFalta(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    supabase: any,
+    params: { cliente_id?: string; dimension?: string; dimension2?: string; filters?: Record<string, string>; advancedFilter?: AdvancedFilter }
+): Promise<LeadCampoDef[]> {
+    if (!params.cliente_id) return []
+    if (collectLeadFieldClaves(params).length === 0) return []
+    return loadLeadCampos(supabase.schema('report_utm'), params.cliente_id)
+}
+
+/**
+ * Mueve los filtros planos de campo de lead al filtro avanzado, como grupos Y
+ * adicionales. No muta la entrada: devuelve una copia de los params.
+ */
+function liftLeadFieldFilters<T extends { filters?: Record<string, string>; advancedFilter?: AdvancedFilter }>(params: T): T {
+    const filters = params.filters ?? {}
+    const claves = Object.keys(filters).filter(k => isLeadFieldDim(k) && String(filters[k] ?? '').trim())
+    if (claves.length === 0) return params
+
+    const restantes: Record<string, string> = {}
+    for (const [k, v] of Object.entries(filters)) if (!claves.includes(k)) restantes[k] = v
+
+    const grupos = claves.map(k => {
+        const { op, value } = parseFilterValue(String(filters[k]))
+        return { conditions: [{ field: k, op, value }] }
+    })
+
+    return {
+        ...params,
+        filters: restantes,
+        advancedFilter: { groups: [...(params.advancedFilter?.groups ?? []), ...grupos] },
+    }
+}
+
 // ── Filtro avanzado (Y de O): evaluación en memoria ───────────────────
 // Se evalúa sobre las filas ya traídas (leads/ventas). Columnas disponibles
 // por tabla: los leads tienen todas las dimensiones de lead; las ventas solo
@@ -219,7 +308,24 @@ type AdvTable = 'leads' | 'sales'
 const LEAD_ADV_COLS = new Set(['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'utm_id', 'ip_country', 'form_name', 'form_plugin', 'attribution_method'])
 const SALES_ADV_COLS = new Set(['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'utm_id', 'platform'])
 
-function advCellValue(row: Record<string, unknown>, field: string, table: AdvTable): string | undefined {
+function advCellValue(
+    row: Record<string, unknown>,
+    field: string,
+    table: AdvTable,
+    campos: LeadCampoDef[] = []
+): string | undefined {
+    // Campo del catálogo: el valor comparable es el BUCKET, no lo que escribió el
+    // formulario. Es lo que hace que filtrar por "$2M a $3M" alcance también a
+    // los leads que respondieron "Entre $2.000.000 – $3.000.000".
+    const clave = parseLeadFieldDim(field)
+    if (clave !== null) {
+        if (table !== 'leads') return undefined
+        const campo = campos.find(c => c.clave === clave)
+        // Sin catálogo (migración sin aplicar o campo borrado) la condición no es
+        // evaluable: se ignora en vez de vaciar el informe en silencio.
+        if (!campo) return undefined
+        return bucketDeLeadRaw(campo, row.raw_fields as Record<string, unknown> | null) ?? ''
+    }
     const fk = parseFieldDim(field)
     if (fk !== null) {
         if (table !== 'leads') return undefined
@@ -231,14 +337,19 @@ function advCellValue(row: Record<string, unknown>, field: string, table: AdvTab
     return row[field] !== null && row[field] !== undefined ? String(row[field]) : ''
 }
 
-export function evalAdvancedRow(row: Record<string, unknown>, af: AdvancedFilter | undefined, table: AdvTable): boolean {
+export function evalAdvancedRow(
+    row: Record<string, unknown>,
+    af: AdvancedFilter | undefined,
+    table: AdvTable,
+    campos: LeadCampoDef[] = []
+): boolean {
     if (!af?.groups?.length) return true
     for (const g of af.groups) {
         const conds = (g.conditions ?? []).filter(c => c.field && c.value && c.value.trim())
         if (!conds.length) continue
         let applicable = false, pass = false
         for (const c of conds) {
-            const cell = advCellValue(row, c.field, table)
+            const cell = advCellValue(row, c.field, table, campos)
             if (cell === undefined) continue   // campo no disponible en esta tabla → se ignora
             applicable = true
             if (matchFilterCondition(cell, c.op, c.value)) { pass = true; break }
@@ -255,7 +366,10 @@ export function collectAdvancedColumns(af: AdvancedFilter | undefined, table: Ad
     for (const g of af?.groups ?? []) {
         for (const c of g.conditions ?? []) {
             if (!c.field || !c.value || !c.value.trim()) continue
-            if (parseFieldDim(c.field) !== null) { if (table === 'leads') needsRawFields = true; continue }
+            if (parseFieldDim(c.field) !== null || parseLeadFieldDim(c.field) !== null) {
+                if (table === 'leads') needsRawFields = true
+                continue
+            }
             const set = table === 'sales' ? SALES_ADV_COLS : LEAD_ADV_COLS
             if (set.has(c.field)) cols.add(c.field)
         }
@@ -271,7 +385,8 @@ async function queryLeadsDirect(
     params: BiQueryParams,
     dateFrom: string,
     dateTo: string,
-    fieldMetrics: FieldMetricReq[]
+    fieldMetrics: FieldMetricReq[],
+    leadCampos: LeadCampoDef[] = []
 ): Promise<LeadAgg[]> {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const applyBase = (q: any) => {
@@ -284,7 +399,8 @@ async function queryLeadsDirect(
     const adv = params.advancedFilter
     const advCols = collectAdvancedColumns(adv, 'leads')
     const hasAdv = advancedFilterHasConditions(adv) && (advCols.cols.length > 0 || advCols.needsRawFields)
-    const needsRawFields = isFieldDim(params.dimension) || fieldKeys.length > 0 || advCols.needsRawFields
+    const needsRawFields = isFieldDim(params.dimension) || isLeadFieldDim(params.dimension) ||
+        fieldKeys.length > 0 || advCols.needsRawFields
 
     // Total sin agregar campos ni filtro avanzado: conteo EXACTO (head + count).
     if (params.dimension === 'none' && fieldKeys.length === 0 && !hasAdv) {
@@ -299,13 +415,13 @@ async function queryLeadsDirect(
     let rows = await fetchAllRows(() =>
         applyBase(supabase.schema('report_utm').from('lead_events').select(buildLeadSelect(params.dimension, needsRawFields, advCols.cols)))
     )
-    if (hasAdv) rows = rows.filter(r => evalAdvancedRow(r, adv, 'leads'))
-    return aggregateLeads(rows, params.dimension, params.date_grouping, fieldKeys)
+    if (hasAdv) rows = rows.filter(r => evalAdvancedRow(r, adv, 'leads', leadCampos))
+    return aggregateLeads(rows, params.dimension, params.date_grouping, fieldKeys, leadCampos)
 }
 
 function buildLeadSelect(dimension: BiDimension, needsRawFields: boolean, extraCols: string[] = []): string {
     const cols = new Set<string>(['id', 'created_at'])
-    if (dimension !== 'none' && dimension !== 'date' && !isFieldDim(dimension)) cols.add(dimension)
+    if (dimension !== 'none' && dimension !== 'date' && !isFieldDim(dimension) && !isLeadFieldDim(dimension)) cols.add(dimension)
     if (needsRawFields) cols.add('raw_fields')
     for (const c of extraCols) cols.add(c)
     return Array.from(cols).join(',')
@@ -315,11 +431,12 @@ function aggregateLeads(
     rows: Record<string, unknown>[],
     dimension: BiDimension,
     grouping: DateGrouping | undefined,
-    fieldKeys: string[]
+    fieldKeys: string[],
+    leadCampos: LeadCampoDef[] = []
 ): LeadAgg[] {
     const map = new Map<string, LeadAgg>()
     for (const r of rows) {
-        const dim = getDimValue(r, dimension, grouping)
+        const dim = getDimValue(r, dimension, grouping, leadCampos)
         let entry = map.get(dim)
         if (!entry) { entry = { dim, count: 0, fields: {} }; map.set(dim, entry) }
         entry.count++
@@ -903,7 +1020,8 @@ function mergeResults(
     subsData: Record<string, number> | null = null,
     offlineFields: OfflineFieldReq[] = [],
     sheetData: SheetRow[] = [],
-    sheetFields: SheetReq[] = []
+    sheetFields: SheetReq[] = [],
+    leadCampos: LeadCampoDef[] = []
 ): BiQueryRow[] {
     const keys = new Set<string>()
     leadsData.forEach(r => keys.add(r.dim ?? 'total'))
@@ -1086,6 +1204,24 @@ function mergeResults(
         return rows
     }
 
+    // Un campo de lead con orden definido manda sobre el orden por métrica: para
+    // eso se configura. Un tramo de ingresos ordenado por volumen deja de leerse
+    // como una escala ("$2M a $3M" antes que "Menos de $2M") y es justo lo que se
+    // quiere evitar al cruzar rangos.
+    const leadFieldClave = parseLeadFieldDim(params.dimension)
+    if (leadFieldClave !== null) {
+        const campo = leadCampos.find(c => c.clave === leadFieldClave)
+        if (campo && campo.valores_orden.length > 0) {
+            const orden = ordenarBuckets(campo, rows.map(r => String(r.dimension_value ?? '')))
+            const pos = new Map(orden.map((v, i) => [v, i]))
+            rows.sort((a, b) =>
+                (pos.get(String(a.dimension_value ?? '')) ?? orden.length) -
+                (pos.get(String(b.dimension_value ?? '')) ?? orden.length))
+            if (params.limit && rows.length > params.limit) return rows.slice(0, params.limit)
+            return rows
+        }
+    }
+
     // Orden: por la primera métrica solicitada (o el campo de orden).
     const sortMetric = params.metrics[0]
     const dir = params.sort === 'asc' ? 1 : -1
@@ -1149,6 +1285,8 @@ export async function runPivotQuery(
     metric: BiMetric
 ): Promise<{ rows: BiPivotRow[]; seriesKeys: string[] }> {
     const supabase = await createAdminClient()
+    const leadCampos = await loadLeadCamposSiHaceFalta(supabase, params)
+    params = liftLeadFieldFilters(params)
     const dateFrom = params.date_from ?? new Date(Date.now() - 30 * 86400_000).toISOString().slice(0, 10)
     const dateTo   = params.date_to   ?? new Date().toISOString().slice(0, 10)
     const dim1 = params.dimension
@@ -1156,14 +1294,15 @@ export async function runPivotQuery(
 
     const isSales = metric === 'sales_count' || metric === 'revenue'
     const table = isSales ? 'sales_events' : 'lead_events'
+    const esDimDeCampo = (d: string) => isFieldDim(d) || isLeadFieldDim(d)
 
     const cols = new Set<string>(['id', 'created_at'])
     if (isSales) { cols.add('amount'); cols.add('status'); cols.add('platform') }
-    if (dim1 !== 'none' && dim1 !== 'date' && dim1 !== 'platform' && !isFieldDim(dim1)) cols.add(dim1)
-    if (dim2 !== 'none' && dim2 !== 'date' && dim2 !== 'platform' && !isFieldDim(dim2)) cols.add(dim2)
+    if (dim1 !== 'none' && dim1 !== 'date' && dim1 !== 'platform' && !esDimDeCampo(dim1)) cols.add(dim1)
+    if (dim2 !== 'none' && dim2 !== 'date' && dim2 !== 'platform' && !esDimDeCampo(dim2)) cols.add(dim2)
     // Ventas no tienen raw_fields → una dimensión de campo sobre ventas cae en
     // "(sin valor)"; solo lead_events puede desglosar por campo de formulario.
-    if (!isSales && (isFieldDim(dim1) || isFieldDim(dim2))) cols.add('raw_fields')
+    if (!isSales && (esDimDeCampo(dim1) || esDimDeCampo(dim2))) cols.add('raw_fields')
 
     // Columnas necesarias para el filtro avanzado en esta tabla.
     const adv = params.advancedFilter
@@ -1184,15 +1323,15 @@ export async function runPivotQuery(
     let data = await fetchAllRows(() =>
         applyBase(supabase.schema('report_utm').from(table).select(Array.from(cols).join(',')))
     )
-    if (hasAdv) data = data.filter(r => evalAdvancedRow(r, adv, isSales ? 'sales' : 'leads'))
+    if (hasAdv) data = data.filter(r => evalAdvancedRow(r, adv, isSales ? 'sales' : 'leads', leadCampos))
 
     const grouping = params.date_grouping ?? 'day'
     const pivot = new Map<string, Map<string, number>>()
     const seriesSet = new Set<string>()
 
     for (const r of data as unknown as Record<string, unknown>[]) {
-        const k1 = getDimValue(r, dim1, grouping)
-        const k2 = getDimValue(r, dim2, grouping)
+        const k1 = getDimValue(r, dim1, grouping, leadCampos)
+        const k2 = getDimValue(r, dim2, grouping, leadCampos)
         seriesSet.add(k2)
         if (!pivot.has(k1)) pivot.set(k1, new Map())
         const inner = pivot.get(k1)!
@@ -1228,11 +1367,24 @@ export async function runPivotQuery(
 
 // ── Helpers ───────────────────────────────────────────────────────────
 
-function getDimValue(row: Record<string, unknown>, dimension: BiDimension, grouping?: DateGrouping): string {
+function getDimValue(
+    row: Record<string, unknown>,
+    dimension: BiDimension,
+    grouping?: DateGrouping,
+    leadCampos: LeadCampoDef[] = []
+): string {
     if (dimension === 'none') return 'total'
     if (dimension === 'date') {
         const dateStr = String(row.created_at ?? '')
         return truncateDate(dateStr.slice(0, 10), grouping ?? 'day')
+    }
+    // Campo del catálogo: la fila cuenta en su BUCKET, que es lo que une las
+    // claves equivalentes y las variantes de escritura del mismo valor.
+    const leadClave = parseLeadFieldDim(dimension)
+    if (leadClave !== null) {
+        const campo = leadCampos.find(c => c.clave === leadClave)
+        if (!campo) return '(sin valor)'
+        return bucketDeLeadRaw(campo, row.raw_fields as Record<string, unknown> | null) ?? '(sin valor)'
     }
     const fieldKey = parseFieldDim(dimension)
     if (fieldKey !== null) {
@@ -1355,6 +1507,38 @@ export async function runDistinctValues(params: {
     const dateFrom = params.date_from ?? new Date(Date.now() - 90 * 86400_000).toISOString().slice(0, 10)
     const dateTo   = params.date_to   ?? new Date().toISOString().slice(0, 10)
     const table = params.source === 'sales' ? 'sales_events' : 'lead_events'
+
+    // Dimensión de campo de lead: los valores son los BUCKETS del campo, en el
+    // orden que definió el analista. Se calculan sobre los leads del período —
+    // no se listan los del catálogo a secas — para que el slicer no ofrezca
+    // rangos que nadie respondió en el rango de fechas elegido.
+    const leadClave = parseLeadFieldDim(dim)
+    if (leadClave !== null) {
+        if (!params.cliente_id) return []
+        const campos = await loadLeadCampos(supabase.schema('report_utm'), params.cliente_id, { soloActivos: true })
+        const campo = campos.find(c => c.clave === leadClave)
+        if (!campo) return []
+
+        const lifted = liftLeadFieldFilters({ filters: params.filters })
+        const rows = await fetchAllRows(() => {
+            let q = supabase
+                .schema('report_utm')
+                .from('lead_events')
+                .select('id,raw_fields')
+                .gte('created_at', dateFrom + 'T00:00:00')
+                .lte('created_at', dateTo + 'T23:59:59')
+                .not('raw_fields', 'is', null)
+            if (params.cliente_id) q = q.eq('cliente_id', params.cliente_id)
+            return applyDimFilters(q, lifted.filters, leadFilterKey)
+        })
+
+        const set = new Set<string>()
+        for (const r of rows) {
+            const b = bucketDeLeadRaw(campo, r.raw_fields as Record<string, unknown> | null)
+            if (b) set.add(b)
+        }
+        return ordenarBuckets(campo, Array.from(set)).slice(0, 500)
+    }
 
     // Dimensión de campo de Sheet: los valores salen del desglose ya
     // materializado, que está acotado por `max_valores`. No hace falta escanear

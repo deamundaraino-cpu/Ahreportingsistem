@@ -26,6 +26,7 @@ Plataforma multi-cliente para agencias de publicidad que **consolida métricas d
 | 14 | [Cron jobs y workers](./14-cron-y-workers.md) | Sincronizaciones automáticas y tareas programadas |
 | 15 | [Despliegue y operación](./15-despliegue.md) | Vercel, crons, headers de seguridad y monitoreo |
 | 16 | [Campos de Sheet](./16-campos-de-sheet.md) | Guía paso a paso: conectar un Google Sheet y convertir sus columnas en métricas |
+| 17 | [Campos de lead](./17-campos-de-lead.md) | Convertir las respuestas de los formularios en dimensiones y filtros de los informes |
 
 ---
 

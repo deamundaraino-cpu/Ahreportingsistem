@@ -195,7 +195,10 @@ export function parseNumeroSheet(raw: unknown): number | null {
  * y adivinar la capitalización "buena" a partir de la primera fila que llega
  * haría que el mismo dato cambiara de etiqueta según el orden del Sheet.
  */
-export function bucketDeValor(campo: SheetCampoDef, crudo: unknown): string | null {
+export function bucketDeValor(
+  campo: Pick<SheetCampoDef, 'valores_map' | 'sin_mapear'>,
+  crudo: unknown
+): string | null {
   const norm = normalizarValorCrudo(crudo)
   if (!norm) return null
 

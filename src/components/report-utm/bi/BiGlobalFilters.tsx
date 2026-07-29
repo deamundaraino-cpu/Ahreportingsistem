@@ -3,8 +3,8 @@
 import { useState, useEffect } from 'react'
 import { Filter, RefreshCw, SlidersHorizontal, ChevronDown, X, Lock, Plus, Save, Check } from 'lucide-react'
 import type { BiFilters } from './BiTypes'
-import type { AdvancedFilter, FilterCondition, FilterOp, FormFieldMeta, SheetFieldMeta } from '@/lib/report-utm/bi-metadata'
-import { FILTER_OPS, FILTERABLE_BASE_DIMS, makeFieldDim, humanizeFieldKey, ADVANCED_FILTER_KEY, makeSheetDim } from '@/lib/report-utm/bi-metadata'
+import type { AdvancedFilter, FilterCondition, FilterOp, FormFieldMeta, SheetFieldMeta, LeadFieldMeta } from '@/lib/report-utm/bi-metadata'
+import { FILTER_OPS, FILTERABLE_BASE_DIMS, makeFieldDim, humanizeFieldKey, ADVANCED_FILTER_KEY, makeSheetDim, makeLeadFieldDim, parseLeadFieldDim } from '@/lib/report-utm/bi-metadata'
 import { HelpTip } from './HelpTip'
 
 interface Cliente {
@@ -112,6 +112,27 @@ export function BiGlobalFilters({
     const condCount = (advancedFilter.groups ?? []).reduce((n, g) => n + (g.conditions ?? []).filter(validCond).length, 0)
     const [showFilters, setShowFilters] = useState(() => condCount > 0)
 
+    // Campos de lead del catálogo del cliente: la opción buena del constructor —
+    // traen los valores ya unificados y ordenados, así que se pueden ofrecer.
+    const [leadFields, setLeadFields] = useState<LeadFieldMeta[]>([])
+    useEffect(() => {
+        if (readonly || !clienteId) { setLeadFields([]); return }
+        const params = new URLSearchParams({ cliente_id: clienteId, date_from: dateFrom, date_to: dateTo })
+        let cancelled = false
+        fetch(`/api/report-utm/bi/lead-fields?${params}`)
+            .then(r => r.json())
+            .then(json => { if (!cancelled) setLeadFields(json.data ?? []) })
+            .catch(() => { if (!cancelled) setLeadFields([]) })
+        return () => { cancelled = true }
+    }, [readonly, clienteId, dateFrom, dateTo])
+
+    /** Valores conocidos de un campo del constructor (vacío si son libres). */
+    const valoresDe = (field: string): string[] => {
+        const clave = parseLeadFieldDim(field)
+        if (clave) return leadFields.find(f => f.clave === clave)?.valores ?? []
+        return sheetFields.find(f => makeSheetDim(f.clave) === field)?.valores ?? []
+    }
+
     // Campos de formulario del cliente → opciones extra del constructor.
     const [formFields, setFormFields] = useState<FormFieldMeta[]>([])
     useEffect(() => {
@@ -148,6 +169,7 @@ export function BiGlobalFilters({
 
     const fieldOptions: { value: string; label: string }[] = [
         ...FILTERABLE_BASE_DIMS,
+        ...leadFields.map(f => ({ value: makeLeadFieldDim(f.clave), label: f.nombre })),
         ...formFields.map(f => ({ value: makeFieldDim(f.key), label: humanizeFieldKey(f.label) })),
         ...sheetFields
             .filter(f => f.rol !== 'metrica' && !f.alta_cardinalidad)
@@ -425,13 +447,22 @@ export function BiGlobalFilters({
                                                         <option key={o.value} value={o.value} title={o.label}>{o.short}</option>
                                                     ))}
                                                 </select>
+                                                {/* Un campo de lead trae sus valores ya agrupados: se
+                                                    ofrecen en lista para no tener que escribir de memoria
+                                                    "Entre $2.000.000 a $3.000.000" carácter a carácter. */}
                                                 <input
                                                     type="text"
+                                                    list={valoresDe(c.field).length ? `bi-vals-${gi}-${ci}` : undefined}
                                                     value={c.value}
                                                     onChange={e => setCondition(gi, ci, { value: e.target.value })}
                                                     placeholder="valor (coma = varios)"
                                                     className="flex-1 min-w-[120px] px-2.5 py-1.5 text-xs rounded-lg bg-muted border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
                                                 />
+                                                {valoresDe(c.field).length > 0 && (
+                                                    <datalist id={`bi-vals-${gi}-${ci}`}>
+                                                        {valoresDe(c.field).map(v => <option key={v} value={v} />)}
+                                                    </datalist>
+                                                )}
                                                 <button
                                                     onClick={() => removeCondition(gi, ci)}
                                                     title="Quitar condición"

@@ -10,25 +10,40 @@ import {
 import type { SheetCampoDef, CampoValoresMap, CampoValorCrudo } from '@/lib/sheets/campos'
 
 /**
- * Agrupador de valores: la parte que resuelve que una hoja diga "20 a 100" y
+ * Agrupador de valores: la parte que resuelve que una fuente diga "20 a 100" y
  * otra "20-100" para el mismo dato.
  *
- * A la izquierda, los valores tal como están en los Sheets, con cuántas filas
- * tiene cada uno y de qué pestaña salen. A la derecha, los buckets resultantes.
- * Se seleccionan varios valores y se agrupan bajo un nombre propio.
+ * A la izquierda, los valores tal como están en el origen, con cuántas filas
+ * tiene cada uno y de dónde salen. A la derecha, los buckets resultantes. Se
+ * seleccionan varios valores y se agrupan bajo un nombre propio.
  *
  * El cálculo del bucket lo hace la MISMA función que usa el motor
  * (`bucketDeValor`), así que la vista previa no puede mentir.
+ *
+ * Lo comparten los campos de Sheet (columnas de Google Sheets) y los campos de
+ * lead (respuestas de formulario): el problema es idéntico y la única diferencia
+ * es de dónde viene el dato y qué variantes conviene sugerir, así que ambas
+ * cosas entran por props.
  */
-export function ValoresAgrupador({ campo, valores, totalDistintos, onChange }: {
-    campo: SheetCampoDef
+export function ValoresAgrupador({
+    campo, valores, totalDistintos, onChange,
+    origenLabel = 'Valores en los Sheets',
+    sugerir = sugerirAgrupacion,
+}: {
+    campo: Pick<SheetCampoDef, 'valores_map' | 'sin_mapear' | 'max_valores'>
     valores: CampoValorCrudo[]
     totalDistintos: number
     onChange: (valoresMap: CampoValoresMap) => void
+    /** Encabezado de la columna izquierda ("Valores en los Sheets", "Respuestas…"). */
+    origenLabel?: string
+    /** Heurística del botón "Auto-agrupar" (los rangos de formulario usan la suya). */
+    sugerir?: (valores: CampoValorCrudo[]) => CampoValoresMap
 }) {
     const [seleccion, setSeleccion] = useState<Set<string>>(new Set())
     const [nombreGrupo, setNombreGrupo] = useState('')
     const [filtro, setFiltro] = useState('')
+
+    const mapa = campo.valores_map ?? {}
 
     const visibles = useMemo(() => {
         const f = filtro.trim().toLowerCase()
@@ -37,16 +52,16 @@ export function ValoresAgrupador({ campo, valores, totalDistintos, onChange }: {
 
     // Buckets tal como quedarían ahora mismo, calculados con el motor real.
     const buckets = useMemo(() => {
-        const mapa = new Map<string, { filas: number; crudos: string[] }>()
+        const acc = new Map<string, { filas: number; crudos: string[] }>()
         for (const v of valores) {
             const b = bucketDeValor(campo, v.valor_crudo)
             if (b === null) continue
-            const e = mapa.get(b) ?? { filas: 0, crudos: [] }
+            const e = acc.get(b) ?? { filas: 0, crudos: [] }
             e.filas += v.filas
             e.crudos.push(v.valor_crudo)
-            mapa.set(b, e)
+            acc.set(b, e)
         }
-        return Array.from(mapa.entries())
+        return Array.from(acc.entries())
             .map(([bucket, d]) => ({ bucket, ...d }))
             .sort((a, b) => b.filas - a.filas)
     }, [campo, valores])
@@ -63,7 +78,7 @@ export function ValoresAgrupador({ campo, valores, totalDistintos, onChange }: {
     const agrupar = () => {
         const nombre = nombreGrupo.trim()
         if (!nombre || seleccion.size === 0) return
-        const next = { ...campo.valores_map }
+        const next = { ...mapa }
         for (const crudo of seleccion) next[normalizarValorCrudo(crudo)] = nombre
         onChange(next)
         setSeleccion(new Set())
@@ -71,16 +86,16 @@ export function ValoresAgrupador({ campo, valores, totalDistintos, onChange }: {
     }
 
     const desagrupar = (bucket: string) => {
-        const next = { ...campo.valores_map }
+        const next = { ...mapa }
         for (const [k, v] of Object.entries(next)) if (v === bucket) delete next[k]
         onChange(next)
     }
 
     const autoAgrupar = () => {
-        const sugerido = sugerirAgrupacion(valores)
+        const sugerido = sugerir(valores)
         if (Object.keys(sugerido).length === 0) return
         // Lo ya decidido a mano manda sobre la sugerencia.
-        onChange({ ...sugerido, ...campo.valores_map })
+        onChange({ ...sugerido, ...mapa })
     }
 
     if (valores.length === 0) {
@@ -88,10 +103,6 @@ export function ValoresAgrupador({ campo, valores, totalDistintos, onChange }: {
             <div className="rounded-lg border border-dashed border-border p-4 text-center">
                 <p className="text-xs text-muted-foreground">
                     Aún no hay valores detectados para este campo.
-                </p>
-                <p className="text-xs text-muted-foreground/70 mt-1">
-                    Guarda el campo con sus pestañas y columnas: al calcularlo aparecerán aquí los
-                    valores reales para agruparlos.
                 </p>
             </div>
         )
@@ -108,7 +119,7 @@ export function ValoresAgrupador({ campo, valores, totalDistintos, onChange }: {
                         Este campo tiene <strong>{totalDistintos}</strong> valores distintos (tope{' '}
                         {campo.max_valores}). Se conservarán los más frecuentes y el resto se agrupará
                         en <span className="font-mono">(otros)</span>. Deja de ofrecerse como dimensión:
-                        si apunta a un correo o un identificador, mejor usa otra columna.
+                        si apunta a un correo o un identificador, mejor usa otro campo.
                     </p>
                 </div>
             )}
@@ -134,12 +145,12 @@ export function ValoresAgrupador({ campo, valores, totalDistintos, onChange }: {
                 {/* ── Valores crudos ─────────────────────────────────────────── */}
                 <div className="space-y-1.5">
                     <p className="text-xs text-muted-foreground/60 px-1">
-                        Valores en los Sheets ({visibles.length})
+                        {origenLabel} ({visibles.length})
                     </p>
                     <div className="rounded-md border border-input bg-background max-h-80 overflow-y-auto p-1.5 space-y-0.5">
                         {visibles.map(v => {
                             const bucket = bucketDeValor(campo, v.valor_crudo)
-                            const agrupado = campo.valores_map[normalizarValorCrudo(v.valor_crudo)]
+                            const agrupado = mapa[normalizarValorCrudo(v.valor_crudo)]
                             return (
                                 <label
                                     key={v.valor_crudo}
@@ -225,7 +236,7 @@ export function ValoresAgrupador({ campo, valores, totalDistintos, onChange }: {
                         })}
                     </div>
                     <p className="text-[10px] text-muted-foreground/60 px-1">
-                        Estos son los valores por los que podrás filtrar y agrupar en el BI y en el dashboard.
+                        Estos son los valores por los que podrás filtrar y agrupar en los informes.
                     </p>
                 </div>
             </div>

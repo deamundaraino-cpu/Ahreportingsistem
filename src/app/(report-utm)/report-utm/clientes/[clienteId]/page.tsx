@@ -13,6 +13,7 @@ import { S2SIntegrationCard } from '@/components/report-utm/S2SIntegrationCard'
 import { OutboundWebhooksCard } from '@/components/report-utm/OutboundWebhooksCard'
 import { BiClienteBrandingCard } from '@/components/report-utm/BiClienteBrandingCard'
 import { BiClienteGoalsCard } from '@/components/report-utm/BiClienteGoalsCard'
+import { LeadCamposCard } from '@/components/report-utm/LeadCamposCard'
 import type { ClienteGoals } from '@/lib/report-utm/bi-metadata'
 import { createClient } from '@/utils/supabase/server'
 import { ArrowLeft, ShoppingBag, DollarSign, TrendingUp, ExternalLink } from 'lucide-react'
@@ -180,6 +181,9 @@ export default async function ClienteDetailPage({
                 clienteId={cliente.id}
                 initialGoals={(cliente.config?.goals ?? {}) as ClienteGoals}
             />
+
+            {/* Campos de formulario convertidos en dimensiones de los informes */}
+            <LeadCamposCard clienteId={cliente.id} />
 
             {/* Integrations */}
             <HotmartIntegrationCard
