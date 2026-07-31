@@ -5,9 +5,14 @@ import { TrendingUp, TrendingDown, Minus, Loader2, Target } from 'lucide-react'
 import type { BiFilters, WidgetConfig, CalculatedField, ScorecardThreshold } from '../BiTypes'
 import { WIDGET_FORMULA_KEY } from '../BiTypes'
 import type { BiMetric, ClienteGoals, GoalStatus } from '@/lib/report-utm/bi-metadata'
-import { METRIC_META, appendUtmFilters, utmFilterSignature, appendFieldFilters, fieldFilterSignature, appendDimFilters, dimFilterSignature, appendAdvancedFilter, advancedFilterSignature, widgetAdvancedSignature, withCampaignFilter, fieldMetricLabel, fieldMetricFormat, offlineFieldLabel, offlineFieldFormat, sheetFieldLabel, sheetFieldFormat, metricGlossary, isLowerBetter, evaluateGoal } from '@/lib/report-utm/bi-metadata'
+import {
+    METRIC_META, fieldMetricLabel, fieldMetricFormat,
+    offlineFieldLabel, offlineFieldFormat, sheetFieldLabel, sheetFieldFormat,
+    metricGlossary, isLowerBetter, evaluateGoal,
+} from '@/lib/report-utm/bi-metadata'
 import { fetchClienteGoals } from '@/lib/report-utm/client-goals'
 import { useBiQueryBase } from '../BiQueryContext'
+import { appendWidgetFilters, widgetFilterSignature } from '../widgetQuery'
 import { HelpTip } from '../HelpTip'
 
 interface Props {
@@ -39,6 +44,9 @@ function formatVal(value: number, format: ValFormat, decimals?: number): string 
 
 export function ScorecardWidget({ title, config, filters, calculatedFields = [] }: Props) {
     const queryBase = useBiQueryBase()
+    // Una sola firma para todo lo que obliga a recargar: filtros del informe +
+    // filtro propio del widget. Ver widgetQuery.ts.
+    const filterSig = widgetFilterSignature(filters, config)
     const [value, setValue]   = useState<number | null>(null)
     const [prev, setPrev]     = useState<number | null>(null)
     const [loading, setLoading] = useState(true)
@@ -72,10 +80,7 @@ export function ScorecardWidget({ title, config, filters, calculatedFields = [] 
         if (filters.cliente_id) params.set('cliente_id', filters.cliente_id)
         if (filters.date_from)  params.set('date_from', filters.date_from)
         if (filters.date_to)    params.set('date_to', filters.date_to)
-        appendUtmFilters(params, filters)
-        appendFieldFilters(params, filters)
-        appendDimFilters(params, filters)
-        appendAdvancedFilter(params, filters, withCampaignFilter(config.advanced_filter, config.campaign_filter))
+        appendWidgetFilters(params, filters, config)
         if (calcField) params.set(`calc[${calcField.name}]`, calcField.expression)
 
         fetch(`${queryBase}?${params}`)
@@ -94,7 +99,7 @@ export function ScorecardWidget({ title, config, filters, calculatedFields = [] 
             })
             .catch(() => setError('Error al cargar'))
             .finally(() => setLoading(false))
-    }, [queryBase, metric, formula, calcField?.expression, compare, filters.cliente_id, filters.date_from, filters.date_to, utmFilterSignature(filters), fieldFilterSignature(filters), dimFilterSignature(filters), advancedFilterSignature(filters), widgetAdvancedSignature(withCampaignFilter(config.advanced_filter, config.campaign_filter))])
+    }, [queryBase, metric, formula, calcField?.expression, compare, filterSig])
 
     // Metas del cliente para el semáforo (una sola petición por cliente).
     const clienteId = filters.cliente_id

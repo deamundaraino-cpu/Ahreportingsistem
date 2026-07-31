@@ -3,27 +3,21 @@
 import { useEffect, useState } from 'react'
 import { Skeleton } from '@/components/ui/skeleton'
 import {
-    ResponsiveContainer,
-    LineChart, Line,
-    AreaChart, Area,
-    BarChart, Bar, Cell,
-    ComposedChart,
-    ScatterChart, Scatter, ZAxis,
-    PieChart, Pie, Tooltip as PieTooltip, Legend,
-    XAxis, YAxis, Tooltip, CartesianGrid,
+    ResponsiveContainer, LineChart, Line, AreaChart, Area, BarChart, Bar, Cell,
+    ComposedChart, ScatterChart, Scatter, ZAxis, PieChart, Pie,
+    Tooltip as PieTooltip, Legend, XAxis, YAxis, Tooltip, CartesianGrid,
 } from 'recharts'
 import type { BiFilters, WidgetConfig, WidgetType, CalculatedField } from '../BiTypes'
 import { WIDGET_FORMULA_KEY } from '../BiTypes'
 import type { BiMetric, BiDimension, BiQueryRow, BiPivotRow } from '@/lib/report-utm/bi-metadata'
 import {
-    METRIC_META, DIMENSION_META, appendUtmFilters, utmFilterSignature, applyValueFilters,
-    appendFieldFilters, fieldFilterSignature, appendAdvancedFilter, advancedFilterSignature,
-    appendDimFilters, dimFilterSignature, widgetAdvancedSignature, withCampaignFilter,
+    METRIC_META, DIMENSION_META, applyValueFilters,
     fieldMetricLabel, fieldMetricFormat, fieldDimLabel, leadFieldLabel, isFieldMetric, metricGlossary,
     offlineFieldLabel, offlineFieldFormat, sheetFieldLabel, sheetFieldFormat,
     supportsPivot,
 } from '@/lib/report-utm/bi-metadata'
 import { useBiQueryBase } from '../BiQueryContext'
+import { appendWidgetFilters, widgetFilterSignature } from '../widgetQuery'
 import { HelpTip } from '../HelpTip'
 
 const COLORS = [
@@ -89,6 +83,9 @@ function ChartTooltip({ active, payload, label, format }: ChartTooltipProps) {
 
 export function ChartWidget({ title, type, config, filters, calculatedFields = [], onDrill }: Props) {
     const queryBase = useBiQueryBase()
+    // Una sola firma para todo lo que obliga a recargar: filtros del informe +
+    // filtro propio del widget. Ver widgetQuery.ts.
+    const filterSig = widgetFilterSignature(filters, config)
     const [rows, setRows]       = useState<BiQueryRow[]>([])
     const [pivot, setPivot]     = useState<{ rows: BiPivotRow[]; seriesKeys: string[] } | null>(null)
     const [loading, setLoading] = useState(true)
@@ -143,10 +140,7 @@ export function ChartWidget({ title, type, config, filters, calculatedFields = [
         if (filters.cliente_id) params.set('cliente_id', filters.cliente_id)
         if (filters.date_from)  params.set('date_from', filters.date_from)
         if (filters.date_to)    params.set('date_to', filters.date_to)
-        appendUtmFilters(params, filters)
-        appendFieldFilters(params, filters)
-        appendDimFilters(params, filters)
-        appendAdvancedFilter(params, filters, withCampaignFilter(config.advanced_filter, config.campaign_filter))
+        appendWidgetFilters(params, filters, config)
         if (calcField) params.set(`calc[${calcField.name}]`, calcField.expression)
 
         fetch(`${queryBase}?${params}`)
@@ -157,7 +151,7 @@ export function ChartWidget({ title, type, config, filters, calculatedFields = [
             })
             .catch(() => setError('Error al cargar'))
             .finally(() => setLoading(false))
-    }, [queryBase, metric, formula, calcField?.expression, dimension, dimension2, usePivot, grouping, limit, sort, filters.cliente_id, filters.date_from, filters.date_to, utmFilterSignature(filters), fieldFilterSignature(filters), dimFilterSignature(filters), advancedFilterSignature(filters), widgetAdvancedSignature(withCampaignFilter(config.advanced_filter, config.campaign_filter))])
+    }, [queryBase, metric, formula, calcField?.expression, dimension, dimension2, usePivot, grouping, limit, sort, filterSig])
 
     const dimLabel = DIMENSION_META[dimension]?.label ?? leadFieldLabel(dimension) ?? fieldDimLabel(dimension) ?? dimension
     const metLabel = formula ? formula : (METRIC_META[metric as BiMetric]?.label ?? fieldMetricLabel(metric) ?? offlineFieldLabel(metric) ?? sheetFieldLabel(metric) ?? calcField?.name ?? metric)

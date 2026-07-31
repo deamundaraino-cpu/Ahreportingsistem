@@ -81,8 +81,6 @@ export interface WidgetConfig {
     slicer_mode?: SlicerMode         // slicer: tipo de control
     source?: 'leads' | 'sales'       // slicer/distinct: tabla base
     target?: number                  // KPI: meta/objetivo
-    databars?: string[]              // tabla: columnas con barras en celda
-    colorscale?: string[]            // tabla: columnas con escala de color
     // ── Bloques estructurales / presentacionales ──
     text?: string                    // text: párrafo libre (soporta \n, **negrita**, - viñetas)
     heading_level?: 1 | 2 | 3        // heading: jerarquía del título
@@ -106,7 +104,6 @@ export interface BiFilters {
     cliente_id?: string
     date_from?: string
     date_to?: string
-    days?: string   // shortcut for last N days
     [key: string]: string | undefined
 }
 

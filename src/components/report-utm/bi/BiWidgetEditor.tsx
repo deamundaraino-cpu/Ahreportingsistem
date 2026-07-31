@@ -15,7 +15,10 @@ import {
     makeSheetDim, makeSheetMetric, makeSheetView, sheetFieldLabel, isSheetDim, isSheetToken,
     advancedFilterHasConditions, supportsPivot, PIVOT_METRICS,
     FUNNEL_STAGE_METRICS, DEFAULT_FUNNEL_STAGES, evaluateExpression,
+    matchFilterConditionNorm, metricCrossesDimension,
+    RECOMMENDED_METRICS, METRIC_GROUP_META, metricsOfGroup,
 } from '@/lib/report-utm/bi-metadata'
+import { normalizarClaveLead } from '@/lib/report-utm/lead-campos'
 import { BiFormulaInput } from './BiFormulaInput'
 import { HelpTip } from './HelpTip'
 import { BiAdvancedFilterBuilder } from './BiAdvancedFilterBuilder'
@@ -65,7 +68,17 @@ const SCORECARD_VARIANTS: { value: ScorecardVariant; label: string }[] = [
 ]
 
 const ALL_METRICS = Object.entries(METRIC_META).map(([k, v]) => ({ value: k as BiMetric, label: v.label }))
-const ALL_DIMS    = Object.entries(DIMENSION_META).map(([k, v]) => ({ value: k as BiDimension, label: v.label }))
+
+/** Una opción del selector de métricas (catálogo fijo o token dinámico). */
+interface MetricOpt { value: string; label: string }
+/** Bloque con encabezado dentro del selector. */
+interface MetricGroupUI { key: string; title: string; items: MetricOpt[] }
+// `campaign` queda fuera: es un alias histórico de `utm_campaign` que el
+// dispatcher normaliza. Ofrecer dos "Campaña" que hacen lo mismo era la causa de
+// que la gente eligiera la que menos métricas soportaba.
+const ALL_DIMS    = Object.entries(DIMENSION_META)
+    .filter(([, v]) => !v.hidden)
+    .map(([k, v]) => ({ value: k as BiDimension, label: v.label }))
 
 const COLOR_OPTIONS = ['#10b981', '#06b6d4', '#8b5cf6', '#f59e0b', '#ef4444', '#3b82f6', '#f97316', '#ec4899']
 
@@ -103,6 +116,8 @@ export function BiWidgetEditor({ widget, calculatedFields = [], clienteId, dateF
     const [advancedFilter, setAdvancedFilter] = useState<AdvancedFilter>(widget?.config?.advanced_filter ?? { groups: [] })
     const [slicerMode, setSlicerMode] = useState<'dropdown' | 'list' | 'daterange'>(widget?.config?.slicer_mode ?? 'dropdown')
     const [metricSearch, setMetricSearch] = useState('')
+    // ¿Se muestra el catálogo entero o solo las recomendadas + los campos del cliente?
+    const [showAllMetrics, setShowAllMetrics] = useState(false)
     // Etapas del embudo (config.metrics). Vacío = embudo por defecto.
     const [funnelStages, setFunnelStages] = useState<string[]>(
         Array.isArray(widget?.config?.metrics) && widget.config.metrics.length >= 2
@@ -231,20 +246,12 @@ export function BiWidgetEditor({ widget, calculatedFields = [], clienteId, dateF
      * así que un texto que no matchea deja gasto y leads a cero sin explicación.
      */
     const campaignFilterMatchesNothing = (() => {
-        const v = campaignValue.trim().toLowerCase()
+        const v = campaignValue.trim()
         if (!v || campaignOptions.length === 0) return false
-        return !campaignOptions.some(c => {
-            const name = c.toLowerCase()
-            switch (campaignOp) {
-                case 'eq':        return name === v
-                case 'neq':       return name !== v
-                case 'contains':  return name.includes(v)
-                case 'ncontains': return !name.includes(v)
-                case 'starts':    return name.startsWith(v)
-                case 'ends':      return name.endsWith(v)
-                default:          return false
-            }
-        })
+        // Se compara con la MISMA normalización que usa el motor al recortar el
+        // gasto (`matchFilterConditionNorm`). Con `toLowerCase` a secas este aviso
+        // saltaba en falso: `promo_verano` sí cruza con la campaña "Promo Verano".
+        return !campaignOptions.some(c => matchFilterConditionNorm(c, campaignOp, v))
     })()
 
     const isChart = ['line', 'area', 'bar', 'combo', 'pie', 'scatter'].includes(type)
@@ -292,10 +299,37 @@ export function BiWidgetEditor({ widget, calculatedFields = [], clienteId, dateF
         label: v.nombre,
     }))
 
-    // Dimensiones base + de campo de lead + de clave cruda + de campo de Sheet.
-    const dimOptions: { value: string; label: string }[] = [
-        ...ALL_DIMS, ...leadFieldDimOptions, ...fieldDimOptions, ...sheetDimOptions,
-    ]
+    // ── Dimensiones agrupadas ─────────────────────────────────────────────
+    // Un campo de lead del catálogo (`leadfield:`) unifica varias claves crudas
+    // de `raw_fields`. Ofrecer también esas claves crudas (`field:`) hacía que la
+    // MISMA pregunta apareciera dos veces en el desplegable, con conteos
+    // distintos, y quien elegía la cruda obtenía el desglose partido.
+    // Aquí se ocultan las crudas que ya están cubiertas por un campo del catálogo;
+    // las que nadie ha catalogado siguen disponibles en su propio bloque.
+    const clavesCubiertas = new Set(leadFields.flatMap(f => f.claves_origen))
+    const fieldDimOptionsSinCatalogar = formFields
+        .filter(f => !clavesCubiertas.has(normalizarClaveLead(f.key)))
+        .map(f => ({ value: makeFieldDim(f.key), label: humanizeFieldKey(f.label) }))
+
+    const dimGroups: MetricGroupUI[] = [
+        { key: 'generales', title: 'Generales', items: ALL_DIMS.map(d => ({ value: String(d.value), label: d.label })) },
+        {
+            key: 'cliente',
+            title: 'Campos de este cliente',
+            items: [
+                ...leadFieldDimOptions.map(o => ({ ...o, label: `${o.label} · lead` })),
+                ...sheetDimOptions.map(o => ({ ...o, label: `${o.label} · sheet` })),
+            ],
+        },
+        {
+            key: 'crudos',
+            title: 'Campos sin catalogar',
+            items: fieldDimOptionsSinCatalogar,
+        },
+    ].filter(g => g.items.length > 0)
+
+    // Lista plana equivalente, para quien solo necesita el conjunto de opciones.
+    const dimOptions: { value: string; label: string }[] = dimGroups.flatMap(g => g.items)
     // Campos filtrables (para el constructor de filtro del widget): dimensiones
     // base de filtro (UTMs, país, formulario…) + campos de formulario del cliente.
     const filterFieldOptions: { value: string; label: string }[] = [
@@ -331,12 +365,6 @@ export function BiWidgetEditor({ widget, calculatedFields = [], clienteId, dateF
     // La fórmula libre sustituye a UNA métrica, así que no aplica a la tabla
     // (multi-columna: ahí se usan los campos calculados del informe).
     const allowFormula = type === 'scorecard' || isChart
-    // Las métricas de campo (sum/avg/… de raw_fields) se usan igual que las calc.
-    const metricOptions = (allowCalc
-        ? [...ALL_METRICS, ...calcAsMetrics, ...fieldMetricOptions, ...offlineMetricOptions,
-           ...sheetViewOptions, ...sheetMetricOptions]
-        : [...ALL_METRICS, ...offlineMetricOptions, ...sheetViewOptions, ...sheetMetricOptions])
-        .filter(m => !metricSearch || m.label.toLowerCase().includes(metricSearch.toLowerCase()))
 
     // Columnas de tabla (multi-columna): el config.metric guarda la lista separada por coma.
     const tableCols = String(metric).split(',').map(s => s.trim()).filter(Boolean)
@@ -347,18 +375,73 @@ export function BiWidgetEditor({ widget, calculatedFields = [], clienteId, dateF
         setMetric(next.join(','))
     }
 
-    // Las métricas de campaña (gasto/CPL/alcance…) no se desglosan por dimensiones
-    // de lead: el gasto cae en una fila "(total)". Solo cruzan global, por fecha o
-    // por "Campaña (cruzada)". Avisamos para orientar a la dimensión correcta.
-    const isAdMetric = (m: string) => {
-        const meta = METRIC_META[m as BiMetric]
-        return !!meta && (meta.source === 'ads' || (meta.source === 'computed' && m !== 'conversion_rate'))
-    }
     const selectedMetrics = type === 'table' ? tableCols : [String(metric)]
+
+    // ── Selector de métricas: curado por defecto, catálogo entero a un clic ──
+    // Con 72 métricas fijas + las dinámicas del cliente en una lista plana,
+    // encontrar "CPL" costaba más que calcularlo a mano. Por defecto se ven las
+    // recomendadas y los campos propios del cliente; el resto queda agrupado por
+    // origen tras "Ver todas". El buscador atraviesa siempre todos los grupos.
+    const searchQ = metricSearch.trim().toLowerCase()
+    const matchesSearch = (o: MetricOpt) => !searchQ || o.label.toLowerCase().includes(searchQ)
+    const selectedSet = new Set(selectedMetrics.filter(Boolean))
+
+    // Una métrica sin datos en el rango solo estorba en la lista. Se oculta, salvo
+    // que la estés buscando por nombre o ya esté puesta en el widget: hacer
+    // desaparecer del selector algo que el widget usa sería peor que el ruido.
+    const isUseful = (o: MetricOpt) => !hasNoData(o.value) || !!searchQ || selectedSet.has(o.value)
+
+    const opt = (m: BiMetric): MetricOpt => ({ value: m, label: METRIC_META[m].label })
+    const recommended = RECOMMENDED_METRICS.map(opt)
+    const recommendedSet = new Set(RECOMMENDED_METRICS as string[])
+
+    /** Grupos del catálogo fijo, sin repetir las recomendadas. */
+    const catalogGroups: MetricGroupUI[] = METRIC_GROUP_META.map(g => ({
+        key: g.key,
+        title: g.label,
+        items: metricsOfGroup(g.key).filter(m => !recommendedSet.has(m)).map(opt),
+    }))
+
+    /** Grupos dinámicos: lo que este cliente concreto tiene configurado. */
+    const dynamicGroups: MetricGroupUI[] = [
+        { key: 'calc',       title: 'Campos calculados del informe', items: allowCalc ? calcAsMetrics : [] },
+        { key: 'formfields', title: 'Campos de formulario',          items: allowCalc ? fieldMetricOptions : [] },
+        { key: 'sheetviews', title: 'Vistas de Sheet',               items: sheetViewOptions },
+        { key: 'sheet',      title: 'Campos de Sheet',               items: sheetMetricOptions },
+        { key: 'offline',    title: 'Columnas de Sheet offline',     items: offlineMetricOptions },
+    ]
+
+    // Sin "ver todas" ni búsqueda, del catálogo fijo solo se muestran las
+    // recomendadas más lo que el widget ya tenga elegido (para no perderlo de
+    // vista al abrir un widget viejo que use una métrica del fondo del catálogo).
+    const extrasEnUso = showAllMetrics || searchQ
+        ? []
+        : (Object.keys(METRIC_META) as BiMetric[])
+            .filter(m => selectedSet.has(m) && !recommendedSet.has(m))
+            .map(opt)
+
+    const metricGroups: MetricGroupUI[] = [
+        { key: 'recommended', title: 'Recomendadas', items: recommended },
+        { key: 'inuse',       title: 'En uso en este widget', items: extrasEnUso },
+        ...(showAllMetrics || searchQ ? catalogGroups : []),
+        ...dynamicGroups,
+    ]
+        .map(g => ({ ...g, items: g.items.filter(matchesSearch).filter(isUseful) }))
+        .filter(g => g.items.length > 0)
+
+    /** Cuántas métricas del catálogo quedan escondidas tras "Ver todas". */
+    const hiddenCount = showAllMetrics || searchQ
+        ? 0
+        : catalogGroups.reduce((n, g) => n + g.items.filter(isUseful).length, 0)
+
+    // Métricas que NO se desglosan por la dimensión elegida: saldrían en la fila
+    // total. Antes esto se deducía de `source === 'ads'`, que estaba mal asignado
+    // en 56 de 72 métricas y disparaba el aviso sobre GA4, offline y suscripciones
+    // incluso agrupando por fecha. Ahora lo declara cada métrica (`breakdown`).
+    const noCrossMetrics = selectedMetrics.filter(m => m && !metricCrossesDimension(m, dim))
     const showAdDimWarning =
         type !== 'scorecard' && type !== 'funnel' && type !== 'slicer' &&
-        dim !== 'none' && dim !== 'date' && dim !== 'campaign' &&
-        selectedMetrics.some(isAdMetric)
+        dim !== 'none' && noCrossMetrics.length > 0
 
     // Un campo de Sheet vive en su propia tabla y no cruza con leads/ventas/gasto.
     // Los dos avisos que hacen falta:
@@ -822,50 +905,96 @@ export function BiWidgetEditor({ widget, calculatedFields = [], clienteId, dateF
                                 </div>
                                 {type === 'table' ? (
                                     <>
-                                        {/* Selector multi-columna */}
-                                        <div className="max-h-44 overflow-y-auto rounded-lg border border-border bg-muted/30 divide-y divide-border">
-                                            {metricOptions.map(m => {
-                                                const checked = tableCols.includes(m.value)
-                                                const order = tableCols.indexOf(m.value)
-                                                return (
-                                                    <label key={m.value} className="flex items-center gap-2 px-3 py-2 cursor-pointer hover:bg-accent transition-colors">
-                                                        <input
-                                                            type="checkbox"
-                                                            checked={checked}
-                                                            onChange={() => toggleTableCol(m.value)}
-                                                            className="h-3.5 w-3.5 rounded accent-emerald-500"
-                                                        />
-                                                        <span className="text-xs text-foreground flex-1">{m.label}</span>
-                                                        {hasNoData(m.value) && (
-                                                            <span className="text-[9px] text-amber-600 dark:text-amber-400">sin datos</span>
-                                                        )}
-                                                        {checked && (
-                                                            <span className="text-[10px] font-mono text-emerald-600 dark:text-emerald-400">
-                                                                col {order + 1}
-                                                            </span>
-                                                        )}
-                                                    </label>
-                                                )
-                                            })}
+                                        {/* Selector multi-columna, agrupado por origen */}
+                                        <div className="max-h-56 overflow-y-auto rounded-lg border border-border bg-muted/30">
+                                            {metricGroups.map(g => (
+                                                <div key={g.key}>
+                                                    <div className="sticky top-0 z-10 px-3 py-1 bg-muted/95 backdrop-blur border-y border-border text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                                                        {g.title}
+                                                    </div>
+                                                    <div className="divide-y divide-border">
+                                                        {g.items.map(m => {
+                                                            const checked = tableCols.includes(m.value)
+                                                            const order = tableCols.indexOf(m.value)
+                                                            const noCross = !metricCrossesDimension(m.value, dim)
+                                                            return (
+                                                                <label key={`${g.key}:${m.value}`} className="flex items-center gap-2 px-3 py-2 cursor-pointer hover:bg-accent transition-colors">
+                                                                    <input
+                                                                        type="checkbox"
+                                                                        checked={checked}
+                                                                        onChange={() => toggleTableCol(m.value)}
+                                                                        className="h-3.5 w-3.5 rounded accent-emerald-500"
+                                                                    />
+                                                                    <span className="text-xs text-foreground flex-1">{m.label}</span>
+                                                                    {noCross && (
+                                                                        <span
+                                                                            title={`No se desglosa por ${resolveDimLabel(dim)}: saldría en la fila “(total)”.`}
+                                                                            className="text-[9px] text-amber-600 dark:text-amber-400"
+                                                                        >
+                                                                            no cruza
+                                                                        </span>
+                                                                    )}
+                                                                    {hasNoData(m.value) && (
+                                                                        <span className="text-[9px] text-amber-600 dark:text-amber-400">sin datos</span>
+                                                                    )}
+                                                                    {checked && (
+                                                                        <span className="text-[10px] font-mono text-emerald-600 dark:text-emerald-400">
+                                                                            col {order + 1}
+                                                                        </span>
+                                                                    )}
+                                                                </label>
+                                                            )
+                                                        })}
+                                                    </div>
+                                                </div>
+                                            ))}
                                         </div>
-                                        <p className="text-[10px] text-muted-foreground mt-1">
-                                            {tableCols.length === 0
-                                                ? 'Selecciona al menos una columna.'
-                                                : `${tableCols.length} columna${tableCols.length > 1 ? 's' : ''} · se muestran en el orden marcado`}
-                                        </p>
+                                        <div className="flex items-center justify-between gap-2 mt-1">
+                                            <p className="text-[10px] text-muted-foreground">
+                                                {tableCols.length === 0
+                                                    ? 'Selecciona al menos una columna.'
+                                                    : `${tableCols.length} columna${tableCols.length > 1 ? 's' : ''} · se muestran en el orden marcado`}
+                                            </p>
+                                            {hiddenCount > 0 && (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setShowAllMetrics(true)}
+                                                    className="text-[10px] font-medium text-emerald-600 dark:text-emerald-400 hover:underline shrink-0"
+                                                >
+                                                    Ver todas ({hiddenCount} más)
+                                                </button>
+                                            )}
+                                        </div>
                                     </>
                                 ) : (
-                                    <select
-                                        value={metric}
-                                        onChange={e => setMetric(e.target.value)}
-                                        className="w-full px-3 py-2 text-sm rounded-lg bg-muted border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
-                                    >
-                                        {metricOptions.map(m => (
-                                            <option key={m.value} value={m.value}>
-                                                {m.label}{hasNoData(m.value) ? ' · sin datos en el rango' : ''}
-                                            </option>
-                                        ))}
-                                    </select>
+                                    <>
+                                        <select
+                                            value={metric}
+                                            onChange={e => setMetric(e.target.value)}
+                                            className="w-full px-3 py-2 text-sm rounded-lg bg-muted border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
+                                        >
+                                            {metricGroups.map(g => (
+                                                <optgroup key={g.key} label={g.title}>
+                                                    {g.items.map(m => (
+                                                        <option key={`${g.key}:${m.value}`} value={m.value}>
+                                                            {m.label}
+                                                            {!metricCrossesDimension(m.value, dim) ? ' · no cruza con esta dimensión' : ''}
+                                                            {hasNoData(m.value) ? ' · sin datos en el rango' : ''}
+                                                        </option>
+                                                    ))}
+                                                </optgroup>
+                                            ))}
+                                        </select>
+                                        {hiddenCount > 0 && (
+                                            <button
+                                                type="button"
+                                                onClick={() => setShowAllMetrics(true)}
+                                                className="mt-1 text-[10px] font-medium text-emerald-600 dark:text-emerald-400 hover:underline"
+                                            >
+                                                Ver todas las métricas ({hiddenCount} más)
+                                            </button>
+                                        )}
+                                    </>
                                 )}
                                 {hasNoData(String(metric)) && (
                                     <div className="mt-2 flex items-start gap-2 rounded-lg border border-amber-300/60 dark:border-amber-500/30 bg-amber-50/60 dark:bg-amber-500/10 px-3 py-2">
@@ -891,16 +1020,23 @@ export function BiWidgetEditor({ widget, calculatedFields = [], clienteId, dateF
                                         onChange={e => setDim(e.target.value)}
                                         className="w-full px-3 py-2 text-sm rounded-lg bg-muted border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
                                     >
-                                        {dimOptions.filter(d => d.value !== 'none').map(d => (
-                                            <option key={d.value} value={d.value}>{d.label}</option>
+                                        {dimGroups.map(g => (
+                                            <optgroup key={g.key} label={g.title}>
+                                                {g.items.filter(d => d.value !== 'none').map(d => (
+                                                    <option key={`${g.key}:${d.value}`} value={d.value}>{d.label}</option>
+                                                ))}
+                                            </optgroup>
                                         ))}
                                     </select>
                                     {showAdDimWarning && (
                                         <div className="mt-2 flex items-start gap-2 rounded-lg border border-amber-300/60 dark:border-amber-500/30 bg-amber-50/60 dark:bg-amber-500/10 px-3 py-2">
                                             <AlertTriangle className="h-3.5 w-3.5 text-amber-500 shrink-0 mt-0.5" />
                                             <p className="text-[11px] text-amber-700 dark:text-amber-300 leading-snug">
-                                                El gasto y las métricas de campaña no se desglosan por <strong>{resolveDimLabel(dim)}</strong> (caerían en una fila “(total)”).
-                                                Para ver gasto / CPL por campaña usa la dimensión <strong>Campaña (cruzada)</strong>; o usa <strong>Fecha</strong> para la evolución.
+                                                <strong>{noCrossMetrics.map(resolveMetricLabel).join(', ')}</strong>{' '}
+                                                {noCrossMetrics.length === 1 ? 'no se desglosa' : 'no se desglosan'} por{' '}
+                                                <strong>{resolveDimLabel(dim)}</strong>: {noCrossMetrics.length === 1 ? 'caería' : 'caerían'} en la fila “(total)”.
+                                                Usa <strong>Fecha</strong> para la evolución, o mide{' '}
+                                                {noCrossMetrics.length === 1 ? 'esa métrica' : 'esas métricas'} en un scorecard aparte.
                                             </p>
                                         </div>
                                     )}

@@ -1,96 +1,29 @@
+// ── Diagnóstico del cruce UTM ↔ campañas ──────────────────────────────
+//
+// Alimenta /report-utm/cruce-campanas: qué UTM de los leads cruzan con una
+// campaña real, por qué método, cuáles no cruzan y qué campaña se les parece.
+//
+// El CRUCE en sí (índice de campañas, cascada de matching, overrides) vive en
+// `campaign-resolver.ts`, que también usa el motor del BI. Aquí queda solo lo
+// específico del diagnóstico: similitud por Dice, detección de UTM inválidos y
+// los agregados que consume la UI.
+//
+// Este módulo tuvo además un motor de consulta propio (`runCampaignQuery`) para
+// la dimensión "Campaña (cruzada)". Se eliminó: solo sabía emitir ~20 de las 72
+// métricas del catálogo e ignoraba por completo los campos calculados. Hoy la
+// dimensión "Campaña" del motor principal (`bi-query.ts`) hace el mismo cruce
+// con todas las métricas.
+
 import { createAdminClient } from '@/utils/supabase/server'
-import type { BiQueryRow, AdvancedFilter } from './bi-metadata'
+import type { AdvancedFilter } from './bi-metadata'
+import { normLabel, round2 } from './bi-metadata'
+import { fetchAllRows } from './bi-query'
 import {
-    AD_JSONB_METRICS, campaignNameFilterPredicate, hasCampaignFilter,
-    hasNonAttributableFilter, advancedFilterHasConditions,
-} from './bi-metadata'
-import {
-    fetchAllRows, applyDimFilters, evalAdvancedRow, collectAdvancedColumns,
-    leadFilterKey, salesFilterKey,
-} from './bi-query'
+    loadCampaignIndex, loadOverrides, matchToCampaign, resolvePublicClienteId,
+} from './campaign-resolver'
+import type { CampaignIndex, MatchMethod, Override } from './campaign-resolver'
 
-function zeroAdMetrics(): Record<string, number> {
-    const e: Record<string, number> = {}
-    for (const k of AD_JSONB_METRICS) e[k] = 0
-    return e
-}
-
-// ============================================================
-// Cruce leads/ventas ↔ campañas (gasto).
-// Estrategia en cascada porque los UTMs son inconsistentes.
-// Prioridad (todos los matches de aquí son EXACTOS = automáticos):
-//   1. overrides manuales (report_utm.utm_campaign_map) → el trafficker manda
-//   2. utm_id === campaign_id (Meta dinámico)
-//   3. utm_id === ad_id (sube a su campaña)
-//   4. utm_campaign normalizado === nombre de campaña
-//   5. utm_content normalizado === nombre de ad (o de campaña)
-//   6. utm_term normalizado === nombre de adset
-//   7. sin match → "(sin campaña)"
-// Lo que no cruza exacto se ofrece como SUGERENCIA por similitud
-// (suggestCampaignMatches) para que el trafficker confirme — nunca se aplica solo.
-// ============================================================
-
-export type MatchMethod =
-    | 'override'
-    | 'utm_id_campaign'
-    | 'utm_id_ad'
-    | 'name'
-    | 'content_ad'
-    | 'term_adset'
-    | 'none'
-
-// Margen extra (días) para el índice de campañas respecto al rango de leads:
-// registra campañas cuyo gasto cayó justo fuera del rango exacto, sin sumar su
-// gasto al periodo (el gasto solo se acumula dentro de [dateFrom, dateTo]).
-const INDEX_MARGIN_DAYS = 30
-
-function shiftDate(isoDate: string, deltaDays: number): string {
-    const d = new Date(isoDate + 'T00:00:00Z')
-    d.setUTCDate(d.getUTCDate() + deltaDays)
-    return d.toISOString().slice(0, 10)
-}
-
-interface CampaignAgg {
-    key: string
-    campaign_id: string | null
-    name: string
-    platform: 'meta' | 'tiktok'
-    spend: number
-    impressions: number
-    clicks: number
-    platform_leads: number   // leads reportados por la plataforma (referencia)
-    extra: Record<string, number>   // métricas de campaña aditivas (alcance, video, compras…)
-}
-
-interface CampaignIndex {
-    campaigns: Map<string, CampaignAgg>     // key → agg
-    byCampaignId: Map<string, string>        // campaign_id → key
-    byAdId: Map<string, string>              // ad_id → key (de la campaña)
-    byName: Map<string, string>              // nombre de campaña normalizado → key
-    byAdName: Map<string, string>            // nombre de ad normalizado → key (campaña)
-    byAdsetName: Map<string, string>         // nombre de adset normalizado → key (campaña)
-}
-
-interface Override {
-    match_field: string
-    match_value: string
-    campaign_id: string | null
-    campaign_name: string | null
-    platform: string
-}
-
-// Normalización fuerte: minúsculas, sin acentos, _ y - como espacios, espacios
-// colapsados. Convierte muchos "casi-iguales" (promo_verano vs Promo Verano) en
-// matches EXACTOS reales.
-function normName(s: string): string {
-    return s
-        .toLowerCase()
-        .normalize('NFD')
-        .replace(/[̀-ͯ]/g, '')   // quita acentos (marcas combinantes)
-        .replace(/[_-]+/g, ' ')            // _ y - → espacio
-        .trim()
-        .replace(/\s+/g, ' ')
-}
+export type { MatchMethod } from './campaign-resolver'
 
 // Coeficiente de Sørensen-Dice sobre bigramas de caracteres → [0,1].
 // Sin dependencias; tolera tokens reordenados/parciales razonablemente.
@@ -118,183 +51,6 @@ function diceCoefficient(a: string, b: string): number {
     return total === 0 ? 0 : (2 * inter) / total
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function num(v: any): number {
-    const n = typeof v === 'string' ? parseFloat(v) : v
-    return Number.isFinite(n) ? Number(n) : 0
-}
-
-/**
- * Carga y agrega las campañas (Meta + TikTok) de metricas_diarias para
- * el cliente público en el rango, e indexa por id, ad_id y nombre.
- */
-async function loadCampaignIndex(
-    publicClienteId: string,
-    dateFrom: string,
-    dateTo: string
-): Promise<CampaignIndex> {
-    const supabase = await createAdminClient()
-    // Ventana ampliada para registrar claves de campañas/ads/adsets que pudieron
-    // gastar justo fuera del rango. El gasto solo se acumula dentro del rango exacto.
-    const keyFrom = shiftDate(dateFrom, -INDEX_MARGIN_DAYS)
-    const { data, error } = await supabase
-        .from('metricas_diarias')
-        .select('fecha,meta_campaigns,meta_ads,meta_adsets,tiktok_campaigns')
-        .eq('cliente_id', publicClienteId)
-        .gte('fecha', keyFrom)
-        .lte('fecha', dateTo)
-        .limit(2000)
-
-    const idx: CampaignIndex = {
-        campaigns: new Map(),
-        byCampaignId: new Map(),
-        byAdId: new Map(),
-        byName: new Map(),
-        byAdName: new Map(),
-        byAdsetName: new Map(),
-    }
-    if (error || !data) return idx
-
-    function upsert(platform: 'meta' | 'tiktok', campId: string | null, name: string, addSpend: boolean, m: { spend: number; impressions: number; clicks: number; leads: number }) {
-        const key = `${platform}:${campId ?? normName(name)}`
-        let agg = idx.campaigns.get(key)
-        if (!agg) {
-            agg = { key, campaign_id: campId, name: name || '(sin nombre)', platform, spend: 0, impressions: 0, clicks: 0, platform_leads: 0, extra: zeroAdMetrics() }
-            idx.campaigns.set(key, agg)
-            if (campId) idx.byCampaignId.set(campId, key)
-            if (name) idx.byName.set(normName(name), key)
-        }
-        if (addSpend) {
-            agg.spend += m.spend
-            agg.impressions += m.impressions
-            agg.clicks += m.clicks
-            agg.platform_leads += m.leads
-        }
-        return key
-    }
-
-    for (const row of data as Record<string, unknown>[]) {
-        const inRange = typeof row.fecha === 'string' ? row.fecha >= dateFrom : true
-        const metaCamps = (row.meta_campaigns as Record<string, unknown>[] | null) ?? []
-        for (const c of metaCamps) {
-            const key = upsert('meta', (c.campaign_id as string) ?? null, (c.name as string) ?? '', inRange, {
-                spend: num(c.spend), impressions: num(c.impressions), clicks: num(c.clicks), leads: num(c.leads),
-            })
-            if (inRange) {
-                const agg = idx.campaigns.get(key)!
-                for (const k of AD_JSONB_METRICS) agg.extra[k] += num(c[k])
-            }
-        }
-        // Indexa ad_id y nombre de ad/adset → campaña (para cruzar utm_id=ad_id,
-        // utm_content=ad_name, utm_term=adset_name).
-        const metaAds = (row.meta_ads as Record<string, unknown>[] | null) ?? []
-        for (const a of metaAds) {
-            const campId = a.campaign_id as string | null
-            const campKey = campId ? idx.byCampaignId.get(campId) : undefined
-            if (!campKey) continue
-            const adId = a.ad_id as string | null
-            if (adId) idx.byAdId.set(adId, campKey)
-            const adName = a.ad_name as string | null
-            if (adName) idx.byAdName.set(normName(adName), campKey)
-            const adsetName = a.adset_name as string | null
-            if (adsetName) idx.byAdsetName.set(normName(adsetName), campKey)
-        }
-        const metaAdsets = (row.meta_adsets as Record<string, unknown>[] | null) ?? []
-        for (const a of metaAdsets) {
-            const campId = a.campaign_id as string | null
-            const campKey = campId ? idx.byCampaignId.get(campId) : undefined
-            if (!campKey) continue
-            const adsetName = a.adset_name as string | null
-            if (adsetName) idx.byAdsetName.set(normName(adsetName), campKey)
-        }
-        const ttCamps = (row.tiktok_campaigns as Record<string, unknown>[] | null) ?? []
-        for (const c of ttCamps) {
-            upsert('tiktok', (c.campaign_id as string) ?? null, (c.name as string) ?? '', inRange, {
-                spend: num(c.spend), impressions: num(c.impressions), clicks: num(c.clicks), leads: num(c.conversions),
-            })
-        }
-    }
-
-    return idx
-}
-
-/** Lista las campañas disponibles (para poblar selectores de mapeo). */
-export async function listCampaigns(
-    clienteId: string,
-    dateFrom?: string,
-    dateTo?: string
-): Promise<{ campaign_id: string | null; name: string; platform: 'meta' | 'tiktok'; spend: number }[]> {
-    const supabase = await createAdminClient()
-    const from = dateFrom ?? new Date(Date.now() - 90 * 86400_000).toISOString().slice(0, 10)
-    const to   = dateTo   ?? new Date().toISOString().slice(0, 10)
-
-    const { data: rtmCliente } = await supabase
-        .schema('report_utm')
-        .from('clientes')
-        .select('public_cliente_id')
-        .eq('id', clienteId)
-        .maybeSingle()
-    const publicClienteId = rtmCliente?.public_cliente_id as string | undefined
-    if (!publicClienteId) return []
-
-    const idx = await loadCampaignIndex(publicClienteId, from, to)
-    return campaignsFromIndex(idx)
-}
-
-/** Cascada de matching de un registro (lead/venta) a una campaña. */
-function matchToCampaign(
-    rec: { utm_id?: string | null; utm_campaign?: string | null; utm_content?: string | null; utm_term?: string | null; utm_source?: string | null },
-    idx: CampaignIndex,
-    overrides: Override[]
-): { key: string | null; method: MatchMethod } {
-    // 1. overrides manuales → máxima prioridad (el trafficker corrige el motor)
-    for (const ov of overrides) {
-        const val = (rec as Record<string, unknown>)[ov.match_field] as string | undefined
-        if (val && normName(val) === normName(ov.match_value)) {
-            const key = ov.campaign_id
-                ? `${ov.platform}:${ov.campaign_id}`
-                : ov.campaign_name ? `${ov.platform}:${normName(ov.campaign_name)}` : null
-            if (key) return { key, method: 'override' }
-        }
-    }
-    // 2. utm_id === campaign_id
-    if (rec.utm_id && idx.byCampaignId.has(rec.utm_id)) {
-        return { key: idx.byCampaignId.get(rec.utm_id)!, method: 'utm_id_campaign' }
-    }
-    // 3. utm_id === ad_id → su campaña
-    if (rec.utm_id && idx.byAdId.has(rec.utm_id)) {
-        return { key: idx.byAdId.get(rec.utm_id)!, method: 'utm_id_ad' }
-    }
-    // 4. utm_campaign === nombre de campaña (normalizado)
-    if (rec.utm_campaign) {
-        const k = idx.byName.get(normName(rec.utm_campaign))
-        if (k) return { key: k, method: 'name' }
-    }
-    // 5. utm_content === nombre de ad (o de campaña) → su campaña
-    if (rec.utm_content) {
-        const n = normName(rec.utm_content)
-        const k = idx.byAdName.get(n) ?? idx.byName.get(n)
-        if (k) return { key: k, method: 'content_ad' }
-    }
-    // 6. utm_term === nombre de adset → su campaña
-    if (rec.utm_term) {
-        const k = idx.byAdsetName.get(normName(rec.utm_term))
-        if (k) return { key: k, method: 'term_adset' }
-    }
-    return { key: null, method: 'none' }
-}
-
-async function loadOverrides(clienteId: string): Promise<Override[]> {
-    const supabase = await createAdminClient()
-    const { data } = await supabase
-        .schema('report_utm')
-        .from('utm_campaign_map')
-        .select('match_field,match_value,campaign_id,campaign_name,platform')
-        .eq('cliente_id', clienteId)
-        .limit(2000)
-    return (data as Override[] | null) ?? []
-}
-
 export interface CampaignCrossParams {
     cliente_id: string          // report_utm cliente id (requerido)
     date_from?: string
@@ -304,153 +60,20 @@ export interface CampaignCrossParams {
     limit?: number
 }
 
-/**
- * Cruce principal: devuelve filas por campaña con gasto real + leads/ventas
- * cruzados + métricas derivadas (CPL, CPA, ROAS). Formato BiQueryRow para
- * encajar directamente en tablas/gráficas del BI.
- */
-export async function runCampaignQuery(params: CampaignCrossParams): Promise<BiQueryRow[]> {
-    const supabase = await createAdminClient()
-    const dateFrom = params.date_from ?? new Date(Date.now() - 30 * 86400_000).toISOString().slice(0, 10)
-    const dateTo   = params.date_to   ?? new Date().toISOString().slice(0, 10)
+/** Lista las campañas disponibles (para poblar selectores de mapeo). */
+export async function listCampaigns(
+    clienteId: string,
+    dateFrom?: string,
+    dateTo?: string
+): Promise<{ campaign_id: string | null; name: string; platform: 'meta' | 'tiktok'; spend: number }[]> {
+    const from = dateFrom ?? new Date(Date.now() - 90 * 86400_000).toISOString().slice(0, 10)
+    const to   = dateTo   ?? new Date().toISOString().slice(0, 10)
 
-    // Resolver el cliente público (para metricas_diarias)
-    const { data: rtmCliente } = await supabase
-        .schema('report_utm')
-        .from('clientes')
-        .select('public_cliente_id')
-        .eq('id', params.cliente_id)
-        .maybeSingle()
-    const publicClienteId = rtmCliente?.public_cliente_id as string | undefined
-    if (!publicClienteId) return []   // sin link al cliente de campañas no hay cruce
+    const publicClienteId = await resolvePublicClienteId(clienteId)
+    if (!publicClienteId) return []
 
-    const [idx, overrides] = await Promise.all([
-        loadCampaignIndex(publicClienteId, dateFrom, dateTo),
-        loadOverrides(params.cliente_id),
-    ])
-
-    // Acumulador por campaña
-    type Acc = { name: string; spend: number; impressions: number; clicks: number; leads: number; sales: number; revenue: number; methods: Record<string, number>; extra: Record<string, number> }
-    const acc = new Map<string, Acc>()
-    function ensure(key: string, name: string): Acc {
-        let a = acc.get(key)
-        if (!a) { a = { name, spend: 0, impressions: 0, clicks: 0, leads: 0, sales: 0, revenue: 0, methods: {}, extra: zeroAdMetrics() }; acc.set(key, a) }
-        return a
-    }
-    // ── Filtros del informe ────────────────────────────────────────────
-    // Leads/ventas se recortan por cualquier campo (planos + avanzado). El GASTO
-    // solo puede recortarse por NOMBRE de campaña; bajo un filtro no atribuible
-    // (país/formulario/campo/plataforma) el gasto se anula (spend=0, ratios null).
-    const nameMatches = campaignNameFilterPredicate(params.filters, params.advancedFilter)
-    const campaignFilterActive = hasCampaignFilter(params.filters, params.advancedFilter)
-    const nonAttrib = hasNonAttributableFilter(params.filters, params.advancedFilter)
-    const hasAdv = advancedFilterHasConditions(params.advancedFilter)
-
-    // Sembrar con las campañas conocidas (para que aparezcan aunque no tengan
-    // leads), saltando las que no pasan el filtro de nombre. Bajo un filtro no
-    // atribuible no se siembra gasto: solo aparecen campañas con leads/ventas
-    // que matchean, con gasto en 0.
-    if (!nonAttrib) {
-        for (const c of idx.campaigns.values()) {
-            if (!nameMatches(c.name)) continue
-            const a = ensure(c.key, c.name)
-            a.spend += c.spend; a.impressions += c.impressions; a.clicks += c.clicks
-            for (const k of AD_JSONB_METRICS) a.extra[k] += c.extra[k]
-        }
-    }
-    const UNMATCHED = '__none__'
-
-    // Columnas extra necesarias para evaluar el filtro avanzado en cada tabla.
-    // `id` es imprescindible para la paginación por keyset de fetchAllRows.
-    const advLead = collectAdvancedColumns(params.advancedFilter, 'leads')
-    const leadCols = new Set(['id', 'utm_id', 'utm_campaign', 'utm_content', 'utm_term', 'utm_source'])
-    for (const c of advLead.cols) leadCols.add(c)
-    if (advLead.needsRawFields) leadCols.add('raw_fields')
-    const advSale = collectAdvancedColumns(params.advancedFilter, 'sales')
-    const saleCols = new Set(['id', 'utm_id', 'utm_campaign', 'utm_content', 'utm_term', 'utm_source', 'amount', 'status'])
-    for (const c of advSale.cols) saleCols.add(c)
-
-    // Leads (paginado completo para no toparse con el límite de PostgREST)
-    let leads = await fetchAllRows(() => applyDimFilters(
-        supabase.schema('report_utm').from('lead_events')
-            .select(Array.from(leadCols).join(','))
-            .gte('created_at', dateFrom + 'T00:00:00')
-            .lte('created_at', dateTo + 'T23:59:59')
-            .eq('cliente_id', params.cliente_id),
-        params.filters, leadFilterKey,
-    ))
-    if (hasAdv) leads = leads.filter(l => evalAdvancedRow(l, params.advancedFilter, 'leads'))
-    for (const l of leads) {
-        const m = matchToCampaign(l, idx, overrides)
-        const key = m.key ?? UNMATCHED
-        const a = ensure(key, m.key ? (idx.campaigns.get(m.key)?.name ?? key) : '(sin campaña)')
-        a.leads += 1
-        a.methods[m.method] = (a.methods[m.method] ?? 0) + 1
-    }
-
-    // Ventas (aprobadas, paginado completo)
-    let sales = await fetchAllRows(() => applyDimFilters(
-        supabase.schema('report_utm').from('sales_events')
-            .select(Array.from(saleCols).join(','))
-            .gte('created_at', dateFrom + 'T00:00:00')
-            .lte('created_at', dateTo + 'T23:59:59')
-            .eq('cliente_id', params.cliente_id)
-            .eq('status', 'approved'),
-        params.filters, salesFilterKey,
-    ))
-    if (hasAdv) sales = sales.filter(s => evalAdvancedRow(s, params.advancedFilter, 'sales'))
-    for (const s of sales) {
-        const m = matchToCampaign(s, idx, overrides)
-        const key = m.key ?? UNMATCHED
-        const a = ensure(key, m.key ? (idx.campaigns.get(m.key)?.name ?? key) : '(sin campaña)')
-        a.sales += 1
-        a.revenue += num(s.amount)
-    }
-
-    // Construir filas BiQueryRow. Con filtro de campaña activo se descartan las
-    // filas cuyo nombre no matchea (incluye el cubo '(sin campaña)').
-    const accEntries = campaignFilterActive
-        ? Array.from(acc.entries()).filter(([, a]) => nameMatches(a.name))
-        : Array.from(acc.entries())
-    const rows: BiQueryRow[] = accEntries.map(([key, a]) => {
-        const spend = round2(a.spend)
-        const revenue = round2(a.revenue)
-        const reach = a.extra.reach ?? 0
-        // Cada campaña es de una plataforma → su gasto va a meta o tiktok.
-        const isTiktok = key.startsWith('tiktok:')
-        const row: BiQueryRow = {
-            dimension_value: a.name,
-            spend,
-            meta_spend: isTiktok ? 0 : spend,
-            tiktok_spend: isTiktok ? spend : 0,
-            impressions: a.impressions,
-            clicks: a.clicks,
-            leads_count: a.leads,
-            // Leads (todos los canales) = leads reales del CRM cruzados a la campaña (ya incluyen los
-            // de Meta Lead Ads, ingeridos a lead_events). NO se suma leads_form (duplicaría).
-            leads_total: a.leads,
-            sales_count: a.sales,
-            revenue,
-            cpl: a.leads > 0 && spend > 0 ? round2(spend / a.leads) : null,
-            cpa: a.sales > 0 && spend > 0 ? round2(spend / a.sales) : null,
-            roas: spend > 0 ? round2(revenue / spend) : null,
-            conversion_rate: a.leads > 0 ? round2((a.sales / a.leads) * 100) : null,
-            cpc: a.clicks > 0 && spend > 0 ? round2(spend / a.clicks) : null,
-            cpm: a.impressions > 0 && spend > 0 ? round2((spend / a.impressions) * 1000) : null,
-            // Métricas de campaña aditivas + ratios recalculados
-            frequency: reach > 0 ? round2(a.impressions / reach) : null,
-            ctr: a.impressions > 0 ? round2((a.clicks / a.impressions) * 100) : null,
-        }
-        for (const k of AD_JSONB_METRICS) row[k] = round2(a.extra[k])
-        return row
-    })
-
-    rows.sort((x, y) => Number(y.spend ?? 0) - Number(x.spend ?? 0))
-    return params.limit ? rows.slice(0, params.limit) : rows
-}
-
-function round2(n: number): number {
-    return Math.round(n * 100) / 100
+    const idx = await loadCampaignIndex(publicClienteId, from, to)
+    return idx ? campaignsFromIndex(idx) : []
 }
 
 // Umbral mínimo de similitud para ofrecer una sugerencia (no autoaplicar).
@@ -488,19 +111,16 @@ async function loadCrossContext(params: CampaignCrossParams): Promise<CrossConte
     const dateFrom = params.date_from ?? new Date(Date.now() - 30 * 86400_000).toISOString().slice(0, 10)
     const dateTo   = params.date_to   ?? new Date().toISOString().slice(0, 10)
 
-    const { data: rtmCliente } = await supabase
-        .schema('report_utm')
-        .from('clientes')
-        .select('public_cliente_id')
-        .eq('id', params.cliente_id)
-        .maybeSingle()
-    const publicClienteId = rtmCliente?.public_cliente_id as string | undefined
+    const publicClienteId = await resolvePublicClienteId(params.cliente_id)
     if (!publicClienteId) return null
 
     const [idx, overrides] = await Promise.all([
         loadCampaignIndex(publicClienteId, dateFrom, dateTo),
         loadOverrides(params.cliente_id),
     ])
+    // Sin índice completo el diagnóstico mentiría: mostraría como "no cruza"
+    // justo lo que no se pudo leer. Mejor no mostrar nada.
+    if (!idx) return null
 
     const leads = await fetchAllRows(() =>
         supabase.schema('report_utm').from('lead_events')
@@ -529,12 +149,12 @@ export interface UnmatchedRow {
 
 /** Mejor campaña candidata para un valor UTM por similitud de nombre. */
 function bestSuggestion(value: string, idx: CampaignIndex): CampaignSuggestion | null {
-    const v = normName(value)
+    const v = normLabel(value)
     if (!v) return null
     let best: CampaignSuggestion | null = null
     let bestScore = 0
     for (const c of idx.campaigns.values()) {
-        const score = diceCoefficient(v, normName(c.name))
+        const score = diceCoefficient(v, normLabel(c.name))
         if (score > bestScore) {
             bestScore = score
             best = { campaign_id: c.campaign_id, campaign_name: c.name, platform: c.platform, confidence: Math.round(score * 100) }

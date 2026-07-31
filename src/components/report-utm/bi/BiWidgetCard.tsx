@@ -182,6 +182,16 @@ function WidgetRenderer({
             return <TextWidget type={widget.type} title={widget.title} config={widget.config} />
         case 'summary':
             return <SummaryWidget title={widget.title} config={widget.config} filters={filters} />
+        case 'section':
+            // Las secciones las intercepta BiReportCanvas antes de delegar aquí
+            // (tienen su propio contenedor con grid y drop zone). Llegar a este
+            // punto significa una sección anidada dentro de otra, que el editor
+            // no deja crear: se avisa en vez de rotularla "widget desconocido".
+            return (
+                <div className="rounded-2xl border border-border bg-muted p-5 text-xs text-muted-foreground">
+                    Una sección no puede ir dentro de otra sección.
+                </div>
+            )
         default:
             return (
                 <div className="rounded-2xl border border-border bg-muted p-5 text-xs text-muted-foreground">

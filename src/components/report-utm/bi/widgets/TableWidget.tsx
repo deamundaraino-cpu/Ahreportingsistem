@@ -6,15 +6,14 @@ import { Skeleton } from '@/components/ui/skeleton'
 import type { BiFilters, WidgetConfig, ConditionalRule, CalculatedField } from '../BiTypes'
 import type { BiMetric, BiDimension, BiQueryRow } from '@/lib/report-utm/bi-metadata'
 import {
-    METRIC_META, DIMENSION_META, appendUtmFilters, utmFilterSignature, applyValueFilters,
-    appendFieldFilters, fieldFilterSignature, appendAdvancedFilter, advancedFilterSignature,
-    appendDimFilters, dimFilterSignature, widgetAdvancedSignature, withCampaignFilter,
+    METRIC_META, DIMENSION_META, applyValueFilters, unifiedTarget,
     fieldMetricLabel, fieldMetricFormat, fieldDimLabel, leadFieldLabel, isFieldMetric, parseFieldMetric,
     isAdditiveMetric,
     isOfflineFieldMetric, parseOfflineFieldMetric, offlineFieldLabel, offlineFieldFormat,
     isSheetToken, sheetFieldLabel, sheetFieldFormat,
 } from '@/lib/report-utm/bi-metadata'
 import { useBiQueryBase } from '../BiQueryContext'
+import { appendWidgetFilters, widgetFilterSignature } from '../widgetQuery'
 
 interface Props {
     title: string
@@ -50,6 +49,9 @@ function fmtVal(value: number | null | undefined, format: ColFormat, decimals?: 
 
 export function TableWidget({ title, config, filters, calculatedFields = [], h = 1 }: Props) {
     const queryBase = useBiQueryBase()
+    // Una sola firma para todo lo que obliga a recargar: filtros del informe +
+    // filtro propio del widget. Ver widgetQuery.ts.
+    const filterSig = widgetFilterSignature(filters, config)
     const [rows, setRows]     = useState<BiQueryRow[]>([])
     const [loading, setLoading] = useState(true)
     const [error, setError]   = useState<string | null>(null)
@@ -93,10 +95,13 @@ export function TableWidget({ title, config, filters, calculatedFields = [], h =
         setLoading(true)
         setError(null)
 
-        // El cruce por campaña requiere un cliente seleccionado
-        if (dimension === 'campaign' && !filters.cliente_id) {
+        // Las dimensiones que cruzan con el reporting (campaña / anuncio /
+        // conjunto) resuelven los UTM contra las campañas reales del cliente. Sin
+        // cliente no hay contra qué resolver: el motor devolvería los UTM crudos y
+        // el gasto en 0, que es justo la confusión que hay que evitar.
+        if (unifiedTarget(dimension) !== null && !filters.cliente_id) {
             setRows([]); setLoading(false)
-            setError('Selecciona un cliente en los filtros para el cruce por campaña.')
+            setError('Selecciona un cliente en los filtros para cruzar con las campañas.')
             return
         }
 
@@ -109,10 +114,7 @@ export function TableWidget({ title, config, filters, calculatedFields = [], h =
         if (filters.cliente_id) params.set('cliente_id', filters.cliente_id)
         if (filters.date_from)  params.set('date_from', filters.date_from)
         if (filters.date_to)    params.set('date_to', filters.date_to)
-        appendUtmFilters(params, filters)
-        appendFieldFilters(params, filters)
-        appendDimFilters(params, filters)
-        appendAdvancedFilter(params, filters, withCampaignFilter(config.advanced_filter, config.campaign_filter))
+        appendWidgetFilters(params, filters, config)
         for (const c of usedCalc) params.set(`calc[${c.name}]`, c.expression)
 
         fetch(`${queryBase}?${params}`)
@@ -120,7 +122,7 @@ export function TableWidget({ title, config, filters, calculatedFields = [], h =
             .then(json => setRows(Array.isArray(json.data) ? json.data : []))
             .catch(() => setError('Error al cargar'))
             .finally(() => setLoading(false))
-    }, [queryBase, rawMetrics, dimension, rowLimit, config.sort, filters.cliente_id, filters.date_from, filters.date_to, utmFilterSignature(filters), fieldFilterSignature(filters), dimFilterSignature(filters), advancedFilterSignature(filters), widgetAdvancedSignature(withCampaignFilter(config.advanced_filter, config.campaign_filter))])
+    }, [queryBase, rawMetrics, dimension, rowLimit, config.sort, filterSig])
 
     // Filtros por valor: oculta filas que no cumplan (ej. spend > 0)
     const filteredRows = applyValueFilters(rows, config.value_filters)
@@ -253,7 +255,18 @@ export function TableWidget({ title, config, filters, calculatedFields = [], h =
                             {sorted.map((row, i) => (
                                 <tr key={i} className="hover:bg-accent">
                                     <td className="px-5 py-2.5 text-xs font-mono text-emerald-600 dark:text-emerald-400">
-                                        {row.dimension_value ?? '(total)'}
+                                        <span className="inline-flex items-center gap-1.5">
+                                            {row.dimension_value ?? '(total)'}
+                                            {/* Sin cruce: este UTM no resolvió a ninguna campaña/anuncio real,
+                                                así que su gasto en 0 es un mapeo pendiente, no un dato. */}
+                                            {row.__nocross === 1 && (
+                                                <span
+                                                    title="Este valor no cruza con ninguna campaña del reporting, así que no tiene gasto asociado. Mapéalo en Cruce de campañas."
+                                                    className="h-1.5 w-1.5 rounded-full bg-amber-500 shrink-0"
+                                                    aria-label="sin cruce con campañas"
+                                                />
+                                            )}
+                                        </span>
                                     </td>
                                     {colKeys.map(key => {
                                         const v = row[key] as number | null | undefined

@@ -5,7 +5,6 @@
 // resuelven exactamente igual y no se desincronizan.
 
 import { runBiQuery, runFunnelQuery, runComparison, runPivotQuery, runDistinctValues } from './bi-query'
-import { runCampaignQuery } from './campaign-data'
 import { supportsPivot, PIVOT_METRICS, METRIC_META, isSheetDim } from './bi-metadata'
 import type { ParsedBiQuery } from './bi-query-params'
 
@@ -16,7 +15,18 @@ export interface DispatchResult {
     status?: number
 }
 
-export async function dispatchBiQuery(p: ParsedBiQuery): Promise<DispatchResult> {
+export async function dispatchBiQuery(rawParams: ParsedBiQuery): Promise<DispatchResult> {
+    // "Campaña (cruzada)" tuvo su propio motor (`runCampaignQuery`), que solo
+    // emitía ~20 de las 72 métricas e ignoraba los campos calculados. Hoy la
+    // dimensión `utm_campaign` del motor principal hace el mismo cruce con todo
+    // el catálogo, así que el alias se normaliza aquí y sigue el camino normal:
+    // los informes guardados con `dimension: 'campaign'` no se enteran.
+    const p: ParsedBiQuery = {
+        ...rawParams,
+        dimension:  rawParams.dimension  === 'campaign' ? 'utm_campaign' : rawParams.dimension,
+        dimension2: rawParams.dimension2 === 'campaign' ? 'utm_campaign' : rawParams.dimension2,
+    }
+
     const base = {
         cliente_id: p.cliente_id,
         metrics: p.metrics,
@@ -80,22 +90,6 @@ export async function dispatchBiQuery(p: ParsedBiQuery): Promise<DispatchResult>
             }
         }
         const data = await runPivotQuery(base, p.metrics[0])
-        return { data }
-    }
-
-    // Dimensión "campaign": cruce real leads/ventas ↔ gasto de campañas.
-    if (p.dimension === 'campaign') {
-        if (!p.cliente_id) {
-            return { error: 'El cruce por campaña requiere seleccionar un cliente.', status: 400 }
-        }
-        const data = await runCampaignQuery({
-            cliente_id: p.cliente_id,
-            date_from: p.date_from,
-            date_to: p.date_to,
-            filters: p.filters,
-            advancedFilter: p.advancedFilter,
-            limit: p.limit,
-        })
         return { data }
     }
 

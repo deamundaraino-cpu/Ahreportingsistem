@@ -3,8 +3,8 @@
 import { useEffect, useState } from 'react'
 import { Loader2, ArrowDown } from 'lucide-react'
 import type { BiFilters, WidgetConfig } from '../BiTypes'
-import { appendUtmFilters, utmFilterSignature, appendFieldFilters, fieldFilterSignature, appendDimFilters, dimFilterSignature, appendAdvancedFilter, advancedFilterSignature, widgetAdvancedSignature, withCampaignFilter } from '@/lib/report-utm/bi-metadata'
 import { useBiQueryBase } from '../BiQueryContext'
+import { appendWidgetFilters, widgetFilterSignature } from '../widgetQuery'
 
 interface Props {
     title: string
@@ -37,6 +37,9 @@ const STAGE_PALETTE = [
 
 export function FunnelWidget({ title, config, filters }: Props) {
     const queryBase = useBiQueryBase()
+    // Una sola firma para todo lo que obliga a recargar: filtros del informe +
+    // filtro propio del widget. Ver widgetQuery.ts.
+    const filterSig = widgetFilterSignature(filters, config)
     const [stages, setStages] = useState<FunnelStage[]>([])
     const [loading, setLoading] = useState(true)
     const [error, setError]   = useState<string | null>(null)
@@ -54,17 +57,14 @@ export function FunnelWidget({ title, config, filters }: Props) {
         if (filters.cliente_id) params.set('cliente_id', filters.cliente_id)
         if (filters.date_from)  params.set('date_from', filters.date_from)
         if (filters.date_to)    params.set('date_to', filters.date_to)
-        appendUtmFilters(params, filters)
-        appendFieldFilters(params, filters)
-        appendDimFilters(params, filters)
-        appendAdvancedFilter(params, filters, withCampaignFilter(config.advanced_filter, config.campaign_filter))
+        appendWidgetFilters(params, filters, config)
 
         fetch(`${queryBase}?${params}`)
             .then(r => r.json())
             .then(json => setStages(json.data ?? []))
             .catch(() => setError('Error al cargar'))
             .finally(() => setLoading(false))
-    }, [queryBase, stageMetrics, filters.cliente_id, filters.date_from, filters.date_to, utmFilterSignature(filters), fieldFilterSignature(filters), dimFilterSignature(filters), advancedFilterSignature(filters), widgetAdvancedSignature(withCampaignFilter(config.advanced_filter, config.campaign_filter))])
+    }, [queryBase, stageMetrics, filterSig])
 
     const maxVal = stages.length > 0 ? Math.max(...stages.map(s => s.value), 1) : 1
 

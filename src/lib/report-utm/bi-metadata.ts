@@ -4,6 +4,32 @@
 // componentes cliente (widgets, editor). Mantenerlo libre de imports de
 // servidor evita arrastrar next/headers al bundle del navegador.
 
+/**
+ * Normalización fuerte de etiquetas: minúsculas, sin acentos, `_`/`-` como
+ * espacios, espacios colapsados. Convierte muchos "casi-iguales" en matches
+ * EXACTOS reales (`promo_verano` → `promo verano` ← `Promo Verano`).
+ *
+ * Vive aquí —y no en el resolver de campañas, que es server-only— porque el
+ * cruce UTM↔campaña se compara igual en los dos lados: el motor al agrupar y la
+ * UI al avisar de que un filtro no coincide con ninguna campaña. Con dos
+ * normalizaciones distintas la UI avisaba en falso de lo que el motor sí cruzaba.
+ */
+export function normLabel(s: string): string {
+    return (s ?? '')
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[̀-ͯ]/g, '')   // quita acentos (marcas combinantes)
+        .replace(/[_-]+/g, ' ')            // _ y - → espacio
+        .trim()
+        .replace(/\s+/g, ' ')
+}
+
+/** Redondeo a 2 decimales. Único en el módulo: el motor y el diagnóstico deben
+ *  redondear igual o sus totales no cuadran entre sí por céntimos. */
+export function round2(n: number): number {
+    return Math.round(n * 100) / 100
+}
+
 export type BiMetric =
     | 'leads_count'
     | 'sales_count'
@@ -138,8 +164,13 @@ export const OFFLINE_METRICS = ['offline_leads', 'offline_ventas', 'offline_reve
 /** Métricas de suscripciones (último snapshot de `hotmart_subscriptions_snapshot`). */
 export const SUBS_METRICS = ['subs_active', 'subs_delayed', 'subs_canceled', 'subs_total', 'subs_mrr'] as const
 
-/** Dimensiones que SOLO desglosan gasto/métricas de campaña (nivel anuncio/conjunto). */
-export const ADS_ONLY_DIMS = ['ad', 'adset'] as const
+/**
+ * Dimensiones de nivel anuncio/conjunto. Desde la unificación, leads y ventas
+ * TAMBIÉN se agrupan por ellas (resolviendo utm_content/utm_term contra los
+ * nombres reales), así que ya no son exclusivas del gasto; el nombre se conserva
+ * porque siguen siendo las únicas que no existen como columna en lead_events.
+ */
+export const ADS_ONLY_DIMS: ReadonlySet<string> = new Set(['ad', 'adset'])
 
 /**
  * Métricas ADITIVAS: sumar sus valores fila a fila da un total correcto, así que
@@ -201,7 +232,19 @@ export type BiDimension =
     | 'utm_content'
     | 'utm_term'
     | 'utm_id'
+    /**
+     * Alias histórico de `utm_campaign`. Antes tenía su propio motor
+     * (`runCampaignQuery`); hoy `utm_campaign` YA cruza con el gasto, así que el
+     * dispatcher lo normaliza a `utm_campaign` al entrar. Se mantiene en el tipo
+     * porque hay informes guardados con `dimension: 'campaign'`.
+     */
     | 'campaign'
+    /**
+     * Agrupa por la columna `utm_campaign` TAL CUAL, sin resolver contra las
+     * campañas reales. Solo para auditar los UTM que llegan; es el
+     * comportamiento que tenía `utm_campaign` antes de la unificación.
+     */
+    | 'utm_campaign_raw'
     | 'date'
     | 'ip_country'
     | 'form_name'
@@ -262,103 +305,203 @@ export interface BiPivotRow {
     series: Record<string, number>
 }
 
-export const METRIC_META: Record<BiMetric, { label: string; format: 'number' | 'currency' | 'percent' | 'ratio'; source: 'leads' | 'sales' | 'ads' | 'computed' }> = {
+// ── Catálogo de métricas ──────────────────────────────────────────────
+//
+// Cada métrica declara DOS cosas además de su etiqueta y formato:
+//
+//   `group`     — dónde se muestra en el selector. Sustituye al antiguo `source`,
+//                 que era un vertedero: 56 de 72 métricas estaban marcadas 'ads',
+//                 incluidas GA4, Hotmart, offline y suscripciones. Como el editor
+//                 lo usaba para decidir avisos, avisaba en falso sobre ellas.
+//
+//   `breakdown` — hasta dónde se puede desglosar. Es la respuesta a "¿por qué mi
+//                 tabla por país muestra el gasto en 0?", y lo que permite marcar
+//                 la métrica en el selector ANTES de que el usuario la elija:
+//                   • 'any'      cruza por cualquier dimensión (columnas de
+//                                lead_events / sales_events)
+//                   • 'campaign' cruza por fecha y por campaña/anuncio/conjunto
+//                                (gasto y JSONB de anuncios: no hay UTM en
+//                                metricas_diarias, solo el nombre de la entidad)
+//                   • 'total'    solo total o fecha (columnas escalares de
+//                                metricas_diarias: GA4, Hotmart, offline)
+//                   • 'global'   solo el total del período (snapshot puntual)
+
+export type MetricGroup =
+    | 'leads' | 'ventas' | 'inversion' | 'rendimiento'
+    | 'campana' | 'ga4' | 'hotmart' | 'offline' | 'subs'
+
+export type MetricBreakdown = 'any' | 'campaign' | 'total' | 'global'
+
+export interface MetricMetaEntry {
+    label: string
+    format: 'number' | 'currency' | 'percent' | 'ratio'
+    group: MetricGroup
+    breakdown: MetricBreakdown
+}
+
+/** Etiqueta de cada grupo en el selector, en el orden en que se muestran. */
+export const METRIC_GROUP_META: { key: MetricGroup; label: string }[] = [
+    { key: 'leads',       label: 'Leads' },
+    { key: 'ventas',      label: 'Ventas' },
+    { key: 'inversion',   label: 'Inversión' },
+    { key: 'rendimiento', label: 'Rendimiento de anuncios' },
+    { key: 'campana',     label: 'Eventos de campaña (Meta / TikTok)' },
+    { key: 'hotmart',     label: 'Hotmart' },
+    { key: 'ga4',         label: 'Google Analytics 4' },
+    { key: 'offline',     label: 'Conversiones offline' },
+    { key: 'subs',        label: 'Suscripciones' },
+]
+
+export const METRIC_META: Record<BiMetric, MetricMetaEntry> = {
+    // ── Leads ──
     // Conteo de-duplicado de lead_events, que ya abarca TODOS los canales
     // (formularios web + Meta Lead Ads). La antigua 'leads_total' era un duplicado
     // exacto de esta métrica y se eliminó del catálogo (ver migración 045).
-    leads_count:     { label: 'Leads',           format: 'number',   source: 'leads' },
-    sales_count:     { label: 'Ventas',          format: 'number',   source: 'sales' },
-    revenue:         { label: 'Revenue',         format: 'currency', source: 'sales' },
-    spend:           { label: 'Gasto total',     format: 'currency', source: 'ads' },
-    meta_spend:      { label: 'Gasto Meta',      format: 'currency', source: 'ads' },
-    tiktok_spend:    { label: 'Gasto TikTok',    format: 'currency', source: 'ads' },
-    cpl:             { label: 'CPL',             format: 'currency', source: 'computed' },
-    cpa:             { label: 'CPA',             format: 'currency', source: 'computed' },
-    roas:            { label: 'ROAS',            format: 'ratio',    source: 'computed' },
-    conversion_rate: { label: 'Conv. Rate',      format: 'percent',  source: 'computed' },
-    clicks:          { label: 'Clics',           format: 'number',   source: 'ads' },
-    impressions:     { label: 'Impresiones',     format: 'number',   source: 'ads' },
-    cpc:             { label: 'CPC',             format: 'currency', source: 'computed' },
-    cpm:             { label: 'CPM',             format: 'currency', source: 'computed' },
-    // ── Campaña ──
-    reach:                  { label: 'Alcance',            format: 'number',  source: 'ads' },
-    frequency:              { label: 'Frecuencia',         format: 'ratio',   source: 'computed' },
-    ctr:                    { label: 'CTR',                format: 'percent', source: 'computed' },
-    link_clicks:            { label: 'Clics de enlace',    format: 'number',  source: 'ads' },
-    leads_form:             { label: 'Leads de formulario',format: 'number',  source: 'ads' },
-    purchases:              { label: 'Compras',            format: 'number',  source: 'ads' },
-    landing_page_views:     { label: 'Vistas de landing',  format: 'number',  source: 'ads' },
-    complete_registration:  { label: 'Registros',          format: 'number',  source: 'ads' },
-    results:                { label: 'Resultados',         format: 'number',  source: 'ads' },
-    video_views:            { label: 'Reproducciones',     format: 'number',  source: 'ads' },
-    video_thruplay:         { label: 'ThruPlay',           format: 'number',  source: 'ads' },
-    messaging_conversations:{ label: 'Conversaciones',     format: 'number',  source: 'ads' },
-    post_engagement:        { label: 'Interacciones',      format: 'number',  source: 'ads' },
-    post_reactions:         { label: 'Reacciones',         format: 'number',  source: 'ads' },
-    post_shares:            { label: 'Compartidos',        format: 'number',  source: 'ads' },
-    post_comments:          { label: 'Comentarios',        format: 'number',  source: 'ads' },
-    // ── Meta píxel ampliado ──
-    adds_to_cart:           { label: 'Añadir al carrito',      format: 'number', source: 'ads' },
-    initiates_checkout:     { label: 'Iniciar pago',           format: 'number', source: 'ads' },
-    view_content:           { label: 'Ver contenido',          format: 'number', source: 'ads' },
-    search:                 { label: 'Búsquedas',              format: 'number', source: 'ads' },
-    add_to_wishlist:        { label: 'Añadir a lista deseos',  format: 'number', source: 'ads' },
-    contact:                { label: 'Contactos',              format: 'number', source: 'ads' },
-    schedule:               { label: 'Agendamientos',          format: 'number', source: 'ads' },
-    subscribe:              { label: 'Suscripciones',          format: 'number', source: 'ads' },
-    start_trial:            { label: 'Inicio de prueba',       format: 'number', source: 'ads' },
-    submit_application:     { label: 'Solicitudes',            format: 'number', source: 'ads' },
-    page_engagement:        { label: 'Interacción con página', format: 'number', source: 'ads' },
-    post_saves:             { label: 'Guardados',              format: 'number', source: 'ads' },
-    video_3s:               { label: 'Video 3s',               format: 'number', source: 'ads' },
-    // ── GA4 ──
-    ga_sessions:            { label: 'Sesiones (GA4)',         format: 'number',  source: 'ads' },
-    ga_bounce_rate:         { label: 'Tasa de rebote (GA4)',   format: 'percent', source: 'ads' },
-    ga_avg_session_duration:{ label: 'Duración sesión GA4 (s)', format: 'number',  source: 'ads' },
-    // ── TikTok ──
-    tiktok_conversions:     { label: 'Conversiones TikTok',    format: 'number',  source: 'ads' },
+    // Se llama "(contactos)" para no confundirla con `leads_form` (píxel de Meta)
+    // ni con `offline_leads` (Sheet): son tres cosas distintas que se solapan.
+    leads_count:     { label: 'Leads (contactos)', format: 'number',   group: 'leads',  breakdown: 'any' },
+    cpl:             { label: 'CPL',               format: 'currency', group: 'leads',  breakdown: 'campaign' },
+    conversion_rate: { label: 'Conv. Rate',        format: 'percent',  group: 'leads',  breakdown: 'any' },
+    // ── Ventas ──
+    sales_count:     { label: 'Ventas',            format: 'number',   group: 'ventas', breakdown: 'any' },
+    revenue:         { label: 'Revenue',           format: 'currency', group: 'ventas', breakdown: 'any' },
+    cpa:             { label: 'CPA',               format: 'currency', group: 'ventas', breakdown: 'campaign' },
+    roas:            { label: 'ROAS',              format: 'ratio',    group: 'ventas', breakdown: 'campaign' },
+    // ── Inversión ──
+    spend:           { label: 'Gasto total',       format: 'currency', group: 'inversion', breakdown: 'campaign' },
+    meta_spend:      { label: 'Gasto Meta',        format: 'currency', group: 'inversion', breakdown: 'campaign' },
+    tiktok_spend:    { label: 'Gasto TikTok',      format: 'currency', group: 'inversion', breakdown: 'campaign' },
+    // ── Rendimiento de anuncios ──
+    clicks:          { label: 'Clics',             format: 'number',   group: 'rendimiento', breakdown: 'campaign' },
+    impressions:     { label: 'Impresiones',       format: 'number',   group: 'rendimiento', breakdown: 'campaign' },
+    ctr:             { label: 'CTR',               format: 'percent',  group: 'rendimiento', breakdown: 'campaign' },
+    cpc:             { label: 'CPC',               format: 'currency', group: 'rendimiento', breakdown: 'campaign' },
+    cpm:             { label: 'CPM',               format: 'currency', group: 'rendimiento', breakdown: 'campaign' },
+    reach:           { label: 'Alcance',           format: 'number',   group: 'rendimiento', breakdown: 'campaign' },
+    frequency:       { label: 'Frecuencia',        format: 'ratio',    group: 'rendimiento', breakdown: 'campaign' },
+    link_clicks:     { label: 'Clics de enlace',   format: 'number',   group: 'rendimiento', breakdown: 'campaign' },
+    // ── Eventos de campaña (JSONB meta_campaigns / tiktok_*) ──
+    // `leads_form` es lo que reporta el PÍXEL de Meta, no la tabla de leads:
+    // puede diferir de leads_count y no son sumables entre sí.
+    leads_form:             { label: 'Leads del píxel de Meta', format: 'number', group: 'campana', breakdown: 'campaign' },
+    purchases:              { label: 'Compras',            format: 'number',  group: 'campana', breakdown: 'campaign' },
+    landing_page_views:     { label: 'Vistas de landing',  format: 'number',  group: 'campana', breakdown: 'campaign' },
+    complete_registration:  { label: 'Registros',          format: 'number',  group: 'campana', breakdown: 'campaign' },
+    results:                { label: 'Resultados',         format: 'number',  group: 'campana', breakdown: 'campaign' },
+    video_views:            { label: 'Reproducciones',     format: 'number',  group: 'campana', breakdown: 'campaign' },
+    video_thruplay:         { label: 'ThruPlay',           format: 'number',  group: 'campana', breakdown: 'campaign' },
+    messaging_conversations:{ label: 'Conversaciones',     format: 'number',  group: 'campana', breakdown: 'campaign' },
+    post_engagement:        { label: 'Interacciones',      format: 'number',  group: 'campana', breakdown: 'campaign' },
+    post_reactions:         { label: 'Reacciones',         format: 'number',  group: 'campana', breakdown: 'campaign' },
+    post_shares:            { label: 'Compartidos',        format: 'number',  group: 'campana', breakdown: 'campaign' },
+    post_comments:          { label: 'Comentarios',        format: 'number',  group: 'campana', breakdown: 'campaign' },
+    adds_to_cart:           { label: 'Añadir al carrito',  format: 'number',  group: 'campana', breakdown: 'campaign' },
+    // "(Meta)" en el nombre: `hotmart_pagos_iniciados` se llamaba igual y eran dos
+    // métricas de fuentes distintas indistinguibles en el selector.
+    initiates_checkout:     { label: 'Iniciar pago (Meta)', format: 'number', group: 'campana', breakdown: 'campaign' },
+    view_content:           { label: 'Ver contenido',          format: 'number', group: 'campana', breakdown: 'campaign' },
+    search:                 { label: 'Búsquedas',              format: 'number', group: 'campana', breakdown: 'campaign' },
+    add_to_wishlist:        { label: 'Añadir a lista deseos',  format: 'number', group: 'campana', breakdown: 'campaign' },
+    contact:                { label: 'Contactos',              format: 'number', group: 'campana', breakdown: 'campaign' },
+    schedule:               { label: 'Agendamientos',          format: 'number', group: 'campana', breakdown: 'campaign' },
+    subscribe:              { label: 'Suscripciones (píxel)',  format: 'number', group: 'campana', breakdown: 'campaign' },
+    start_trial:            { label: 'Inicio de prueba',       format: 'number', group: 'campana', breakdown: 'campaign' },
+    submit_application:     { label: 'Solicitudes',            format: 'number', group: 'campana', breakdown: 'campaign' },
+    page_engagement:        { label: 'Interacción con página', format: 'number', group: 'campana', breakdown: 'campaign' },
+    post_saves:             { label: 'Guardados',              format: 'number', group: 'campana', breakdown: 'campaign' },
+    video_3s:               { label: 'Video 3s',               format: 'number', group: 'campana', breakdown: 'campaign' },
+    tiktok_conversions:     { label: 'Conversiones TikTok',    format: 'number', group: 'campana', breakdown: 'campaign' },
+    // ── GA4 (columnas escalares de metricas_diarias: día×cliente, sin campaña) ──
+    ga_sessions:            { label: 'Sesiones (GA4)',         format: 'number',  group: 'ga4', breakdown: 'total' },
+    ga_bounce_rate:         { label: 'Tasa de rebote (GA4)',   format: 'percent', group: 'ga4', breakdown: 'total' },
+    ga_avg_session_duration:{ label: 'Duración sesión GA4 (s)', format: 'number', group: 'ga4', breakdown: 'total' },
     // ── Hotmart ──
-    hotmart_pagos_iniciados:{ label: 'Pagos iniciados (Hotmart)', format: 'number',   source: 'ads' },
-    hotmart_revenue:        { label: 'Facturación Hotmart (neto)', format: 'currency', source: 'computed' },
-    hotmart_sales:          { label: 'Ventas Hotmart (total)',  format: 'number',   source: 'computed' },
+    // OJO: `hotmart_pagos_iniciados` se calcula desde GA4 (payment_page_views),
+    // no desde la API de Hotmart. El nombre viene del dashboard clásico.
+    hotmart_pagos_iniciados:{ label: 'Pagos iniciados (Hotmart)', format: 'number',   group: 'hotmart', breakdown: 'total' },
+    // Sumas de columnas escalares, no ratios: son aditivas (ver ADDITIVE_METRICS).
+    hotmart_revenue:        { label: 'Facturación Hotmart (neto)', format: 'currency', group: 'hotmart', breakdown: 'total' },
+    hotmart_sales:          { label: 'Ventas Hotmart (total)',  format: 'number',   group: 'hotmart', breakdown: 'total' },
     // Retorno calculado sobre la facturación agregada de Hotmart, no sobre
     // sales_events (ventas por webhook). Sirve para clientes que venden por
     // Hotmart sin webhook configurado, donde roas/cpa/revenue darían 0.
-    hotmart_roas:           { label: 'ROAS (Hotmart)',          format: 'ratio',    source: 'computed' },
-    hotmart_cpa:            { label: 'CPA (Hotmart)',           format: 'currency', source: 'computed' },
-    hotmart_roi:            { label: 'ROI % (Hotmart)',         format: 'percent',  source: 'computed' },
-    ventas_principal:       { label: 'Ventas principal (neto)', format: 'currency', source: 'ads' },
-    ventas_bump:            { label: 'Ventas bump (neto)',      format: 'currency', source: 'ads' },
-    ventas_upsell:          { label: 'Ventas upsell (neto)',    format: 'currency', source: 'ads' },
-    ventas_principal_count: { label: 'Ventas principal (#)',    format: 'number',   source: 'ads' },
-    ventas_bump_count:      { label: 'Ventas bump (#)',         format: 'number',   source: 'ads' },
-    ventas_upsell_count:    { label: 'Ventas upsell (#)',       format: 'number',   source: 'ads' },
-    ventas_cerradas:        { label: 'Ventas cerradas (#)',     format: 'number',   source: 'ads' },
-    ventas_principal_bruto: { label: 'Ventas principal (bruto)',format: 'currency', source: 'ads' },
-    ventas_bump_bruto:      { label: 'Ventas bump (bruto)',     format: 'currency', source: 'ads' },
-    ventas_upsell_bruto:    { label: 'Ventas upsell (bruto)',   format: 'currency', source: 'ads' },
-    // ── Conversiones offline ──
-    offline_leads:          { label: 'Leads offline',           format: 'number',   source: 'ads' },
-    offline_ventas:         { label: 'Ventas offline',          format: 'number',   source: 'ads' },
-    offline_revenue:        { label: 'Revenue offline',         format: 'currency', source: 'ads' },
-    offline_total:          { label: 'Conversiones offline',    format: 'number',   source: 'ads' },
+    hotmart_roas:           { label: 'ROAS (Hotmart)',          format: 'ratio',    group: 'hotmart', breakdown: 'total' },
+    hotmart_cpa:            { label: 'CPA (Hotmart)',           format: 'currency', group: 'hotmart', breakdown: 'total' },
+    hotmart_roi:            { label: 'ROI % (Hotmart)',         format: 'percent',  group: 'hotmart', breakdown: 'total' },
+    ventas_principal:       { label: 'Ventas principal (neto)', format: 'currency', group: 'hotmart', breakdown: 'total' },
+    ventas_bump:            { label: 'Ventas bump (neto)',      format: 'currency', group: 'hotmart', breakdown: 'total' },
+    ventas_upsell:          { label: 'Ventas upsell (neto)',    format: 'currency', group: 'hotmart', breakdown: 'total' },
+    ventas_principal_count: { label: 'Ventas principal (#)',    format: 'number',   group: 'hotmart', breakdown: 'total' },
+    ventas_bump_count:      { label: 'Ventas bump (#)',         format: 'number',   group: 'hotmart', breakdown: 'total' },
+    ventas_upsell_count:    { label: 'Ventas upsell (#)',       format: 'number',   group: 'hotmart', breakdown: 'total' },
+    ventas_cerradas:        { label: 'Ventas cerradas (#)',     format: 'number',   group: 'hotmart', breakdown: 'total' },
+    ventas_principal_bruto: { label: 'Ventas principal (bruto)',format: 'currency', group: 'hotmart', breakdown: 'total' },
+    ventas_bump_bruto:      { label: 'Ventas bump (bruto)',     format: 'currency', group: 'hotmart', breakdown: 'total' },
+    ventas_upsell_bruto:    { label: 'Ventas upsell (bruto)',   format: 'currency', group: 'hotmart', breakdown: 'total' },
+    // ── Conversiones offline (Google Sheets del cliente) ──
+    offline_leads:          { label: 'Leads offline (Sheet)',        format: 'number',   group: 'offline', breakdown: 'total' },
+    offline_ventas:         { label: 'Ventas offline (Sheet)',       format: 'number',   group: 'offline', breakdown: 'total' },
+    offline_revenue:        { label: 'Revenue offline (Sheet)',      format: 'currency', group: 'offline', breakdown: 'total' },
+    offline_total:          { label: 'Conversiones offline (Sheet)', format: 'number',   group: 'offline', breakdown: 'total' },
     // ── Suscripciones Hotmart (último snapshot) ──
-    subs_active:            { label: 'Suscripciones activas',   format: 'number',   source: 'ads' },
-    subs_delayed:           { label: 'Suscripciones atrasadas', format: 'number',   source: 'ads' },
-    subs_canceled:          { label: 'Suscripciones canceladas',format: 'number',   source: 'ads' },
-    subs_total:             { label: 'Suscripciones (total)',   format: 'number',   source: 'ads' },
-    subs_mrr:               { label: 'MRR (valor recurrente)',  format: 'currency', source: 'ads' },
+    // Es una FOTO puntual, no una serie: solo tiene sentido en el total del
+    // período. Con cualquier dimensión (incluida Fecha) no hay nada que repartir.
+    subs_active:            { label: 'Suscripciones activas',   format: 'number',   group: 'subs', breakdown: 'global' },
+    subs_delayed:           { label: 'Suscripciones atrasadas', format: 'number',   group: 'subs', breakdown: 'global' },
+    subs_canceled:          { label: 'Suscripciones canceladas',format: 'number',   group: 'subs', breakdown: 'global' },
+    subs_total:             { label: 'Suscripciones (total)',   format: 'number',   group: 'subs', breakdown: 'global' },
+    subs_mrr:               { label: 'MRR (valor recurrente)',  format: 'currency', group: 'subs', breakdown: 'global' },
 }
 
-export const DIMENSION_META: Record<BiDimension, { label: string }> = {
+/**
+ * Las que sirven para el 90% de los informes y cruzan bien entre sí. Son las que
+ * el editor muestra por defecto; el resto queda tras "Ver todas".
+ */
+export const RECOMMENDED_METRICS: BiMetric[] = [
+    'leads_count', 'sales_count', 'revenue', 'spend',
+    'cpl', 'cpa', 'roas', 'clicks', 'impressions', 'ctr', 'cpc', 'cpm',
+]
+
+/**
+ * ¿Esta métrica se desglosa por esta dimensión, o caería en la fila total?
+ *
+ * Es lo que permite marcar la métrica en el selector antes de elegirla, en vez de
+ * dejar que el usuario descubra el 0 en el informe ya montado. Los tokens
+ * dinámicos (campos de formulario, de Sheet) no se evalúan aquí: tienen sus
+ * propios avisos, más específicos.
+ */
+export function metricCrossesDimension(metric: string, dimension: string): boolean {
+    if (dimension === 'none') return true
+    // Las columnas extra de Sheet offline viven en conversiones_offline_diarias,
+    // que es día×cliente: se comportan como 'total'.
+    if (isOfflineFieldMetric(metric)) return dimension === 'date'
+    const meta = METRIC_META[metric as BiMetric]
+    if (!meta) return true   // calculada, campo de formulario o de Sheet
+    switch (meta.breakdown) {
+        case 'any':      return true
+        case 'campaign': return dimension === 'date' || unifiedTarget(dimension) !== null
+        case 'total':    return dimension === 'date'
+        case 'global':   return false
+    }
+}
+
+/** Métricas del catálogo que pertenecen a un grupo, en orden de declaración. */
+export function metricsOfGroup(group: MetricGroup): BiMetric[] {
+    return (Object.keys(METRIC_META) as BiMetric[]).filter(m => METRIC_META[m].group === group)
+}
+
+export const DIMENSION_META: Record<BiDimension, { label: string; hidden?: boolean }> = {
     none:              { label: 'Total' },
     utm_source:        { label: 'Source' },
     utm_medium:        { label: 'Medium' },
     utm_campaign:      { label: 'Campaña' },
-    utm_content:       { label: 'Contenido' },
-    utm_term:          { label: 'Término' },
+    utm_content:       { label: 'Contenido (anuncio)' },
+    utm_term:          { label: 'Término (conjunto)' },
     utm_id:            { label: 'UTM ID' },
-    campaign:          { label: 'Campaña (cruzada)' },
+    // Alias histórico: el dispatcher lo normaliza a utm_campaign. Oculto del
+    // selector para no ofrecer dos "Campaña" que ahora hacen lo mismo.
+    campaign:          { label: 'Campaña', hidden: true },
+    utm_campaign_raw:  { label: 'Campaña UTM (crudo)' },
     date:              { label: 'Fecha' },
     ip_country:        { label: 'País' },
     form_name:         { label: 'Formulario' },
@@ -370,6 +513,53 @@ export const DIMENSION_META: Record<BiDimension, { label: string }> = {
     customer_country:  { label: 'País del cliente' },
     ad:                { label: 'Anuncio' },
     adset:             { label: 'Conjunto de anuncios' },
+}
+
+// ── Dimensiones unificadas (leads/ventas ↔ gasto) ─────────────────────
+// `metricas_diarias` está preagregada por día×cliente y no tiene UTM: el único
+// puente hacia los leads es el NOMBRE de la entidad (campaña / anuncio /
+// conjunto). Para estas dimensiones, leads y ventas NO se agrupan por su columna
+// cruda sino por el nombre real al que resuelven, y el gasto se desglosa con ese
+// mismo nombre. Así ambas fuentes comparten clave y `mergeResults` las une.
+//
+// Fuera de esta lista (país, formulario, campo de lead…) no hay puente posible y
+// el gasto sigue cayendo en la fila total, como hasta ahora.
+
+/** Dimensiones que se resuelven contra las campañas reales del reporting. */
+export const UNIFIED_DIMS: ReadonlySet<string> = new Set([
+    'utm_campaign', 'campaign', 'utm_id',
+    'utm_content', 'ad',
+    'utm_term', 'adset',
+])
+
+/** Entidad del reporting a la que resuelve una dimensión unificada (o null). */
+export function unifiedTarget(dim: string): 'campaign' | 'ad' | 'adset' | null {
+    switch (dim) {
+        case 'utm_campaign': case 'campaign': case 'utm_id': return 'campaign'
+        case 'utm_content':  case 'ad':                      return 'ad'
+        case 'utm_term':     case 'adset':                   return 'adset'
+        default: return null
+    }
+}
+
+/**
+ * Plataforma de ads a la que apunta un valor de utm_source/utm_medium.
+ * Devuelve null cuando el valor no identifica una plataforma concreta (orgánico,
+ * email, un source propio del cliente…), que es lo que impide recortar el gasto.
+ */
+const PLATFORM_ALIASES: Record<string, 'meta' | 'tiktok'> = {
+    facebook: 'meta', fb: 'meta', ig: 'meta', instagram: 'meta',
+    meta: 'meta', meta_ads: 'meta', 'facebook ads': 'meta', 'meta ads': 'meta',
+    tiktok: 'tiktok', tt: 'tiktok', tiktok_ads: 'tiktok', 'tiktok ads': 'tiktok',
+}
+
+export function platformFromUtm(source?: string | null, medium?: string | null): 'meta' | 'tiktok' | null {
+    for (const raw of [source, medium]) {
+        if (!raw) continue
+        const hit = PLATFORM_ALIASES[normLabel(raw)]
+        if (hit) return hit
+    }
+    return null
 }
 
 // ── Filtros por valor (ocultar filas que no cumplan una condición numérica) ──
@@ -577,7 +767,14 @@ export function extractFieldMetricAliases(
 // valores bajo un nombre propio, y se referencia con su propio token:
 //   • Dimensión / filtro:  "leadfield:<clave>"
 // El token guarda solo la `clave` (slug estable), así que renombrar el campo no
-// rompe los widgets ya guardados. En expresiones calc se usa el alias "lf__<clave>".
+// rompe los widgets ya guardados.
+//
+// NO existe alias de expresión calculada para estos campos, y no es un olvido: un
+// campo de lead es una DIMENSIÓN (agrupa por bucket), no una medida — no lleva
+// agregación, así que no hay ningún número que un `lf__<clave>` pudiera devolver.
+// Para medir un campo numérico del formulario está `fieldagg:<agg>:<clave>`
+// (alias `f_<agg>__<clave>`), que sí agrega. Un comentario anterior aquí anunciaba
+// un alias `lf__<clave>` que nunca se implementó: quien lo usara obtenía 0.
 
 export const LEAD_FIELD_PREFIX = 'leadfield:'
 
@@ -1239,6 +1436,33 @@ export function matchFilterCondition(cell: string, op: FilterOp, target: string)
     }
 }
 
+/**
+ * Igual que `matchFilterCondition` pero normalizando AMBOS lados con `normLabel`.
+ *
+ * Es la comparación correcta cuando lo que se compara son NOMBRES de entidades
+ * del reporting (campaña, anuncio, conjunto): el UTM llega como `promo_verano` y
+ * la campaña se llama `Promo Verano`. Con `toLowerCase` a secas eso no matcheaba,
+ * así que elegir una campaña del desplegable dejaba el widget en 0.
+ *
+ * No sustituye a `matchFilterCondition`: en columnas de texto libre (país,
+ * formulario, campos de lead) la igualdad exacta sigue siendo la esperada.
+ */
+export function matchFilterConditionNorm(cell: string, op: FilterOp, target: string): boolean {
+    const v = normLabel(cell ?? '')
+    const t = (target ?? '').trim()
+    const lt = normLabel(t)
+    const parts = t.split(',').map((s) => normLabel(s)).filter(Boolean)
+    switch (op) {
+        case 'eq':        return parts.some((x) => v === x)
+        case 'neq':       return !parts.some((x) => v === x)
+        case 'contains':  return v.includes(lt)
+        case 'ncontains': return !v.includes(lt)
+        case 'starts':    return v.startsWith(lt)
+        case 'ends':      return v.endsWith(lt)
+        default:          return true
+    }
+}
+
 // ── Atribución de gasto a filtros ─────────────────────────────────────
 // El gasto (metricas_diarias) está preagregado por día×cliente, sin UTM ni
 // campos de formulario. El único puente UTM→gasto es el NOMBRE de campaña
@@ -1261,29 +1485,164 @@ const NON_ATTRIBUTABLE_FIELDS = new Set(['ip_country', 'form_name', 'form_plugin
  * restringe el gasto). El filtro plano filters['utm_campaign'] actúa como grupo Y
  * adicional. Sin ninguna condición de campaña → predicado que acepta todo.
  */
-export function campaignNameFilterPredicate(
+/** Campos UTM que nombran una entidad del reporting (campaña/anuncio/conjunto). */
+export const ENTITY_FILTER_FIELDS: ReadonlySet<string> = new Set([
+    'utm_campaign', 'utm_content', 'utm_term',
+])
+
+/**
+ * Condiciones de filtro que restringen EFECTIVAMENTE el nombre de una entidad.
+ * Cada "clause" es un OR de condiciones; las clauses van en AND.
+ *
+ * Un grupo del filtro avanzado es un O, así que solo restringe el nombre de este
+ * campo si TODAS sus ramas hablan de este mismo campo. Un grupo mixto
+ * (`campaña = A` O `país = CO`) admite cualquier campaña por su segunda rama:
+ * recortar el gasto por "A" dejaría fuera gasto que el informe sí muestra.
+ */
+function entityFilterClauses(
     filters: Record<string, string | undefined> | undefined,
-    advancedFilter: AdvancedFilter | undefined
-): (name: string) => boolean {
-    // Cada "clause" es un OR de condiciones (op,value); las clauses van en AND.
+    advancedFilter: AdvancedFilter | undefined,
+    field: string
+): Array<{ op: FilterOp; value: string }[]> {
     const clauses: Array<{ op: FilterOp; value: string }[]> = []
 
-    const plain = filters?.utm_campaign
+    const plain = filters?.[field]
     if (plain && plain.trim()) {
         const { op, value } = parseFilterValue(plain)
         if (value.trim()) clauses.push([{ op, value }])
     }
 
     for (const g of advancedFilter?.groups ?? []) {
-        const conds = (g.conditions ?? [])
-            .filter((c) => c.field === 'utm_campaign' && c.value && c.value.trim())
-            .map((c) => ({ op: c.op, value: c.value }))
-        if (conds.length) clauses.push(conds)
+        const conds = (g.conditions ?? []).filter((c) => c.field && c.value && c.value.trim())
+        if (!conds.length) continue
+        if (!conds.every((c) => c.field === field)) continue
+        clauses.push(conds.map((c) => ({ op: c.op, value: c.value })))
     }
 
+    return clauses
+}
+
+export function entityNameFilterPredicate(
+    filters: Record<string, string | undefined> | undefined,
+    advancedFilter: AdvancedFilter | undefined,
+    field: string
+): (name: string) => boolean {
+    const clauses = entityFilterClauses(filters, advancedFilter, field)
     if (!clauses.length) return () => true
+    // Comparación NORMALIZADA: lo que se filtra es el nombre real de una entidad
+    // del reporting contra un valor que el usuario eligió de un desplegable o
+    // escribió a mano. `promo_verano` y `Promo Verano` son la misma campaña.
     return (name: string) =>
-        clauses.every((or) => or.some((c) => matchFilterCondition(name ?? '', c.op, c.value)))
+        clauses.every((or) => or.some((c) => matchFilterConditionNorm(name ?? '', c.op, c.value)))
+}
+
+/** ¿Hay alguna condición que restrinja efectivamente el nombre de esta entidad? */
+export function hasEntityFilter(
+    filters: Record<string, string | undefined> | undefined,
+    advancedFilter: AdvancedFilter | undefined,
+    field: string
+): boolean {
+    return entityFilterClauses(filters, advancedFilter, field).length > 0
+}
+
+/**
+ * Grupos del filtro avanzado que hablan SOLO de entidades del reporting. Se
+ * evalúan contra el nombre resuelto (no contra la columna cruda), así que el
+ * motor los saca del camino normal para no aplicarlos dos veces con criterios
+ * distintos. El resto de grupos se evalúa como siempre.
+ */
+export function splitEntityGroups(
+    af: AdvancedFilter | undefined
+): { entityOnly: AdvancedFilter | undefined; rest: AdvancedFilter | undefined } {
+    if (!af?.groups?.length) return { entityOnly: undefined, rest: undefined }
+    const entity: AdvancedFilter['groups'] = []
+    const rest: AdvancedFilter['groups'] = []
+    for (const g of af.groups) {
+        const conds = (g.conditions ?? []).filter((c) => c.field && c.value && c.value.trim())
+        if (conds.length && conds.every((c) => ENTITY_FILTER_FIELDS.has(c.field))) entity.push(g)
+        else rest.push(g)
+    }
+    return {
+        entityOnly: entity.length ? { groups: entity } : undefined,
+        rest: rest.length ? { groups: rest } : undefined,
+    }
+}
+
+/** Predicado sobre el NOMBRE de campaña. Atajo de `entityNameFilterPredicate`. */
+export function campaignNameFilterPredicate(
+    filters: Record<string, string | undefined> | undefined,
+    advancedFilter: AdvancedFilter | undefined
+): (name: string) => boolean {
+    return entityNameFilterPredicate(filters, advancedFilter, 'utm_campaign')
+}
+
+/**
+ * Plataforma a la que el filtro activo restringe el gasto, o null si no lo
+ * restringe a una sola.
+ *
+ * Un filtro `utm_source = facebook` recortaba los leads pero dejaba el gasto
+ * entero (Meta + TikTok), así que el CPL salía inflado sin avisar. Cuando TODAS
+ * las condiciones de source/medium apuntan a la misma plataforma, el gasto se
+ * puede recortar a esa plataforma sin inventar nada.
+ *
+ * Devuelve null en cuanto hay ambigüedad: dos plataformas mezcladas, un valor
+ * que no identifica plataforma (orgánico, email, un source propio) o un operador
+ * que no delimita un valor concreto (`neq`, `ncontains`).
+ */
+export function platformScopeFromFilters(
+    filters: Record<string, string | undefined> | undefined,
+    advancedFilter: AdvancedFilter | undefined
+): 'meta' | 'tiktok' | null {
+    const found = new Set<'meta' | 'tiktok'>()
+    let sawCondition = false
+
+    /** Plataformas a las que apunta una condición; null = no delimita. */
+    const scopeOf = (field: string, op: FilterOp, value: string): ('meta' | 'tiktok')[] | null => {
+        if (field !== 'utm_source' && field !== 'utm_medium') return null
+        // Solo los operadores que AFIRMAN un valor delimitan la plataforma.
+        if (op !== 'eq' && op !== 'contains' && op !== 'starts') return null
+        const parts = value.split(',').map(s => s.trim()).filter(Boolean)
+        if (!parts.length) return null
+        const out: ('meta' | 'tiktok')[] = []
+        for (const p of parts) {
+            const hit = field === 'utm_source' ? platformFromUtm(p, null) : platformFromUtm(null, p)
+            if (!hit) return null   // un valor sin plataforma clara invalida el recorte
+            out.push(hit)
+        }
+        return out
+    }
+
+    for (const key of ['utm_source', 'utm_medium'] as const) {
+        const raw = filters?.[key]
+        if (!raw || !raw.trim()) continue
+        sawCondition = true
+        const { op, value } = parseFilterValue(raw)
+        const scope = scopeOf(key, op, value)
+        if (!scope) return null
+        for (const p of scope) found.add(p)
+    }
+
+    for (const g of advancedFilter?.groups ?? []) {
+        const conds = (g.conditions ?? []).filter(c => c.value && c.value.trim())
+        const relevant = conds.filter(c => c.field === 'utm_source' || c.field === 'utm_medium')
+        if (!relevant.length) continue
+        // Un grupo es un O: solo delimita si es ENTERAMENTE de plataforma y todas
+        // sus ramas apuntan a la misma. Si mezcla source con otra cosa, la otra
+        // rama puede traer gasto de cualquier plataforma → no se recorta.
+        if (relevant.length !== conds.length) return null
+        sawCondition = true
+        const grupo = new Set<'meta' | 'tiktok'>()
+        for (const c of relevant) {
+            const scope = scopeOf(c.field, c.op, c.value)
+            if (!scope) return null
+            for (const p of scope) grupo.add(p)
+        }
+        if (grupo.size !== 1) return null
+        for (const p of grupo) found.add(p)
+    }
+
+    if (!sawCondition || found.size !== 1) return null
+    return Array.from(found)[0]
 }
 
 /** ¿Hay alguna condición de filtro sobre utm_campaign (plana o avanzada)? */
@@ -1291,10 +1650,7 @@ export function hasCampaignFilter(
     filters: Record<string, string | undefined> | undefined,
     advancedFilter: AdvancedFilter | undefined
 ): boolean {
-    if (filters?.utm_campaign && filters.utm_campaign.trim()) return true
-    return !!advancedFilter?.groups?.some(
-        (g) => g.conditions?.some((c) => c.field === 'utm_campaign' && c.value && c.value.trim())
-    )
+    return hasEntityFilter(filters, advancedFilter, 'utm_campaign')
 }
 
 /**
@@ -1331,7 +1687,7 @@ export function hasNonAttributableFilter(
  * (no para el trafficker). Se muestra como tooltip junto al título del widget.
  */
 export const METRIC_GLOSSARY: Record<string, string> = {
-    leads_count:   'Personas que dejaron sus datos durante el período, sumando formularios web y formularios de Meta.',
+    leads_count:   'Personas que dejaron sus datos durante el período, sumando formularios web y formularios de Meta. Es el conteo real de contactos: no se suma con “Leads del píxel de Meta” ni con “Leads offline”, que miden lo mismo desde otra fuente y se solapan.',
     sales_count:   'Cantidad de ventas registradas en el período.',
     revenue:       'Dinero total facturado por las ventas del período.',
     spend:         'Dinero invertido en publicidad (Meta + TikTok) durante el período.',
@@ -1357,11 +1713,63 @@ export const METRIC_GLOSSARY: Record<string, string> = {
     hotmart_roas:    'Retorno de la inversión usando la facturación de Hotmart: por cada $1 invertido en anuncios, cuántos $ se facturaron. Cuanto MÁS ALTO, mejor. Se calcula sobre el total del período, sin atribuir a una campaña concreta.',
     hotmart_cpa:     'Cuánto costó, en promedio, cada venta de Hotmart. Cuanto MÁS BAJO, mejor. Se calcula sobre el total del período, sin atribuir a una campaña concreta.',
     hotmart_roi:     'Ganancia sobre la inversión publicitaria: (facturación Hotmart − inversión) ÷ inversión. Un 100% significa que se recuperó el doble de lo invertido. Cuanto MÁS ALTO, mejor.',
+    // ── Las tres métricas que se llaman "leads" y NO son comparables ──
+    leads_form:    'Leads que reporta el píxel de Meta desde sus propios formularios. Puede no coincidir con “Leads (contactos)”: mide otra cosa, en otro sistema, y los mismos contactos pueden estar en ambas. No las sumes.',
+    offline_leads: 'Leads que el equipo carga a mano en el Google Sheet del cliente. Se solapan con “Leads (contactos)” si el mismo contacto está en los dos sitios.',
+    // ── Eventos del píxel ──
+    initiates_checkout: 'Veces que alguien empezó un pago en la web, según el píxel de Meta.',
+    purchases:     'Compras que registra el píxel de Meta. Es la lectura de Meta, no la de la pasarela de pago.',
+    complete_registration: 'Registros completados que reporta el píxel de Meta.',
+    view_content:  'Veces que alguien vio una página de producto o contenido clave, según el píxel.',
+    adds_to_cart:  'Veces que alguien añadió un producto al carrito, según el píxel.',
+    contact:       'Veces que alguien inició un contacto (chat, llamada, formulario), según el píxel.',
+    messaging_conversations: 'Conversaciones iniciadas por mensaje (WhatsApp, Messenger, Instagram) desde los anuncios.',
+    video_views:   'Reproducciones de video de los anuncios.',
+    video_thruplay: 'Reproducciones que llegaron a 15 segundos o al final del video. Mide interés real, no un scroll.',
+    results:       'Resultados según el objetivo de cada campaña (suma de leads, compras e inicios de pago).',
+    post_engagement: 'Interacciones totales con los anuncios: reacciones, comentarios, compartidos y clics.',
+    // ── Las que solo existen a nivel de cuenta ──
+    ga_avg_session_duration: 'Cuánto dura, en promedio, una visita al sitio. Es un dato del sitio entero: no se puede repartir por campaña.',
+    hotmart_pagos_iniciados: 'Veces que alguien llegó a la página de pago. Se mide con Google Analytics, no con Hotmart, y es del sitio entero: no se reparte por campaña.',
+    offline_ventas:  'Ventas que el equipo carga a mano en el Google Sheet del cliente.',
+    offline_revenue: 'Dinero de las ventas cargadas a mano en el Google Sheet del cliente.',
+    offline_total:   'Todas las filas de conversión del Google Sheet, sin distinguir leads de ventas.',
+    ventas_cerradas: 'Ventas cerradas que carga el equipo a mano en el dashboard.',
+    // ── Suscripciones: una foto, no una serie ──
+    subs_active:   'Suscripciones activas en la última foto disponible. Es un estado del momento, no algo que ocurriera durante el período: no cambia si mueves las fechas ni se puede repartir por campaña o por día.',
+    subs_delayed:  'Suscripciones con el pago atrasado en la última foto disponible.',
+    subs_canceled: 'Suscripciones canceladas en la última foto disponible.',
+    subs_total:    'Total de suscripciones registradas en la última foto disponible.',
+    subs_mrr:      'Dinero recurrente que generan las suscripciones activas, en la última foto disponible.',
 }
 
-/** Texto del glosario para una métrica, si existe. */
+/**
+ * Texto de respaldo por grupo, para las métricas sin entrada propia. Evita que
+ * una métrica llegue al cliente final sin ninguna explicación.
+ */
+const GROUP_GLOSSARY: Record<MetricGroup, string> = {
+    leads:       'Métrica sobre los contactos generados en el período.',
+    ventas:      'Métrica sobre las ventas registradas en el período.',
+    inversion:   'Dinero invertido en publicidad durante el período.',
+    rendimiento: 'Métrica de rendimiento de los anuncios en el período.',
+    campana:     'Evento medido por el píxel de la plataforma de anuncios durante el período.',
+    ga4:         'Dato del sitio web medido por Google Analytics. Es del sitio entero: no se reparte por campaña.',
+    hotmart:     'Dato de facturación de Hotmart en el período. Es del total de la cuenta: no se reparte por campaña.',
+    offline:     'Dato cargado a mano en el Google Sheet del cliente.',
+    subs:        'Estado de las suscripciones en la última foto disponible, no algo ocurrido durante el período.',
+}
+
+/**
+ * Texto del glosario para una métrica. Con entrada propia devuelve la suya; si
+ * no, el texto genérico de su grupo. Solo devuelve undefined para tokens que no
+ * son del catálogo (campos de formulario, de Sheet, calculadas), que llevan su
+ * propia etiqueta configurada por el analista.
+ */
 export function metricGlossary(metric: string): string | undefined {
-    return METRIC_GLOSSARY[metric]
+    const own = METRIC_GLOSSARY[metric]
+    if (own) return own
+    const meta = METRIC_META[metric as BiMetric]
+    return meta ? GROUP_GLOSSARY[meta.group] : undefined
 }
 
 /** Métricas donde un valor MENOR es mejor (costos y tasas de abandono). */
@@ -1443,9 +1851,4 @@ export function evaluateGoal(
         else status = 'bad'
     }
     return { status, target, mustNotExceed: rule.mustNotExceed }
-}
-
-/** ¿Esta métrica puede compararse contra alguna meta del cliente? */
-export function metricHasGoal(metric: string, goals?: ClienteGoals | null): boolean {
-    return evaluateGoal(metric, 0, goals) !== null || (!!GOAL_BY_METRIC[metric] && !!goals)
 }

@@ -3,12 +3,9 @@
 import { useEffect, useState } from 'react'
 import { Loader2, Sparkles } from 'lucide-react'
 import type { BiFilters, WidgetConfig } from '../BiTypes'
-import {
-    appendUtmFilters, utmFilterSignature, appendFieldFilters, fieldFilterSignature,
-    appendDimFilters, dimFilterSignature, appendAdvancedFilter, advancedFilterSignature,
-    widgetAdvancedSignature, withCampaignFilter, isLowerBetter,
-} from '@/lib/report-utm/bi-metadata'
+import { isLowerBetter } from '@/lib/report-utm/bi-metadata'
 import { useBiQueryBase } from '../BiQueryContext'
+import { appendWidgetFilters, widgetFilterSignature } from '../widgetQuery'
 
 interface Props {
     title: string
@@ -89,20 +86,15 @@ export function buildSummarySentences(cur: Totals, prev: Totals): string[] {
  */
 export function SummaryWidget({ title, config, filters }: Props) {
     const queryBase = useBiQueryBase()
+    // Una sola firma para todo lo que obliga a recargar: filtros del informe +
+    // filtro propio del widget. Ver widgetQuery.ts.
+    const filterSig = widgetFilterSignature(filters, config)
     // Texto manual: no se consulta nada (y no hay estado de carga).
     const manual = config.text?.trim()
 
     const [sentences, setSentences] = useState<string[] | null>(null)
     const [loading, setLoading] = useState(!manual)
     const [error, setError] = useState<string | null>(null)
-
-    // Firmas de los filtros: extraídas fuera del array de dependencias para que
-    // el linter pueda comprobarlas estáticamente.
-    const utmSig   = utmFilterSignature(filters)
-    const fieldSig = fieldFilterSignature(filters)
-    const dimSig   = dimFilterSignature(filters)
-    const advSig   = advancedFilterSignature(filters)
-    const wAdvSig  = widgetAdvancedSignature(withCampaignFilter(config.advanced_filter, config.campaign_filter))
 
     useEffect(() => {
         if (manual) return
@@ -117,10 +109,7 @@ export function SummaryWidget({ title, config, filters }: Props) {
         if (filters.cliente_id) params.set('cliente_id', filters.cliente_id)
         if (filters.date_from)  params.set('date_from', filters.date_from)
         if (filters.date_to)    params.set('date_to', filters.date_to)
-        appendUtmFilters(params, filters)
-        appendFieldFilters(params, filters)
-        appendDimFilters(params, filters)
-        appendAdvancedFilter(params, filters, withCampaignFilter(config.advanced_filter, config.campaign_filter))
+        appendWidgetFilters(params, filters, config)
 
         fetch(`${queryBase}?${params}`)
             .then(r => r.json())
@@ -132,7 +121,7 @@ export function SummaryWidget({ title, config, filters }: Props) {
             .catch(() => setError('Error al cargar'))
             .finally(() => setLoading(false))
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [queryBase, manual, filters.cliente_id, filters.date_from, filters.date_to, utmSig, fieldSig, dimSig, advSig, wAdvSig])
+    }, [queryBase, manual, filterSig])
 
     const accent = config.accent || '#10b981'
 

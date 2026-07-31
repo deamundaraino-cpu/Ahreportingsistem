@@ -78,6 +78,8 @@ const MONTH_RANGE = PRESETS.find(p => p.key === 'month')!.range()
 const FILTER_OP_SHORT: Record<string, string> = Object.fromEntries(FILTER_OPS.map(o => [o.value, o.short]))
 
 /** Claves que gestiona esta barra directamente (no son "filtros fijos"). */
+// 'days' sigue en la lista para que un informe guardado que lo arrastre no lo
+// muestre como un chip de filtro suelto: nunca se leyó como filtro real.
 const MANAGED_KEYS = new Set(['cliente_id', 'date_from', 'date_to', 'days', ADVANCED_FILTER_KEY])
 
 /** Condición con al menos campo + valor. */

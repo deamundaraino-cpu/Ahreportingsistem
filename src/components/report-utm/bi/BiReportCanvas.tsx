@@ -12,7 +12,7 @@ import type { AdvancedFilter } from '@/lib/report-utm/bi-metadata'
 import {
     isFieldDim, fieldDimLabel, isLeadFieldDim, leadFieldLabel,
     ADVANCED_FILTER_KEY, parseAdvancedFilter, serializeAdvancedFilter, advancedFilterHasConditions,
-    hasNonAttributableFilter, parseFilterValue, matchFilterCondition,
+    hasNonAttributableFilter, parseFilterValue, matchFilterConditionNorm,
 } from '@/lib/report-utm/bi-metadata'
 import {
     DndContext,
@@ -537,9 +537,12 @@ export function BiReportCanvas({ report: initialReport, readonly, lockedDates, p
     const campaignFilterMatchesNothing = (() => {
         if (!campaignFilter || !knownCampaigns?.length) return false
         const { op, value } = parseFilterValue(campaignFilter)
-        const v = value.trim().toLowerCase()
+        const v = value.trim()
         if (!v) return false
-        return !knownCampaigns.some(c => matchFilterCondition(c, op, v))
+        // Misma normalización que el motor (`matchFilterConditionNorm`): comparar
+        // en minúsculas a secas hacía saltar este aviso rojo sobre filtros que sí
+        // cruzaban, como `promo_verano` contra la campaña "Promo Verano".
+        return !knownCampaigns.some(c => matchFilterConditionNorm(c, op, v))
     })()
 
     return (
