@@ -1093,10 +1093,40 @@ export interface SheetSyncResult {
   error?: string
 }
 
+/** Respuesta de `POST /api/admin/sync-conversiones-offline`, tal como la lee la UI. */
+export interface SyncConversionesResponse {
+  success: boolean
+  clientName: string
+  totalFilas: number
+  diasProcesados: number
+  filasDescartadas: number
+  filasCrudas: number
+  sheetsProcessed: number
+  camposRecalculados: number
+  warnings?: string[]
+  error?: string
+}
+
+export interface SyncClienteConversionesOptions {
+  /**
+   * Sincroniza solo este sheet. Los demás quedan intactos: un documento grande
+   * no cabe junto a los otros en el `maxDuration` de una función, así que la UI
+   * los sincroniza de uno en uno.
+   */
+  sheetId?: string
+  /**
+   * Recalcular los campos de Sheet al terminar (por defecto sí). El recálculo
+   * recorre toda la capa cruda del cliente, así que quien sincroniza sheet a
+   * sheet lo apaga y lo lanza una sola vez al final.
+   */
+  recalcularCampos?: boolean
+}
+
 export async function syncClienteConversiones(
   supabase: any,
   clienteId: string,
-  rawConfig: unknown
+  rawConfig: unknown,
+  opts: SyncClienteConversionesOptions = {}
 ): Promise<{
   results: SheetSyncResult[]
   rows: ConversionRow[]
@@ -1105,10 +1135,16 @@ export async function syncClienteConversiones(
   const allSheets = normalizeSheetConfigs(rawConfig)
   const enabledSheets = allSheets.filter(s => s.enabled && s.sheet_url)
 
+  // La limpieza de huérfanos de abajo mira SIEMPRE `enabledSheets` (todos), no
+  // esta lista: si no, sincronizar un sheet suelto borraría los datos del resto.
+  const targetSheets = opts.sheetId
+    ? enabledSheets.filter(s => s.id === opts.sheetId)
+    : enabledSheets
+
   const results: SheetSyncResult[] = []
   const allRows: ConversionRow[] = []
 
-  for (const sheetCfg of enabledSheets) {
+  for (const sheetCfg of targetSheets) {
     const sheetId = sheetCfg.id!
     const label = sheetCfg.name || sheetCfg.sheet_url
     try {
@@ -1159,6 +1195,7 @@ export async function syncClienteConversiones(
   // import es dinámico para no meter la capa de campos en el arranque de los
   // workers que solo sincronizan conversiones.
   let campos: { campos: number; dias: number; valores: number; avisos: string[]; error?: string } | undefined
+  if (opts.recalcularCampos === false) return { results, rows: allRows, campos }
   try {
     const { recalcularCamposCliente } = await import('../sheets/campos-db')
     campos = await recalcularCamposCliente(supabase, clienteId)

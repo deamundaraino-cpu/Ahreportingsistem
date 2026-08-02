@@ -6,12 +6,13 @@ import { headers } from 'next/headers'
 import { BetaAnalyticsDataClient } from '@google-analytics/data'
 import type {
     ConversionesConfig, DriveSheet, SheetTabConfig, SheetTabInfo,
-    DetectedColumn, SheetSyncStatus,
+    DetectedColumn, SheetSyncStatus, SyncConversionesResponse,
 } from '@/lib/integrations/google-sheets-conversiones'
 import type { GA4Property } from '@/lib/integrations/google-analytics'
 import type { SheetCampoDef, SheetCampoVistaDef, CampoValorCrudo } from '@/lib/sheets/campos'
 import type { FuenteColumnas } from '@/lib/sheets/campos-db'
 import { loadCamposCliente as loadCamposClienteServer } from '@/lib/sheets/campos-db'
+import { leerJsonRespuesta, esTimeoutDeFetch } from '@/lib/fetch-json'
 
 export async function getClientes() {
     const supabase = await createClient()
@@ -1006,7 +1007,21 @@ export async function listSheetColumnas(clienteId: string) {
     }
 }
 
-export async function syncConversionesOffline(clienteId: string) {
+/** Mensaje de timeout del sync: la salida es sincronizar de a un documento. */
+const TIMEOUT_SYNC_SHEETS =
+    'La sincronización superó el tiempo máximo del servidor. Vuelve a intentarlo; si el documento es muy grande, sincroniza los sheets de uno en uno.'
+
+/**
+ * Sincroniza los sheets de conversiones del cliente.
+ *
+ * Con `sheetId` sincroniza solo ese documento y NO recalcula los campos: la UI
+ * recorre los sheets uno a uno y llama a `recalcularSheetCampos` al final, para
+ * que ninguna petición se acerque al límite de tiempo de la función.
+ */
+export async function syncConversionesOffline(
+    clienteId: string,
+    sheetId?: string
+): Promise<Partial<SyncConversionesResponse>> {
     try {
         const headersList = await headers()
         const host = headersList.get('host') || 'localhost:3001'
@@ -1016,20 +1031,30 @@ export async function syncConversionesOffline(clienteId: string) {
         const res = await fetch(`${baseUrl}/api/admin/sync-conversiones-offline`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ clientId: clienteId }),
+            body: JSON.stringify({ clientId: clienteId, ...(sheetId ? { sheetId } : {}) }),
             cache: 'no-store',
+            // Justo por debajo del maxDuration de la ruta: así el error lo damos
+            // nosotros, con un mensaje que se entiende.
+            signal: AbortSignal.timeout(58_000),
         })
 
-        const data = await res.json()
+        const leido = await leerJsonRespuesta<SyncConversionesResponse>(
+            res, 'Error al sincronizar conversiones offline', TIMEOUT_SYNC_SHEETS
+        )
+        if (!leido.ok) return { error: leido.error }
+        const data = leido.data
 
         if (!res.ok) {
             return { error: data.error || 'Error al sincronizar conversiones offline' }
         }
 
         revalidatePath(`/admin/settings/${clienteId}`)
-        return { success: true, ...data }
+        // `data.success` ya dice si entró al menos un sheet; el literal que había
+        // aquí quedaba pisado por el spread, así que no aportaba nada.
+        return data
     } catch (e: any) {
         console.error('Conversiones offline sync error:', e)
+        if (esTimeoutDeFetch(e)) return { error: TIMEOUT_SYNC_SHEETS }
         return { error: e.message || 'Error al sincronizar conversiones offline' }
     }
 }

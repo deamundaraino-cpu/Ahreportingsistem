@@ -12,13 +12,17 @@ export const maxDuration = 60
 /**
  * Sync manual de conversiones offline desde Google Sheets.
  * POST /api/admin/sync-conversiones-offline
- * Body: { clientId: string }
+ * Body: { clientId: string, sheetId?: string, recalcularCampos?: boolean }
  * Sincroniza todos los sheets habilitados del cliente (cada uno con sus
  * pestañas) de forma independiente: el fallo de uno no toca los datos de otro.
+ *
+ * Con `sheetId` sincroniza solo ese documento. Un cliente con varios sheets de
+ * decenas de miles de filas no cabe entero en los 60s de la función: la UI los
+ * recorre de uno en uno y recalcula los campos al final (`recalcularCampos`).
  */
 export async function POST(request: NextRequest) {
   try {
-    const { clientId } = await request.json()
+    const { clientId, sheetId, recalcularCampos } = await request.json()
     if (!clientId) {
       return NextResponse.json({ error: 'clientId is required' }, { status: 400 })
     }
@@ -48,7 +52,19 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    const { results, rows, campos } = await syncClienteConversiones(supabase, cliente.id, rawConfig)
+    if (sheetId && !enabledSheets.some(s => s.id === sheetId)) {
+      return NextResponse.json(
+        { error: 'El sheet indicado no existe o está deshabilitado' },
+        { status: 400 }
+      )
+    }
+
+    const { results, rows, campos } = await syncClienteConversiones(supabase, cliente.id, rawConfig, {
+      sheetId,
+      // Por defecto se recalcula; el sync por sheet no, porque el recálculo
+      // recorre la capa cruda entera y se lanza una sola vez al terminar todos.
+      recalcularCampos: recalcularCampos ?? !sheetId,
+    })
 
     const porTipo = rows.reduce<Record<string, { cantidad: number; valor: number }>>((acc, r) => {
       if (!acc[r.tipo]) acc[r.tipo] = { cantidad: 0, valor: 0 }

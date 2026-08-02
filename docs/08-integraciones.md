@@ -201,7 +201,14 @@ están guardadas y el motivo queda como aviso en el log de sync.
 
 ### Disparadores
 - **Automático**: `GET /api/worker/google-sheets-conversiones` (job `sheets_conversiones`).
-- **Manual**: `POST /api/admin/sync-conversiones-offline` desde la UI.
+- **Manual**: `POST /api/admin/sync-conversiones-offline` desde la UI, con
+  `{ clientId, sheetId?, recalcularCampos? }`. **"Sincronizar todos ahora" manda
+  una petición por documento** (`sheetId`) y recalcula los campos una sola vez al
+  final: un cliente con varios sheets de decenas de miles de filas no cabe en el
+  `maxDuration` de la función, y al morir la petición devolvía la página de error
+  de la plataforma en texto plano — no JSON. Con `sheetId` el resto de sheets no
+  se toca (la limpieza de huérfanos sigue viendo la config completa) y no se
+  recalculan los campos, porque el recálculo recorre la capa cruda entera.
 - **Descubrimiento**: `POST /api/admin/list-sheet-tabs` (pestañas del doc) y
   `POST /api/admin/detect-sheet-columns` (encabezados de una pestaña; lo usa la
   validación del sheet para avisar de columnas mapeadas que no existen).

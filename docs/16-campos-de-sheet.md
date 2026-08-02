@@ -81,6 +81,11 @@ Esto llena dos capas: las conversiones de siempre y la **capa cruda**
 todo lo siguiente sea instantáneo: crear o editar un campo se recalcula desde la
 base **sin volver a llamar a Google**.
 
+El botón va **documento a documento** (verás `Sincronizando 2/3 · <nombre>`) y
+recalcula los campos al terminar. Es a propósito: los documentos grandes no caben
+todos juntos en el límite de tiempo del servidor. Si uno falla, los demás siguen
+y el motivo sale como aviso junto al resultado.
+
 ---
 
 ## Parte 2 · Crear el campo

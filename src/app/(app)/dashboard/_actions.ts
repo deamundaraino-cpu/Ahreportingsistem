@@ -15,6 +15,8 @@ import type { CampoValorDiario, CampoAgg, CampoFormato } from '@/lib/sheets/camp
 import { mergeMetricasDelRango, agruparOfflinePorFecha } from '@/lib/dashboard/merge-metrics';
 import { fetchAllRows } from '@/lib/supabase-paginate';
 import { normalizeSheetConfigs } from '@/lib/integrations/google-sheets-conversiones';
+import type { SyncConversionesResponse } from '@/lib/integrations/google-sheets-conversiones';
+import { leerJsonRespuesta, esTimeoutDeFetch } from '@/lib/fetch-json';
 
 /** Un campo de Sheet tal como lo necesita la UI del dashboard. */
 export interface SheetCampoResumen {
@@ -41,6 +43,9 @@ interface SheetCamposDelDia {
 
 /** Días por debajo de los cuales el sync se ejecuta al momento en vez de encolarse. */
 const SYNC_DIRECTO_MAX_DIAS = 7;
+
+/** Aquí el sync es de todos los sheets a la vez; el de uno en uno está en Ajustes. */
+const TIMEOUT_SHEETS = 'El Sheet tardó demasiado. Sincronízalo desde Ajustes del cliente.';
 
 /** Resultado de `triggerWorkerSync`, consumido por el botón "Sincronizar Datos". */
 export type SyncResult = {
@@ -103,7 +108,10 @@ export async function triggerSheetsSync(clientId: string): Promise<SheetsSyncRes
       signal: AbortSignal.timeout(58_000),
     })
 
-    const data = await res.json()
+    const leido = await leerJsonRespuesta<SyncConversionesResponse>(res, 'Error al sincronizar el Sheet', TIMEOUT_SHEETS)
+    if (!leido.ok) return { ok: false, configured: true, error: leido.error }
+    const data = leido.data
+
     if (!res.ok) {
       return { ok: false, configured: true, error: data.error || 'Error al sincronizar el Sheet' }
     }
@@ -116,12 +124,11 @@ export async function triggerSheetsSync(clientId: string): Promise<SheetsSyncRes
       warnings: data.warnings ?? [],
     }
   } catch (e: any) {
-    const timeout = e?.name === 'TimeoutError' || e?.name === 'AbortError'
     return {
       ok: false,
       configured: true,
-      error: timeout
-        ? 'El Sheet tardó demasiado. Sincronízalo desde Ajustes del cliente.'
+      error: esTimeoutDeFetch(e)
+        ? TIMEOUT_SHEETS
         : (e?.message || 'Error al sincronizar el Sheet'),
     }
   }

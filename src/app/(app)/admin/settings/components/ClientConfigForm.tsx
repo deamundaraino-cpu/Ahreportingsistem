@@ -6,7 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter }
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Button } from '@/components/ui/button'
-import { updateClienteConfig, deleteCliente, assignLayoutToCliente, testMetaConnection, testHotmartConnection, refreshMetaCustomConversions, testTikTokConnection, syncClienteMetrics, testGA4Connection, syncConversionesOffline, detectConversionesColumns, listConversionesTabs, getConversionesSyncStatus, listDriveSheets, listGa4Properties, fetchMetaAdAccounts, fetchTikTokAdAccounts } from '../_actions'
+import { updateClienteConfig, deleteCliente, assignLayoutToCliente, testMetaConnection, testHotmartConnection, refreshMetaCustomConversions, testTikTokConnection, syncClienteMetrics, testGA4Connection, syncConversionesOffline, recalcularSheetCampos, detectConversionesColumns, listConversionesTabs, getConversionesSyncStatus, listDriveSheets, listGa4Properties, fetchMetaAdAccounts, fetchTikTokAdAccounts } from '../_actions'
 import type { ConversionesConfig, DriveSheet, SheetTabConfig, SheetTabInfo, SheetSyncStatus } from '@/lib/integrations/google-sheets-conversiones'
 import type { GA4Property } from '@/lib/integrations/google-analytics'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -244,6 +244,9 @@ const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean
     const [validateUI, setValidateUI] = useState<Record<string, { loading: boolean; results: { tab: string; ok: boolean; message: string }[] }>>({})
     // Por sheet: último sync registrado (filas ok/descartadas, avisos por pestaña).
     const [convSyncStatus, setConvSyncStatus] = useState<Record<string, SheetSyncStatus>>({})
+    // "Sincronizar todos" va documento a documento: sin esto el botón se queda
+    // mudo un minuto largo y parece colgado.
+    const [convSyncProgreso, setConvSyncProgreso] = useState<string | null>(null)
 
     // El estado del último sync vive en la BD (tabla de log), no en la config.
     useEffect(() => {
@@ -1754,7 +1757,51 @@ const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean
                                                 if (saved && !saved.success) {
                                                     return { error: saved.error || 'Error al guardar la configuración antes de sincronizar' }
                                                 }
-                                                return syncConversionesOffline(cliente.id)
+
+                                                // Un documento por petición: varios sheets de decenas de miles
+                                                // de filas no caben en el límite de tiempo de la función, y la
+                                                // petición moría devolviendo la página de error de la
+                                                // plataforma. El id ausente se deriva de la posición, igual
+                                                // que hace `normalizeSheetConfigs` en el servidor.
+                                                const objetivo = convSheets
+                                                    .map((s, i) => ({ ...s, id: s.id || `sheet_${i}` }))
+                                                    .filter(s => s.enabled && s.sheet_url)
+
+                                                const total = { totalFilas: 0, diasProcesados: 0, filasDescartadas: 0 }
+                                                const avisos: string[] = []
+                                                const fallos: string[] = []
+
+                                                try {
+                                                    for (const [i, sheet] of objetivo.entries()) {
+                                                        const etiqueta = sheet.name || `Sheet ${i + 1}`
+                                                        setConvSyncProgreso(`${i + 1}/${objetivo.length} · ${etiqueta}`)
+                                                        const res = await syncConversionesOffline(cliente.id, sheet.id)
+                                                        if (res.error) {
+                                                            fallos.push(`${etiqueta}: ${res.error}`)
+                                                            continue
+                                                        }
+                                                        total.totalFilas += res.totalFilas ?? 0
+                                                        total.diasProcesados += res.diasProcesados ?? 0
+                                                        total.filasDescartadas += res.filasDescartadas ?? 0
+                                                        if (res.warnings) avisos.push(...res.warnings)
+                                                    }
+
+                                                    if (fallos.length === objetivo.length) {
+                                                        return { error: fallos.join(' · ') }
+                                                    }
+
+                                                    // Los campos de Sheet se derivan de la capa cruda de TODOS los
+                                                    // documentos, así que se recalculan una sola vez al final. No
+                                                    // vuelve a llamar a Google: lee solo de `sheet_filas`.
+                                                    setConvSyncProgreso('Recalculando campos…')
+                                                    const rec = await recalcularSheetCampos(cliente.id)
+                                                    if ('error' in rec) avisos.push(`Campos de Sheet: ${rec.error}`)
+                                                    else if (rec.avisos) avisos.push(...rec.avisos)
+                                                } finally {
+                                                    setConvSyncProgreso(null)
+                                                }
+
+                                                return { ...total, warnings: [...fallos, ...avisos] }
                                             })}
                                             disabled={testStatus['conversionesOffline']?.loading}
                                             className="h-8 text-xs"
@@ -1763,7 +1810,9 @@ const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean
                                                 ? <RefreshCw className="w-3 h-3 animate-spin mr-2" />
                                                 : <DownloadCloud className="w-3 h-3 mr-2" />
                                             }
-                                            Sincronizar todos ahora
+                                            {convSyncProgreso
+                                                ? `Sincronizando ${convSyncProgreso}`
+                                                : 'Sincronizar todos ahora'}
                                         </Button>
                                         {testStatus['conversionesOffline']?.success && (
                                             <span className="text-green-600 dark:text-green-500 text-xs flex items-center gap-1">
