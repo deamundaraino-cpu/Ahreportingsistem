@@ -738,17 +738,32 @@ export function computeConversionesAggregates(
   rows: ConversionRow[],
   customColumnsConfig?: Record<string, CustomColumnDef>
 ): ConversionDiaria[] {
-  const map = new Map<string, ConversionDiaria & { _pct_sums: Record<string, { total: number; weight: number }> }>()
+  return finalizarAgregados(computeConversionesAggregatesParcial(rows, customColumnsConfig))
+}
+
+/**
+ * Agregado a medio hacer: conserva las sumas de los porcentajes en vez de su
+ * división. Es lo que permite sumar el aporte de varias pestañas sin perder el
+ * ponderado — promediar promedios daría otro número.
+ */
+export interface ConversionDiariaParcial extends ConversionDiaria {
+  _pct_sums: Record<string, { total: number; weight: number }>
+}
+
+/** Igual que `computeConversionesAggregates`, pero sin resolver los porcentajes. */
+export function computeConversionesAggregatesParcial(
+  rows: ConversionRow[],
+  customColumnsConfig?: Record<string, CustomColumnDef>
+): ConversionDiariaParcial[] {
+  const map = new Map<string, ConversionDiariaParcial>()
 
   for (const row of rows) {
     const key = `${row.fecha}|${row.tipo}|${row.fuente}`
     let entry = map.get(key)
-
     if (!entry) {
       entry = {
         fecha: row.fecha, tipo: row.tipo, fuente: row.fuente,
-        total_cantidad: 0, total_valor: 0,
-        custom_fields: {}, _pct_sums: {},
+        total_cantidad: 0, total_valor: 0, custom_fields: {}, _pct_sums: {},
       }
       map.set(key, entry)
     }
@@ -759,22 +774,59 @@ export function computeConversionesAggregates(
     for (const [k, v] of Object.entries(row.custom_fields)) {
       const colType = customColumnsConfig?.[k]?.type ?? 'count'
       if (colType === 'text' || colType === 'date') continue
-
       if (colType === 'percentage') {
-        // Promedio ponderado: cada fila contribuye val*cantidad
         if (!entry._pct_sums[k]) entry._pct_sums[k] = { total: 0, weight: 0 }
         entry._pct_sums[k].total  += (v as number) * row.cantidad
         entry._pct_sums[k].weight += row.cantidad
       } else {
-        // count / currency → suma directa
         entry.custom_fields[k] = (entry.custom_fields[k] ?? 0) + (v as number)
       }
     }
   }
 
-  // Resolver porcentajes ponderados
-  return Array.from(map.values()).map(({ _pct_sums, ...entry }) => {
-    for (const [k, { total, weight }] of Object.entries(_pct_sums)) {
+  return Array.from(map.values())
+}
+
+/** Suma los agregados parciales de varias pestañas del mismo sheet. */
+export function mergeAgregadosParciales(
+  partes: ConversionDiariaParcial[][]
+): ConversionDiariaParcial[] {
+  const map = new Map<string, ConversionDiariaParcial>()
+
+  for (const parte of partes) {
+    for (const a of parte) {
+      const key = `${a.fecha}|${a.tipo}|${a.fuente}`
+      const acc = map.get(key)
+      if (!acc) {
+        map.set(key, {
+          ...a,
+          custom_fields: { ...a.custom_fields },
+          _pct_sums: Object.fromEntries(
+            Object.entries(a._pct_sums ?? {}).map(([k, v]) => [k, { ...v }])
+          ),
+        })
+        continue
+      }
+      acc.total_cantidad += a.total_cantidad
+      acc.total_valor    += a.total_valor
+      for (const [k, v] of Object.entries(a.custom_fields)) {
+        acc.custom_fields[k] = (acc.custom_fields[k] ?? 0) + v
+      }
+      for (const [k, v] of Object.entries(a._pct_sums ?? {})) {
+        if (!acc._pct_sums[k]) acc._pct_sums[k] = { total: 0, weight: 0 }
+        acc._pct_sums[k].total  += v.total
+        acc._pct_sums[k].weight += v.weight
+      }
+    }
+  }
+
+  return Array.from(map.values())
+}
+
+/** Resuelve los porcentajes ponderados y deja el agregado listo para guardar. */
+export function finalizarAgregados(parciales: ConversionDiariaParcial[]): ConversionDiaria[] {
+  return parciales.map(({ _pct_sums, ...entry }) => {
+    for (const [k, { total, weight }] of Object.entries(_pct_sums ?? {})) {
       entry.custom_fields[k] = weight > 0 ? total / weight : 0
     }
     return entry
@@ -811,37 +863,31 @@ export async function listGoogleSheets(): Promise<DriveSheet[]> {
 }
 
 /**
- * Reemplazo completo de UN sheet del cliente, en orden seguro.
+ * Inserta el lote de UNA tanda (un sheet entero, o una sola pestaña de él).
  *
- * Se inserta primero el lote nuevo con un `sync_batch_id` y solo al terminar se
- * borran las filas de lotes anteriores DE ESE MISMO SHEET. Antes el borrado era
- * por cliente: en un sync multi-sheet, si un sheet fallaba, el replace con las
- * filas de los que sí funcionaron borraba silenciosamente sus datos.
+ * Solo inserta: ni agrega ni retira lotes anteriores. Eso lo hace
+ * `consolidarLoteSheet`, y va aparte porque un sync partido por pestañas manda
+ * varias tandas con el MISMO `sync_batch_id` y el reemplazo no puede ocurrir
+ * hasta que estén todas — si no, la primera pestaña borraría los datos viejos de
+ * las otras dos y el sheet se quedaría a un tercio hasta el final.
+ *
+ * `tabName` acota el deshacer: cuando falla una pestaña suelta se retira solo lo
+ * suyo, no lo que ya habían dejado las pestañas anteriores del mismo lote.
  */
-export async function saveConversionesSheetToDb(
+export async function insertarLoteSheet(
   supabase: any,
   clienteId: string,
   sheetId: string,
+  batchId: string,
   rows: ConversionRow[],
-  aggregates: ConversionDiaria[],
-  crudas: SheetRawRow[] = []
-): Promise<{ rowsProcessed: number; daysProcessed: number; rawProcessed: number; rawError?: string }> {
-  const batchId = randomUUID()
-
-  /**
-   * Deshace el lote a medias para no dejar duplicados junto a los datos viejos.
-   *
-   * NO toca `conversiones_offline_diarias` a propósito. Esa tabla se escribe con
-   * upsert, así que una fila sobrescrita ya lleva el `sync_batch_id` nuevo:
-   * borrarla por lote se llevaría por delante el agregado anterior, que era dato
-   * bueno. Y no hace falta — cada fila es el agregado COMPLETO de su
-   * (sheet, día, tipo, fuente), no una suma parcial, así que una mezcla de dos
-   * ejecuciones sigue siendo coherente; a lo sumo queda algún día desactualizado
-   * hasta el siguiente sync.
-   */
+  crudas: SheetRawRow[] = [],
+  tabName?: string
+): Promise<{ rowsProcessed: number; rawProcessed: number; rawError?: string }> {
   const rollback = async () => {
     for (const t of ['conversiones_offline', 'sheet_filas']) {
-      await supabase.from(t).delete().eq('sync_batch_id', batchId)
+      let q = supabase.from(t).delete().eq('sync_batch_id', batchId).eq('sheet_id', sheetId)
+      if (tabName) q = q.eq('tab_name', tabName)
+      await q
     }
   }
 
@@ -861,32 +907,7 @@ export async function saveConversionesSheetToDb(
     }
   }
 
-  if (aggregates.length > 0) {
-    const toInsert = aggregates.map(a => ({
-      cliente_id: clienteId, fecha: a.fecha, tipo: a.tipo, fuente: a.fuente,
-      total_cantidad: a.total_cantidad, total_valor: a.total_valor,
-      custom_fields: a.custom_fields, sync_batch_id: batchId, sheet_id: sheetId,
-    }))
-    // UPSERT, no insert: `uq_conv_diarias_origen` es único por
-    // (cliente_id, sheet_id, fecha, tipo, fuente) y el lote anterior sigue en la
-    // tabla hasta el replace de abajo, así que un insert chocaba con él a partir
-    // del segundo sync de cada sheet ("Error insertando agregados").
-    //
-    // El upsert es además lo correcto semánticamente: el agregado de un
-    // (sheet, día, tipo, fuente) es único por definición. Al sobrescribirlo se
-    // actualiza también su `sync_batch_id`, de modo que el borrado posterior
-    // sigue retirando solo las filas que este sync ya no produce.
-    for (let i = 0; i < toInsert.length; i += 500) {
-      const { error } = await supabase.from('conversiones_offline_diarias')
-        .upsert(toInsert.slice(i, i + 500), { onConflict: 'cliente_id,sheet_id,fecha,tipo,fuente' })
-      if (error) {
-        await rollback()
-        throw new Error(`Error insertando agregados: ${error.message}`)
-      }
-    }
-  }
-
-  // Capa cruda: mismo lote que las conversiones, para que el replace de abajo
+  // Capa cruda: mismo lote que las conversiones, para que el replace posterior
   // deje las tres tablas en el mismo estado.
   //
   // Un fallo aquí NO tumba el sheet: la capa cruda alimenta los campos de Sheet,
@@ -908,15 +929,67 @@ export async function saveConversionesSheetToDb(
       if (error) {
         rawOk = false
         rawError = error.message
-        await supabase.from('sheet_filas').delete().eq('sync_batch_id', batchId)
+        let q = supabase.from('sheet_filas').delete()
+          .eq('sync_batch_id', batchId).eq('sheet_id', sheetId)
+        if (tabName) q = q.eq('tab_name', tabName)
+        await q
         console.error(`[conversiones] sheet ${sheetId}: no se pudo guardar la capa cruda:`, error.message)
       }
     }
   }
 
+  return {
+    rowsProcessed: rows.length,
+    rawProcessed: rawOk ? crudas.length : 0,
+    ...(rawError ? { rawError } : {}),
+  }
+}
+
+/**
+ * Cierra un lote: guarda los agregados diarios y retira los lotes anteriores.
+ *
+ * Se llama UNA vez por sheet, con el lote ya completo. En el sync partido por
+ * pestañas los agregados llegan sumados por el llamador: `uq_conv_diarias_origen`
+ * es único por (cliente, sheet, fecha, tipo, fuente) **sin la pestaña**, así que
+ * dos pestañas que aporten al mismo día se pisarían la una a la otra si cada una
+ * escribiera su agregado por separado.
+ *
+ * `conservarCrudas` evita retirar los lotes anteriores de `sheet_filas` cuando la
+ * capa cruda de esta corrida quedó incompleta: mejor una capa cruda vieja que
+ * ninguna.
+ */
+export async function consolidarLoteSheet(
+  supabase: any,
+  clienteId: string,
+  sheetId: string,
+  batchId: string,
+  aggregates: ConversionDiaria[],
+  conservarCrudas = false
+): Promise<{ daysProcessed: number; replaceError?: string }> {
+  if (aggregates.length > 0) {
+    const toInsert = aggregates.map(a => ({
+      cliente_id: clienteId, fecha: a.fecha, tipo: a.tipo, fuente: a.fuente,
+      total_cantidad: a.total_cantidad, total_valor: a.total_valor,
+      custom_fields: a.custom_fields, sync_batch_id: batchId, sheet_id: sheetId,
+    }))
+    // UPSERT, no insert: el lote anterior sigue en la tabla hasta el replace de
+    // abajo, así que un insert chocaba con él a partir del segundo sync de cada
+    // sheet ("Error insertando agregados").
+    //
+    // El upsert es además lo correcto semánticamente: el agregado de un
+    // (sheet, día, tipo, fuente) es único por definición. Al sobrescribirlo se
+    // actualiza también su `sync_batch_id`, de modo que el borrado posterior
+    // sigue retirando solo las filas que este sync ya no produce.
+    for (let i = 0; i < toInsert.length; i += 500) {
+      const { error } = await supabase.from('conversiones_offline_diarias')
+        .upsert(toInsert.slice(i, i + 500), { onConflict: 'cliente_id,sheet_id,fecha,tipo,fuente' })
+      if (error) throw new Error(`Error insertando agregados: ${error.message}`)
+    }
+  }
+
   // El lote nuevo está completo: recién ahora se retira el anterior de este sheet.
   const aReemplazar = ['conversiones_offline', 'conversiones_offline_diarias']
-  if (rawOk) aReemplazar.push('sheet_filas')
+  if (!conservarCrudas) aReemplazar.push('sheet_filas')
   const replaceErrors: string[] = []
   for (const t of aReemplazar) {
     const err = await borrarLotesAnteriores(supabase, t, clienteId, sheetId, batchId)
@@ -927,20 +1000,43 @@ export async function saveConversionesSheetToDb(
   }
 
   // Un replace fallido deja una copia entera del sheet conviviendo con la nueva.
-  // Se propaga como `rawError` (lo único que llega al log de sync) porque durante
-  // meses este fallo fue invisible: el error del delete se descartaba y el sync
-  // reportaba éxito mientras `sheet_filas` acumulaba un duplicado por ejecución.
-  const replaceError = replaceErrors.length > 0
-    ? `No se retiraron lotes anteriores — hay filas duplicadas en ${replaceErrors.join('; ')}`
-    : null
-
+  // Se propaga hacia arriba porque durante meses este fallo fue invisible: el
+  // error del delete se descartaba y el sync reportaba éxito mientras
+  // `sheet_filas` acumulaba un duplicado por ejecución.
   return {
-    rowsProcessed: rows.length,
     daysProcessed: aggregates.length,
-    rawProcessed: rawOk ? crudas.length : 0,
-    ...(rawError || replaceError
-      ? { rawError: [rawError, replaceError].filter(Boolean).join(' | ') }
+    ...(replaceErrors.length > 0
+      ? { replaceError: `No se retiraron lotes anteriores — hay filas duplicadas en ${replaceErrors.join('; ')}` }
       : {}),
+  }
+}
+
+/**
+ * Reemplazo completo de UN sheet del cliente, en orden seguro: inserta el lote
+ * nuevo entero y solo entonces retira los anteriores DE ESE MISMO SHEET. Antes
+ * el borrado era por cliente: en un sync multi-sheet, si un sheet fallaba, el
+ * replace con las filas de los que sí funcionaron borraba sus datos.
+ */
+export async function saveConversionesSheetToDb(
+  supabase: any,
+  clienteId: string,
+  sheetId: string,
+  rows: ConversionRow[],
+  aggregates: ConversionDiaria[],
+  crudas: SheetRawRow[] = []
+): Promise<{ rowsProcessed: number; daysProcessed: number; rawProcessed: number; rawError?: string }> {
+  const batchId = randomUUID()
+  const insertado = await insertarLoteSheet(supabase, clienteId, sheetId, batchId, rows, crudas)
+  const cerrado = await consolidarLoteSheet(
+    supabase, clienteId, sheetId, batchId, aggregates, !!insertado.rawError
+  )
+
+  const motivos = [insertado.rawError, cerrado.replaceError].filter(Boolean)
+  return {
+    rowsProcessed: insertado.rowsProcessed,
+    daysProcessed: cerrado.daysProcessed,
+    rawProcessed: insertado.rawProcessed,
+    ...(motivos.length > 0 ? { rawError: motivos.join(' | ') } : {}),
   }
 }
 
@@ -985,43 +1081,83 @@ async function borrarLotesAnteriores(
   return `quedan lotes sin retirar tras ${MAX_LOTES} intentos`
 }
 
+/** Filas por sentencia de borrado. Ver `borrarPorPaginas`. */
+const BORRADO_PAGINA = 500
+
 /**
- * Borra las filas que ya no pertenecen a ningún sheet configurado: las de un
- * sheet eliminado de la config y las anteriores a la trazabilidad por sheet
- * (sheet_id NULL). Debe llamarse DESPUÉS de los saves — si no, borraría los
- * datos legacy antes de que el sync los repueble.
+ * Borra filas por páginas de id en vez de en una sola sentencia.
+ *
+ * Un `delete` masivo sobre `sheet_filas` no cabe en el `statement_timeout` de 8 s
+ * del rol de PostgREST: el índice GIN sobre `valores` hace que decenas de miles de
+ * filas no entren ni de lejos. Y como el error se ignoraba, la basura se quedaba
+ * y crecía en cada corrida. Troceado, cada sentencia toca 500 filas y termina.
+ *
+ * Devuelve cuántas borró y, si no pudo terminar, por qué — el llamador decide si
+ * eso es un aviso o un fallo, pero ya no pasa desapercibido.
+ */
+async function borrarPorPaginas(
+  supabase: any,
+  tabla: string,
+  filtrar: (q: any) => any,
+  maxPaginas = 400
+): Promise<{ borradas: number; error?: string }> {
+  let borradas = 0
+  for (let i = 0; i < maxPaginas; i++) {
+    const { data, error } = await filtrar(supabase.from(tabla).select('id')).limit(BORRADO_PAGINA)
+    if (error) return { borradas, error: error.message }
+    if (!data || data.length === 0) return { borradas }
+
+    const ids = (data as { id: string }[]).map(r => r.id)
+    const { error: delErr } = await supabase.from(tabla).delete().in('id', ids)
+    if (delErr) return { borradas, error: delErr.message }
+    borradas += ids.length
+  }
+  return { borradas, error: `quedan filas por retirar tras ${maxPaginas} páginas` }
+}
+
+/**
+ * Borra las filas que ya no pertenecen a ningún sheet de la config: las de un
+ * sheet eliminado y las anteriores a la trazabilidad por sheet (sheet_id NULL).
+ * Debe llamarse DESPUÉS de los saves — si no, borraría los datos legacy antes de
+ * que el sync los repueble.
+ *
+ * `configuredSheetIds` son TODOS los sheets de la config, habilitados o no.
+ * Deshabilitar un sheet es pausar su sync, no tirar su historia; cuando esta
+ * función recibía solo los habilitados, quitar la casilla borraba los datos.
  */
 export async function cleanupOrphanConversiones(
   supabase: any,
   clienteId: string,
-  validSheetIds: string[]
-): Promise<number> {
+  configuredSheetIds: string[]
+): Promise<{ deleted: number; errors: string[] }> {
   let deleted = 0
+  const errors: string[] = []
 
   // Lista para el filtro `not.in` de PostgREST. Se hace por negación en vez de
   // listar primero los sheet_id existentes: aquel `select ... limit(5000)`
   // dejaba de ver los sheets huérfanos en clientes con muchas filas, y
   // `sheet_filas` es bastante más grande que las otras dos.
-  const validList = validSheetIds.length > 0
-    ? `(${validSheetIds.map(id => `"${String(id).replace(/"/g, '""')}"`).join(',')})`
+  const validList = configuredSheetIds.length > 0
+    ? `(${configuredSheetIds.map(id => `"${String(id).replace(/"/g, '""')}"`).join(',')})`
     : null
 
   for (const table of ['conversiones_offline', 'conversiones_offline_diarias', 'sheet_filas']) {
-    // Filas anteriores a la trazabilidad por sheet. Van aparte porque en SQL
-    // `NULL NOT IN (...)` no es verdadero y el filtro de abajo no las alcanza.
-    const { error: nullErr, count } = await supabase.from(table)
-      .delete({ count: 'exact' }).eq('cliente_id', clienteId).is('sheet_id', null)
-    if (!nullErr) deleted += count ?? 0
+    // Las filas con sheet_id NULL van aparte: en SQL `NULL NOT IN (...)` no es
+    // verdadero, así que el filtro de abajo no las alcanza.
+    const nulos = await borrarPorPaginas(supabase, table, (q: any) =>
+      q.eq('cliente_id', clienteId).is('sheet_id', null))
+    deleted += nulos.borradas
+    if (nulos.error) errors.push(`${table} (legacy): ${nulos.error}`)
 
-    let q = supabase.from(table)
-      .delete({ count: 'exact' }).eq('cliente_id', clienteId).not('sheet_id', 'is', null)
-    if (validList) q = q.not('sheet_id', 'in', validList)
-
-    const { error, count: c } = await q
-    if (!error) deleted += c ?? 0
+    const retirados = await borrarPorPaginas(supabase, table, (q: any) => {
+      const base = q.eq('cliente_id', clienteId).not('sheet_id', 'is', null)
+      return validList ? base.not('sheet_id', 'in', validList) : base
+    })
+    deleted += retirados.borradas
+    if (retirados.error) errors.push(`${table}: ${retirados.error}`)
   }
 
-  return deleted
+  return { deleted, errors }
 }
 
 export type SyncLogStatus = 'ok' | 'partial' | 'error'
@@ -1107,6 +1243,65 @@ export interface SyncConversionesResponse {
   error?: string
 }
 
+/** Lo que devuelve sincronizar una pestaña suelta. */
+export interface TabSyncResult {
+  tab_id: string
+  tab_name: string
+  rowsProcessed: number
+  rawProcessed: number
+  rowsDescartadas: number
+  quality: TabSyncQuality[]
+  /** Parciales, para que el consolidado los sume sin romper los ponderados. */
+  aggregates: ConversionDiariaParcial[]
+  rawError?: string
+}
+
+/**
+ * Sincroniza UNA pestaña dentro del lote `batchId`, sin agregar ni reemplazar.
+ *
+ * Es la unidad del sync partido: un documento de decenas de miles de filas no
+ * cabe entero en el tiempo de una función, pero una pestaña sí. Todas las
+ * pestañas de una corrida comparten `batchId` y `consolidarLoteSheet` cierra al
+ * final; hasta entonces los datos anteriores siguen intactos, que es lo que hace
+ * que una corrida a medias no deje al cliente sin dato.
+ */
+export async function syncTabConversiones(
+  supabase: any,
+  clienteId: string,
+  sheetCfg: ConversionesConfig,
+  tabId: string,
+  batchId: string
+): Promise<TabSyncResult> {
+  const sheetId = sheetCfg.id!
+  const tab = normalizeTabs(sheetCfg).find(t => t.id === tabId)
+  if (!tab) throw new Error(`La pestaña ${tabId} no está en la configuración del sheet`)
+  if (tab.enabled === false) throw new Error(`La pestaña "${tab.sheet_name}" está deshabilitada`)
+
+  // Se le pasa el sheet con esta única pestaña: `fetchConversionesFromSheet` abre
+  // el documento y recorre las que reciba.
+  const { rows, crudas, quality } = await fetchConversionesFromSheet({ ...sheetCfg, tabs: [tab] })
+
+  const customCols = mergeTabCustomColumns([tab])
+  const aggregates = computeConversionesAggregatesParcial(
+    rows, Object.keys(customCols).length > 0 ? customCols : undefined
+  )
+
+  const guardado = await insertarLoteSheet(
+    supabase, clienteId, sheetId, batchId, rows, crudas, tab.sheet_name
+  )
+
+  return {
+    tab_id: tabId,
+    tab_name: tab.sheet_name,
+    rowsProcessed: guardado.rowsProcessed,
+    rawProcessed: guardado.rawProcessed,
+    rowsDescartadas: quality.reduce((s, q) => s + q.fecha_invalida + q.cantidad_invalida, 0),
+    quality,
+    aggregates,
+    ...(guardado.rawError ? { rawError: guardado.rawError } : {}),
+  }
+}
+
 export interface SyncClienteConversionesOptions {
   /**
    * Sincroniza solo este sheet. Los demás quedan intactos: un documento grande
@@ -1131,6 +1326,8 @@ export async function syncClienteConversiones(
   results: SheetSyncResult[]
   rows: ConversionRow[]
   campos?: { campos: number; dias: number; valores: number; avisos: string[]; error?: string }
+  /** Filas retiradas de sheets que ya no están en la config, y lo que no se pudo retirar. */
+  limpieza: { deleted: number; errors: string[] }
 }> {
   const allSheets = normalizeSheetConfigs(rawConfig)
   const enabledSheets = allSheets.filter(s => s.enabled && s.sheet_url)
@@ -1184,8 +1381,12 @@ export async function syncClienteConversiones(
   }
 
   // Los sheets retirados de la config (y los datos previos a la trazabilidad por
-  // sheet) se limpian con la config ya leída correctamente.
-  await cleanupOrphanConversiones(supabase, clienteId, enabledSheets.map(s => s.id!))
+  // sheet) se limpian con la config ya leída correctamente. Se pasan TODOS los
+  // sheets, no solo los habilitados: deshabilitar pausa el sync, no borra nada.
+  const limpieza = await cleanupOrphanConversiones(supabase, clienteId, allSheets.map(s => s.id!))
+  if (limpieza.errors.length > 0) {
+    console.error('[conversiones] limpieza de huérfanos incompleta:', limpieza.errors.join(' | '))
+  }
 
   // Los campos de Sheet se derivan de la capa cruda, así que se recalculan al
   // final, con `sheet_filas` ya reemplazada y sin los huérfanos.
@@ -1195,7 +1396,7 @@ export async function syncClienteConversiones(
   // import es dinámico para no meter la capa de campos en el arranque de los
   // workers que solo sincronizan conversiones.
   let campos: { campos: number; dias: number; valores: number; avisos: string[]; error?: string } | undefined
-  if (opts.recalcularCampos === false) return { results, rows: allRows, campos }
+  if (opts.recalcularCampos === false) return { results, rows: allRows, campos, limpieza }
   try {
     const { recalcularCamposCliente } = await import('../sheets/campos-db')
     campos = await recalcularCamposCliente(supabase, clienteId)
@@ -1206,5 +1407,5 @@ export async function syncClienteConversiones(
     campos = { campos: 0, dias: 0, valores: 0, avisos: [], error: motivo }
   }
 
-  return { results, rows: allRows, campos }
+  return { results, rows: allRows, campos, limpieza }
 }

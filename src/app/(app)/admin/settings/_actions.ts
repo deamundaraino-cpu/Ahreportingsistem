@@ -751,6 +751,67 @@ export async function detectConversionesColumns(sheetConfig: ConversionesConfig,
     }
 }
 
+export interface SheetEliminarPreview {
+    filas: { conversiones: number; diarias: number; crudas: number; total: number }
+    campos: Array<{ nombre: string; clave: string; origenesQuePierde: number; quedaSinOrigen: boolean }>
+}
+
+/** Qué se llevará por delante borrar un sheet: filas y campos que lo usan. */
+export async function previewEliminarSheet(
+    clienteId: string,
+    sheetId: string
+): Promise<SheetEliminarPreview | { error: string }> {
+    try {
+        const res = await fetch(
+            `${await baseUrl()}/api/admin/sheets-conversiones/eliminar` +
+            `?clientId=${encodeURIComponent(clienteId)}&sheetId=${encodeURIComponent(sheetId)}`,
+            { cache: 'no-store' }
+        )
+        const leido = await leerJsonRespuesta<SheetEliminarPreview & { error?: string }>(
+            res, 'Error al consultar el sheet'
+        )
+        if (!leido.ok) return { error: leido.error }
+        if (!res.ok) return { error: leido.data.error || 'Error al consultar el sheet' }
+        return { filas: leido.data.filas, campos: leido.data.campos ?? [] }
+    } catch (e: any) {
+        return { error: e.message || 'Error al consultar el sheet' }
+    }
+}
+
+/**
+ * Borra una tanda de filas del sheet. Con `done:false` quedan más: el llamador
+ * repite hasta que sea `true`, que es cuando además se retira de la config y se
+ * recalculan los campos.
+ */
+export async function eliminarSheetConversiones(
+    clienteId: string,
+    sheetId: string
+): Promise<{ done?: boolean; borradas?: number; restantes?: number; warning?: string; error?: string }> {
+    try {
+        const res = await fetch(`${await baseUrl()}/api/admin/sheets-conversiones/eliminar`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ clientId: clienteId, sheetId }),
+            cache: 'no-store',
+            signal: AbortSignal.timeout(58_000),
+        })
+        const leido = await leerJsonRespuesta<any>(
+            res, 'Error al eliminar el sheet',
+            'El borrado superó el tiempo máximo del servidor. Vuelve a pulsar Eliminar: retoma donde lo dejó.'
+        )
+        if (!leido.ok) return { error: leido.error }
+        if (!res.ok) return { error: leido.data.error || 'Error al eliminar el sheet' }
+
+        if (leido.data.done) revalidatePath(`/admin/settings/${clienteId}`)
+        return leido.data
+    } catch (e: any) {
+        if (esTimeoutDeFetch(e)) {
+            return { error: 'El borrado superó el tiempo máximo del servidor. Vuelve a pulsar Eliminar: retoma donde lo dejó.' }
+        }
+        return { error: e.message || 'Error al eliminar el sheet' }
+    }
+}
+
 // Pestañas reales del documento, para elegirlas en vez de teclear el nombre.
 export async function listConversionesTabs(sheetConfig: ConversionesConfig) {
     try {
@@ -1011,12 +1072,57 @@ export async function listSheetColumnas(clienteId: string) {
 const TIMEOUT_SYNC_SHEETS =
     'La sincronización superó el tiempo máximo del servidor. Vuelve a intentarlo; si el documento es muy grande, sincroniza los sheets de uno en uno.'
 
+/** Una pestaña del lote, o la consolidación final. Ver la ruta del sync. */
+export interface SyncTanda {
+    sheetId: string
+    batchId: string
+    /** Pestaña a sincronizar. Sin esto, la petición consolida el lote. */
+    tabId?: string
+    consolidar?: boolean
+    aggregates?: unknown[]
+    quality?: unknown[]
+    /** Solo en la consolidación: apagado mientras queden sheets por sincronizar. */
+    recalcularCampos?: boolean
+}
+
 /**
- * Sincroniza los sheets de conversiones del cliente.
+ * Sincroniza una tanda: una pestaña, o el cierre del lote.
  *
- * Con `sheetId` sincroniza solo ese documento y NO recalcula los campos: la UI
- * recorre los sheets uno a uno y llama a `recalcularSheetCampos` al final, para
- * que ninguna petición se acerque al límite de tiempo de la función.
+ * Partido así porque un documento de decenas de miles de filas no cabe en el
+ * tiempo de una función. Hasta la consolidación no se toca el dato anterior.
+ */
+export async function syncTandaConversiones(
+    clienteId: string,
+    tanda: SyncTanda
+): Promise<Partial<SyncConversionesResponse> & { aggregates?: unknown[]; quality?: unknown[]; batchId?: string }> {
+    try {
+        const res = await fetch(`${await baseUrl()}/api/admin/sync-conversiones-offline`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ clientId: clienteId, ...tanda }),
+            cache: 'no-store',
+            signal: AbortSignal.timeout(58_000),
+        })
+
+        const leido = await leerJsonRespuesta<any>(
+            res, 'Error al sincronizar la pestaña', TIMEOUT_SYNC_SHEETS
+        )
+        if (!leido.ok) return { error: leido.error }
+        if (!res.ok) return { error: leido.data.error || 'Error al sincronizar la pestaña' }
+
+        if (tanda.consolidar) revalidatePath(`/admin/settings/${clienteId}`)
+        return leido.data
+    } catch (e: any) {
+        if (esTimeoutDeFetch(e)) return { error: TIMEOUT_SYNC_SHEETS }
+        return { error: e.message || 'Error al sincronizar la pestaña' }
+    }
+}
+
+/**
+ * Sincroniza los sheets de conversiones del cliente de una vez.
+ *
+ * Se conserva para documentos pequeños y para el worker; la UI usa
+ * `syncTandaConversiones`, que trocea por pestaña.
  */
 export async function syncConversionesOffline(
     clienteId: string,

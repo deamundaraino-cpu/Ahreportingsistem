@@ -6,12 +6,13 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter }
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Button } from '@/components/ui/button'
-import { updateClienteConfig, deleteCliente, assignLayoutToCliente, testMetaConnection, testHotmartConnection, refreshMetaCustomConversions, testTikTokConnection, syncClienteMetrics, testGA4Connection, syncConversionesOffline, recalcularSheetCampos, detectConversionesColumns, listConversionesTabs, getConversionesSyncStatus, listDriveSheets, listGa4Properties, fetchMetaAdAccounts, fetchTikTokAdAccounts } from '../_actions'
+import { updateClienteConfig, deleteCliente, assignLayoutToCliente, testMetaConnection, testHotmartConnection, refreshMetaCustomConversions, testTikTokConnection, syncClienteMetrics, testGA4Connection, syncTandaConversiones, detectConversionesColumns, previewEliminarSheet, eliminarSheetConversiones, listConversionesTabs, getConversionesSyncStatus, listDriveSheets, listGa4Properties, fetchMetaAdAccounts, fetchTikTokAdAccounts } from '../_actions'
 import type { ConversionesConfig, DriveSheet, SheetTabConfig, SheetTabInfo, SheetSyncStatus } from '@/lib/integrations/google-sheets-conversiones'
+import type { SheetEliminarPreview } from '../_actions'
 import type { GA4Property } from '@/lib/integrations/google-analytics'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { SheetCamposSection } from './sheet-campos/SheetCamposSection'
-import { Loader2, ArrowLeft, Save, Trash2, CheckCircle2, AlertCircle, RefreshCw, LayoutDashboard, DownloadCloud, DatabaseZap, Plus, FolderSearch, FileSpreadsheet, Search, BarChart3, ChevronDown } from 'lucide-react'
+import { Loader2, ArrowLeft, Save, Trash2, CheckCircle2, AlertCircle, RefreshCw, LayoutDashboard, DownloadCloud, DatabaseZap, Plus, FolderSearch, FileSpreadsheet, Search, BarChart3, ChevronDown, Lock } from 'lucide-react'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -197,8 +198,13 @@ export function ClientConfigForm({ cliente, layouts = [], isAdmin = false, googl
         // Normalize google_sheets_conversiones to always be an array
         const rawConv = initial.google_sheets_conversiones
         if (rawConv && !Array.isArray(rawConv) && typeof rawConv === 'object') {
+            // El id tiene que ser 'legacy', el mismo que le pone
+            // `normalizeSheetConfigs` en el servidor. Con un `crypto.randomUUID()`
+            // aquí, abrir esta pantalla y guardar le cambiaba el id al documento
+            // y toda su historia quedaba huérfana — el sheet_id es la clave de
+            // partición de conversiones_offline, _diarias y sheet_filas.
             initial.google_sheets_conversiones = [{
-                id: crypto.randomUUID(),
+                id: 'legacy',
                 name: 'Sheet Principal',
                 ...rawConv,
             }]
@@ -247,6 +253,37 @@ const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean
     // "Sincronizar todos" va documento a documento: sin esto el botón se queda
     // mudo un minuto largo y parece colgado.
     const [convSyncProgreso, setConvSyncProgreso] = useState<string | null>(null)
+
+    /**
+     * Sheets ya guardados: su URL queda en solo lectura.
+     *
+     * El `sheet_id` es la clave de partición de las tres tablas de Sheets, así que
+     * apuntar un sheet existente a otro documento mezcla dos documentos en la
+     * misma partición, y borrarlo para volver a crearlo deja la historia entera
+     * huérfana. Se cambia de documento borrando este y añadiendo otro, que es
+     * explícito sobre lo que le pasa al dato.
+     */
+    const [sheetsBloqueados, setSheetsBloqueados] = useState<Set<string>>(() => {
+        const guardado = cliente.config_api?.google_sheets_conversiones
+        // Los ids ausentes se derivan de la posición y el objeto legacy es
+        // 'legacy': mismas reglas que `normalizeSheetConfigs` en el servidor.
+        if (Array.isArray(guardado)) {
+            return new Set(guardado.map((s: ConversionesConfig, i: number) => s?.id || `sheet_${i}`))
+        }
+        return new Set(guardado && typeof guardado === 'object' ? ['legacy'] : [])
+    })
+
+    // Borrado de un sheet: confirmación con lo que se lleva por delante, y progreso.
+    const [borrarSheet, setBorrarSheet] = useState<{
+        idx: number
+        sid: string
+        nombre: string
+        preview?: SheetEliminarPreview
+        cargando: boolean
+        borrando: boolean
+        progreso: number
+        error?: string
+    } | null>(null)
 
     // El estado del último sync vive en la BD (tabla de log), no en la config.
     useEffect(() => {
@@ -526,10 +563,71 @@ const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean
         if (!success) {
             setError(updateError || 'Error al guardar la configuración')
         } else {
+            // Lo guardado ya tiene (o tendrá) datos colgando de su sheet_id: a
+            // partir de aquí el documento no se cambia, se elimina y se añade otro.
+            setSheetsBloqueados(new Set(
+                ((finalConfig.google_sheets_conversiones ?? []) as ConversionesConfig[])
+                    .map((s, i) => s?.id || `sheet_${i}`)
+            ))
             router.refresh()
         }
         setLoading(false)
         return { success, error: updateError }
+    }
+
+    /** Abre el diálogo de borrado y pide qué se llevará por delante. */
+    async function abrirBorradoSheet(idx: number, sid: string, nombre: string) {
+        setBorrarSheet({ idx, sid, nombre, cargando: true, borrando: false, progreso: 0 })
+        const res = await previewEliminarSheet(cliente.id, sid)
+        setBorrarSheet(prev => prev && prev.sid === sid
+            ? ('error' in res
+                ? { ...prev, cargando: false, error: res.error }
+                : { ...prev, cargando: false, preview: res })
+            : prev)
+    }
+
+    /**
+     * Borra el sheet y sus datos. El endpoint va por tandas y contesta
+     * `done:false` mientras queden filas, así que se le llama en bucle: un
+     * documento de decenas de miles de filas se retira entero sin que ninguna
+     * petición se acerque al límite de tiempo de la función.
+     */
+    async function confirmarBorradoSheet() {
+        const objetivo = borrarSheet
+        if (!objetivo) return
+        setBorrarSheet({ ...objetivo, borrando: true, error: undefined })
+
+        let borradas = 0
+        for (let intento = 0; intento < 200; intento++) {
+            const res = await eliminarSheetConversiones(cliente.id, objetivo.sid)
+            if (res.error) {
+                setBorrarSheet(prev => prev ? { ...prev, borrando: false, error: res.error } : prev)
+                return
+            }
+            borradas += res.borradas ?? 0
+            setBorrarSheet(prev => prev ? { ...prev, progreso: borradas } : prev)
+            if (res.done) {
+                // La config ya la actualizó el servidor; el estado local se pone al día
+                // para no volver a guardar el sheet recién retirado.
+                setConfig((prev: any) => ({
+                    ...prev,
+                    google_sheets_conversiones: (prev.google_sheets_conversiones ?? [])
+                        .filter((s: ConversionesConfig, i: number) => (s?.id || `sheet_${i}`) !== objetivo.sid),
+                }))
+                setSheetsBloqueados(prev => {
+                    const next = new Set(prev)
+                    next.delete(objetivo.sid)
+                    return next
+                })
+                setBorrarSheet(null)
+                if (res.warning) setError(res.warning)
+                router.refresh()
+                return
+            }
+        }
+        setBorrarSheet(prev => prev
+            ? { ...prev, borrando: false, error: 'Quedan filas por borrar. Vuelve a pulsar Eliminar para continuar.' }
+            : prev)
     }
 
     const handleGA4JSONUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1431,6 +1529,7 @@ const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean
 
                                 {convSheets.map((sheet, idx) => {
                                     const sid = sheet.id ?? String(idx)
+                                    const bloqueado = sheetsBloqueados.has(sid)
                                     const tabs = tabsOf(sheet)
                                     const tabsState = tabsUI[sid] || { loading: false, error: null, available: [] }
                                     const validation = validateUI[sid]
@@ -1467,7 +1566,12 @@ const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean
                                                 <Button
                                                     variant="ghost"
                                                     size="sm"
-                                                    onClick={() => removeSheet(idx)}
+                                                    onClick={() => {
+                                                        // Un sheet que aún no se ha guardado no tiene datos
+                                                        // que borrar: se quita y ya.
+                                                        if (!bloqueado) { removeSheet(idx); return }
+                                                        abrirBorradoSheet(idx, sid, sheet.name || `Sheet ${idx + 1}`)
+                                                    }}
                                                     className="text-muted-foreground/70 hover:text-red-500 shrink-0 h-8 w-8 p-0"
                                                 >
                                                     <Trash2 className="w-3.5 h-3.5" />
@@ -1484,18 +1588,30 @@ const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean
                                                             placeholder="https://docs.google.com/spreadsheets/d/..."
                                                             value={sheet.sheet_url || ''}
                                                             onChange={(e) => updateSheet(idx, { sheet_url: e.target.value })}
-                                                            className="bg-background border-input"
+                                                            readOnly={bloqueado}
+                                                            title={bloqueado ? 'El documento no se puede cambiar. Elimina este sheet y añade otro.' : undefined}
+                                                            className={`bg-background border-input ${bloqueado ? 'text-muted-foreground cursor-not-allowed' : ''}`}
                                                         />
-                                                        <Button
-                                                            variant="outline"
-                                                            size="sm"
-                                                            className="shrink-0 h-10 text-xs gap-1.5"
-                                                            onClick={() => openPicker(sid)}
-                                                        >
-                                                            <FolderSearch className="w-3.5 h-3.5" />
-                                                            Seleccionar
-                                                        </Button>
+                                                        {!bloqueado && (
+                                                            <Button
+                                                                variant="outline"
+                                                                size="sm"
+                                                                className="shrink-0 h-10 text-xs gap-1.5"
+                                                                onClick={() => openPicker(sid)}
+                                                            >
+                                                                <FolderSearch className="w-3.5 h-3.5" />
+                                                                Seleccionar
+                                                            </Button>
+                                                        )}
                                                     </div>
+                                                    {bloqueado && (
+                                                        <p className="text-xs text-muted-foreground/70 flex items-center gap-1.5">
+                                                            <Lock className="w-3 h-3 shrink-0" />
+                                                            El documento queda fijo al guardar. Todos los datos sincronizados cuelgan de
+                                                            este sheet, así que para usar otro documento hay que eliminar este — con sus
+                                                            datos — y añadir uno nuevo.
+                                                        </p>
+                                                    )}
                                                 </div>
 
                                                 {/* Pestañas del documento */}
@@ -1758,11 +1874,12 @@ const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean
                                                     return { error: saved.error || 'Error al guardar la configuración antes de sincronizar' }
                                                 }
 
-                                                // Un documento por petición: varios sheets de decenas de miles
-                                                // de filas no caben en el límite de tiempo de la función, y la
-                                                // petición moría devolviendo la página de error de la
-                                                // plataforma. El id ausente se deriva de la posición, igual
-                                                // que hace `normalizeSheetConfigs` en el servidor.
+                                                // Una PESTAÑA por petición. Un documento de decenas de miles de
+                                                // filas no cabe en el tiempo de una función, así que se recorren
+                                                // las pestañas con un mismo lote y se consolida al final: hasta
+                                                // ese momento el dato anterior sigue intacto, y una corrida a
+                                                // medias no deja al cliente sin nada. El id ausente se deriva de
+                                                // la posición, igual que `normalizeSheetConfigs` en el servidor.
                                                 const objetivo = convSheets
                                                     .map((s, i) => ({ ...s, id: s.id || `sheet_${i}` }))
                                                     .filter(s => s.enabled && s.sheet_url)
@@ -1774,29 +1891,66 @@ const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean
                                                 try {
                                                     for (const [i, sheet] of objetivo.entries()) {
                                                         const etiqueta = sheet.name || `Sheet ${i + 1}`
-                                                        setConvSyncProgreso(`${i + 1}/${objetivo.length} · ${etiqueta}`)
-                                                        const res = await syncConversionesOffline(cliente.id, sheet.id)
-                                                        if (res.error) {
-                                                            fallos.push(`${etiqueta}: ${res.error}`)
+                                                        const pestanas = tabsOf(sheet)
+                                                            .map((t, j) => ({ ...t, id: t.id || `tab_${j}` }))
+                                                            .filter(t => t.enabled !== false)
+                                                        if (pestanas.length === 0) {
+                                                            fallos.push(`${etiqueta}: no tiene pestañas habilitadas`)
                                                             continue
                                                         }
-                                                        total.totalFilas += res.totalFilas ?? 0
-                                                        total.diasProcesados += res.diasProcesados ?? 0
-                                                        total.filasDescartadas += res.filasDescartadas ?? 0
-                                                        if (res.warnings) avisos.push(...res.warnings)
+
+                                                        const batchId = crypto.randomUUID()
+                                                        const agregados: unknown[] = []
+                                                        const calidad: unknown[] = []
+                                                        let algunaOk = false
+                                                        const fallosTabs: string[] = []
+
+                                                        for (const [j, tab] of pestanas.entries()) {
+                                                            const nombreTab = tab.sheet_name || `Pestaña ${j + 1}`
+                                                            setConvSyncProgreso(
+                                                                `${etiqueta} · pestaña ${j + 1}/${pestanas.length} (${nombreTab})`
+                                                            )
+                                                            const res = await syncTandaConversiones(cliente.id, {
+                                                                sheetId: sheet.id, batchId, tabId: tab.id,
+                                                            })
+                                                            if (res.error) { fallosTabs.push(`${nombreTab}: ${res.error}`); continue }
+                                                            algunaOk = true
+                                                            total.totalFilas += res.totalFilas ?? 0
+                                                            total.filasDescartadas += res.filasDescartadas ?? 0
+                                                            if (res.aggregates) agregados.push(...res.aggregates)
+                                                            if (res.quality) calidad.push(...res.quality)
+                                                            if (res.warnings) avisos.push(...res.warnings)
+                                                        }
+
+                                                        // Sin ninguna pestaña buena no se consolida: consolidar
+                                                        // retiraría los lotes anteriores y dejaría el sheet vacío.
+                                                        if (!algunaOk) {
+                                                            fallos.push(`${etiqueta}: ${fallosTabs.join(' · ')}`)
+                                                            continue
+                                                        }
+                                                        if (fallosTabs.length > 0) {
+                                                            avisos.push(...fallosTabs.map(f => `${etiqueta} › ${f}`))
+                                                        }
+
+                                                        // Los campos se recalculan una sola vez, tras el último sheet.
+                                                        const ultimo = i === objetivo.length - 1
+                                                        setConvSyncProgreso(
+                                                            ultimo ? `${etiqueta} · consolidando y recalculando campos…`
+                                                                : `${etiqueta} · consolidando…`
+                                                        )
+                                                        const cierre = await syncTandaConversiones(cliente.id, {
+                                                            sheetId: sheet.id, batchId, consolidar: true,
+                                                            aggregates: agregados, quality: calidad,
+                                                            ...(ultimo ? {} : { recalcularCampos: false }),
+                                                        })
+                                                        if (cierre.error) { fallos.push(`${etiqueta}: ${cierre.error}`); continue }
+                                                        total.diasProcesados += cierre.diasProcesados ?? 0
+                                                        if (cierre.warnings) avisos.push(...cierre.warnings)
                                                     }
 
-                                                    if (fallos.length === objetivo.length) {
+                                                    if (objetivo.length > 0 && fallos.length === objetivo.length) {
                                                         return { error: fallos.join(' · ') }
                                                     }
-
-                                                    // Los campos de Sheet se derivan de la capa cruda de TODOS los
-                                                    // documentos, así que se recalculan una sola vez al final. No
-                                                    // vuelve a llamar a Google: lee solo de `sheet_filas`.
-                                                    setConvSyncProgreso('Recalculando campos…')
-                                                    const rec = await recalcularSheetCampos(cliente.id)
-                                                    if ('error' in rec) avisos.push(`Campos de Sheet: ${rec.error}`)
-                                                    else if (rec.avisos) avisos.push(...rec.avisos)
                                                 } finally {
                                                     setConvSyncProgreso(null)
                                                 }
@@ -1828,6 +1982,94 @@ const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean
                                 )}
                             </CardContent>
                         </Card>
+
+                        {/* ── Confirmación de borrado de un sheet ─────────────── */}
+                        <Dialog
+                            open={!!borrarSheet}
+                            onOpenChange={(open) => { if (!open && !borrarSheet?.borrando) setBorrarSheet(null) }}
+                        >
+                            <DialogContent className="sm:max-w-lg">
+                                <DialogHeader>
+                                    <DialogTitle className="flex items-center gap-2">
+                                        <Trash2 className="w-4 h-4 text-red-500" />
+                                        Eliminar «{borrarSheet?.nombre}»
+                                    </DialogTitle>
+                                </DialogHeader>
+
+                                {borrarSheet?.cargando && (
+                                    <p className="text-sm text-muted-foreground flex items-center gap-2 py-4">
+                                        <Loader2 className="w-4 h-4 animate-spin" /> Comprobando qué datos tiene…
+                                    </p>
+                                )}
+
+                                {borrarSheet?.preview && !borrarSheet.borrando && (
+                                    <div className="space-y-3 text-sm">
+                                        <p className="text-foreground/90">
+                                            Se borrarán <strong>{borrarSheet.preview.filas.total.toLocaleString('es')}</strong> filas
+                                            y el documento saldrá de la configuración. No se puede deshacer.
+                                        </p>
+                                        <ul className="text-xs text-muted-foreground space-y-0.5 pl-4 list-disc">
+                                            <li>{borrarSheet.preview.filas.conversiones.toLocaleString('es')} conversiones</li>
+                                            <li>{borrarSheet.preview.filas.diarias.toLocaleString('es')} agregados diarios</li>
+                                            <li>{borrarSheet.preview.filas.crudas.toLocaleString('es')} filas de la capa cruda</li>
+                                        </ul>
+
+                                        {borrarSheet.preview.campos.length > 0 && (
+                                            <div className="rounded-md border border-amber-500/40 bg-amber-500/5 p-3 space-y-1.5">
+                                                <p className="text-xs font-medium text-amber-600 dark:text-amber-500">
+                                                    Campos de Sheet que pierden este origen
+                                                </p>
+                                                <ul className="text-xs text-muted-foreground space-y-0.5">
+                                                    {borrarSheet.preview.campos.map(c => (
+                                                        <li key={c.clave}>
+                                                            <span className="text-foreground/80">{c.nombre}</span>
+                                                            {c.quedaSinOrigen
+                                                                ? ' — se queda sin ningún origen y quedará vacío'
+                                                                : ' — se recalculará sin este documento'}
+                                                        </li>
+                                                    ))}
+                                                </ul>
+                                                <p className="text-xs text-muted-foreground/70">
+                                                    Los campos no se borran. Las fórmulas del dashboard que los usen seguirán resolviendo.
+                                                </p>
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+
+                                {borrarSheet?.borrando && (
+                                    <p className="text-sm text-muted-foreground flex items-center gap-2 py-4">
+                                        <Loader2 className="w-4 h-4 animate-spin" />
+                                        Borrando… {borrarSheet.progreso.toLocaleString('es')} filas retiradas
+                                    </p>
+                                )}
+
+                                {borrarSheet?.error && (
+                                    <p className="text-sm text-red-500 flex items-start gap-2">
+                                        <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" /> {borrarSheet.error}
+                                    </p>
+                                )}
+
+                                <div className="flex justify-end gap-2 pt-2">
+                                    <Button
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() => setBorrarSheet(null)}
+                                        disabled={borrarSheet?.borrando}
+                                    >Cancelar</Button>
+                                    <Button
+                                        size="sm"
+                                        onClick={confirmarBorradoSheet}
+                                        disabled={borrarSheet?.cargando || borrarSheet?.borrando}
+                                        className="bg-red-600 hover:bg-red-700 text-white"
+                                    >
+                                        {borrarSheet?.borrando
+                                            ? <><Loader2 className="w-3.5 h-3.5 animate-spin mr-2" /> Borrando</>
+                                            : 'Eliminar sheet y datos'}
+                                    </Button>
+                                </div>
+                            </DialogContent>
+                        </Dialog>
 
                         {/* ── Sheet Picker Modal ──────────────────────────────── */}
                         <Dialog open={pickerOpen} onOpenChange={(open) => { if (!open) { setPickerOpen(false); setPickerForSheetId(null) } }}>

@@ -2,8 +2,15 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import {
   syncClienteConversiones,
+  syncTabConversiones,
+  consolidarLoteSheet,
+  cleanupOrphanConversiones,
+  mergeAgregadosParciales,
+  finalizarAgregados,
   normalizeSheetConfigs,
+  logSyncResult,
 } from '@/lib/integrations/google-sheets-conversiones'
+import type { ConversionDiariaParcial, TabSyncQuality } from '@/lib/integrations/google-sheets-conversiones'
 
 // Releer un documento entero y recalcular los campos no cabe en el timeout por
 // defecto: sin esto la petición moría a mitad y el cliente no se enteraba.
@@ -12,17 +19,27 @@ export const maxDuration = 60
 /**
  * Sync manual de conversiones offline desde Google Sheets.
  * POST /api/admin/sync-conversiones-offline
- * Body: { clientId: string, sheetId?: string, recalcularCampos?: boolean }
- * Sincroniza todos los sheets habilitados del cliente (cada uno con sus
- * pestañas) de forma independiente: el fallo de uno no toca los datos de otro.
  *
- * Con `sheetId` sincroniza solo ese documento. Un cliente con varios sheets de
- * decenas de miles de filas no cabe entero en los 60s de la función: la UI los
- * recorre de uno en uno y recalcula los campos al final (`recalcularCampos`).
+ * Tres modos, de más troceado a menos:
+ *
+ *   { clientId, sheetId, tabId, batchId }        → una pestaña del lote
+ *   { clientId, sheetId, batchId, consolidar, aggregates }
+ *                                                → cierra el lote de ese sheet
+ *   { clientId, sheetId?, recalcularCampos? }    → documento(s) enteros de una vez
+ *
+ * El modo por pestaña existe porque un documento grande no cabe en los 60 s de la
+ * función: la UI recorre las pestañas con un mismo `batchId` y consolida al
+ * final. Hasta la consolidación no se toca el dato anterior, así que una corrida
+ * interrumpida nunca deja al cliente sin datos — solo un lote suelto, que el
+ * siguiente sync retira.
+ *
+ * El modo entero se conserva para el worker diario y los clientes pequeños.
  */
 export async function POST(request: NextRequest) {
   try {
-    const { clientId, sheetId, recalcularCampos } = await request.json()
+    const {
+      clientId, sheetId, tabId, batchId, consolidar, aggregates, quality, recalcularCampos,
+    } = await request.json()
     if (!clientId) {
       return NextResponse.json({ error: 'clientId is required' }, { status: 400 })
     }
@@ -59,7 +76,76 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    const { results, rows, campos } = await syncClienteConversiones(supabase, cliente.id, rawConfig, {
+    const sheetCfg = sheetId ? enabledSheets.find(s => s.id === sheetId)! : null
+
+    // ── Modo pestaña: inserta lo suyo en el lote y devuelve su agregado ──────
+    if (sheetCfg && tabId) {
+      if (!batchId) {
+        return NextResponse.json({ error: 'Falta el batchId del lote' }, { status: 400 })
+      }
+      const tab = await syncTabConversiones(supabase, cliente.id, sheetCfg, tabId, batchId)
+      return NextResponse.json({
+        success: true,
+        batchId,
+        tab_name: tab.tab_name,
+        totalFilas: tab.rowsProcessed,
+        filasCrudas: tab.rawProcessed,
+        filasDescartadas: tab.rowsDescartadas,
+        aggregates: tab.aggregates,
+        quality: tab.quality,
+        ...(tab.rawError ? { warnings: [`${tab.tab_name}: ${tab.rawError}`] } : {}),
+      })
+    }
+
+    // ── Modo consolidación: cierra el lote del sheet ─────────────────────────
+    if (sheetCfg && consolidar) {
+      if (!batchId) {
+        return NextResponse.json({ error: 'Falta el batchId del lote' }, { status: 400 })
+      }
+
+      const parciales = (aggregates ?? []) as ConversionDiariaParcial[]
+      const cerrado = await consolidarLoteSheet(
+        supabase, cliente.id, sheetCfg.id!, batchId,
+        finalizarAgregados(mergeAgregadosParciales([parciales]))
+      )
+
+      // El log alimenta el "Último sync" de la UI; la calidad la traen las
+      // pestañas, que son las que leyeron el documento.
+      const calidad = (quality ?? []) as TabSyncQuality[]
+      const hayAvisos = calidad.some(q => q.warnings.length > 0) || !!cerrado.replaceError
+      await logSyncResult(
+        supabase, cliente.id, sheetCfg.id!,
+        hayAvisos ? 'partial' : 'ok', calidad, cerrado.replaceError
+      )
+
+      const limpieza = await cleanupOrphanConversiones(
+        supabase, cliente.id, normalizeSheetConfigs(rawConfig).map(s => s.id!)
+      )
+
+      let campos: { campos: number; error?: string } | undefined
+      if (recalcularCampos !== false) {
+        try {
+          const { recalcularCamposCliente } = await import('@/lib/sheets/campos-db')
+          campos = await recalcularCamposCliente(supabase, cliente.id)
+        } catch (err: any) {
+          campos = { campos: 0, error: err?.message || 'Error al recalcular los campos' }
+        }
+      }
+
+      return NextResponse.json({
+        success: true,
+        diasProcesados: cerrado.daysProcessed,
+        camposRecalculados: campos?.campos ?? 0,
+        warnings: [
+          ...(cerrado.replaceError ? [cerrado.replaceError] : []),
+          ...limpieza.errors.map(e => `No se pudieron retirar todas las filas huérfanas — ${e}`),
+          ...(campos?.error ? [`Campos de Sheet: ${campos.error}`] : []),
+        ],
+        timestamp: new Date().toISOString(),
+      })
+    }
+
+    const { results, rows, campos, limpieza } = await syncClienteConversiones(supabase, cliente.id, rawConfig, {
       sheetId,
       // Por defecto se recalcula; el sync por sheet no, porque el recálculo
       // recorre la capa cruda entera y se lanza una sola vez al terminar todos.
@@ -80,6 +166,9 @@ export async function POST(request: NextRequest) {
       )),
       ...(campos?.error ? [`Campos de Sheet: ${campos.error}`] : []),
       ...(campos?.avisos ?? []),
+      // Una limpieza a medias deja filas de sheets retirados contando en los
+      // totales. Antes solo se veía en el log del servidor.
+      ...limpieza.errors.map(e => `No se pudieron retirar todas las filas huérfanas — ${e}`),
     ]
 
     return NextResponse.json({

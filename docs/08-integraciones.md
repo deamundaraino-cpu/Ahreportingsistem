@@ -199,16 +199,54 @@ La fecha sigue siendo obligatoria en ambas capas: es el eje temporal del módulo
 Un fallo al escribir `sheet_filas` **no** tumba el sheet — las conversiones ya
 están guardadas y el motivo queda como aviso en el log de sync.
 
+### El `sheet_id` es la clave de partición
+`conversiones_offline`, `conversiones_offline_diarias` y `sheet_filas` se
+particionan por `sheet_id` (el `id` de la entrada en `config_api`, **no** el id
+del documento de Google). De ahí tres reglas:
+
+- **La URL se bloquea al guardar.** Apuntar una entrada existente a otro
+  documento mezclaría dos documentos en la misma partición. Para cambiar de
+  documento se elimina la entrada y se añade otra.
+- **Eliminar un sheet borra sus datos en el acto**, vía
+  `POST /api/admin/sheets-conversiones/eliminar`, que va por tandas y responde
+  `done:false` mientras queden filas. Antes solo se quitaba del JSON y las filas
+  esperaban a que un sync futuro las barriera como huérfanas — barrido que se
+  hacía en una sola sentencia, no cabía en el `statement_timeout` y cuyo error se
+  descartaba, así que en la práctica se quedaban para siempre.
+- **Deshabilitar NO borra.** `cleanupOrphanConversiones` recibe todos los sheets
+  configurados, no solo los habilitados; quitar la casilla pausa el sync y
+  conserva la historia.
+
+Para el residuo ya existente: `npx tsx scripts/limpiar-sheets-huerfanos.ts`
+(informe; `--apply` para borrar).
+
 ### Disparadores
 - **Automático**: `GET /api/worker/google-sheets-conversiones` (job `sheets_conversiones`).
-- **Manual**: `POST /api/admin/sync-conversiones-offline` desde la UI, con
-  `{ clientId, sheetId?, recalcularCampos? }`. **"Sincronizar todos ahora" manda
-  una petición por documento** (`sheetId`) y recalcula los campos una sola vez al
-  final: un cliente con varios sheets de decenas de miles de filas no cabe en el
-  `maxDuration` de la función, y al morir la petición devolvía la página de error
-  de la plataforma en texto plano — no JSON. Con `sheetId` el resto de sheets no
-  se toca (la limpieza de huérfanos sigue viendo la config completa) y no se
-  recalculan los campos, porque el recálculo recorre la capa cruda entera.
+- **Manual**: `POST /api/admin/sync-conversiones-offline`, con tres modos:
+
+  | body | qué hace |
+  |---|---|
+  | `{ clientId, sheetId, tabId, batchId }` | sincroniza UNA pestaña dentro del lote |
+  | `{ clientId, sheetId, batchId, consolidar, aggregates, quality }` | cierra el lote de ese sheet |
+  | `{ clientId, sheetId?, recalcularCampos? }` | documento(s) enteros de una vez |
+
+  **"Sincronizar todos ahora" va pestaña a pestaña.** Un documento de decenas de
+  miles de filas no cabe en el `maxDuration`: leer las tres pestañas de un sheet
+  real costaba 73 s (11,6 + 15,0 + 37,7 de lectura + 9,4 de cierre), la petición
+  moría y devolvía la página de error de la plataforma en texto plano — no JSON.
+  Troceado, la más lenta son 37,7 s.
+
+  Todas las pestañas comparten `sync_batch_id` y **hasta la consolidación no se
+  toca el dato anterior**: una corrida interrumpida deja un lote suelto, que el
+  siguiente sync retira, pero nunca deja al cliente sin datos. Por eso la UI no
+  consolida si ninguna pestaña salió bien.
+
+  Los agregados viajan en su forma **parcial** (`ConversionDiariaParcial`, con las
+  sumas de los porcentajes sin dividir) y se suman en la consolidación:
+  `uq_conv_diarias_origen` es único por (cliente, sheet, fecha, tipo, fuente)
+  **sin la pestaña**, así que dos pestañas que aporten al mismo día se pisarían si
+  cada una escribiera su agregado, y promediar promedios ya calculados daría otro
+  número. Lo verifica `npx tsx scripts/verify-sync-por-pestana.ts --cliente=UUID`.
 - **Descubrimiento**: `POST /api/admin/list-sheet-tabs` (pestañas del doc) y
   `POST /api/admin/detect-sheet-columns` (encabezados de una pestaña; lo usa la
   validación del sheet para avisar de columnas mapeadas que no existen).
