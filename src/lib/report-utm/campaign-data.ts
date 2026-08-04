@@ -22,6 +22,7 @@ import {
     loadCampaignIndex, loadOverrides, matchToCampaign, resolvePublicClienteId,
 } from './campaign-resolver'
 import type { CampaignIndex, MatchMethod, Override } from './campaign-resolver'
+import { colombiaRangeBounds } from '@/lib/colombia-date'
 
 export type { MatchMethod } from './campaign-resolver'
 
@@ -125,8 +126,8 @@ async function loadCrossContext(params: CampaignCrossParams): Promise<CrossConte
     const leads = await fetchAllRows(() =>
         supabase.schema('report_utm').from('lead_events')
             .select('id,utm_id,utm_campaign,utm_content,utm_term,utm_source')
-            .gte('created_at', dateFrom + 'T00:00:00')
-            .lte('created_at', dateTo + 'T23:59:59')
+            .gte('created_at', colombiaRangeBounds(dateFrom, dateTo).gte)
+            .lt('created_at', colombiaRangeBounds(dateFrom, dateTo).lt)
             .eq('cliente_id', params.cliente_id)
     ) as Record<string, unknown>[]
 

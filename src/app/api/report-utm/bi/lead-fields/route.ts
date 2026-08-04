@@ -5,6 +5,7 @@ import { fetchAllRows } from '@/lib/report-utm/bi-query'
 import { loadLeadCampos } from '@/lib/report-utm/lead-campos-db'
 import { bucketDeLeadRaw, ordenarBuckets } from '@/lib/report-utm/lead-campos'
 import type { LeadFieldMeta } from '@/lib/report-utm/bi-metadata'
+import { colombiaRangeBounds } from '@/lib/colombia-date'
 
 export const dynamic = 'force-dynamic'
 
@@ -48,8 +49,8 @@ export async function GET(req: NextRequest) {
                     .from('lead_events')
                     .select('id,raw_fields')
                     .eq('cliente_id', clienteId)
-                    .gte('created_at', dateFrom + 'T00:00:00')
-                    .lte('created_at', dateTo + 'T23:59:59')
+                    .gte('created_at', colombiaRangeBounds(dateFrom, dateTo).gte)
+                    .lt('created_at', colombiaRangeBounds(dateFrom, dateTo).lt)
                     .not('raw_fields', 'is', null),
             1000,
             MAX_LEADS

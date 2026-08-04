@@ -222,26 +222,62 @@ seccion('Nadie lee ads_daily sin fijar el nivel')
 // Es la guarda contra el fallo silencioso más peligroso de esta tabla: un
 // SUM(spend) sin `nivel` triplica el gasto y el número parece razonable.
 async function comprobacionesConEntorno() {
-    const { execSync } = await import('node:child_process')
-    let lecturas: string[] = []
-    try {
-        const out = execSync(
-            `git grep -n "from('ads_daily')" -- src sync-worker scripts || true`,
-            { encoding: 'utf8', cwd: process.cwd() }
-        )
-        lecturas = out.split('\n').filter(Boolean)
-    } catch { /* sin git: se omite */ }
+    // Se recorre el sistema de ficheros, NO `git grep`: éste solo mira lo que ya
+    // está trackeado, así que mientras los archivos nuevos estaban sin añadir la
+    // comprobación devolvía «0 referencias» y no guardaba nada. Un test que pasa
+    // porque no encuentra nada es peor que no tenerlo.
+    const { readdirSync, readFileSync, statSync } = await import('node:fs')
+    const { join } = await import('node:path')
 
-    const sospechosas = lecturas.filter(l => {
-        // El backfill ESCRIBE (upsert): no necesita filtrar nivel.
-        if (l.includes('.upsert(') || l.includes('backfill-ads-daily')) return false
-        // La verificación lee a propósito todos los niveles de un día concreto.
-        if (l.includes('verify-ads-daily')) return false
-        return !l.includes(".eq('nivel'")
+    const lecturas: string[] = []
+    const recorrer = (dir: string) => {
+        let entradas: string[]
+        try { entradas = readdirSync(dir) } catch { return }
+        for (const e of entradas) {
+            if (e === 'node_modules' || e === '.next' || e === '.git' || e === 'dist') continue
+            const p = join(dir, e)
+            let st: ReturnType<typeof statSync>
+            try { st = statSync(p) } catch { continue }
+            if (st.isDirectory()) { recorrer(p); continue }
+            if (!/\.(ts|tsx)$/.test(e)) continue
+            const txt = readFileSync(p, 'utf8')
+            const lineas = txt.split(/\r?\n/)
+            lineas.forEach((linea, i) => {
+                if (!linea.includes("from('ads_daily')")) return
+                // La sentencia encadenada ocupa varias líneas, así que se mira una
+                // ventana, no solo la línea del `from`. Mirar solo la línea daba
+                // falsos positivos en cada escritura.
+                const sentencia = lineas.slice(i, i + 10).join(' ')
+                lecturas.push(`${p}:${i + 1}|${sentencia}`)
+            })
+        }
+    }
+    for (const raiz of ['src', 'sync-worker', 'scripts']) recorrer(raiz)
+
+    const sospechosas = lecturas.filter(ref => {
+        const [donde, sentencia] = ref.split('|')
+        // Una ESCRITURA no necesita filtrar nivel: el peligro es sumar leyendo.
+        if (/\.(upsert|insert)\(/.test(sentencia)) return false
+        // Un DELETE acotado por cliente_id + fecha abarca todos los niveles a
+        // propósito: limpia lo que la plataforma dejó de reportar, sea del nivel
+        // que sea. Se exige que esté acotado, no que filtre nivel.
+        if (/\.delete\(/.test(sentencia)) {
+            const acotado = /\.eq\('cliente_id'/.test(sentencia) && /\.in\('fecha'|\.eq\('fecha'|\.lt\('fecha'/.test(sentencia)
+            return !acotado ? true : false
+        }
+        // Una lectura anclada a UN día concreto (`.eq('fecha', …)`) es una
+        // inspección, no una agregación: se usa para comparar los tres niveles de
+        // ese día contra el origen. El peligro que persigue esta guarda es sumar
+        // sobre un RANGO sin fijar nivel, que triplica el gasto con un número que
+        // parece plausible.
+        if (/\.eq\('fecha'/.test(sentencia)) return false
+        if (donde.includes('verify-ads-daily')) return false
+        // Lo demás es una LECTURA agregable: tiene que fijar el nivel.
+        return !/\.eq\('nivel'/.test(sentencia)
     })
     console.log(`  · ${lecturas.length} referencia(s) a ads_daily en el repo`)
     check('ninguna lectura omite el filtro de nivel', sospechosas.length === 0,
-        sospechosas.join(' | '))
+        sospechosas.map(s => s.split('|')[0]).join(' | '))
 
     // ════════════════════════════════════════════════════════════
     seccion('Estado de la migración 063')

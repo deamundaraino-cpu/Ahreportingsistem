@@ -1,5 +1,5 @@
 {
-  "generado": "2026-08-04T03:19:38.045Z",
+  "generado": "2026-08-04T00:39:19.819Z",
   "rango": {
     "desde": "2026-07-01",
     "hasta": "2026-07-31"
@@ -375,7 +375,7 @@
         "filas": [
           {
             "__dim": null,
-            "leads_count": 618
+            "leads_count": 617
           }
         ]
       },
@@ -396,8 +396,8 @@
           {
             "__dim": null,
             "spend": 818429,
-            "leads_count": 618,
-            "cpl": 1324.32
+            "leads_count": 617,
+            "cpl": 1326.47
           }
         ]
       },
@@ -488,27 +488,27 @@
           },
           {
             "__dim": "2026-07-03",
-            "leads_count": 58,
+            "leads_count": 48,
             "spend": 23209
           },
           {
             "__dim": "2026-07-04",
-            "leads_count": 29,
+            "leads_count": 35,
             "spend": 11114
           },
           {
             "__dim": "2026-07-05",
-            "leads_count": 48,
+            "leads_count": 34,
             "spend": 21611
           },
           {
             "__dim": "2026-07-06",
-            "leads_count": 31,
+            "leads_count": 44,
             "spend": 17318
           },
           {
             "__dim": "2026-07-07",
-            "leads_count": 20,
+            "leads_count": 19,
             "spend": 15042
           },
           {
@@ -518,32 +518,32 @@
           },
           {
             "__dim": "2026-07-09",
-            "leads_count": 49,
+            "leads_count": 41,
             "spend": 43167
           },
           {
             "__dim": "2026-07-10",
-            "leads_count": 25,
+            "leads_count": 31,
             "spend": 28763
           },
           {
             "__dim": "2026-07-11",
-            "leads_count": 33,
+            "leads_count": 32,
             "spend": 31187
           },
           {
             "__dim": "2026-07-12",
-            "leads_count": 39,
+            "leads_count": 41,
             "spend": 39374
           },
           {
             "__dim": "2026-07-13",
-            "leads_count": 38,
+            "leads_count": 33,
             "spend": 37756
           },
           {
             "__dim": "2026-07-14",
-            "leads_count": 26,
+            "leads_count": 30,
             "spend": 33391
           },
           {
@@ -553,32 +553,32 @@
           },
           {
             "__dim": "2026-07-16",
-            "leads_count": 27,
+            "leads_count": 32,
             "spend": 45356
           },
           {
             "__dim": "2026-07-17",
-            "leads_count": 31,
+            "leads_count": 27,
             "spend": 0
           },
           {
             "__dim": "2026-07-18",
-            "leads_count": 19,
+            "leads_count": 21,
             "spend": 0
           },
           {
             "__dim": "2026-07-19",
-            "leads_count": 22,
+            "leads_count": 20,
             "spend": 0
           },
           {
             "__dim": "2026-07-20",
-            "leads_count": 19,
+            "leads_count": 13,
             "spend": 31547
           },
           {
             "__dim": "2026-07-21",
-            "leads_count": 14,
+            "leads_count": 26,
             "spend": 20326
           },
           {
@@ -588,7 +588,7 @@
           },
           {
             "__dim": "2026-07-23",
-            "leads_count": 0,
+            "leads_count": 1,
             "spend": 33716
           },
           {
@@ -598,17 +598,17 @@
           },
           {
             "__dim": "2026-07-25",
-            "leads_count": 2,
+            "leads_count": 1,
             "spend": 57384
           },
           {
             "__dim": "2026-07-26",
-            "leads_count": 1,
+            "leads_count": 2,
             "spend": 34028
           },
           {
             "__dim": "2026-07-27",
-            "leads_count": 3,
+            "leads_count": 2,
             "spend": 38465
           },
           {
@@ -618,17 +618,17 @@
           },
           {
             "__dim": "2026-07-29",
-            "leads_count": 7,
+            "leads_count": 2,
             "spend": 31851
           },
           {
             "__dim": "2026-07-30",
-            "leads_count": 5,
+            "leads_count": 9,
             "spend": 37803
           },
           {
             "__dim": "2026-07-31",
-            "leads_count": 6,
+            "leads_count": 7,
             "spend": 46504
           }
         ]
@@ -638,11 +638,11 @@
         "filas": [
           {
             "__dim": "2026-06-29",
-            "leads_count": 140
+            "leads_count": 122
           },
           {
             "__dim": "2026-07-06",
-            "leads_count": 220
+            "leads_count": 231
           },
           {
             "__dim": "2026-07-13",
@@ -650,11 +650,11 @@
           },
           {
             "__dim": "2026-07-20",
-            "leads_count": 39
+            "leads_count": 46
           },
           {
             "__dim": "2026-07-27",
-            "leads_count": 22
+            "leads_count": 21
           }
         ]
       },
@@ -680,8 +680,8 @@
           {
             "__dim": "F2[23|07][ASESORIA TRIBUTARIA][C LEADS][AGENDAMIENTO][VIDS][P FRIO][ABO][JUL]",
             "spend": 160206,
-            "leads_count": 8,
-            "cpl": 20025.75,
+            "leads_count": 7,
+            "cpl": 22886.57,
             "sales_count": 0
           },
           {
@@ -757,7 +757,7 @@
           },
           {
             "__dim": "F2[23|07][ASESORIA TRIBUTARIA][C LEADS][AGENDAMIENTO][VIDS][P FRIO][ABO][JUL]",
-            "leads_count": 6
+            "leads_count": 5
           },
           {
             "__dim": "F2 [ASESORIA TRIBUTARIA][CAPTACIÓN][ANDROMEDA][VID][ABO][FEB] OK - Copia",
@@ -870,7 +870,7 @@
         "filas": [
           {
             "__dim": "BR",
-            "leads_count": 618,
+            "leads_count": 617,
             "spend": 0,
             "cpl": null
           },
@@ -893,7 +893,7 @@
           },
           {
             "__dim": "Instagram_Stories",
-            "leads_count": 150,
+            "leads_count": 149,
             "sales_count": 0,
             "conversion_rate": 0
           },
@@ -974,7 +974,7 @@
           },
           {
             "__dim": "New Form",
-            "leads_count": 17
+            "leads_count": 16
           },
           {
             "__dim": "Postulación Curso Reorganización Patrimonial",
@@ -1211,7 +1211,7 @@
         },
         {
           "stage": "leads_count",
-          "value": 618,
+          "value": 617,
           "label": "Leads (contactos)"
         },
         {
@@ -1224,9 +1224,9 @@
         "current": [
           {
             "dimension_value": null,
-            "leads_count": 618,
+            "leads_count": 617,
             "spend": 818429,
-            "cpl": 1324.32
+            "cpl": 1326.47
           }
         ],
         "previous": [

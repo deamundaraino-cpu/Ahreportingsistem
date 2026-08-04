@@ -10,6 +10,7 @@ import { metaFetch, tiktokFetch, hotmartFetch, ga4Run, setRetryDeadline } from '
 import { evaluateAlertRules } from '@/lib/notifications/rules-engine'
 import { getUsdRate, preloadUsdRates } from '@/lib/fx'
 import { importesCuadran, sumarCampanas } from '@/lib/sync/reconcile'
+import { expandirFila } from '@/lib/ads/ads-daily-writer'
 
 // Vercel Hobby corta las funciones a 60s: pedir 300 no las alarga, solo hacía que
 // los presupuestos internos (270s) nunca dispararan y la función muriera a mitad
@@ -2363,6 +2364,64 @@ export async function GET(request: Request) {
             } else {
                 log(`[DB] ✓ Mass Upsert exitoso. ${upsertPayloads.length} filas actualizadas/insertadas procesadas rapidísimo.`);
                 results.forEach((r: any) => { if (r.cliente_id === cliente.id) r.status = 'ok' });
+
+                // ─── Escritura espejo en public.ads_daily ───────────────────
+                // Los mismos datos, normalizados a una fila por
+                // (fecha, plataforma, nivel, entidad). No cuesta ni una llamada
+                // extra a la API: se expande el payload que ya está en memoria.
+                //
+                // NO FATAL a propósito. `metricas_diarias` sigue siendo la fuente
+                // de verdad y el motor todavía lee de sus JSONB, así que un fallo
+                // aquí no puede marcar el cliente como fallido ni tumbar el sync.
+                // Se avisa y se sigue.
+                try {
+                    const inicioEspejo = new Date().toISOString();
+                    const payloadsAds = upsertPayloads as Array<Record<string, unknown>>;
+                    const filasAds = payloadsAds.flatMap(p =>
+                        expandirFila(
+                            {
+                                cliente_id: String(p.cliente_id),
+                                fecha: String(p.fecha),
+                                meta_campaigns: p.meta_campaigns,
+                                meta_adsets: p.meta_adsets,
+                                meta_ads: p.meta_ads,
+                                tiktok_campaigns: p.tiktok_campaigns,
+                                tiktok_adgroups: p.tiktok_adgroups,
+                                tiktok_ads: p.tiktok_ads,
+                            },
+                            { hoy: todayStr, origen: 'worker' }
+                        ).map(f => ({ ...f, synced_at: inicioEspejo }))
+                    );
+
+                    if (filasAds.length > 0) {
+                        const { error: eAds } = await adminSupabase
+                            .from('ads_daily')
+                            .upsert(filasAds, {
+                                onConflict: 'cliente_id,fecha,plataforma,nivel,entidad_key',
+                            });
+                        if (eAds) throw new Error(eAds.message);
+
+                        // Limpieza de lo que la plataforma dejó de reportar: si una
+                        // campaña desaparece del array de un día, su fila quedaría
+                        // con el gasto viejo e inflaría los totales. Se borra por
+                        // `synced_at` anterior a esta corrida, y DESPUÉS del upsert
+                        // para que nunca haya un hueco: como mucho hay un instante
+                        // con datos de más, nunca de menos.
+                        const fechasTocadas = [...new Set(payloadsAds.map(p => String(p.fecha)))];
+                        const { error: eLimpieza } = await adminSupabase
+                            .from('ads_daily')
+                            .delete()
+                            .eq('cliente_id', cliente.id)
+                            .in('fecha', fechasTocadas)
+                            .lt('synced_at', inicioEspejo);
+                        if (eLimpieza) throw new Error(eLimpieza.message);
+
+                        log(`[DB] ✓ ads_daily: ${filasAds.length} filas espejo en ${fechasTocadas.length} día(s).`);
+                    }
+                } catch (e) {
+                    // Un espejo desactualizado es un problema; un sync caído, peor.
+                    log(`[DB] ⚠ ads_daily no se pudo actualizar (metricas_diarias SÍ se guardó): ${(e as Error)?.message ?? e}`);
+                }
             }
         }
 

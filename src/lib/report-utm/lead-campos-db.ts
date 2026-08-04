@@ -16,6 +16,7 @@ import {
     normalizarClaveLead, normalizarValorCrudo, esClaveOfrecible,
 } from './lead-campos'
 import type { LeadCampoDef, ClaveDetectada, CampoValorCrudo } from './lead-campos'
+import { colombiaRangeBounds } from '@/lib/colombia-date'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -166,8 +167,8 @@ export async function detectarCamposDeLeads(
                 .from('lead_events')
                 .select('id,raw_fields,form_name')
                 .eq('cliente_id', clienteId)
-                .gte('created_at', opts.dateFrom + 'T00:00:00')
-                .lte('created_at', opts.dateTo + 'T23:59:59')
+                .gte('created_at', colombiaRangeBounds(opts.dateFrom, opts.dateTo).gte)
+                .lt('created_at', colombiaRangeBounds(opts.dateFrom, opts.dateTo).lt)
                 // Sin `order` propio: fetchAllRows pagina por keyset sobre `id` y
                 // añadir otro criterio rompería el cursor.
                 .not('raw_fields', 'is', null),

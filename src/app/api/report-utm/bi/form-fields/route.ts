@@ -3,6 +3,7 @@ import { createClient, createAdminClient } from '@/utils/supabase/server'
 import { fetchAllRows } from '@/lib/report-utm/bi-query'
 import { parseFieldNumber } from '@/lib/report-utm/bi-metadata'
 import type { FormFieldMeta } from '@/lib/report-utm/bi-metadata'
+import { colombiaRangeBounds } from '@/lib/colombia-date'
 
 export const dynamic = 'force-dynamic'
 
@@ -39,8 +40,8 @@ export async function GET(req: NextRequest) {
                 .schema('report_utm')
                 .from('lead_events')
                 .select('id,raw_fields')
-                .gte('created_at', dateFrom + 'T00:00:00')
-                .lte('created_at', dateTo + 'T23:59:59')
+                .gte('created_at', colombiaRangeBounds(dateFrom, dateTo).gte)
+                .lt('created_at', colombiaRangeBounds(dateFrom, dateTo).lt)
                 .not('raw_fields', 'is', null)
             if (cliente_id) q = q.eq('cliente_id', cliente_id)
             return q

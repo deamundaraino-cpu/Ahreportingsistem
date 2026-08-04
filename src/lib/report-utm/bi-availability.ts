@@ -18,6 +18,7 @@ import {
 } from './bi-metadata'
 import type { BiMetric } from './bi-metadata'
 import { loadCamposCliente } from '@/lib/sheets/campos-db'
+import { colombiaRangeBounds } from '@/lib/colombia-date'
 
 export interface AvailabilityParams {
     cliente_id?: string
@@ -93,9 +94,9 @@ export async function getMetricAvailability(params: AvailabilityParams): Promise
     const rtm = db.schema('report_utm')
 
     const leadsQ = rtm.from('lead_events').select('id', { count: 'exact', head: true })
-        .gte('created_at', dateFrom + 'T00:00:00').lte('created_at', dateTo + 'T23:59:59')
+        .gte('created_at', colombiaRangeBounds(dateFrom, dateTo).gte).lt('created_at', colombiaRangeBounds(dateFrom, dateTo).lt)
     const salesQ = rtm.from('sales_events').select('amount')
-        .gte('created_at', dateFrom + 'T00:00:00').lte('created_at', dateTo + 'T23:59:59')
+        .gte('created_at', colombiaRangeBounds(dateFrom, dateTo).gte).lt('created_at', colombiaRangeBounds(dateFrom, dateTo).lt)
         .eq('status', 'approved').limit(1000)
     let offlineQ = db.from('conversiones_offline_diarias').select('tipo, total_cantidad, total_valor, custom_fields')
         .gte('fecha', dateFrom).lte('fecha', dateTo).limit(1000)

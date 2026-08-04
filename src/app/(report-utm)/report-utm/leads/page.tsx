@@ -4,6 +4,7 @@ import type { ReportUtmLeadEvent } from '@/lib/report-utm/types'
 import { UserCheck, Filter, ChevronLeft, ChevronRight, Download, Megaphone, Film, Radio } from 'lucide-react'
 import { LeadsView } from '@/components/report-utm/LeadsView'
 import { PLUGIN_LABELS, dec } from '@/lib/report-utm/leads-display'
+import { colombiaRangeBounds } from '@/lib/colombia-date'
 
 export const dynamic = 'force-dynamic'
 
@@ -52,8 +53,10 @@ export default async function LeadsPage({
     if (sp.utm_source) leadsQuery = leadsQuery.ilike('utm_source', `%${sp.utm_source}%`)
     if (sp.utm_campaign) leadsQuery = leadsQuery.ilike('utm_campaign', `%${sp.utm_campaign}%`)
     if (sp.utm_content) leadsQuery = leadsQuery.ilike('utm_content', `%${sp.utm_content}%`)
-    if (sp.from) leadsQuery = leadsQuery.gte('created_at', sp.from)
-    if (sp.to) leadsQuery = leadsQuery.lte('created_at', sp.to + 'T23:59:59')
+    // Día calendario Colombia, igual que el motor del BI: si esta página usara
+    // otra ventana, su total y el del informe no cuadrarían y parecería un bug.
+    if (sp.from) leadsQuery = leadsQuery.gte('created_at', colombiaRangeBounds(sp.from, sp.to ?? sp.from).gte)
+    if (sp.to) leadsQuery = leadsQuery.lt('created_at', colombiaRangeBounds(sp.from ?? sp.to, sp.to).lt)
 
     const { data: leads, count } = await leadsQuery
         .order('created_at', { ascending: false })
@@ -68,8 +71,10 @@ export default async function LeadsPage({
     if (sp.utm_source) statsQuery = statsQuery.ilike('utm_source', `%${sp.utm_source}%`)
     if (sp.utm_campaign) statsQuery = statsQuery.ilike('utm_campaign', `%${sp.utm_campaign}%`)
     if (sp.utm_content) statsQuery = statsQuery.ilike('utm_content', `%${sp.utm_content}%`)
-    if (sp.from) statsQuery = statsQuery.gte('created_at', sp.from)
-    if (sp.to) statsQuery = statsQuery.lte('created_at', sp.to + 'T23:59:59')
+    // Día calendario Colombia, igual que el motor del BI: si esta página usara
+    // otra ventana, su total y el del informe no cuadrarían y parecería un bug.
+    if (sp.from) statsQuery = statsQuery.gte('created_at', colombiaRangeBounds(sp.from, sp.to ?? sp.from).gte)
+    if (sp.to) statsQuery = statsQuery.lt('created_at', colombiaRangeBounds(sp.from ?? sp.to, sp.to).lt)
 
     const { data: statsRows } = await statsQuery.limit(STATS_CAP)
     const stats = computeStats((statsRows as StatsRow[]) ?? [])

@@ -16,6 +16,7 @@ import {
     sheetFieldAlias, sheetViewAlias,
     isLeadFieldDim, parseLeadFieldDim,
 } from './bi-metadata'
+import { colombiaDateOf, colombiaRangeBounds } from '@/lib/colombia-date'
 import { loadResolver, resolvePublicClienteId, SIN_CAMPANA, SIN_ANUNCIO, SIN_CONJUNTO } from './campaign-resolver'
 import type { CampaignResolver, UtmRecord } from './campaign-resolver'
 import { loadCamposCliente } from '@/lib/sheets/campos-db'
@@ -37,6 +38,29 @@ const ENTITY_FILTER_FIELD = {
 
 /** Valor de dimensión para un registro sin cruce, por entidad. */
 const SIN_ENTIDAD = { campaign: SIN_CAMPANA, ad: SIN_ANUNCIO, adset: SIN_CONJUNTO } as const
+
+/**
+ * Recorta una consulta sobre `created_at` al rango de días de COLOMBIA.
+ *
+ * Sustituye a `.gte('created_at', dateFrom + 'T00:00:00').lte('created_at',
+ * dateTo + 'T23:59:59')`, que tenía dos problemas:
+ *
+ *  1. El literal iba SIN zona a una columna `timestamptz`, así que Postgres lo
+ *     interpretaba en la zona del servidor (UTC): «desde el 1 de julio» era en
+ *     realidad «desde las 19:00 del 30 de junio» en hora Colombia, y se colaban
+ *     los leads de esa noche.
+ *  2. El límite superior `<= 23:59:59` perdía las filas caídas en ese último
+ *     segundo — con microsegundos ocurre de verdad. Ahora es `< día siguiente`.
+ *
+ * Está centralizado a propósito: eran ocho sitios repitiendo la misma expresión,
+ * y arreglar siete de ocho habría sido peor que no arreglar ninguno, porque los
+ * totales dejarían de cuadrar entre widgets.
+ */
+function rangoColombia<T>(q: T, dateFrom: string, dateTo: string): T {
+    const b = colombiaRangeBounds(dateFrom, dateTo)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return (q as any).gte('created_at', b.gte).lt('created_at', b.lt) as T
+}
 
 /** Columna cruda que sustituye al nombre real cuando no hay resolver. */
 const ENTITY_RAW_COL = { campaign: 'utm_campaign', ad: 'utm_content', adset: 'utm_term' } as const
@@ -518,7 +542,15 @@ async function queryLeadsDirect(
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const applyBase = (q: any) => {
-        q = q.gte('created_at', dateFrom + 'T00:00:00').lte('created_at', dateTo + 'T23:59:59')
+        // Día calendario Colombia: el literal sin zona equivalía a UTC, así que
+
+        // «desde el 1 de julio» era «desde las 19:00 del 30 de junio» en Colombia.
+
+        // El límite superior es exclusivo (< día siguiente) en vez de <= 23:59:59,
+
+        // que perdía las filas con microsegundos en ese último segundo.
+
+        q = rangoColombia(q, dateFrom, dateTo)
         if (params.cliente_id) q = q.eq('cliente_id', params.cliente_id)
         return applyDimFilters(q, params.filters, filterKey)
     }
@@ -627,8 +659,7 @@ async function querySalesDirect(
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const applyBase = (q: any) => {
-        q = q.gte('created_at', dateFrom + 'T00:00:00')
-            .lte('created_at', dateTo + 'T23:59:59')
+        q = rangoColombia(q, dateFrom, dateTo)
             .eq('status', 'approved')
         if (params.cliente_id) q = q.eq('cliente_id', params.cliente_id)
         return applyDimFilters(q, params.filters, filterKey)
@@ -1553,7 +1584,15 @@ export async function runPivotQuery(
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const applyBase = (q: any) => {
-        q = q.gte('created_at', dateFrom + 'T00:00:00').lte('created_at', dateTo + 'T23:59:59')
+        // Día calendario Colombia: el literal sin zona equivalía a UTC, así que
+
+        // «desde el 1 de julio» era «desde las 19:00 del 30 de junio» en Colombia.
+
+        // El límite superior es exclusivo (< día siguiente) en vez de <= 23:59:59,
+
+        // que perdía las filas con microsegundos en ese último segundo.
+
+        q = rangoColombia(q, dateFrom, dateTo)
         if (isSales) q = q.eq('status', 'approved')
         if (params.cliente_id) q = q.eq('cliente_id', params.cliente_id)
         return applyDimFilters(q, params.filters, isSales ? salesFilterKey : leadFilterKey)
@@ -1617,8 +1656,14 @@ function getDimValue(
 ): string {
     if (dimension === 'none') return 'total'
     if (dimension === 'date') {
-        const dateStr = String(row.created_at ?? '')
-        return truncateDate(dateStr.slice(0, 10), grouping ?? 'day')
+        // Día calendario COLOMBIA, no día UTC. Antes esto era
+        // `String(created_at).slice(0, 10)`, los 10 primeros caracteres del ISO,
+        // que es el día UTC — mientras el gasto se agrupa por
+        // `metricas_diarias.fecha`, un DATE que el worker escribe en día
+        // Colombia. Un lead de las 20:00 en Colombia es 01:00 UTC del día
+        // siguiente, así que se comparaba contra el gasto del día equivocado.
+        // Medido en julio 2026: el 26,9% de los leads caía en el día incorrecto.
+        return truncateDate(colombiaDateOf(row.created_at as string), grouping ?? 'day')
     }
     // Dimensión unificada: la fila cuenta bajo el NOMBRE REAL de la campaña /
     // anuncio / conjunto al que cruza, que es la misma clave con la que se emite
@@ -1780,8 +1825,8 @@ export async function runDistinctValues(params: {
                 .schema('report_utm')
                 .from('lead_events')
                 .select('id,raw_fields')
-                .gte('created_at', dateFrom + 'T00:00:00')
-                .lte('created_at', dateTo + 'T23:59:59')
+                .gte('created_at', colombiaRangeBounds(dateFrom, dateTo).gte)
+                .lt('created_at', colombiaRangeBounds(dateFrom, dateTo).lt)
                 .not('raw_fields', 'is', null)
             if (params.cliente_id) q = q.eq('cliente_id', params.cliente_id)
             return applyDimFilters(q, lifted.filters, leadFilterKey)
@@ -1837,8 +1882,8 @@ export async function runDistinctValues(params: {
                 .schema('report_utm')
                 .from('lead_events')
                 .select('id,raw_fields')
-                .gte('created_at', dateFrom + 'T00:00:00')
-                .lte('created_at', dateTo + 'T23:59:59')
+                .gte('created_at', colombiaRangeBounds(dateFrom, dateTo).gte)
+                .lt('created_at', colombiaRangeBounds(dateFrom, dateTo).lt)
                 .not('raw_fields', 'is', null)
             if (params.cliente_id) q = q.eq('cliente_id', params.cliente_id)
             return applyDimFilters(q, params.filters, leadFilterKey)
@@ -1880,8 +1925,8 @@ export async function runDistinctValues(params: {
                 .schema('report_utm')
                 .from(table)
                 .select(['id', ...UTM_RESOLVE_COLS].join(','))
-                .gte('created_at', dateFrom + 'T00:00:00')
-                .lte('created_at', dateTo + 'T23:59:59')
+                .gte('created_at', colombiaRangeBounds(dateFrom, dateTo).gte)
+                .lt('created_at', colombiaRangeBounds(dateFrom, dateTo).lt)
             if (params.cliente_id) q = q.eq('cliente_id', params.cliente_id)
             return applyDimFilters(q, params.filters, params.source === 'sales' ? salesFilterKey : leadFilterKey)
         })
@@ -1899,8 +1944,8 @@ export async function runDistinctValues(params: {
         .schema('report_utm')
         .from(table)
         .select(col)
-        .gte('created_at', dateFrom + 'T00:00:00')
-        .lte('created_at', dateTo + 'T23:59:59')
+        .gte('created_at', colombiaRangeBounds(dateFrom, dateTo).gte)
+        .lt('created_at', colombiaRangeBounds(dateFrom, dateTo).lt)
         .not(col, 'is', null)
         .limit(params.limit ?? 5000)
 

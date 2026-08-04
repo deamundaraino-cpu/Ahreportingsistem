@@ -254,6 +254,45 @@ export async function limpiarHistorial(db: any, dias = 30): Promise<void> {
     await db.from('sync_jobs').delete().in('estado', ['done', 'cancelled']).lt('updated_at', corte)
     await db.from('sync_runs').delete().lt('started_at', corte)
     await purgarPixelEvents(db)
+    await purgarAdsDaily(db)
+}
+
+/** Días que se conservan del nivel ANUNCIO en `ads_daily`. */
+export const ADS_DAILY_NIVEL_AD_RETENCION_DIAS = 30
+
+/**
+ * Purga las filas de nivel ANUNCIO antiguas de `public.ads_daily`.
+ *
+ * Sin esto la tabla no cabe. El nivel anuncio es el 65% de las filas posibles
+ * (111.800 de 171.666) y la base está en 368 MB contra el tope de 500 MB del
+ * plan — la migración 061 existe porque llegó a 539 MB y hubo que soltar una
+ * tabla y seis índices para recuperarla.
+ *
+ * Los niveles CAMPAÑA y CONJUNTO no se tocan nunca: son los ejes con los que se
+ * agrupan los informes, incluidos los antiguos, y son baratos. El desglose por
+ * anuncio de fechas viejas sigue disponible en el JSONB de `metricas_diarias`.
+ *
+ * Delega en la función SQL `purgar_ads_daily` (migración 063) en vez de hacer el
+ * DELETE desde aquí: así el criterio de retención vive junto a la tabla y no se
+ * puede desincronizar con lo que el comentario de la migración promete.
+ */
+export async function purgarAdsDaily(
+    // Mismo tipo laxo que `purgarPixelEvents`: el planificador recibe tanto el
+    // cliente de la app como el del worker self-hosted, que no comparten tipos.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    db: any,
+    dias = ADS_DAILY_NIVEL_AD_RETENCION_DIAS,
+): Promise<number> {
+    const { data, error } = await db.rpc('purgar_ads_daily', { p_dias: dias })
+    if (error) {
+        // No es fatal: `ads_daily` es un espejo de `metricas_diarias`. Que crezca
+        // de más es un problema de espacio, no de exactitud.
+        console.error('[planner] purga de ads_daily:', error.message)
+        return 0
+    }
+    const borradas = Number(data ?? 0)
+    if (borradas > 0) console.log(`[planner] ads_daily: ${borradas} fila(s) de nivel anuncio purgadas`)
+    return borradas
 }
 
 /** Días de `pixel_events` que se conservan. */

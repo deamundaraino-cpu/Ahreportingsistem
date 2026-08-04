@@ -45,6 +45,50 @@ const HASTA = opt('hasta')
 
 const money = (n: number) => n.toLocaleString('es-AR', { maximumFractionDigits: 2 })
 
+/**
+ * Reintenta una operación ante fallos TRANSITORIOS de la base.
+ *
+ * Hizo falta de verdad: a mitad de la primera corrida la instancia devolvió
+ * `57P03: the database system is not accepting connections / Hot standby mode is
+ * disabled` — un reinicio del lado de Supabase, con el proyecto reportando
+ * `ACTIVE_HEALTHY`. Se recuperó sola en menos de un minuto. Un backfill de 8.000
+ * días no puede abortar entero por eso, sobre todo cuando ya escribió la mitad.
+ *
+ * Solo reintenta lo que parece transitorio. Un error de esquema o de permisos se
+ * propaga a la primera: reintentarlo solo retrasaría el diagnóstico.
+ */
+const TRANSITORIOS = [
+    'not accepting connections',
+    'schema cache',
+    'timeout',
+    'fetch failed',
+    'ECONNRESET',
+    'terminating connection',
+    '57P03',
+]
+
+async function conReintentos<T>(
+    etiqueta: string,
+    fn: () => Promise<T>,
+    intentos = 5
+): Promise<T> {
+    let ultimo: unknown
+    for (let i = 1; i <= intentos; i++) {
+        try {
+            return await fn()
+        } catch (e) {
+            ultimo = e
+            const msg = (e as Error)?.message ?? String(e)
+            if (!TRANSITORIOS.some(t => msg.includes(t))) throw e
+            if (i === intentos) break
+            const espera = 3000 * i          // 3s, 6s, 9s, 12s
+            process.stdout.write(`\n  ⚠ ${etiqueta}: ${msg.slice(0, 80)} — reintento ${i}/${intentos - 1} en ${espera / 1000}s\n`)
+            await new Promise(r => setTimeout(r, espera))
+        }
+    }
+    throw ultimo
+}
+
 async function main() {
     const { createAdminClient } = await import('../src/utils/supabase/server')
     const db = await createAdminClient()
@@ -77,9 +121,11 @@ async function main() {
         if (CLIENTE) q = q.eq('cliente_id', CLIENTE)
         if (HASTA)   q = q.lte('fecha', HASTA)
 
-        const { data, error } = await q
-        if (error) throw new Error(`Leyendo metricas_diarias: ${error.message}`)
-        const filas = (data ?? []) as unknown as MetricasDiariasRow[]
+        const filas = await conReintentos(`leyendo desde ${desde}`, async () => {
+            const { data, error } = await q
+            if (error) throw new Error(`Leyendo metricas_diarias: ${error.message}`)
+            return (data ?? []) as unknown as MetricasDiariasRow[]
+        })
         if (!filas.length) break
 
         const salida: AdsDailyRow[] = []
@@ -95,10 +141,14 @@ async function main() {
             // En trozos: un insert de miles de filas supera el límite de payload.
             for (let i = 0; i < salida.length; i += 1000) {
                 const trozo = salida.slice(i, i + 1000)
-                const { error: e2 } = await db.from('ads_daily').upsert(trozo, {
-                    onConflict: 'cliente_id,fecha,plataforma,nivel,entidad_key',
+                // El upsert es idempotente por la clave del UNIQUE, así que
+                // reintentar un trozo ya escrito no duplica nada.
+                await conReintentos(`escribiendo ${trozo.length} filas`, async () => {
+                    const { error: e2 } = await db.from('ads_daily').upsert(trozo, {
+                        onConflict: 'cliente_id,fecha,plataforma,nivel,entidad_key',
+                    })
+                    if (e2) throw new Error(`Escribiendo ads_daily: ${e2.message}`)
                 })
-                if (e2) throw new Error(`Escribiendo ads_daily: ${e2.message}`)
                 escritas += trozo.length
             }
         }
