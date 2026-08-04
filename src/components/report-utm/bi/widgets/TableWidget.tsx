@@ -14,6 +14,8 @@ import {
 } from '@/lib/report-utm/bi-metadata'
 import { useBiQueryBase } from '../BiQueryContext'
 import { appendWidgetFilters, widgetFilterSignature } from '../widgetQuery'
+import { readUnavailable, UnavailableNote } from '../widgetDiagnostics'
+import type { WidgetUnavailable } from '../widgetDiagnostics'
 
 interface Props {
     title: string
@@ -57,6 +59,8 @@ export function TableWidget({ title, config, filters, calculatedFields = [], h =
     const [error, setError]   = useState<string | null>(null)
     const [sortKey, setSortKey] = useState<string | null>(null)
     const [sortDir, setSortDir] = useState<'asc' | 'desc'>(config.sort === 'asc' ? 'asc' : 'desc')
+    /** Motivo de la primera columna que no se pudo medir, si hay alguna. */
+    const [naInfo, setNaInfo] = useState<WidgetUnavailable | null>(null)
 
     const rawMetrics = config.metric ?? 'leads_count'
     const colKeys = rawMetrics.split(',').map(s => s.trim()).filter(Boolean)
@@ -119,7 +123,13 @@ export function TableWidget({ title, config, filters, calculatedFields = [], h =
 
         fetch(`${queryBase}?${params}`)
             .then(r => r.json())
-            .then(json => setRows(Array.isArray(json.data) ? json.data : []))
+            .then(json => {
+                setRows(Array.isArray(json.data) ? json.data : [])
+                // Una tabla mezcla columnas de varias fuentes, así que es donde
+                // más se nota: se explica la primera columna que no se pudo
+                // medir en vez de dejar una columna entera de ceros.
+                setNaInfo(readUnavailable(json.meta, colKeys))
+            })
             .catch(() => setError('Error al cargar'))
             .finally(() => setLoading(false))
     }, [queryBase, rawMetrics, dimension, rowLimit, config.sort, filterSig])
@@ -214,9 +224,12 @@ export function TableWidget({ title, config, filters, calculatedFields = [], h =
     return (
         <div className="rounded-2xl border border-border bg-card overflow-hidden flex flex-col h-full">
             <div className="px-5 py-4 border-b border-border flex items-center justify-between gap-2">
-                <div>
+                <div className="min-w-0">
                     <p className="text-sm font-semibold text-foreground">{title}</p>
                     <p className="text-[10px] text-muted-foreground mt-0.5">Por {dimLabel}</p>
+                    {/* Va en la cabecera y no al pie: en una tabla larga el
+                        motivo tiene que verse sin hacer scroll hasta el final. */}
+                    {!loading && !error && <div className="mt-1"><UnavailableNote info={naInfo} /></div>}
                 </div>
                 {(config.value_filters?.length ?? 0) > 0 && !loading && !error && (
                     <span className="shrink-0 text-[10px] font-mono text-muted-foreground bg-muted/60 px-2 py-1 rounded-md">

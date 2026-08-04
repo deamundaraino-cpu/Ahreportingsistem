@@ -271,6 +271,63 @@ function computeCoverage(ctx: CrossContext): MatchCoverage {
     return { total: ctx.leads.length, methods }
 }
 
+/**
+ * Cobertura del cruce por el lado del GASTO.
+ *
+ * `MatchCoverage` cuenta leads: dice qué proporción de los contactos encontró su
+ * campaña. Pero la pregunta que se hace el trafficker es la de al lado —
+ * «¿cuánto de lo que invertí tiene leads atribuidos?»— y esa no se calculaba en
+ * ninguna parte.
+ *
+ * Son dos números distintos y los dos importan:
+ *
+ *  - 100% de leads cruzados y 40% de gasto cruzado ⇒ los leads están bien
+ *    etiquetados, pero el 60% de la inversión no produjo ni un contacto
+ *    (campañas de tráfico, alcance… o dinero tirado).
+ *  - 100% de gasto cruzado y 40% de leads cruzados ⇒ hay leads con UTM roto.
+ *
+ * `orphans` son las campañas con gasto a las que NINGÚN lead resolvió: es la
+ * mitad de la historia que hoy se pierde dentro de la fila «(sin campaña)».
+ */
+export interface SpendCoverage {
+    /** Gasto de campañas con al menos un lead cruzado. */
+    matched: number
+    /** Gasto total del período según el índice. */
+    total: number
+    /** 0-100, o `null` si no hubo gasto (no es 0%: es que no aplica). */
+    pct: number | null
+    /** Campañas con gasto y sin ningún lead, de mayor a menor. */
+    orphans: { name: string; platform: 'meta' | 'tiktok'; spend: number }[]
+}
+
+function computeSpendCoverage(ctx: CrossContext): SpendCoverage {
+    // Claves de campaña a las que resolvió al menos un lead.
+    const conLeads = new Set<string>()
+    for (const l of ctx.leads) {
+        const m = matchToCampaign(l, ctx.idx, ctx.overrides)
+        if (m.key) conLeads.add(m.key)
+    }
+
+    let matched = 0
+    let total = 0
+    const orphans: { name: string; platform: 'meta' | 'tiktok'; spend: number }[] = []
+    for (const c of ctx.idx.campaigns.values()) {
+        total += c.spend
+        if (conLeads.has(c.key)) matched += c.spend
+        else if (c.spend > 0) orphans.push({ name: c.name, platform: c.platform, spend: round2(c.spend) })
+    }
+    orphans.sort((a, b) => b.spend - a.spend)
+
+    return {
+        matched: round2(matched),
+        total: round2(total),
+        // Sin gasto no se dice «0% cruzado», que sonaría a fallo: se dice que no
+        // aplica. Es el mismo criterio de `lib/fx.ts`: cero ≠ desconocido.
+        pct: total > 0 ? round2((matched / total) * 100) : null,
+        orphans: orphans.slice(0, 20),
+    }
+}
+
 /** (Puro) lista de campañas conocidas (para poblar selectores de mapeo). */
 function campaignsFromIndex(idx: CampaignIndex): { campaign_id: string | null; name: string; platform: 'meta' | 'tiktok'; spend: number }[] {
     return Array.from(idx.campaigns.values())
@@ -284,6 +341,8 @@ export interface CrossDiagnostics {
     invalid: InvalidUtmRow[]
     breakdown: UtmCampaignRow[]
     coverage: MatchCoverage
+    /** Cobertura por el lado del gasto. `null` si no hay índice (sin enlace). */
+    spend: SpendCoverage | null
 }
 
 /**
@@ -294,7 +353,14 @@ export interface CrossDiagnostics {
  */
 export async function getCrossDiagnostics(params: CampaignCrossParams): Promise<CrossDiagnostics> {
     const ctx = await loadCrossContext(params)
-    if (!ctx) return { campaigns: [], suggestions: [], invalid: [], breakdown: [], coverage: { total: 0, methods: ZERO_METHODS() } }
+    // `spend: null` y no un 0%: sin índice (cliente sin enlace, o lectura
+    // incompleta) no se sabe la cobertura. Decir «0% cruzado» sería inventar.
+    if (!ctx) {
+        return {
+            campaigns: [], suggestions: [], invalid: [], breakdown: [],
+            coverage: { total: 0, methods: ZERO_METHODS() }, spend: null,
+        }
+    }
     const { suggestions, invalid } = computeUnmatched(ctx)
     return {
         campaigns: campaignsFromIndex(ctx.idx),
@@ -302,5 +368,6 @@ export async function getCrossDiagnostics(params: CampaignCrossParams): Promise<
         invalid,
         breakdown: computeUtmBreakdown(ctx),
         coverage: computeCoverage(ctx),
+        spend: computeSpendCoverage(ctx),
     }
 }

@@ -16,7 +16,10 @@ export async function GET(req: NextRequest) {
         if (result.error) {
             return NextResponse.json({ error: result.error }, { status: result.status ?? 400 })
         }
-        return NextResponse.json({ data: result.data })
+        // `meta` es aditivo: los widgets que solo leen `data` no se enteran.
+        // Lleva el motivo por el que un campo no se pudo medir, para pintar «—»
+        // con explicación en vez de un 0 que no significa cero.
+        return NextResponse.json({ data: result.data, meta: result.meta })
     } catch (err) {
         console.error('[bi/query]', err)
         return NextResponse.json({ error: 'Query error' }, { status: 500 })

@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { Plus, Save, Pencil, Check, X, FileDown, Share2, Calculator, Clock, Info, LayoutTemplate, Zap } from 'lucide-react'
 import { BiShareModal } from './BiShareModal'
 import { BiScheduleModal } from './BiScheduleModal'
+import { BiCrossBanner } from './BiCrossBanner'
 import type { BiSchedule } from './BiTypes'
 import { BiCalcFieldsModal } from './BiCalcFieldsModal'
 import { HelpTip } from './HelpTip'
@@ -513,6 +514,32 @@ export function BiReportCanvas({ report: initialReport, readonly, lockedDates, p
     // campo/plataforma → bajo esos filtros el gasto y sus ratios se muestran en 0.
     const spendNotAttributable = hasNonAttributableFilter(filters, advancedFilter)
 
+    // ── Enlace con el cliente de Reporting ────────────────────────────
+    // Si `report_utm.clientes.public_cliente_id` es NULL, el gasto, GA4, Hotmart,
+    // las conversiones offline y los campos de Sheet devuelven 0 —media
+    // plataforma— y hasta ahora NADA en el informe lo decía: se leía como un
+    // cliente sin resultados. Se pregunta una sola vez por cliente, con una
+    // consulta mínima que ya trae el diagnóstico.
+    const [sinEnlaceCliente, setSinEnlaceCliente] = useState(false)
+    useEffect(() => {
+        if (!filters.cliente_id) { setSinEnlaceCliente(false); return }
+        const params = new URLSearchParams({
+            metrics: 'spend', dimension: 'none', cliente_id: filters.cliente_id,
+        })
+        if (filters.date_from) params.set('date_from', filters.date_from)
+        if (filters.date_to)   params.set('date_to', filters.date_to)
+        let cancelled = false
+        fetch(`${publicToken ? publicQueryBase(publicToken) : DEFAULT_BI_QUERY_BASE}?${params}`)
+            .then(r => r.json())
+            .then(json => {
+                // En el enlace público el motivo viene neutralizado a propósito,
+                // así que este aviso solo aparece para el equipo.
+                if (!cancelled) setSinEnlaceCliente(json?.meta?.hasPublicLink === false)
+            })
+            .catch(() => { if (!cancelled) setSinEnlaceCliente(false) })
+        return () => { cancelled = true }
+    }, [filters.cliente_id, filters.date_from, filters.date_to, publicToken])
+
     // Un filtro de campaña que no coincide con ninguna deja TODO el informe en 0
     // (el gasto se recorta por nombre de campaña). Pasaba en silencio: se veía un
     // informe entero de ceros sin pista de por qué. Se comprueba contra las
@@ -737,6 +764,41 @@ export function BiReportCanvas({ report: initialReport, readonly, lockedDates, p
                         </button>
                     )}
                 </div>
+            )}
+
+            {/* Falta el enlace con el cliente de Reporting: pone a 0 el gasto, GA4,
+                Hotmart, offline y los campos de Sheet. Era la causa más cara de un
+                "informe en 0" y no se avisaba en ninguna parte. Va PRIMERO porque,
+                cuando ocurre, los demás avisos son consecuencia de este. */}
+            {sinEnlaceCliente && !readonly && (
+                <div className="flex items-start gap-2 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-[11px] text-red-700 dark:text-red-300">
+                    <Info className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                    <span>
+                        Este cliente no está <strong>enlazado con su cliente de Reporting</strong>, así que la
+                        inversión, GA4, Hotmart, las conversiones offline y los campos de Sheet no se pueden leer
+                        y se muestran vacíos. Los leads y las ventas sí funcionan. Se arregla en la{' '}
+                        {filters.cliente_id ? (
+                            <a
+                                href={`/report-utm/clientes/${filters.cliente_id}`}
+                                className="underline font-medium"
+                            >
+                                ficha del cliente
+                            </a>
+                        ) : 'ficha del cliente'}.
+                    </span>
+                </div>
+            )}
+
+            {/* Cobertura del cruce. El cruce sigue siendo automático —nadie
+                configura claves de unión—, pero ya no es opaco: se ve cuánto
+                cruzó y, si algo no cruzó, por qué y dónde se arregla. */}
+            {!sinEnlaceCliente && (
+                <BiCrossBanner
+                    clienteId={filters.cliente_id}
+                    dateFrom={filters.date_from}
+                    dateTo={filters.date_to}
+                    readonly={readonly}
+                />
             )}
 
             {/* Aviso: gasto no atribuible al filtro activo */}

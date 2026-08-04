@@ -14,7 +14,7 @@ import {
     makeLeadFieldDim, leadFieldLabel,
     makeSheetDim, makeSheetMetric, makeSheetView, sheetFieldLabel, isSheetDim, isSheetToken,
     advancedFilterHasConditions, supportsPivot, PIVOT_METRICS,
-    FUNNEL_STAGE_METRICS, DEFAULT_FUNNEL_STAGES, evaluateExpression,
+    FUNNEL_STAGE_METRICS, DEFAULT_FUNNEL_STAGES,
     matchFilterConditionNorm, metricCrossesDimension,
     RECOMMENDED_METRICS, METRIC_GROUP_META, metricsOfGroup,
 } from '@/lib/report-utm/bi-metadata'
@@ -22,6 +22,8 @@ import { normalizarClaveLead } from '@/lib/report-utm/lead-campos'
 import { BiFormulaInput } from './BiFormulaInput'
 import { HelpTip } from './HelpTip'
 import { BiAdvancedFilterBuilder } from './BiAdvancedFilterBuilder'
+import { BiFieldPicker } from './BiFieldPicker'
+import { parseExpr, isExprError } from '@/lib/report-utm/bi/expr'
 
 interface Props {
     widget?: BiWidget | null
@@ -882,11 +884,26 @@ export function BiWidgetEditor({ widget, calculatedFields = [], clienteId, dateF
                                                 />
                                             </div>
                                         </div>
-                                        {formula.trim() && evaluateExpression(formula, {}) === null && (
-                                            <p className="text-[10px] text-red-500">
-                                                Expresión inválida: solo se admiten métricas, números y + − × ÷ ( ).
-                                            </p>
-                                        )}
+                                        {/* El parser dice QUÉ está mal y DÓNDE, en vez de un
+                                            «Expresión inválida» genérico. Antes esto se
+                                            resolvía evaluando la fórmula y viendo si daba
+                                            null, así que un paréntesis sin cerrar y una
+                                            errata en el nombre de una métrica producían el
+                                            mismo mensaje inútil. */}
+                                        {formula.trim() && (() => {
+                                            const p = parseExpr(formula)
+                                            if (!isExprError(p)) return null
+                                            return (
+                                                <p className="text-[10px] text-red-500">
+                                                    {p.error}
+                                                    {p.at < formula.length && (
+                                                        <span className="font-mono ml-1 opacity-70">
+                                                            (posición {p.at + 1})
+                                                        </span>
+                                                    )}
+                                                </p>
+                                            )
+                                        })()}
                                     </div>
                                 )}
 
@@ -967,34 +984,20 @@ export function BiWidgetEditor({ widget, calculatedFields = [], clienteId, dateF
                                         </div>
                                     </>
                                 ) : (
-                                    <>
-                                        <select
-                                            value={metric}
-                                            onChange={e => setMetric(e.target.value)}
-                                            className="w-full px-3 py-2 text-sm rounded-lg bg-muted border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
-                                        >
-                                            {metricGroups.map(g => (
-                                                <optgroup key={g.key} label={g.title}>
-                                                    {g.items.map(m => (
-                                                        <option key={`${g.key}:${m.value}`} value={m.value}>
-                                                            {m.label}
-                                                            {!metricCrossesDimension(m.value, dim) ? ' · no cruza con esta dimensión' : ''}
-                                                            {hasNoData(m.value) ? ' · sin datos en el rango' : ''}
-                                                        </option>
-                                                    ))}
-                                                </optgroup>
-                                            ))}
-                                        </select>
-                                        {hiddenCount > 0 && (
-                                            <button
-                                                type="button"
-                                                onClick={() => setShowAllMetrics(true)}
-                                                className="mt-1 text-[10px] font-medium text-emerald-600 dark:text-emerald-400 hover:underline"
-                                            >
-                                                Ver todas las métricas ({hiddenCount} más)
-                                            </button>
-                                        )}
-                                    </>
+                                    /* Cascada FUENTE → CAMPO en vez de una lista de 72
+                                       métricas con 9 optgroups y un «Ver todas». El
+                                       picker devuelve el id histórico, así que el widget
+                                       se guarda exactamente igual que antes: no hay
+                                       migración de datos detrás de este cambio.
+                                       El buscador interno cubre a quien ya sabe el
+                                       nombre y no quiere navegar. */
+                                    <BiFieldPicker
+                                        kind="measure"
+                                        value={metric}
+                                        onChange={id => setMetric(id)}
+                                        clienteId={clienteId}
+                                        dimension={dim}
+                                    />
                                 )}
                                 {hasNoData(String(metric)) && (
                                     <div className="mt-2 flex items-start gap-2 rounded-lg border border-amber-300/60 dark:border-amber-500/30 bg-amber-50/60 dark:bg-amber-500/10 px-3 py-2">
@@ -1015,19 +1018,16 @@ export function BiWidgetEditor({ widget, calculatedFields = [], clienteId, dateF
                                         Dimensión
                                         <HelpTip text="Cómo se agrupan los datos. Ej: por Source muestra una fila/barra por cada utm_source; por Fecha muestra la evolución en el tiempo; por Campaña compara campañas." />
                                     </label>
-                                    <select
+                                    {/* Misma cascada fuente → campo que en la métrica.
+                                        Aquí además ordena mentalmente el problema: las
+                                        dimensiones de lead, las de venta y las de anuncio
+                                        dejan de estar mezcladas en una lista. */}
+                                    <BiFieldPicker
+                                        kind="dimension"
                                         value={dim}
-                                        onChange={e => setDim(e.target.value)}
-                                        className="w-full px-3 py-2 text-sm rounded-lg bg-muted border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
-                                    >
-                                        {dimGroups.map(g => (
-                                            <optgroup key={g.key} label={g.title}>
-                                                {g.items.filter(d => d.value !== 'none').map(d => (
-                                                    <option key={`${g.key}:${d.value}`} value={d.value}>{d.label}</option>
-                                                ))}
-                                            </optgroup>
-                                        ))}
-                                    </select>
+                                        onChange={id => setDim(id)}
+                                        clienteId={clienteId}
+                                    />
                                     {showAdDimWarning && (
                                         <div className="mt-2 flex items-start gap-2 rounded-lg border border-amber-300/60 dark:border-amber-500/30 bg-amber-50/60 dark:bg-amber-500/10 px-3 py-2">
                                             <AlertTriangle className="h-3.5 w-3.5 text-amber-500 shrink-0 mt-0.5" />
@@ -1241,16 +1241,32 @@ export function BiWidgetEditor({ widget, calculatedFields = [], clienteId, dateF
                                 <div className="rounded-xl border border-border p-3 space-y-2">
                                     <p className="flex items-center gap-1 text-[11px] font-medium text-foreground">
                                         Formato condicional
-                                        <HelpTip text="Pinta una celda de color cuando cumple una condición. Ej: métrica 'roas' > 2 en verde resalta las campañas rentables; 'cpl' > 50 en rojo marca leads caros. Usa el nombre interno de la métrica (roas, cpl, revenue…)." />
+                                        <HelpTip text="Pinta una celda de color cuando cumple una condición. Ej: ROAS > 2 en verde resalta las campañas rentables; CPL > 50 en rojo marca leads caros. Solo se pueden usar las columnas que tiene la tabla." />
                                     </p>
                                     {conditional.map((rule, i) => (
                                         <div key={i} className="flex items-center gap-1.5">
-                                            <input
-                                                type="text" value={rule.metric}
+                                            {/* Antes era un input de TEXTO LIBRE donde había que
+                                                escribir la clave interna («roas», «cpl»). Una errata
+                                                no hacía nada, en silencio, y no había forma de
+                                                notarlo. Ahora solo se pueden elegir las columnas que
+                                                la tabla realmente muestra. */}
+                                            <select
+                                                value={rule.metric}
                                                 onChange={e => setConditional(c => c.map((r, idx) => idx === i ? { ...r, metric: e.target.value } : r))}
-                                                placeholder="métrica"
-                                                className="w-24 px-2 py-1 text-[11px] font-mono rounded bg-muted border border-border text-foreground"
-                                            />
+                                                className="w-32 px-1.5 py-1 text-[11px] rounded bg-muted border border-border text-foreground"
+                                            >
+                                                {/* Se conserva el valor guardado aunque ya no sea una
+                                                    columna: si no, editar el widget borraría la regla
+                                                    sin avisar. */}
+                                                {!tableCols.includes(rule.metric) && rule.metric && (
+                                                    <option value={rule.metric}>
+                                                        {resolveMetricLabel(rule.metric)} (no está en la tabla)
+                                                    </option>
+                                                )}
+                                                {tableCols.map(c => (
+                                                    <option key={c} value={c}>{resolveMetricLabel(c)}</option>
+                                                ))}
+                                            </select>
                                             <select
                                                 value={rule.op}
                                                 onChange={e => setConditional(c => c.map((r, idx) => idx === i ? { ...r, op: e.target.value as 'gt' | 'lt' } : r))}
@@ -1279,7 +1295,13 @@ export function BiWidgetEditor({ widget, calculatedFields = [], clienteId, dateF
                                         </div>
                                     ))}
                                     <button
-                                        onClick={() => setConditional(c => [...c, { metric: 'roas', op: 'gt', value: 2, color: 'green' }])}
+                                        // Arranca en la primera columna de la tabla, no en
+                                        // un 'roas' fijo que podía no estar entre ellas —
+                                        // así la regla nace apuntando a algo que existe.
+                                        onClick={() => setConditional(c => [...c, {
+                                            metric: tableCols[0] ?? 'leads_count',
+                                            op: 'gt', value: 2, color: 'green',
+                                        }])}
                                         className="flex items-center gap-1 text-[11px] font-medium text-emerald-600 dark:text-emerald-400 hover:underline"
                                     >
                                         <Plus className="h-3 w-3" /> Agregar regla

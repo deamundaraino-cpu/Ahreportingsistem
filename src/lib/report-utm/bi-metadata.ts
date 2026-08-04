@@ -4,6 +4,9 @@
 // componentes cliente (widgets, editor). Mantenerlo libre de imports de
 // servidor evita arrastrar next/headers al bundle del navegador.
 
+// `bi/expr.ts` es puro (sin imports), así que respeta la regla de arriba.
+import { parseExpr, isExprError, evalExpr } from './bi/expr'
+
 /**
  * Normalización fuerte de etiquetas: minúsculas, sin acentos, `_`/`-` como
  * espacios, espacios colapsados. Convierte muchos "casi-iguales" en matches
@@ -1194,94 +1197,29 @@ export function dimFilterSignature(filters: Record<string, string | undefined>):
 // Evaluador seguro de expresiones aritméticas sobre métricas base.
 // Solo permite identificadores de métrica, números, + - * / ( ) y punto.
 
-const ALLOWED_EXPR = /^[a-z0-9_+\-*/().\s]+$/i
-
 /**
  * Evalúa una expresión tipo "revenue / leads_count" usando los valores
  * de una fila. Devuelve null si la expresión es inválida o hay división
  * por cero. Client-safe (no usa nada de servidor).
+ *
+ * Fachada sobre `bi/expr.ts`, que parsea a un AST. Antes esto sustituía
+ * identificadores por texto con un `replace` y luego evaluaba la aritmética
+ * resultante; el problema no era el cálculo sino que la MISMA expresión se
+ * leía con otro regex en `bi-query.ts` para deducir qué métricas traer, y las
+ * dos lecturas no coincidían. Con un AST, `refs` es la única fuente de verdad.
+ *
+ * `onMissing: 'zero'` conserva el comportamiento histórico a propósito: un
+ * identificador sin valor cuenta como 0, así que ningún informe ya guardado
+ * cambia de número. Las métricas derivadas nuevas usan `'null'`, que es lo
+ * correcto (ver la doctrina de `lib/fx.ts`: cero ≠ desconocido).
  */
 export function evaluateExpression(
     expression: string,
     values: Record<string, number>
 ): number | null {
-    if (!expression || !ALLOWED_EXPR.test(expression)) return null
-    // Reemplaza identificadores por sus valores numéricos (0 si falta).
-    const replaced = expression.replace(/[a-z_][a-z0-9_]*/gi, (id) => {
-        const v = values[id]
-        return Number.isFinite(v) ? String(v) : '0'
-    })
-    // Tras el reemplazo solo deben quedar números y operadores.
-    if (!/^[0-9+\-*/().\s]+$/.test(replaced)) return null
-    const result = safeEvalArithmetic(replaced)
-    if (!Number.isFinite(result)) return null
-    return Math.round(result * 100) / 100
-}
-
-/**
- * Evalúa una expresión aritmética pura (dígitos, espacios, + - * / . paréntesis).
- *
- * Sustituye a `new Function`: la CSP de producción no incluye 'unsafe-eval'
- * (`next.config.ts`), así que en el navegador aquello lanzaba siempre — el
- * validador del editor de fórmulas daba toda expresión por inválida y la vista
- * previa de campos calculados nunca aparecía. En servidor funcionaba, de ahí que
- * los informes guardados sí calcularan bien.
- *
- * Parser de descenso recursivo con la precedencia estándar y unarios +/-. El
- * llamador debe haber saneado la entrada al juego de caracteres permitido.
- * Devuelve NaN si la expresión está mal formada.
- *
- * Es el mismo enfoque que `safeEvalArithmetic` en `lib/formula-engine.ts`, que
- * ya había tenido que resolver esto para el dashboard clásico.
- */
-function safeEvalArithmetic(input: string): number {
-    const s = input
-    let i = 0
-    const skipWs = () => { while (i < s.length && (s[i] === ' ' || s[i] === '\t')) i++ }
-
-    const parseExpression = (): number => {
-        let left = parseTerm()
-        skipWs()
-        while (i < s.length && (s[i] === '+' || s[i] === '-')) {
-            const op = s[i++]
-            const right = parseTerm()
-            left = op === '+' ? left + right : left - right
-            skipWs()
-        }
-        return left
-    }
-    const parseTerm = (): number => {
-        let left = parseFactor()
-        skipWs()
-        while (i < s.length && (s[i] === '*' || s[i] === '/')) {
-            const op = s[i++]
-            const right = parseFactor()
-            left = op === '*' ? left * right : left / right
-            skipWs()
-        }
-        return left
-    }
-    const parseFactor = (): number => {
-        skipWs()
-        if (s[i] === '+') { i++; return parseFactor() }
-        if (s[i] === '-') { i++; return -parseFactor() }
-        if (s[i] === '(') {
-            i++
-            const val = parseExpression()
-            skipWs()
-            if (s[i] === ')') i++
-            return val
-        }
-        const start = i
-        while (i < s.length && ((s[i] >= '0' && s[i] <= '9') || s[i] === '.')) i++
-        if (i === start) return NaN
-        return parseFloat(s.slice(start, i))
-    }
-
-    const result = parseExpression()
-    skipWs()
-    if (i !== s.length) return NaN   // sobra texto sin parsear → mal formada
-    return result
+    const parsed = parseExpr(expression)
+    if (isExprError(parsed)) return null
+    return evalExpr(parsed.ast, values, { onMissing: 'zero', decimals: 2 })
 }
 
 // ── Filtro avanzado guardado (Y de O) ─────────────────────────────────
@@ -1472,8 +1410,15 @@ export function matchFilterConditionNorm(cell: string, op: FilterOp, target: str
 // Los demás UTM (source/medium/content/term/id) no tienen mapeo limpio a gasto
 // a nivel de campaña → se dejan sin recortar (limitación física documentada).
 
-/** Campos de filtro que no pueden atribuirse al gasto de campañas. */
-const NON_ATTRIBUTABLE_FIELDS = new Set(['ip_country', 'form_name', 'form_plugin', 'attribution_method', 'platform'])
+/**
+ * Campos de filtro que no pueden atribuirse al gasto de campañas.
+ *
+ * Se exporta para que el diagnóstico pueda NOMBRAR cuáles están activos (no solo
+ * decir que hay alguno). Duplicar la lista en el dispatcher habría dejado dos
+ * verdades que se desincronizan en cuanto se añada un campo.
+ */
+export const NON_ATTRIBUTABLE_FIELDS: ReadonlySet<string> =
+    new Set(['ip_country', 'form_name', 'form_plugin', 'attribution_method', 'platform'])
 
 /**
  * Construye un predicado sobre el NOMBRE de campaña a partir de las condiciones

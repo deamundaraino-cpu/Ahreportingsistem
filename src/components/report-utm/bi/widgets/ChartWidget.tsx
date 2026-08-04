@@ -19,6 +19,8 @@ import {
 import { useBiQueryBase } from '../BiQueryContext'
 import { appendWidgetFilters, widgetFilterSignature } from '../widgetQuery'
 import { HelpTip } from '../HelpTip'
+import { readUnavailable, UnavailableNote } from '../widgetDiagnostics'
+import type { WidgetUnavailable } from '../widgetDiagnostics'
 
 const COLORS = [
     '#10b981', '#06b6d4', '#8b5cf6', '#f59e0b',
@@ -90,6 +92,8 @@ export function ChartWidget({ title, type, config, filters, calculatedFields = [
     const [pivot, setPivot]     = useState<{ rows: BiPivotRow[]; seriesKeys: string[] } | null>(null)
     const [loading, setLoading] = useState(true)
     const [error, setError]     = useState<string | null>(null)
+    /** Motivo por el que la métrica de la gráfica no se pudo medir, si es el caso. */
+    const [naInfo, setNaInfo]   = useState<WidgetUnavailable | null>(null)
 
     // Fórmula propia del widget: manda sobre `metric` y viaja bajo una clave fija.
     const formula   = config.formula?.trim()
@@ -146,6 +150,7 @@ export function ChartWidget({ title, type, config, filters, calculatedFields = [
         fetch(`${queryBase}?${params}`)
             .then(r => r.json())
             .then(json => {
+                setNaInfo(readUnavailable(json.meta, metric))
                 if (usePivot) { setPivot(json.data ?? { rows: [], seriesKeys: [] }); setRows([]) }
                 else { setRows(Array.isArray(json.data) ? json.data : []); setPivot(null) }
             })
@@ -178,6 +183,10 @@ export function ChartWidget({ title, type, config, filters, calculatedFields = [
                     {dimLabel}{dimension2 ? ` × ${DIMENSION_META[dimension2 as BiDimension]?.label ?? leadFieldLabel(dimension2) ?? fieldDimLabel(dimension2) ?? dimension2}` : ''} · {metLabel}
                 </span>
             </div>
+
+            {/* Una gráfica plana a cero engaña más que un hueco: si la métrica no
+                se pudo medir, se dice antes de dibujarla. */}
+            {!loading && !error && <UnavailableNote info={naInfo} />}
 
             {loading ? (
                 <Skeleton className="flex-1 min-h-[180px] rounded-xl" />

@@ -1,0 +1,1295 @@
+{
+  "generado": "2026-08-04T00:39:19.819Z",
+  "rango": {
+    "desde": "2026-07-01",
+    "hasta": "2026-07-31"
+  },
+  "clientes": [
+    {
+      "id": "50118457-9e39-4318-a1e0-e1755fdc7cc9",
+      "nombre": "CAMARADICTOS ",
+      "publicLink": true
+    },
+    {
+      "id": "337d5c5a-684c-4b50-88e2-70a73d7ebc4b",
+      "nombre": "Cris tributario",
+      "publicLink": true
+    },
+    {
+      "id": "3ab7fdde-6f3e-47f5-ab9f-29883591b1c2",
+      "nombre": "Peiurba",
+      "publicLink": false
+    }
+  ],
+  "resultados": {
+    "50118457-9e39-4318-a1e0-e1755fdc7cc9": [
+      {
+        "caso": "leads total",
+        "filas": [
+          {
+            "__dim": null,
+            "leads_count": 0
+          }
+        ]
+      },
+      {
+        "caso": "gasto total",
+        "filas": [
+          {
+            "__dim": null,
+            "spend": 100.91,
+            "meta_spend": 100.91,
+            "tiktok_spend": 0
+          }
+        ]
+      },
+      {
+        "caso": "cruce gasto×leads",
+        "filas": [
+          {
+            "__dim": null,
+            "spend": 100.91,
+            "leads_count": 0,
+            "cpl": null
+          }
+        ]
+      },
+      {
+        "caso": "ventas y retorno",
+        "filas": [
+          {
+            "__dim": null,
+            "sales_count": 0,
+            "revenue": 0,
+            "roas": 0,
+            "cpa": null
+          }
+        ]
+      },
+      {
+        "caso": "rendimiento de anuncios",
+        "filas": [
+          {
+            "__dim": null,
+            "impressions": 200583,
+            "clicks": 4214,
+            "ctr": 2.1,
+            "cpc": 0.02,
+            "cpm": 0.5,
+            "reach": 194840,
+            "frequency": 1.03
+          }
+        ]
+      },
+      {
+        "caso": "hotmart",
+        "filas": [
+          {
+            "__dim": null,
+            "hotmart_revenue": 101.51,
+            "hotmart_sales": 6,
+            "hotmart_roas": 1.01,
+            "hotmart_cpa": 16.82,
+            "hotmart_roi": 0.59
+          }
+        ]
+      },
+      {
+        "caso": "ga4",
+        "filas": [
+          {
+            "__dim": null,
+            "ga_sessions": 392,
+            "ga_bounce_rate": 47.7,
+            "ga_avg_session_duration": 67.44
+          }
+        ]
+      },
+      {
+        "caso": "offline",
+        "filas": [
+          {
+            "__dim": null,
+            "offline_leads": 989,
+            "offline_ventas": 0,
+            "offline_revenue": 0
+          }
+        ]
+      },
+      {
+        "caso": "suscripciones (foto)",
+        "filas": [
+          {
+            "__dim": null,
+            "subs_active": 0,
+            "subs_mrr": 0
+          }
+        ]
+      },
+      {
+        "caso": "serie por día",
+        "filas": [
+          {
+            "__dim": "2026-07-01",
+            "leads_count": 0,
+            "spend": 0
+          },
+          {
+            "__dim": "2026-07-02",
+            "leads_count": 0,
+            "spend": 0
+          },
+          {
+            "__dim": "2026-07-03",
+            "leads_count": 0,
+            "spend": 4.03
+          },
+          {
+            "__dim": "2026-07-04",
+            "leads_count": 0,
+            "spend": 7.08
+          },
+          {
+            "__dim": "2026-07-05",
+            "leads_count": 0,
+            "spend": 8.46
+          },
+          {
+            "__dim": "2026-07-06",
+            "leads_count": 0,
+            "spend": 8.08
+          },
+          {
+            "__dim": "2026-07-07",
+            "leads_count": 0,
+            "spend": 11.58
+          },
+          {
+            "__dim": "2026-07-08",
+            "leads_count": 0,
+            "spend": 16.68
+          },
+          {
+            "__dim": "2026-07-09",
+            "leads_count": 0,
+            "spend": 12.54
+          },
+          {
+            "__dim": "2026-07-10",
+            "leads_count": 0,
+            "spend": 9.93
+          },
+          {
+            "__dim": "2026-07-11",
+            "leads_count": 0,
+            "spend": 11.17
+          },
+          {
+            "__dim": "2026-07-12",
+            "leads_count": 0,
+            "spend": 11.36
+          },
+          {
+            "__dim": "2026-07-13",
+            "leads_count": 0,
+            "spend": 0
+          },
+          {
+            "__dim": "2026-07-14",
+            "leads_count": 0,
+            "spend": 0
+          },
+          {
+            "__dim": "2026-07-15",
+            "leads_count": 0,
+            "spend": 0
+          },
+          {
+            "__dim": "2026-07-16",
+            "leads_count": 0,
+            "spend": 0
+          },
+          {
+            "__dim": "2026-07-17",
+            "leads_count": 0,
+            "spend": 0
+          },
+          {
+            "__dim": "2026-07-18",
+            "leads_count": 0,
+            "spend": 0
+          },
+          {
+            "__dim": "2026-07-19",
+            "leads_count": 0,
+            "spend": 0
+          },
+          {
+            "__dim": "2026-07-20",
+            "leads_count": 0,
+            "spend": 0
+          },
+          {
+            "__dim": "2026-07-21",
+            "leads_count": 0,
+            "spend": 0
+          },
+          {
+            "__dim": "2026-07-23",
+            "leads_count": 0,
+            "spend": 0
+          },
+          {
+            "__dim": "2026-07-24",
+            "leads_count": 0,
+            "spend": 0
+          },
+          {
+            "__dim": "2026-07-25",
+            "leads_count": 0,
+            "spend": 0
+          },
+          {
+            "__dim": "2026-07-26",
+            "leads_count": 0,
+            "spend": 0
+          },
+          {
+            "__dim": "2026-07-27",
+            "leads_count": 0,
+            "spend": 0
+          },
+          {
+            "__dim": "2026-07-28",
+            "leads_count": 0,
+            "spend": 0
+          },
+          {
+            "__dim": "2026-07-29",
+            "leads_count": 0,
+            "spend": 0
+          },
+          {
+            "__dim": "2026-07-30",
+            "leads_count": 0,
+            "spend": 0
+          },
+          {
+            "__dim": "2026-07-31",
+            "leads_count": 0,
+            "spend": 0
+          }
+        ]
+      },
+      {
+        "caso": "serie por semana",
+        "filas": []
+      },
+      {
+        "caso": "serie por mes",
+        "filas": [
+          {
+            "__dim": "2026-07",
+            "spend": 100.91
+          }
+        ]
+      },
+      {
+        "caso": "por campaña (cruzada)",
+        "filas": [
+          {
+            "__dim": "Nueva campaña de Interacción",
+            "spend": 95.12,
+            "leads_count": 0,
+            "cpl": null,
+            "sales_count": 0
+          },
+          {
+            "__dim": "a7rvi",
+            "spend": 5.79,
+            "leads_count": 0,
+            "cpl": null,
+            "sales_count": 0
+          }
+        ]
+      },
+      {
+        "caso": "por campaña CRUDA",
+        "filas": []
+      },
+      {
+        "caso": "por anuncio",
+        "filas": [
+          {
+            "__dim": "Nuevo anuncio de Interacción",
+            "spend": 75.55,
+            "impressions": 184820
+          },
+          {
+            "__dim": "a7rvi",
+            "spend": 25.36,
+            "impressions": 15763
+          }
+        ]
+      },
+      {
+        "caso": "por conjunto",
+        "filas": [
+          {
+            "__dim": "Nuevo conjunto de anuncios de Interacción",
+            "spend": 75.55
+          },
+          {
+            "__dim": "a7rvi",
+            "spend": 25.36
+          }
+        ]
+      },
+      {
+        "caso": "por país (gasto no cruza)",
+        "filas": [
+          {
+            "__dim": null,
+            "leads_count": 0,
+            "spend": 100.91,
+            "cpl": null
+          }
+        ]
+      },
+      {
+        "caso": "por source",
+        "filas": []
+      },
+      {
+        "caso": "por formulario",
+        "filas": []
+      },
+      {
+        "caso": "Top-3 campañas",
+        "filas": []
+      }
+    ],
+    "337d5c5a-684c-4b50-88e2-70a73d7ebc4b": [
+      {
+        "caso": "leads total",
+        "filas": [
+          {
+            "__dim": null,
+            "leads_count": 617
+          }
+        ]
+      },
+      {
+        "caso": "gasto total",
+        "filas": [
+          {
+            "__dim": null,
+            "spend": 818429,
+            "meta_spend": 818429,
+            "tiktok_spend": 0
+          }
+        ]
+      },
+      {
+        "caso": "cruce gasto×leads",
+        "filas": [
+          {
+            "__dim": null,
+            "spend": 818429,
+            "leads_count": 617,
+            "cpl": 1326.47
+          }
+        ]
+      },
+      {
+        "caso": "ventas y retorno",
+        "filas": [
+          {
+            "__dim": null,
+            "sales_count": 0,
+            "revenue": 0,
+            "roas": 0,
+            "cpa": null
+          }
+        ]
+      },
+      {
+        "caso": "rendimiento de anuncios",
+        "filas": [
+          {
+            "__dim": null,
+            "impressions": 162460,
+            "clicks": 4434,
+            "ctr": 2.73,
+            "cpc": 184.58,
+            "cpm": 5037.73,
+            "reach": 137761,
+            "frequency": 1.18
+          }
+        ]
+      },
+      {
+        "caso": "hotmart",
+        "filas": [
+          {
+            "__dim": null,
+            "hotmart_revenue": 390.12,
+            "hotmart_sales": 50,
+            "hotmart_roas": 0,
+            "hotmart_cpa": 16368.58,
+            "hotmart_roi": -99.95
+          }
+        ]
+      },
+      {
+        "caso": "ga4",
+        "filas": [
+          {
+            "__dim": null,
+            "ga_sessions": 0,
+            "ga_bounce_rate": null,
+            "ga_avg_session_duration": null
+          }
+        ]
+      },
+      {
+        "caso": "offline",
+        "filas": [
+          {
+            "__dim": null,
+            "offline_leads": 0,
+            "offline_ventas": 0,
+            "offline_revenue": 0
+          }
+        ]
+      },
+      {
+        "caso": "suscripciones (foto)",
+        "filas": [
+          {
+            "__dim": null,
+            "subs_active": 0,
+            "subs_mrr": 0
+          }
+        ]
+      },
+      {
+        "caso": "serie por día",
+        "filas": [
+          {
+            "__dim": "2026-07-01",
+            "leads_count": 1,
+            "spend": 0
+          },
+          {
+            "__dim": "2026-07-02",
+            "leads_count": 4,
+            "spend": 0
+          },
+          {
+            "__dim": "2026-07-03",
+            "leads_count": 48,
+            "spend": 23209
+          },
+          {
+            "__dim": "2026-07-04",
+            "leads_count": 35,
+            "spend": 11114
+          },
+          {
+            "__dim": "2026-07-05",
+            "leads_count": 34,
+            "spend": 21611
+          },
+          {
+            "__dim": "2026-07-06",
+            "leads_count": 44,
+            "spend": 17318
+          },
+          {
+            "__dim": "2026-07-07",
+            "leads_count": 19,
+            "spend": 15042
+          },
+          {
+            "__dim": "2026-07-08",
+            "leads_count": 23,
+            "spend": 17927
+          },
+          {
+            "__dim": "2026-07-09",
+            "leads_count": 41,
+            "spend": 43167
+          },
+          {
+            "__dim": "2026-07-10",
+            "leads_count": 31,
+            "spend": 28763
+          },
+          {
+            "__dim": "2026-07-11",
+            "leads_count": 32,
+            "spend": 31187
+          },
+          {
+            "__dim": "2026-07-12",
+            "leads_count": 41,
+            "spend": 39374
+          },
+          {
+            "__dim": "2026-07-13",
+            "leads_count": 33,
+            "spend": 37756
+          },
+          {
+            "__dim": "2026-07-14",
+            "leads_count": 30,
+            "spend": 33391
+          },
+          {
+            "__dim": "2026-07-15",
+            "leads_count": 34,
+            "spend": 34675
+          },
+          {
+            "__dim": "2026-07-16",
+            "leads_count": 32,
+            "spend": 45356
+          },
+          {
+            "__dim": "2026-07-17",
+            "leads_count": 27,
+            "spend": 0
+          },
+          {
+            "__dim": "2026-07-18",
+            "leads_count": 21,
+            "spend": 0
+          },
+          {
+            "__dim": "2026-07-19",
+            "leads_count": 20,
+            "spend": 0
+          },
+          {
+            "__dim": "2026-07-20",
+            "leads_count": 13,
+            "spend": 31547
+          },
+          {
+            "__dim": "2026-07-21",
+            "leads_count": 26,
+            "spend": 20326
+          },
+          {
+            "__dim": "2026-07-22",
+            "leads_count": 3,
+            "spend": 15184
+          },
+          {
+            "__dim": "2026-07-23",
+            "leads_count": 1,
+            "spend": 33716
+          },
+          {
+            "__dim": "2026-07-24",
+            "leads_count": 0,
+            "spend": 42409
+          },
+          {
+            "__dim": "2026-07-25",
+            "leads_count": 1,
+            "spend": 57384
+          },
+          {
+            "__dim": "2026-07-26",
+            "leads_count": 2,
+            "spend": 34028
+          },
+          {
+            "__dim": "2026-07-27",
+            "leads_count": 2,
+            "spend": 38465
+          },
+          {
+            "__dim": "2026-07-28",
+            "leads_count": 1,
+            "spend": 29322
+          },
+          {
+            "__dim": "2026-07-29",
+            "leads_count": 2,
+            "spend": 31851
+          },
+          {
+            "__dim": "2026-07-30",
+            "leads_count": 9,
+            "spend": 37803
+          },
+          {
+            "__dim": "2026-07-31",
+            "leads_count": 7,
+            "spend": 46504
+          }
+        ]
+      },
+      {
+        "caso": "serie por semana",
+        "filas": [
+          {
+            "__dim": "2026-06-29",
+            "leads_count": 122
+          },
+          {
+            "__dim": "2026-07-06",
+            "leads_count": 231
+          },
+          {
+            "__dim": "2026-07-13",
+            "leads_count": 197
+          },
+          {
+            "__dim": "2026-07-20",
+            "leads_count": 46
+          },
+          {
+            "__dim": "2026-07-27",
+            "leads_count": 21
+          }
+        ]
+      },
+      {
+        "caso": "serie por mes",
+        "filas": [
+          {
+            "__dim": "2026-07",
+            "spend": 818429
+          }
+        ]
+      },
+      {
+        "caso": "por campaña (cruzada)",
+        "filas": [
+          {
+            "__dim": "[12/07][EBOOK][VENTAS][HOTMART][PERPETUO][ADS GANADORES/NUEVOS JUL] - Copia",
+            "spend": 247053,
+            "leads_count": 0,
+            "cpl": null,
+            "sales_count": 0
+          },
+          {
+            "__dim": "F2[23|07][ASESORIA TRIBUTARIA][C LEADS][AGENDAMIENTO][VIDS][P FRIO][ABO][JUL]",
+            "spend": 160206,
+            "leads_count": 7,
+            "cpl": 22886.57,
+            "sales_count": 0
+          },
+          {
+            "__dim": "[3|07][WEBINAR ASESORÍA][CHILE][C LEADS][CBO][ADVANTAGE]",
+            "spend": 134527,
+            "leads_count": 228,
+            "cpl": 590.03,
+            "sales_count": 0
+          },
+          {
+            "__dim": "[3|07][WEBINAR ASESORÍA][CHILE][C LEADS][CBO][SIMILARES]",
+            "spend": 134246,
+            "leads_count": 181,
+            "cpl": 741.69,
+            "sales_count": 0
+          },
+          {
+            "__dim": "[5|07][WEBINAR ASESORÍA][CHILE][C LEADS][CBO][P. TIBIO]",
+            "spend": 118259,
+            "leads_count": 164,
+            "cpl": 721.09,
+            "sales_count": 0
+          },
+          {
+            "__dim": "[REORGANIZACION] [CAPTACION] [ VENTAS] [23 FEBRERO] - Copia 3",
+            "spend": 24138,
+            "leads_count": 8,
+            "cpl": 3017.25,
+            "sales_count": 0
+          },
+          {
+            "__dim": "(sin campaña)",
+            "spend": 0,
+            "leads_count": 22,
+            "cpl": null,
+            "sales_count": 0
+          },
+          {
+            "__dim": "{{campaign.name}}",
+            "spend": 0,
+            "leads_count": 7,
+            "cpl": null,
+            "sales_count": 0
+          }
+        ]
+      },
+      {
+        "caso": "por campaña CRUDA",
+        "filas": [
+          {
+            "__dim": "[3|07][WEBINAR ASESORÍA][CHILE][C LEADS][CBO][ADVANTAGE]",
+            "leads_count": 228
+          },
+          {
+            "__dim": "[3|07][WEBINAR ASESORÍA][CHILE][C LEADS][CBO][SIMILARES]",
+            "leads_count": 181
+          },
+          {
+            "__dim": "[5|07][WEBINAR ASESORÍA][CHILE][C LEADS][CBO][P. TIBIO]",
+            "leads_count": 164
+          },
+          {
+            "__dim": "(sin valor)",
+            "leads_count": 22
+          },
+          {
+            "__dim": "120249457869770774",
+            "leads_count": 8
+          },
+          {
+            "__dim": "{{campaign.name}}",
+            "leads_count": 7
+          },
+          {
+            "__dim": "F2[23|07][ASESORIA TRIBUTARIA][C LEADS][AGENDAMIENTO][VIDS][P FRIO][ABO][JUL]",
+            "leads_count": 5
+          },
+          {
+            "__dim": "F2 [ASESORIA TRIBUTARIA][CAPTACIÓN][ANDROMEDA][VID][ABO][FEB] OK - Copia",
+            "leads_count": 2
+          }
+        ]
+      },
+      {
+        "caso": "por anuncio",
+        "filas": [
+          {
+            "__dim": "[AD 3 JUL][NUESTRO EBOOK]",
+            "spend": 187327,
+            "impressions": 25926
+          },
+          {
+            "__dim": "Imagen 3 - Storie",
+            "spend": 120696,
+            "impressions": 41983
+          },
+          {
+            "__dim": "Imagen 1 -storie",
+            "spend": 120109,
+            "impressions": 35180
+          },
+          {
+            "__dim": "VIDEO 2 Storie",
+            "spend": 80338,
+            "impressions": 15365
+          },
+          {
+            "__dim": "Imagen 2 - Storie",
+            "spend": 55744,
+            "impressions": 15451
+          },
+          {
+            "__dim": "[AD 1 JUL][]",
+            "spend": 53869,
+            "impressions": 4543
+          },
+          {
+            "__dim": "[AD 22 JUL][]",
+            "spend": 50730,
+            "impressions": 4916
+          },
+          {
+            "__dim": "[AD 2 JUL][EN CHILE HAY]",
+            "spend": 44691,
+            "impressions": 7049
+          },
+          {
+            "__dim": "[AD 14 JUL][]",
+            "spend": 22327,
+            "impressions": 2100
+          },
+          {
+            "__dim": "[AD 13 JUL][]",
+            "spend": 22142,
+            "impressions": 2043
+          }
+        ]
+      },
+      {
+        "caso": "por conjunto",
+        "filas": [
+          {
+            "__dim": "[ADVANTAGE FRIO][CHILE][25-60] - IMGS",
+            "spend": 244666
+          },
+          {
+            "__dim": "[ADVANTAGE][CHILE][30-50][AUTOMATICO] - AD 3 GANADOR",
+            "spend": 146766
+          },
+          {
+            "__dim": "[ADVANTAGE][CHILE][30-50][AUTOMATICO] - ADS JULIO",
+            "spend": 87648
+          },
+          {
+            "__dim": "[SIMILARES BD AGENDAMIENTO][CHILE][25-60] - VIDEOS",
+            "spend": 75863
+          },
+          {
+            "__dim": "[SIMILARES BD AGENDAMIENTO][CHILE][25-60] - IMGS",
+            "spend": 58383
+          },
+          {
+            "__dim": "[ADVANTAGE][HM][35-55] [ ADS JUN|JUL] - ADS 1/2/3",
+            "spend": 53869
+          },
+          {
+            "__dim": "[ADVANTAGE][HM][35-55] [ ADS JUN|JUL] - ADS 7/8/22",
+            "spend": 52429
+          },
+          {
+            "__dim": "[ADVANTAGE][HM][35-55] [ ADS JUN|JUL] - ADS 14/16",
+            "spend": 27126
+          },
+          {
+            "__dim": "[ADVANTAGE][HM][35-55] [ ADS JUN|JUL] - ADS 11/12/13",
+            "spend": 26782
+          },
+          {
+            "__dim": "[ADVANTAGE] [30-50] [CHILE] - Copia",
+            "spend": 11959
+          }
+        ]
+      },
+      {
+        "caso": "por país (gasto no cruza)",
+        "filas": [
+          {
+            "__dim": "BR",
+            "leads_count": 617,
+            "spend": 0,
+            "cpl": null
+          },
+          {
+            "__dim": null,
+            "leads_count": 0,
+            "spend": 818429,
+            "cpl": null
+          }
+        ]
+      },
+      {
+        "caso": "por source",
+        "filas": [
+          {
+            "__dim": "Instagram_Feed",
+            "leads_count": 155,
+            "sales_count": 0,
+            "conversion_rate": 0
+          },
+          {
+            "__dim": "Instagram_Stories",
+            "leads_count": 149,
+            "sales_count": 0,
+            "conversion_rate": 0
+          },
+          {
+            "__dim": "Facebook_Mobile_Feed",
+            "leads_count": 117,
+            "sales_count": 0,
+            "conversion_rate": 0
+          },
+          {
+            "__dim": "Instagram_Reels",
+            "leads_count": 74,
+            "sales_count": 0,
+            "conversion_rate": 0
+          },
+          {
+            "__dim": "Facebook_Mobile_Reels",
+            "leads_count": 63,
+            "sales_count": 0,
+            "conversion_rate": 0
+          },
+          {
+            "__dim": "(sin valor)",
+            "leads_count": 22,
+            "sales_count": 0,
+            "conversion_rate": 0
+          },
+          {
+            "__dim": "Facebook_Stories",
+            "leads_count": 10,
+            "sales_count": 0,
+            "conversion_rate": 0
+          },
+          {
+            "__dim": "{{placement}}",
+            "leads_count": 7,
+            "sales_count": 0,
+            "conversion_rate": 0
+          },
+          {
+            "__dim": "Facebook_Desktop_Feed",
+            "leads_count": 6,
+            "sales_count": 0,
+            "conversion_rate": 0
+          },
+          {
+            "__dim": "ig",
+            "leads_count": 5,
+            "sales_count": 0,
+            "conversion_rate": 0
+          },
+          {
+            "__dim": "Others",
+            "leads_count": 4,
+            "sales_count": 0,
+            "conversion_rate": 0
+          },
+          {
+            "__dim": "fb",
+            "leads_count": 3,
+            "sales_count": 0,
+            "conversion_rate": 0
+          },
+          {
+            "__dim": "Facebook_Instream_Video",
+            "leads_count": 2,
+            "sales_count": 0,
+            "conversion_rate": 0
+          }
+        ]
+      },
+      {
+        "caso": "por formulario",
+        "filas": [
+          {
+            "__dim": "FORM WEBINAR",
+            "leads_count": 587
+          },
+          {
+            "__dim": "New Form",
+            "leads_count": 16
+          },
+          {
+            "__dim": "Postulación Curso Reorganización Patrimonial",
+            "leads_count": 14
+          }
+        ]
+      },
+      {
+        "caso": "Top-3 campañas",
+        "filas": [
+          {
+            "__dim": "[3|07][WEBINAR ASESORÍA][CHILE][C LEADS][CBO][ADVANTAGE]",
+            "leads_count": 228
+          },
+          {
+            "__dim": "[3|07][WEBINAR ASESORÍA][CHILE][C LEADS][CBO][SIMILARES]",
+            "leads_count": 181
+          },
+          {
+            "__dim": "[5|07][WEBINAR ASESORÍA][CHILE][C LEADS][CBO][P. TIBIO]",
+            "leads_count": 164
+          }
+        ]
+      }
+    ],
+    "3ab7fdde-6f3e-47f5-ab9f-29883591b1c2": [
+      {
+        "caso": "leads total",
+        "filas": [
+          {
+            "__dim": null,
+            "leads_count": 0
+          }
+        ]
+      },
+      {
+        "caso": "gasto total",
+        "filas": [
+          {
+            "__dim": null,
+            "spend": 0,
+            "meta_spend": 0,
+            "tiktok_spend": 0
+          }
+        ]
+      },
+      {
+        "caso": "cruce gasto×leads",
+        "filas": [
+          {
+            "__dim": null,
+            "spend": 0,
+            "leads_count": 0,
+            "cpl": null
+          }
+        ]
+      },
+      {
+        "caso": "ventas y retorno",
+        "filas": [
+          {
+            "__dim": null,
+            "sales_count": 0,
+            "revenue": 0,
+            "roas": null,
+            "cpa": null
+          }
+        ]
+      },
+      {
+        "caso": "rendimiento de anuncios",
+        "filas": [
+          {
+            "__dim": null,
+            "impressions": 0,
+            "clicks": 0,
+            "ctr": null,
+            "cpc": null,
+            "cpm": null,
+            "reach": 0,
+            "frequency": null
+          }
+        ]
+      },
+      {
+        "caso": "hotmart",
+        "filas": [
+          {
+            "__dim": null,
+            "hotmart_revenue": 0,
+            "hotmart_sales": 0,
+            "hotmart_roas": null,
+            "hotmart_cpa": null,
+            "hotmart_roi": null
+          }
+        ]
+      },
+      {
+        "caso": "ga4",
+        "filas": [
+          {
+            "__dim": null,
+            "ga_sessions": 0,
+            "ga_bounce_rate": null,
+            "ga_avg_session_duration": null
+          }
+        ]
+      },
+      {
+        "caso": "offline",
+        "filas": [
+          {
+            "__dim": null,
+            "offline_leads": 0,
+            "offline_ventas": 0,
+            "offline_revenue": 0
+          }
+        ]
+      },
+      {
+        "caso": "suscripciones (foto)",
+        "filas": [
+          {
+            "__dim": null,
+            "subs_active": null,
+            "subs_mrr": null
+          }
+        ]
+      },
+      {
+        "caso": "serie por día",
+        "filas": []
+      },
+      {
+        "caso": "serie por semana",
+        "filas": []
+      },
+      {
+        "caso": "serie por mes",
+        "filas": []
+      },
+      {
+        "caso": "por campaña (cruzada)",
+        "filas": []
+      },
+      {
+        "caso": "por campaña CRUDA",
+        "filas": []
+      },
+      {
+        "caso": "por anuncio",
+        "filas": []
+      },
+      {
+        "caso": "por conjunto",
+        "filas": []
+      },
+      {
+        "caso": "por país (gasto no cruza)",
+        "filas": []
+      },
+      {
+        "caso": "por source",
+        "filas": []
+      },
+      {
+        "caso": "por formulario",
+        "filas": []
+      },
+      {
+        "caso": "Top-3 campañas",
+        "filas": []
+      }
+    ]
+  },
+  "extras": {
+    "50118457-9e39-4318-a1e0-e1755fdc7cc9": {
+      "funnel": [
+        {
+          "stage": "impressions",
+          "value": 200583,
+          "label": "Impresiones"
+        },
+        {
+          "stage": "clicks",
+          "value": 4214,
+          "label": "Clics"
+        },
+        {
+          "stage": "leads_count",
+          "value": 0,
+          "label": "Leads (contactos)"
+        },
+        {
+          "stage": "sales_count",
+          "value": 0,
+          "label": "Ventas"
+        }
+      ],
+      "comparacion": {
+        "current": [
+          {
+            "dimension_value": null,
+            "leads_count": 0,
+            "spend": 100.91,
+            "cpl": null
+          }
+        ],
+        "previous": [
+          {
+            "dimension_value": null,
+            "leads_count": 0,
+            "spend": 300.91,
+            "cpl": null
+          }
+        ]
+      },
+      "distinct_campanas": [
+        "a7rvi",
+        "Nueva campaña de Interacción"
+      ]
+    },
+    "337d5c5a-684c-4b50-88e2-70a73d7ebc4b": {
+      "funnel": [
+        {
+          "stage": "impressions",
+          "value": 162460,
+          "label": "Impresiones"
+        },
+        {
+          "stage": "clicks",
+          "value": 4434,
+          "label": "Clics"
+        },
+        {
+          "stage": "leads_count",
+          "value": 617,
+          "label": "Leads (contactos)"
+        },
+        {
+          "stage": "sales_count",
+          "value": 0,
+          "label": "Ventas"
+        }
+      ],
+      "comparacion": {
+        "current": [
+          {
+            "dimension_value": null,
+            "leads_count": 617,
+            "spend": 818429,
+            "cpl": 1326.47
+          }
+        ],
+        "previous": [
+          {
+            "dimension_value": null,
+            "leads_count": 19,
+            "spend": 1074686,
+            "cpl": 56562.42
+          }
+        ]
+      },
+      "distinct_campanas": [
+        "[12/07][EBOOK][VENTAS][HOTMART][PERPETUO][ADS GANADORES/NUEVOS JUL] - Copia",
+        "[3|07][WEBINAR ASESORÍA][CHILE][C LEADS][CBO][ADVANTAGE]",
+        "[3|07][WEBINAR ASESORÍA][CHILE][C LEADS][CBO][SIMILARES]",
+        "[5|07][WEBINAR ASESORÍA][CHILE][C LEADS][CBO][P. TIBIO]",
+        "[REORGANIZACION] [CAPTACION] [ VENTAS] [23 FEBRERO] - Copia 3",
+        "{{campaign.name}}",
+        "F2[23|07][ASESORIA TRIBUTARIA][C LEADS][AGENDAMIENTO][VIDS][P FRIO][ABO][JUL]"
+      ]
+    },
+    "3ab7fdde-6f3e-47f5-ab9f-29883591b1c2": {
+      "funnel": [
+        {
+          "stage": "impressions",
+          "value": 0,
+          "label": "Impresiones"
+        },
+        {
+          "stage": "clicks",
+          "value": 0,
+          "label": "Clics"
+        },
+        {
+          "stage": "leads_count",
+          "value": 0,
+          "label": "Leads (contactos)"
+        },
+        {
+          "stage": "sales_count",
+          "value": 0,
+          "label": "Ventas"
+        }
+      ],
+      "comparacion": {
+        "current": [
+          {
+            "dimension_value": null,
+            "leads_count": 0,
+            "spend": 0,
+            "cpl": null
+          }
+        ],
+        "previous": [
+          {
+            "dimension_value": null,
+            "leads_count": 0,
+            "spend": 0,
+            "cpl": null
+          }
+        ]
+      },
+      "distinct_campanas": []
+    }
+  }
+}

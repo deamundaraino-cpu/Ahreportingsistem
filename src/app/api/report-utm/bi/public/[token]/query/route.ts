@@ -19,6 +19,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/utils/supabase/server'
 import { parseBiQueryParams } from '@/lib/report-utm/bi-query-params'
 import { dispatchBiQuery } from '@/lib/report-utm/bi-dispatch'
+import { sanitizeForClient } from '@/lib/report-utm/bi/diagnostics'
 import { ADVANCED_FILTER_KEY, parseAdvancedFilter, advancedFilterHasConditions } from '@/lib/report-utm/bi-metadata'
 import type { BiDimension } from '@/lib/report-utm/bi-metadata'
 
@@ -157,7 +158,9 @@ export async function GET(
             return NextResponse.json({ error: result.error }, { status: result.status ?? 400 })
         }
 
-        return NextResponse.json({ data: result.data }, {
+        // `meta` saneado: el cliente ve POR QUÉ una celda está vacía, pero no el
+        // estado del enlace interno entre los dos cliente_id de la plataforma.
+        return NextResponse.json({ data: result.data, meta: sanitizeForClient(result.meta) }, {
             headers: { 'Cache-Control': 'private, max-age=30' },
         })
     } catch (err) {

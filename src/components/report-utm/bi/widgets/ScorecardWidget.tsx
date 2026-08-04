@@ -14,6 +14,8 @@ import { fetchClienteGoals } from '@/lib/report-utm/client-goals'
 import { useBiQueryBase } from '../BiQueryContext'
 import { appendWidgetFilters, widgetFilterSignature } from '../widgetQuery'
 import { HelpTip } from '../HelpTip'
+import { readUnavailable, readValue, UnavailableNote } from '../widgetDiagnostics'
+import type { WidgetUnavailable } from '../widgetDiagnostics'
 
 interface Props {
     title: string
@@ -52,6 +54,8 @@ export function ScorecardWidget({ title, config, filters, calculatedFields = [] 
     const [loading, setLoading] = useState(true)
     const [error, setError]   = useState<string | null>(null)
     const [goals, setGoals]   = useState<ClienteGoals | null>(null)
+    /** Motivo por el que esta métrica no se pudo medir, si es el caso. */
+    const [naInfo, setNaInfo] = useState<WidgetUnavailable | null>(null)
 
     const compare = !!config.compare_period
     // Fórmula propia del widget: manda sobre `metric` y viaja bajo una clave fija.
@@ -86,14 +90,17 @@ export function ScorecardWidget({ title, config, filters, calculatedFields = [] 
         fetch(`${queryBase}?${params}`)
             .then(r => r.json())
             .then(json => {
+                // Un hueco NO es un cero: `readValue` conserva el null y el
+                // render lo pinta como «—» con su explicación. Antes esto era
+                // `Number(row[metric] ?? 0)`, así que "no se pudo medir" y
+                // "salió cero" se veían igual.
+                const na = readUnavailable(json.meta, metric)
+                setNaInfo(na)
                 if (compare) {
-                    const cur = json.data?.current?.[0]
-                    const prv = json.data?.previous?.[0]
-                    setValue(cur ? Number(cur[metric] ?? 0) : 0)
-                    setPrev(prv ? Number(prv[metric] ?? 0) : 0)
+                    setValue(readValue(json.data?.current?.[0], metric, na))
+                    setPrev(readValue(json.data?.previous?.[0], metric, na))
                 } else {
-                    const row = json.data?.[0]
-                    setValue(row ? Number(row[metric as keyof typeof row] ?? 0) : 0)
+                    setValue(readValue(json.data?.[0], metric, na))
                     setPrev(null)
                 }
             })
@@ -190,6 +197,8 @@ export function ScorecardWidget({ title, config, filters, calculatedFields = [] 
                             </span>
                         </div>
                     )}
+                    {/* El «—» de arriba dice QUE no se pudo medir; esto dice POR QUÉ. */}
+                    <UnavailableNote info={naInfo} />
                 </div>
             )}
             <p className="text-[10px] text-muted-foreground/60 uppercase tracking-wider">

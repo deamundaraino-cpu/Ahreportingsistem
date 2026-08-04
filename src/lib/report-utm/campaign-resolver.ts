@@ -323,12 +323,31 @@ export async function loadOverrides(clienteId: string): Promise<Override[]> {
 }
 
 /** Resuelve el public cliente_id enlazado a un cliente report_utm (o null). */
+// El enlace cliente report_utm → cliente público cambia muy de vez en cuando
+// (solo al vincular a mano), pero se pregunta varias veces por consulta: una en
+// `queryAdsDirect`, otra en `loadResolver` y otra en el diagnóstico. Con 12
+// widgets por informe eso son decenas de viajes idénticos a la base. TTL igual
+// que el del resolver, por coherencia.
+const PUBLIC_ID_TTL_MS = 60_000
+const publicIdCache = new Map<string, { value: string | null; ts: number }>()
+
 export async function resolvePublicClienteId(rtmClienteId: string): Promise<string | null> {
+    const now = Date.now()
+    const hit = publicIdCache.get(rtmClienteId)
+    if (hit && now - hit.ts <= PUBLIC_ID_TTL_MS) return hit.value
+
     const supabase = await createAdminClient()
-    const { data } = await supabase
+    const { data, error } = await supabase
         .schema('report_utm').from('clientes')
         .select('public_cliente_id').eq('id', rtmClienteId).maybeSingle()
-    return data?.public_cliente_id ?? null
+    // Un error de red NO se cachea: cachear el null convertiría un fallo puntual
+    // en un minuto entero de informes en blanco.
+    if (error) return null
+
+    const value = data?.public_cliente_id ?? null
+    if (publicIdCache.size > 500) publicIdCache.clear()
+    publicIdCache.set(rtmClienteId, { value, ts: now })
+    return value
 }
 
 // ── API pública del resolver ──────────────────────────────────────────
