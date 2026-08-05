@@ -181,6 +181,58 @@ export async function heartbeat(db: any, jobId: string, cursor?: Record<string, 
     if (error) throw new Error(`heartbeat: ${error.message}`)
 }
 
+/**
+ * Devuelve un job a la cola SIN gastar un intento.
+ *
+ * Es para cuando el job está perfectamente bien pero no toca ahora (ver
+ * `clienteOcupado`). `failJob` no sirve: consumiría reintentos y acabaría
+ * pintando de rojo en /admin/sync algo que nunca falló.
+ */
+export async function releaseJob(db: any, jobId: string): Promise<void> {
+    const { error } = await db
+        .from('sync_jobs')
+        .update({ estado: 'pending', locked_at: null, locked_by: null })
+        .eq('id', jobId)
+    if (error) throw new Error(`releaseJob: ${error.message}`)
+}
+
+/**
+ * ¿Hay OTRO job vivo del mismo cliente, tomado por otro ejecutor?
+ *
+ * `claim_sync_job` usa SKIP LOCKED, que garantiza que un job no se entrega dos
+ * veces, pero NO que un cliente no se procese dos veces a la vez: el cron de
+ * Vercel y el worker del VPS pueden estar corriendo rangos solapados del mismo
+ * cliente (se observaron 5 corridas del mismo cliente en 3 minutos). Dos
+ * corridas concurrentes sobre las mismas fechas se pisan los datos, así que la
+ * segunda se devuelve a la cola y espera turno.
+ *
+ * Solo cuenta el lease vivo: un job 'running' con `locked_at` viejo es un
+ * ejecutor muerto, y bloquear por él dejaría al cliente sin sincronizar.
+ */
+export async function clienteOcupado(
+    db: any,
+    clienteId: string | null,
+    jobIdActual: string,
+    worker: string,
+    leaseSeconds = 600,
+): Promise<boolean> {
+    if (!clienteId) return false
+    const vivoDesde = new Date(Date.now() - leaseSeconds * 1000).toISOString()
+    const { data, error } = await db
+        .from('sync_jobs')
+        .select('id')
+        .eq('cliente_id', clienteId)
+        .eq('estado', 'running')
+        .neq('id', jobIdActual)
+        .neq('locked_by', worker)
+        .gte('locked_at', vivoDesde)
+        .limit(1)
+    // Ante un error de consulta se sigue adelante: perder una sincronización es
+    // peor que un solapamiento ocasional.
+    if (error) return false
+    return (data ?? []).length > 0
+}
+
 export async function completeJob(db: any, jobId: string): Promise<void> {
     const { error } = await db
         .from('sync_jobs')

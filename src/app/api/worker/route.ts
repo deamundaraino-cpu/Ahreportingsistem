@@ -11,6 +11,7 @@ import { evaluateAlertRules } from '@/lib/notifications/rules-engine'
 import { getUsdRate, preloadUsdRates } from '@/lib/fx'
 import { importesCuadran, sumarCampanas } from '@/lib/sync/reconcile'
 import { expandirFila } from '@/lib/ads/ads-daily-writer'
+import { agruparPorForma, plataformasOmitidas } from '@/lib/sync/upsert-batches'
 
 // Vercel Hobby corta las funciones a 60s: pedir 300 no las alarga, solo hacía que
 // los presupuestos internos (270s) nunca dispararan y la función muriera a mitad
@@ -58,7 +59,14 @@ function computeSyncHash(obj: any): string {
  * (carrito, ver contenido, búsquedas, contacto, agenda, suscripción…).
  */
 const META_ACTION_FAMILIES: Record<string, string[]> = {
-    lead:                  ['lead', 'offsite_conversion.fb_pixel_lead'],
+    // Los formularios nativos de Instagram/Messenger y el reporte agrupado de Meta
+    // llegan como `onsite_conversion.lead_grouped` / `onsite_conversion.lead` /
+    // `onsite_web_lead`, que no estaban mapeados: esas cuentas devolvían 0 leads
+    // para siempre. El agregado por familia es un MAX entre variantes, así que
+    // añadirlas no duplica el mismo evento reportado de varias formas.
+    lead:                  ['lead', 'offsite_conversion.fb_pixel_lead', 'omni_lead',
+                            'onsite_conversion.lead', 'onsite_conversion.lead_grouped',
+                            'onsite_web_lead', 'leadgen_grouped'],
     purchase:              ['purchase', 'omni_purchase', 'offsite_conversion.fb_pixel_purchase'],
     complete_registration: ['complete_registration', 'omni_complete_registration', 'offsite_conversion.fb_pixel_complete_registration'],
     add_to_cart:           ['add_to_cart', 'omni_add_to_cart', 'offsite_conversion.fb_pixel_add_to_cart'],
@@ -270,7 +278,20 @@ export async function GET(request: Request) {
         // ─── Cachés por-cliente para lookups independientes de la fecha ───
         // Se cargan UNA vez por rango (no por día). Valor Promise → fechas
         // concurrentes deduplican la misma carga.
-        const tiktokNameCache = new Map<string, Promise<{ campaigns: Map<string, string>; ads: Map<string, string>; adgroups: Map<string, string> }>>() // key: advertiserId
+        /**
+         * Catálogo por cuenta: nombres + a qué campaña/conjunto cuelga cada
+         * entidad. La jerarquía sale gratis de /ad/get/ y /adgroup/get/, y sin
+         * ella las filas de anuncio/conjunto de TikTok no tienen campaña, así
+         * que cualquier filtro por campaña las descarta enteras.
+         */
+        type TikTokPadre = { campaign_id: string | null; adgroup_id: string | null }
+        const tiktokNameCache = new Map<string, Promise<{
+            campaigns: Map<string, string>
+            ads: Map<string, string>
+            adgroups: Map<string, string>
+            padresAds: Map<string, TikTokPadre>
+            padresAdgroups: Map<string, TikTokPadre>
+        }>>() // key: advertiserId
         const metaFormCatalogCache = new Map<string, Promise<Map<string, string>>>() // key: actId → (formId → name)
         const metaTargetingCache = new Map<string, Promise<Map<string, any[]>>>() // key: actId → (campaignId → regions)
 
@@ -635,8 +656,14 @@ export async function GET(request: Request) {
         // y los 3 rastreos corren en paralelo (acotados por el pool de TikTok).
         async function loadTikTokNames(advertiserId: string, token: string) {
             return memo(tiktokNameCache, advertiserId, async () => {
+                // `padres` guarda a qué campaña pertenece cada anuncio/conjunto.
+                // /ad/get/ y /adgroup/get/ ya devuelven `campaign_id` en cada objeto,
+                // así que sale gratis: sin él, las filas de tiktok_ads/tiktok_adgroups
+                // no tienen campaña y el motor BI las descarta enteras en cuanto hay
+                // un filtro por campaña (bi-query.ts: sin nombre no se puede comprobar).
                 const crawl = async (path: string, idKey: string, nameKey: string) => {
                     const map = new Map<string, string>()
+                    const padres = new Map<string, { campaign_id: string | null; adgroup_id: string | null }>()
                     try {
                         const url = new URL(path)
                         url.searchParams.append('advertiser_id', advertiserId)
@@ -644,8 +671,12 @@ export async function GET(request: Request) {
                         if (paged.ok) {
                             paged.list.forEach((item: any) => {
                                 const id = String(item[idKey] || '')
+                                if (!id) return
                                 const name = item[nameKey]
-                                if (id && name) map.set(id, name)
+                                if (name) map.set(id, name)
+                                const campaignId = item.campaign_id ? String(item.campaign_id) : null
+                                const adgroupId = item.adgroup_id ? String(item.adgroup_id) : null
+                                if (campaignId || adgroupId) padres.set(id, { campaign_id: campaignId, adgroup_id: adgroupId })
                             })
                         } else {
                             log(`[TikTok] Warning: nombres no obtenidos (${path}): ${paged.message}`)
@@ -653,14 +684,20 @@ export async function GET(request: Request) {
                     } catch (e: any) {
                         log(`[TikTok] Warning: nombres no obtenidos (${path}): ${e.message}`)
                     }
-                    return map
+                    return { map, padres }
                 }
                 const [campaigns, ads, adgroups] = await Promise.all([
                     crawl('https://business-api.tiktok.com/open_api/v1.3/campaign/get/', 'campaign_id', 'campaign_name'),
                     crawl('https://business-api.tiktok.com/open_api/v1.3/ad/get/', 'ad_id', 'ad_name'),
                     crawl('https://business-api.tiktok.com/open_api/v1.3/adgroup/get/', 'adgroup_id', 'adgroup_name'),
                 ])
-                return { campaigns, ads, adgroups }
+                return {
+                    campaigns: campaigns.map,
+                    ads: ads.map,
+                    adgroups: adgroups.map,
+                    padresAds: ads.padres,
+                    padresAdgroups: adgroups.padres,
+                }
             })
         }
 
@@ -1310,6 +1347,8 @@ export async function GET(request: Request) {
 
                         // Nombres ya cargados desde la caché por cuenta (no se vuelve a pedir)
                         const nameMap = level === 'ad' ? tkNames.ads : tkNames.adgroups
+                        // Jerarquía: a qué campaña (y conjunto) pertenece cada entidad.
+                        const padres = level === 'ad' ? tkNames.padresAds : tkNames.padresAdgroups
 
                         const dims = [idDim, 'stat_time_day']
 
@@ -1337,9 +1376,20 @@ export async function GET(request: Request) {
                             if (!day) return
                             const id = String(d[idDim] || '')
                             const dayMap = perDay.get(day) || new Map<string, any>()
+                            const padre = padres.get(id)
+                            const campaignId = padre?.campaign_id ?? null
                             dayMap.set(id || nameMap.get(id) || 'Desconocido', {
                                 [idKey]:     id || null,
                                 [nameKey]:   nameMap.get(id) || id || 'Desconocido',
+                                // Campaña padre: la necesita el filtro por keyword del
+                                // dashboard y del motor BI, que casan por NOMBRE.
+                                campaign_id:   campaignId,
+                                campaign_name: campaignId ? (campaignMap.get(campaignId) || null) : null,
+                                // Un anuncio cuelga además de un conjunto.
+                                ...(level === 'ad' && padre?.adgroup_id ? {
+                                    adset_id:   padre.adgroup_id,
+                                    adset_name: tkNames.adgroups.get(padre.adgroup_id) || null,
+                                } : {}),
                                 spend:       parseFloat(m.spend       || '0'),
                                 impressions: parseInt(m.impressions   || '0'),
                                 clicks:      parseInt(m.clicks        || '0'),
@@ -2351,13 +2401,45 @@ export async function GET(request: Request) {
             }
         }
         
-        // ─── Mass Upsert into Supabase (1 Single Database Query per Client!) ───
+        // ─── Mass Upsert into Supabase (1 query por FORMA de fila) ───
+        //
+        // Las filas se agrupan por su conjunto de claves ANTES de enviarlas.
+        //
+        // La red de seguridad de arriba «preserva» los campos de una plataforma
+        // omitiéndolos del objeto. Eso solo funciona si el lote es homogéneo:
+        // PostgREST normaliza un insert masivo a UNA lista de columnas —la unión
+        // de las claves de todas las filas— y a las filas que no traen una clave
+        // les mete NULL, que el ON CONFLICT DO UPDATE escribe encima. Es decir,
+        // en un lote mezclado omitir un campo no lo preservaba: lo BORRABA.
+        //
+        // Así se perdieron 4 días de Meta de Sur Profundo (24-27 jul 2026) con el
+        // gasto y los leads ya descargados: la ventana de Meta (7 días) y la de
+        // TikTok (3) no coinciden, así que hay fechas donde Meta no se re-pide
+        // pero TikTok sí trae datos; esa fila entraba al lote sin las claves de
+        // Meta y anulaba meta_spend/meta_campaigns. La corrida siguiente los
+        // volvía a bajar y la de después los borraba otra vez, en bucle.
+        //
+        // Agrupando, cada upsert lleva filas con exactamente las mismas columnas
+        // y lo omitido vuelve a significar «no tocar». Son 1-3 grupos por corrida.
         if (upsertPayloads.length > 0) {
-            log(`[DB] Ejecutando Mass Upsert de ${upsertPayloads.length} días de golpe para el cliente ${cliente.nombre}...`);
-            const { error: batchError } = await adminSupabase
-                .from('metricas_diarias')
-                .upsert(upsertPayloads, { onConflict: 'cliente_id, fecha' });
-            
+            const gruposPorForma = agruparPorForma(upsertPayloads as Array<Record<string, unknown>>)
+
+            log(`[DB] Ejecutando Mass Upsert de ${upsertPayloads.length} días de golpe para el cliente ${cliente.nombre} (${gruposPorForma.length} grupo(s) por forma de fila)...`);
+
+            let batchError: { message: string } | null = null
+            for (const filas of gruposPorForma) {
+                // Rastro explícito: si un grupo no trae una plataforma, es que se
+                // está preservando lo que ya hay en BD para esas fechas.
+                const omitidas = plataformasOmitidas(filas[0])
+                if (omitidas.length > 0) {
+                    log(`[DB] ${filas.length} fecha(s) conservan ${omitidas.join(' y ')} de BD (no se re-pidió o falló): ${filas.map(f => f.fecha).join(', ')}`)
+                }
+                const { error } = await adminSupabase
+                    .from('metricas_diarias')
+                    .upsert(filas, { onConflict: 'cliente_id, fecha' });
+                if (error) { batchError = error; break }
+            }
+
             if (batchError) {
                 log(`[DB] ❌ Error en Mass Upsert: ${batchError.message}`);
                 results.forEach((r: any) => { if (r.cliente_id === cliente.id) r.status = 'failed' });
@@ -2407,15 +2489,32 @@ export async function GET(request: Request) {
                         // `synced_at` anterior a esta corrida, y DESPUÉS del upsert
                         // para que nunca haya un hueco: como mucho hay un instante
                         // con datos de más, nunca de menos.
-                        const fechasTocadas = [...new Set(payloadsAds.map(p => String(p.fecha)))];
-                        const { error: eLimpieza } = await adminSupabase
-                            .from('ads_daily')
-                            .delete()
-                            .eq('cliente_id', cliente.id)
-                            .in('fecha', fechasTocadas)
-                            .lt('synced_at', inicioEspejo);
-                        if (eLimpieza) throw new Error(eLimpieza.message);
+                        //
+                        // ACOTADO POR PLATAFORMA: una fecha que conserva Meta de BD
+                        // (porque no se re-pidió o falló) no trae filas Meta nuevas,
+                        // así que un borrado por fecha a secas se llevaba por delante
+                        // el espejo bueno y dejaba el día solo con TikTok. Solo se
+                        // limpia la plataforma que SÍ se acaba de escribir.
+                        const fechasPorPlataforma: Record<'meta' | 'tiktok', string[]> = { meta: [], tiktok: [] }
+                        for (const p of payloadsAds) {
+                            const fecha = String(p.fecha)
+                            if ('meta_campaigns' in p) fechasPorPlataforma.meta.push(fecha)
+                            if ('tiktok_campaigns' in p) fechasPorPlataforma.tiktok.push(fecha)
+                        }
+                        for (const plataforma of ['meta', 'tiktok'] as const) {
+                            const fechas = [...new Set(fechasPorPlataforma[plataforma])]
+                            if (fechas.length === 0) continue
+                            const { error: eLimpieza } = await adminSupabase
+                                .from('ads_daily')
+                                .delete()
+                                .eq('cliente_id', cliente.id)
+                                .eq('plataforma', plataforma)
+                                .in('fecha', fechas)
+                                .lt('synced_at', inicioEspejo);
+                            if (eLimpieza) throw new Error(eLimpieza.message);
+                        }
 
+                        const fechasTocadas = [...new Set(payloadsAds.map(p => String(p.fecha)))];
                         log(`[DB] ✓ ads_daily: ${filasAds.length} filas espejo en ${fechasTocadas.length} día(s).`);
                     }
                 } catch (e) {

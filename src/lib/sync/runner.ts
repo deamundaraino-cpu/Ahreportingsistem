@@ -18,9 +18,11 @@
 
 import {
     claimJob,
+    clienteOcupado,
     completeJob,
     failJob,
     enqueueJob,
+    releaseJob,
     type SyncJob,
 } from './queue'
 import { notifyUsers } from '../notifications/notify'
@@ -184,10 +186,28 @@ export async function runJobs(db: any, opts: RunnerOptions): Promise<RunnerResul
     const budgetMs = opts.budgetMs ?? 45_000
     const startedLoop = Date.now()
     const result: RunnerResult = { claimed: 0, done: 0, failed: 0, requeued: 0, details: [] }
+    /**
+     * Jobs devueltos a la cola en este ciclo por tener el cliente ocupado.
+     * `claim_sync_job` los volvería a entregar de inmediato (mismo orden de
+     * prioridad), así que reencontrarse con uno significa que ya no queda nada
+     * más que hacer ahora: se corta el ciclo en vez de girar en vacío.
+     */
+    const liberados = new Set<string>()
 
     while (Date.now() - startedLoop < budgetMs) {
         const job = await claimJob(db, opts.workerId, opts.leaseSeconds ?? 600)
         if (!job) break
+
+        // Dos corridas concurrentes del mismo cliente se pisan los datos.
+        if (liberados.has(job.id) ||
+            await clienteOcupado(db, job.cliente_id, job.id, opts.workerId, opts.leaseSeconds ?? 600)) {
+            await releaseJob(db, job.id)
+            if (liberados.has(job.id)) break
+            liberados.add(job.id)
+            result.details.push({ jobId: job.id, tipo: job.tipo, estado: 'reintento', message: 'cliente ocupado por otro ejecutor' })
+            continue
+        }
+
         result.claimed++
 
         const startedAt = Date.now()
