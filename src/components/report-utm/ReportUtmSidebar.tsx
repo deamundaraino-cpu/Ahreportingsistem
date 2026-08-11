@@ -16,6 +16,7 @@ import {
     UserCheck,
     PieChart,
     Link2 as Link2Icon,
+    Activity,
 } from 'lucide-react'
 import { ThemeToggle } from '@/components/theme/ThemeToggle'
 
@@ -35,6 +36,8 @@ const NAV_ANALISIS = [
 ]
 
 const NAV_CONFIG = [
+    // Va junto a Integraciones porque casi todo lo que reporta se arregla ahí.
+    { name: 'Salud de fuentes', href: '/report-utm/salud', icon: Activity },
     { name: 'Integraciones', href: '/report-utm/integraciones', icon: Settings },
 ]
 

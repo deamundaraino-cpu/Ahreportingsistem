@@ -20,7 +20,12 @@ import { colombiaDateOf, colombiaRangeBounds } from '@/lib/colombia-date'
 import { loadResolver, resolvePublicClienteId, SIN_CAMPANA, SIN_ANUNCIO, SIN_CONJUNTO } from './campaign-resolver'
 import type { CampaignResolver, UtmRecord } from './campaign-resolver'
 import { loadCamposCliente } from '@/lib/sheets/campos-db'
-import { agregarDiarios, vistaIncluyeValor } from '@/lib/sheets/campos'
+import {
+    agregarDiarios, vistaIncluyeValor,
+    valoresDeCampoEnFila, bucketDeValor, parseNumeroSheet,
+} from '@/lib/sheets/campos'
+import type { SheetCampoDef, SheetRawRow, CampoValorDiario } from '@/lib/sheets/campos'
+import { utmDeFilaSheet, filaEsAtribuible } from '@/lib/sheets/atribucion'
 import { loadLeadCampos } from './lead-campos-db'
 import { bucketDeLeadRaw, ordenarBuckets } from './lead-campos'
 import type { LeadCampoDef } from './lead-campos'
@@ -180,10 +185,20 @@ export async function runBiQuery(params: BiQueryParams): Promise<BiQueryRow[]> {
     const isBreakdownDim = isSalesOnlyDim || unified !== null || isFieldDimQuery || isSheetDimQuery
     const needsOffline = !isBreakdownDim && (requires([...OFFLINE_METRICS]) || offlineFields.length > 0)
     const needsSubs    = !isBreakdownDim && requires([...SUBS_METRICS])
-    // Los campos de Sheet sí se desglosan por su propia dimensión, pero no por las
-    // de lead/venta/anuncio: su desglose diario no cruza con esas tablas.
+    // Los campos de Sheet se desglosan por su propia dimensión, por fecha y —desde
+    // que se leen también en crudo— por campaña, conjunto y anuncio.
+    //
+    // El desglose diario (`sheet_campo_valores_diarios`) no puede repartirse entre
+    // campañas porque no guarda a qué anuncio pertenecía cada fila. La fila cruda
+    // (`sheet_filas`) sí lo trae, así que al pedir un eje de publicidad se lee de
+    // ahí. Siguen sin cruzar con las dimensiones de formulario y de venta, que no
+    // existen en el Sheet.
     const needsSheet = (sheetFields.length > 0 || isSheetDimQuery) &&
-        !isSalesOnlyDim && unified === null && !isFieldDimQuery
+        !isSalesOnlyDim && !isFieldDimQuery &&
+        (unified === null || !isSheetDimQuery)
+    /** ¿Hay que resolver la identidad publicitaria de cada fila del Sheet? */
+    const sheetPorEntidad = needsSheet && sheetFields.length > 0 && !isSheetDimQuery &&
+        (unified !== null || hasAnyEntityFilter(params.filters, params.advancedFilter))
 
     const dateFrom = params.date_from ?? new Date(Date.now() - 30 * 86400_000).toISOString().slice(0, 10)
     const dateTo   = params.date_to   ?? new Date().toISOString().slice(0, 10)
@@ -236,7 +251,11 @@ export async function runBiQuery(params: BiQueryParams): Promise<BiQueryRow[]> {
 
     // ── CAMPOS DE SHEET (sheet_campo_valores_diarios) ─────────────────
     let sheetData: SheetRow[] = []
-    if (needsSheet) {
+    if (sheetPorEntidad) {
+        // Grano de fila: recupera la identidad del anuncio que el desglose diario
+        // no guarda. Es lo que permite «leads calificados por campaña».
+        sheetData = await querySheetLeadsDirect(params, dateFrom, dateTo, sheetFields, resolver, nocross)
+    } else if (needsSheet) {
         sheetData = await querySheetFieldsDirect(params, dateFrom, dateTo, sheetFields, sheetDimClave)
     }
 
@@ -793,9 +812,179 @@ async function queryAdsDirect(
         if (!publicId) return []
     }
 
-    return level
-        ? queryAdsFromJsonb(params, dateFrom, dateTo, publicId, level, breakdown, matchers, platform)
-        : queryAdsScalar(params, dateFrom, dateTo, publicId, platform)
+    if (!level) return queryAdsScalar(params, dateFrom, dateTo, publicId, platform)
+
+    // `ads_daily` es la tabla normalizada que la migración 063 creó justo para
+    // no leer los JSONB: una fila por (cliente, fecha, plataforma, nivel,
+    // entidad), agregable en la base. Se usa cuando cubre el rango pedido; si no,
+    // se cae al JSONB, que sigue siendo la capa cruda y llega más atrás en el
+    // tiempo. Los dos caminos tienen que dar el MISMO número —lo comprueba
+    // `scripts/verify-ads-daily-paridad.ts`—, así que cuál se use es una
+    // decisión de coste, no de resultado.
+    if (!forzarJsonb() && publicId && await adsDailyCubre(publicId, level, dateFrom, dateTo)) {
+        return queryAdsFromDaily(params, dateFrom, dateTo, publicId, level, breakdown, matchers, platform)
+    }
+    return queryAdsFromJsonb(params, dateFrom, dateTo, publicId, level, breakdown, matchers, platform)
+}
+
+/**
+ * Palanca para forzar el camino antiguo: `BI_ADS_SOURCE=jsonb`.
+ *
+ * Existe por una razón concreta: la única forma de demostrar que las dos
+ * lecturas dan el mismo número es pedirle al MOTOR las dos, no comparar dos
+ * consultas SQL escritas a mano que podrían compartir el mismo error. La usa
+ * `scripts/verify-ads-daily-paridad.ts`.
+ *
+ * De paso deja una salida de emergencia: si algún día `ads_daily` se corrompe,
+ * una variable de entorno devuelve los informes a la capa cruda sin desplegar.
+ */
+function forzarJsonb(): boolean {
+    return process.env.BI_ADS_SOURCE === 'jsonb'
+}
+
+/**
+ * ¿`ads_daily` tiene el rango entero para este cliente y nivel?
+ *
+ * La pregunta no es «¿hay filas?» sino «¿están TODOS los días?». Un rango
+ * parcialmente cubierto devolvería un gasto menor que el real y perfectamente
+ * creíble, que es la peor forma de fallar. Ante la duda se usa el JSONB.
+ *
+ * Dos motivos reales por los que puede no cubrir:
+ *   • El nivel `ad` se purga a los 30 días (`purgar_ads_daily`), porque es el
+ *     65 % de las filas y la base tiene un tope de 500 MB.
+ *   • El backfill arrancó en enero de 2026; antes de eso solo existe el JSONB.
+ */
+const ADS_DAILY_COBERTURA_TTL_MS = 60_000
+const adsDailyCoberturaCache = new Map<string, { desde: string; hasta: string; ts: number } | null>()
+
+async function adsDailyCubre(
+    publicId: string, nivel: EntityKind, dateFrom: string, dateTo: string
+): Promise<boolean> {
+    const cacheKey = `${publicId} ${nivel}`
+    const now = Date.now()
+    let rango = adsDailyCoberturaCache.get(cacheKey)
+    if (!rango || now - rango.ts > ADS_DAILY_COBERTURA_TTL_MS) {
+        const db = await createAdminClient()
+        // Un solo viaje: el primer y el último día con datos de este nivel.
+        const [{ data: min }, { data: max }] = await Promise.all([
+            db.from('ads_daily').select('fecha')
+                .eq('cliente_id', publicId).eq('nivel', nivel)
+                .order('fecha', { ascending: true }).limit(1).maybeSingle(),
+            db.from('ads_daily').select('fecha')
+                .eq('cliente_id', publicId).eq('nivel', nivel)
+                .order('fecha', { ascending: false }).limit(1).maybeSingle(),
+        ])
+        if (!min?.fecha || !max?.fecha) {
+            adsDailyCoberturaCache.set(cacheKey, null)
+            return false
+        }
+        rango = { desde: String(min.fecha).slice(0, 10), hasta: String(max.fecha).slice(0, 10), ts: now }
+        if (adsDailyCoberturaCache.size > 500) adsDailyCoberturaCache.clear()
+        adsDailyCoberturaCache.set(cacheKey, rango)
+    }
+    if (!rango) return false
+    return rango.desde <= dateFrom && rango.hasta >= dateTo
+}
+
+/**
+ * Gasto derivado de `public.ads_daily` a través de `ads_daily_resumen`.
+ *
+ * Espejo exacto de `queryAdsFromJsonb`: mismos parámetros, mismas claves de
+ * salida (el nombre REAL de la entidad, que es lo que permite a `mergeResults`
+ * unir esta fila con la de leads), mismos filtros por nombre.
+ *
+ * Lo que cambia es de dónde sale y cuánto viaja:
+ *   • La suma por entidad la hace Postgres, no Node.
+ *   • Sin el tope de `MAX_AD_DAY_ROWS`, que al no llevar `.order()` dejaba
+ *     indefinido QUÉ días llegaban cuando se superaba.
+ *   • La jerarquía viene desnormalizada en la propia fila (`campana_nombre`,
+ *     `adset_nombre`), así que agrupar por campaña partiendo del nivel anuncio
+ *     no necesita reconstruir ningún índice.
+ */
+async function queryAdsFromDaily(
+    params: BiQueryParams,
+    dateFrom: string,
+    dateTo: string,
+    publicId: string,
+    level: EntityKind,
+    breakdown: EntityKind | null,
+    matchers: Map<EntityKind, (name: string) => boolean>,
+    platform: 'meta' | 'tiktok' | null
+): Promise<AdRow[]> {
+    const db = await createAdminClient()
+    const porFecha = params.dimension === 'date'
+
+    const { data, error } = await db.rpc('ads_daily_resumen', {
+        p_cliente_id: publicId,
+        p_nivel: level,
+        p_desde: dateFrom,
+        p_hasta: dateTo,
+        p_plataforma: platform,
+        p_por_fecha: porFecha,
+    })
+    if (error || !data) return []
+
+    const grouping = params.date_grouping ?? 'day'
+    const map = new Map<string, Record<string, number>>()
+
+    /** Nombre de la entidad de un nivel dado, en una fila ya desnormalizada. */
+    const nameOf = (r: Record<string, unknown>, kind: EntityKind): string | null => {
+        // La entidad del nivel consultado es `entidad_nombre`; sus ancestros
+        // vienen en sus propias columnas.
+        if (kind === level) return String(r.entidad_nombre ?? '').trim() || null
+        if (kind === 'campaign') return String(r.campana_nombre ?? '').trim() || null
+        if (kind === 'adset') return String(r.adset_nombre ?? '').trim() || null
+        // Un nivel MÁS específico que el consultado no se puede nombrar desde
+        // aquí (una fila de campaña no sabe de sus anuncios).
+        return null
+    }
+
+    for (const r of data as unknown as Record<string, unknown>[]) {
+        // Filtros por nombre: mismo criterio que el JSONB. Sin nombre para esa
+        // entidad no se puede comprobar, y contarla sería atribuir gasto a algo
+        // que el informe no está mostrando.
+        let pasa = true
+        for (const [kind, test] of matchers) {
+            const name = nameOf(r, kind)
+            if (name === null || !test(name)) { pasa = false; break }
+        }
+        if (!pasa) continue
+
+        const key = breakdown
+            ? (nameOf(r, breakdown) ?? SIN_ENTIDAD[breakdown])
+            : porFecha
+                ? truncateDate(String(r.fecha ?? ''), grouping)
+                : 'total'
+
+        let entry = map.get(key)
+        if (!entry) { entry = newAdEntry(); map.set(key, entry) }
+
+        const isMeta = String(r.plataforma ?? '') !== 'tiktok'
+        const sp = Number(r.spend ?? 0)
+        if (isMeta) entry.meta_spend += sp
+        else        entry.tiktok_spend += sp
+        entry.spend       += sp
+        entry.clicks      += Number(r.clicks ?? 0)
+        entry.impressions += Number(r.impressions ?? 0)
+
+        // Métricas de campaña: las "calientes" son columnas propias de
+        // `ads_daily` y el resto viven en `eventos`. Ese reparto es un detalle de
+        // almacenamiento, así que aquí se vuelven a juntar bajo el mismo nombre
+        // que emite el JSONB. TikTok no reporta ninguna de estas.
+        if (isMeta) {
+            const eventos = (r.eventos ?? {}) as Record<string, unknown>
+            for (const k of AD_JSONB_METRICS) {
+                const propia = r[k]
+                entry[k] += Number(propia ?? eventos[k] ?? 0) || 0
+            }
+        } else {
+            entry.tiktok_conversions += Number(r.conversions ?? 0)
+        }
+    }
+
+    return Array.from(map.entries())
+        .map(([dim, v]) => ({ dim, ...v } as AdRow))
+        .sort((a, b) => b.spend - a.spend)
 }
 
 /**
@@ -1229,6 +1418,188 @@ async function querySheetFieldsDirect(
             }
         }
 
+        out.push({ dim, values })
+    }
+
+    return out
+}
+
+// ── Campos de Sheet por eje de PUBLICIDAD (public.sheet_filas) ────────
+/**
+ * Los mismos campos de Sheet, pero calculados desde la fila cruda para poder
+ * agruparlos por campaña, conjunto o anuncio.
+ *
+ * ── Por qué existe un segundo camino ─────────────────────────────────────
+ * `querySheetFieldsDirect` lee el desglose ya materializado
+ * (`campo_id × fecha × valor`), que es lo correcto y lo barato cuando se agrupa
+ * por fecha, por un campo de Sheet o por el total. Pero ese resumen no guarda a
+ * qué anuncio pertenecía cada fila, así que no puede repartirse entre campañas.
+ *
+ * La exportación de Meta Lead Ads que alimenta esos Sheets SÍ trae la identidad
+ * del anuncio en cada fila. Leyendo `sheet_filas` se recupera, y con ella el
+ * cruce que hasta ahora era imposible: «costo por lead calificado, por anuncio».
+ *
+ * ── Por qué los números siguen cuadrando ─────────────────────────────────
+ * Los buckets se calculan con las MISMAS funciones puras que usan el sync y el
+ * recálculo (`valoresDeCampoEnFila` → `bucketDeValor` → `parseNumeroSheet`), y
+ * se agregan con el mismo `agregarDiarios`. Es lo que garantiza que el total de
+ * este camino y el del desglose diario coincidan exactamente; hay una
+ * comprobación dedicada en `scripts/verify-sheet-atribucion.ts`.
+ *
+ * NO se aplica el repliegue por cardinalidad de `computeCampoValoresDiarios`:
+ * ese repliegue conserva los totales por campo (solo renombra los buckets menos
+ * frecuentes a «(otros)»), así que no cambia ninguna métrica, y saltárselo evita
+ * que el corte dependa de cómo hayan quedado repartidas las filas entre campañas.
+ */
+async function querySheetLeadsDirect(
+    params: BiQueryParams,
+    dateFrom: string,
+    dateTo: string,
+    reqs: SheetReq[],
+    resolver: CampaignResolver | null,
+    nocross: Set<string>
+): Promise<SheetRow[]> {
+    if (!params.cliente_id) return []
+    const publicId = await resolvePublicClienteId(params.cliente_id)
+    if (!publicId) return []
+
+    const db = await createAdminClient()
+    const { campos, vistas } = await loadCamposCliente(db, publicId, { soloActivos: true })
+    if (campos.length === 0) return []
+
+    const campoPorClave = new Map(campos.map(c => [c.clave, c]))
+    const vistaPorClave = new Map(vistas.map(v => [v.clave, v]))
+
+    /** Campo del que depende un token: el suyo, o el padre si es una vista. */
+    const campoDeReq = (r: SheetReq): SheetCampoDef | undefined =>
+        r.kind === 'vista'
+            ? campoPorClave.get(vistaPorClave.get(r.clave)?.campo_clave ?? '')
+            : campoPorClave.get(r.campoClave)
+
+    // Solo se calculan los campos que algún token pide: recorrer los demás por
+    // cada fila es trabajo puro desperdiciado.
+    const camposUsados = new Map<string, SheetCampoDef>()
+    for (const r of reqs) {
+        const c = campoDeReq(r)
+        if (c) camposUsados.set(c.id, c)
+    }
+    if (camposUsados.size === 0) return []
+
+    // `id` es OBLIGATORIO en el select: `fetchAllRows` pagina por keyset sobre
+    // esa columna. Sin ella corta en la primera página (1.000 filas) y devuelve
+    // un resultado plausible pero truncado, sin ningún error.
+    const filas = await fetchAllRows(() =>
+        db.from('sheet_filas')
+            .select('id, sheet_id, tab_name, fecha, fila_num, valores')
+            .eq('cliente_id', publicId)
+            .gte('fecha', dateFrom)
+            .lte('fecha', dateTo)
+    )
+
+    const unified = unifiedTarget(params.dimension)
+    const grouping = params.date_grouping ?? 'day'
+
+    // Filtro por valores de un campo de Sheet, igual que en el camino diario.
+    const filtroPorCampo = new Map<string, Set<string>>()
+    for (const [k, v] of Object.entries(params.filters ?? {})) {
+        const clave = parseSheetDim(k)
+        if (!clave || !v || !String(v).trim()) continue
+        const valores = String(v).split(',').map(s => s.trim()).filter(Boolean)
+        const campo = campoPorClave.get(clave)
+        if (campo && valores.length) filtroPorCampo.set(campo.id, new Set(valores))
+    }
+
+    // Filtro por nombre de entidad, evaluado sobre el valor RESUELTO (igual que
+    // en leads): filtrar por la columna cruda dejaría fuera las filas que cruzan
+    // por id, que son justo las que este camino existe para aprovechar.
+    const plan = buildEntityFilterPlan(params, resolver)
+
+    /** Acumulador por (dimensión, campo, bucket). */
+    const acc = new Map<string, CampoValorDiario & { dim: string }>()
+    const acumular = (dim: string, campoId: string, bucket: string, n: number | null) => {
+        const key = `${dim} ${campoId} ${bucket}`
+        let e = acc.get(key)
+        if (!e) {
+            e = { dim, campo_id: campoId, fecha: '', valor: bucket, filas: 0, suma: 0, n_num: 0, minimo: null, maximo: null }
+            acc.set(key, e)
+        }
+        e.filas++
+        if (n !== null) {
+            e.suma += n
+            e.n_num++
+            e.minimo = e.minimo === null ? n : Math.min(e.minimo, n)
+            e.maximo = e.maximo === null ? n : Math.max(e.maximo, n)
+        }
+    }
+
+    for (const raw of filas) {
+        const valores = (raw.valores ?? {}) as Record<string, string>
+        const fila: SheetRawRow = {
+            sheet_id: String(raw.sheet_id ?? ''),
+            tab_name: String(raw.tab_name ?? ''),
+            fecha: String(raw.fecha ?? '').slice(0, 10),
+            fila_num: Number(raw.fila_num ?? 0),
+            valores,
+        }
+        if (!fila.fecha) continue
+
+        // La fila entra al resolver con forma de UtmRecord: mismo contrato que
+        // un lead, misma cascada, mismo resultado.
+        const rec = utmDeFilaSheet(valores) as UtmRecord
+
+        if (plan.inMemory && !rowPassesEntityFilters(rec as Record<string, unknown>, plan, resolver!)) continue
+
+        let dim = 'total'
+        if (unified) {
+            const r = resolveEntityLabel(rec as Record<string, unknown>, unified, resolver)
+            dim = r.label
+            // Una fila sin nada con lo que atribuir no es un fallo de mapeo: es
+            // un Sheet que no trae identidad publicitaria. Marcar su clave
+            // llenaría el aviso de la UI de ruido que nadie puede arreglar.
+            if (!r.matched && filaEsAtribuible(valores)) nocross.add(dim)
+        } else if (params.dimension === 'date') {
+            dim = truncateDate(fila.fecha, grouping)
+        }
+
+        for (const campo of camposUsados.values()) {
+            const permitidos = filtroPorCampo.get(campo.id)
+            for (const crudo of valoresDeCampoEnFila(campo, fila)) {
+                const bucket = bucketDeValor(campo, crudo)
+                if (bucket === null) continue
+                if (permitidos && !permitidos.has(bucket)) continue
+                acumular(dim, campo.id, bucket, parseNumeroSheet(crudo))
+            }
+        }
+    }
+
+    // ── Agregación por dimensión, idéntica a la del camino diario ────────
+    const porDim = new Map<string, CampoValorDiario[]>()
+    for (const e of acc.values()) {
+        const lista = porDim.get(e.dim)
+        if (lista) lista.push(e)
+        else porDim.set(e.dim, [e])
+    }
+
+    const out: SheetRow[] = []
+    for (const [dim, rows] of porDim) {
+        const values: Record<string, number> = {}
+        for (const req of reqs) {
+            const campo = campoDeReq(req)
+            if (!campo) { values[req.outKey] = 0; continue }
+            const propias = rows.filter(r => r.campo_id === campo.id)
+
+            if (req.kind === 'vista') {
+                const vista = vistaPorClave.get(req.clave)
+                if (!vista) { values[req.outKey] = 0; continue }
+                values[req.outKey] = round2(agregarDiarios(
+                    propias.filter(r => vistaIncluyeValor(vista, r.valor)),
+                    vista.agregacion
+                ))
+            } else {
+                const agg = parseSheetMetric(req.outKey)?.agg ?? campo.agregacion
+                values[req.outKey] = round2(agregarDiarios(propias, agg))
+            }
+        }
         out.push({ dim, values })
     }
 

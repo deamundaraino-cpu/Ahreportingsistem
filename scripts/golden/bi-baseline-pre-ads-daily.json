@@ -1,5 +1,5 @@
 {
-  "generado": "2026-08-11T02:47:25.002Z",
+  "generado": "2026-08-04T03:19:38.045Z",
   "rango": {
     "desde": "2026-07-01",
     "hasta": "2026-07-31"
@@ -384,8 +384,8 @@
         "filas": [
           {
             "__dim": null,
-            "spend": 938371,
-            "meta_spend": 938371,
+            "spend": 818429,
+            "meta_spend": 818429,
             "tiktok_spend": 0
           }
         ]
@@ -395,9 +395,9 @@
         "filas": [
           {
             "__dim": null,
-            "spend": 938371,
+            "spend": 818429,
             "leads_count": 618,
-            "cpl": 1518.4
+            "cpl": 1324.32
           }
         ]
       },
@@ -418,13 +418,13 @@
         "filas": [
           {
             "__dim": null,
-            "impressions": 187238,
-            "clicks": 5081,
-            "ctr": 2.71,
-            "cpc": 184.68,
-            "cpm": 5011.65,
-            "reach": 159605,
-            "frequency": 1.17
+            "impressions": 162460,
+            "clicks": 4434,
+            "ctr": 2.73,
+            "cpc": 184.58,
+            "cpm": 5037.73,
+            "reach": 137761,
+            "frequency": 1.18
           }
         ]
       },
@@ -436,8 +436,8 @@
             "hotmart_revenue": 390.12,
             "hotmart_sales": 50,
             "hotmart_roas": 0,
-            "hotmart_cpa": 18767.42,
-            "hotmart_roi": -99.96
+            "hotmart_cpa": 16368.58,
+            "hotmart_roi": -99.95
           }
         ]
       },
@@ -559,17 +559,17 @@
           {
             "__dim": "2026-07-17",
             "leads_count": 31,
-            "spend": 39303
+            "spend": 0
           },
           {
             "__dim": "2026-07-18",
             "leads_count": 19,
-            "spend": 36544
+            "spend": 0
           },
           {
             "__dim": "2026-07-19",
             "leads_count": 22,
-            "spend": 44095
+            "spend": 0
           },
           {
             "__dim": "2026-07-20",
@@ -663,7 +663,7 @@
         "filas": [
           {
             "__dim": "2026-07",
-            "spend": 938371
+            "spend": 818429
           }
         ]
       },
@@ -672,7 +672,7 @@
         "filas": [
           {
             "__dim": "[12/07][EBOOK][VENTAS][HOTMART][PERPETUO][ADS GANADORES/NUEVOS JUL] - Copia",
-            "spend": 300716,
+            "spend": 247053,
             "leads_count": 0,
             "cpl": null,
             "sales_count": 0
@@ -686,23 +686,23 @@
           },
           {
             "__dim": "[3|07][WEBINAR ASESORÍA][CHILE][C LEADS][CBO][ADVANTAGE]",
-            "spend": 159648,
+            "spend": 134527,
             "leads_count": 228,
-            "cpl": 700.21,
+            "cpl": 590.03,
             "sales_count": 0
           },
           {
             "__dim": "[3|07][WEBINAR ASESORÍA][CHILE][C LEADS][CBO][SIMILARES]",
-            "spend": 153922,
+            "spend": 134246,
             "leads_count": 181,
-            "cpl": 850.4,
+            "cpl": 741.69,
             "sales_count": 0
           },
           {
             "__dim": "[5|07][WEBINAR ASESORÍA][CHILE][C LEADS][CBO][P. TIBIO]",
-            "spend": 139741,
+            "spend": 118259,
             "leads_count": 164,
-            "cpl": 852.08,
+            "cpl": 721.09,
             "sales_count": 0
           },
           {
@@ -770,33 +770,28 @@
         "filas": [
           {
             "__dim": "[AD 3 JUL][NUESTRO EBOOK]",
-            "spend": 198752,
-            "impressions": 27421
+            "spend": 187327,
+            "impressions": 25926
           },
           {
             "__dim": "Imagen 3 - Storie",
-            "spend": 144673,
-            "impressions": 49837
+            "spend": 120696,
+            "impressions": 41983
           },
           {
             "__dim": "Imagen 1 -storie",
-            "spend": 140828,
-            "impressions": 40487
+            "spend": 120109,
+            "impressions": 35180
           },
           {
             "__dim": "VIDEO 2 Storie",
-            "spend": 95326,
-            "impressions": 17709
-          },
-          {
-            "__dim": "[AD 2 JUL][EN CHILE HAY]",
-            "spend": 67120,
-            "impressions": 10772
+            "spend": 80338,
+            "impressions": 15365
           },
           {
             "__dim": "Imagen 2 - Storie",
-            "spend": 61080,
-            "impressions": 17050
+            "spend": 55744,
+            "impressions": 15451
           },
           {
             "__dim": "[AD 1 JUL][]",
@@ -807,6 +802,11 @@
             "__dim": "[AD 22 JUL][]",
             "spend": 50730,
             "impressions": 4916
+          },
+          {
+            "__dim": "[AD 2 JUL][EN CHILE HAY]",
+            "spend": 44691,
+            "impressions": 7049
           },
           {
             "__dim": "[AD 14 JUL][]",
@@ -825,7 +825,7 @@
         "filas": [
           {
             "__dim": "[ADVANTAGE FRIO][CHILE][25-60] - IMGS",
-            "spend": 289556
+            "spend": 244666
           },
           {
             "__dim": "[ADVANTAGE][CHILE][30-50][AUTOMATICO] - AD 3 GANADOR",
@@ -833,15 +833,15 @@
           },
           {
             "__dim": "[ADVANTAGE][CHILE][30-50][AUTOMATICO] - ADS JULIO",
-            "spend": 121601
+            "spend": 87648
           },
           {
             "__dim": "[SIMILARES BD AGENDAMIENTO][CHILE][25-60] - VIDEOS",
-            "spend": 89601
+            "spend": 75863
           },
           {
             "__dim": "[SIMILARES BD AGENDAMIENTO][CHILE][25-60] - IMGS",
-            "spend": 64321
+            "spend": 58383
           },
           {
             "__dim": "[ADVANTAGE][HM][35-55] [ ADS JUN|JUL] - ADS 1/2/3",
@@ -860,8 +860,8 @@
             "spend": 26782
           },
           {
-            "__dim": "[ADVANTAGE][CHILE][30-50][AUTOMATICO] - ADS JULIO TANDA 2",
-            "spend": 24347
+            "__dim": "[ADVANTAGE] [30-50] [CHILE] - Copia",
+            "spend": 11959
           }
         ]
       },
@@ -877,7 +877,7 @@
           {
             "__dim": null,
             "leads_count": 0,
-            "spend": 938371,
+            "spend": 818429,
             "cpl": null
           }
         ]
@@ -1201,12 +1201,12 @@
       "funnel": [
         {
           "stage": "impressions",
-          "value": 187238,
+          "value": 162460,
           "label": "Impresiones"
         },
         {
           "stage": "clicks",
-          "value": 5081,
+          "value": 4434,
           "label": "Clics"
         },
         {
@@ -1225,8 +1225,8 @@
           {
             "dimension_value": null,
             "leads_count": 618,
-            "spend": 938371,
-            "cpl": 1518.4
+            "spend": 818429,
+            "cpl": 1324.32
           }
         ],
         "previous": [

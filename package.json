@@ -11,7 +11,10 @@
     "type-check": "tsc --noEmit",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "test": "npx tsx scripts/verify-sync-fixes.ts && npx tsx scripts/verify-upsert-preserva.ts && npx tsx scripts/verify-conversiones-multitab.ts && npx tsx scripts/verify-sheet-campos.ts && npx tsx scripts/verify-lead-campos.ts && npx tsx scripts/verify-tz-colombia.ts && npx tsx scripts/verify-weeks-range.ts",
+    "test": "npm run test:puro && npm run test:datos",
+    "test:puro": "npx tsx scripts/verify-sync-fixes.ts && npx tsx scripts/verify-upsert-preserva.ts && npx tsx scripts/verify-conversiones-multitab.ts && npx tsx scripts/verify-sheet-campos.ts && npx tsx scripts/verify-lead-campos.ts && npx tsx scripts/verify-tz-colombia.ts && npx tsx scripts/verify-weeks-range.ts && npx tsx scripts/verify-bi-expr.ts && npx tsx scripts/verify-bi-registry.ts && npx tsx scripts/verify-bi-engine.ts && npx tsx scripts/verify-sheet-atribucion.ts && npx tsx scripts/verify-salud-fuentes.ts",
+    "test:datos": "npx tsx scripts/verify-ads-daily.ts && npx tsx scripts/verify-ads-daily-paridad.ts && npx tsx scripts/verify-bi-sheet-por-campana.ts && npx tsx scripts/verify-bi-golden.ts",
+    "diagnostico": "npx tsx scripts/diagnostico-fuentes.ts",
     "detectar:huecos": "npx tsx scripts/detectar-dias-nulos.ts",
     "validate": "npm run type-check && npm run lint && npm run format:check"
   },

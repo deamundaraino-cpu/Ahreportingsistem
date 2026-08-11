@@ -200,6 +200,36 @@ check('los 72 grupos coinciden', difGroup.length === 0, difGroup.join(' | '))
 // deriva de grain ∩ joinAxes. Si esto pasa, la derivación no pierde nada.
 check('los 72 desgloses se DERIVAN correctamente', difBreakdown.length === 0, difBreakdown.join(' | '))
 
+// ── La dirección contraria: deriva del registro hacia METRIC_META ────
+//
+// Todo lo de arriba recorre METRIC_META y busca su equivalente en el registro,
+// así que solo detecta lo que falta en el registro. Mientras los dos catálogos
+// convivan —el motor sigue sobre `bi-metadata`— la deriva puede ir en los DOS
+// sentidos: una medida declarada solo en una fuente sale en el selector de
+// campos y el motor no sabe calcularla, y el widget devuelve vacío sin error.
+//
+// Esta comprobación cierra ese lado. Es la que hace que añadir un campo nuevo a
+// una fuente falle aquí en vez de fallar en un informe de un cliente.
+{
+    const canonicasDelRegistro = new Set(
+        REG.measures()
+            // Las derivadas de fuentes dinámicas no viven en METRIC_META por
+            // definición: sus ids los aporta cada cliente en tiempo de ejecución.
+            .filter(f => !f.dynamic)
+            .map(f => f.id)
+    )
+    const canonicasDeMetricMeta = new Set(
+        legacyMetrics.map(l => LEGACY_MEASURE_IDS[l]).filter(Boolean) as string[]
+    )
+    const soloEnRegistro = [...canonicasDelRegistro].filter(id => !canonicasDeMetricMeta.has(id))
+    check('ninguna medida existe solo en el registro',
+        soloEnRegistro.length === 0,
+        soloEnRegistro.length
+            ? `${soloEnRegistro.join(', ')} — declarada en su fuente pero ausente de METRIC_META: ` +
+              'el editor la ofrecería y el motor devolvería vacío'
+            : '')
+}
+
 // ════════════════════════════════════════════════════════════
 seccion('Los conjuntos que hoy se sincronizan a mano')
 // ════════════════════════════════════════════════════════════
