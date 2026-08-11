@@ -23,6 +23,7 @@ import { BiFormulaInput } from './BiFormulaInput'
 import { HelpTip } from './HelpTip'
 import { BiAdvancedFilterBuilder } from './BiAdvancedFilterBuilder'
 import { BiFieldPicker } from './BiFieldPicker'
+import { DEFAULT_BI_QUERY_BASE } from './BiQueryContext'
 import { parseExpr, isExprError } from '@/lib/report-utm/bi/expr'
 
 interface Props {
@@ -1435,6 +1436,10 @@ export function BiWidgetEditor({ widget, calculatedFields = [], clienteId, dateF
                                 value={advancedFilter}
                                 onChange={setAdvancedFilter}
                                 fieldOptions={filterFieldOptions}
+                                clienteId={clienteId}
+                                dateFrom={dateFrom}
+                                dateTo={dateTo}
+                                queryBase={DEFAULT_BI_QUERY_BASE}
                             />
                         </div>
                     )}

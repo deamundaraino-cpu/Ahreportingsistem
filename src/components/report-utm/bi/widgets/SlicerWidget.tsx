@@ -1,11 +1,12 @@
 'use client'
 
-import { useEffect, useState } from 'react'
 import { Loader2, Filter, Check } from 'lucide-react'
 import type { BiFilters, WidgetConfig } from '../BiTypes'
 import type { BiDimension } from '@/lib/report-utm/bi-metadata'
 import { DIMENSION_META, fieldDimLabel, leadFieldLabel } from '@/lib/report-utm/bi-metadata'
 import { useBiQueryBase } from '../BiQueryContext'
+import { useValoresDistintos } from '../useValoresDistintos'
+import { parseSeleccion, serializarSeleccion } from '@/lib/report-utm/bi-valores'
 
 interface Props {
     title: string
@@ -21,26 +22,22 @@ export function SlicerWidget({ title, config, filters, onSetFilter, onSetDateRan
     const mode = config.slicer_mode ?? 'dropdown'
     const dimLabel = DIMENSION_META[dimension]?.label ?? leadFieldLabel(dimension) ?? fieldDimLabel(dimension) ?? dimension
 
-    const [values, setValues]   = useState<string[]>([])
-    const [loading, setLoading] = useState(mode !== 'daterange')
-
-    useEffect(() => {
-        if (mode === 'daterange') { setLoading(false); return }
-        setLoading(true)
-        const params = new URLSearchParams({ type: 'distinct', dimension })
-        if (config.source) params.set('source', config.source)
-        if (filters.cliente_id) params.set('cliente_id', filters.cliente_id)
-        if (filters.date_from)  params.set('date_from', filters.date_from)
-        if (filters.date_to)    params.set('date_to', filters.date_to)
-        fetch(`${queryBase}?${params}`)
-            .then(r => r.json())
-            .then(json => setValues(Array.isArray(json.data) ? json.data : []))
-            .catch(() => setValues([]))
-            .finally(() => setLoading(false))
-    }, [queryBase, dimension, mode, config.source, filters.cliente_id, filters.date_from, filters.date_to])
+    // El `fetch` propio se retiró: lo hace el hook, el mismo que usa el selector
+    // de los filtros. Tener dos caminos fue lo que dejó que este widget mandara
+    // `source` durante meses sin que el servidor lo leyera.
+    const { valores, cargando: loading } = useValoresDistintos({
+        queryBase,
+        dimension,
+        clienteId: filters.cliente_id,
+        dateFrom: filters.date_from,
+        dateTo: filters.date_to,
+        source: config.source,
+        activo: mode !== 'daterange',
+    })
+    const values = valores
 
     // valor(es) seleccionados desde el estado global de filtros
-    const current = (filters[dimension] ?? '').split(',').map(s => s.trim()).filter(Boolean)
+    const current = parseSeleccion(filters[dimension] ?? '')
 
     function selectSingle(v: string) {
         onSetFilter?.(dimension, v || null)
@@ -48,7 +45,10 @@ export function SlicerWidget({ title, config, filters, onSetFilter, onSetDateRan
 
     function toggleMulti(v: string) {
         const next = current.includes(v) ? current.filter(x => x !== v) : [...current, v]
-        onSetFilter?.(dimension, next.length ? next.join(',') : null)
+        // Se serializa escapando las comas del propio valor: hay 717 nombres de
+        // entidad que llevan una, y sin escaparlas el filtro se partía en dos
+        // trozos que no coincidían con nada.
+        onSetFilter?.(dimension, next.length ? serializarSeleccion(next) : null)
     }
 
     return (
@@ -93,7 +93,11 @@ export function SlicerWidget({ title, config, filters, onSetFilter, onSetDateRan
                     className="w-full px-3 py-2 text-xs rounded-lg bg-muted border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
                 >
                     <option value="">Todos</option>
-                    {values.map(v => <option key={v} value={v}>{v}</option>)}
+                    {values.map(v => (
+                        <option key={v.valor} value={v.valor}>
+                            {v.valor} ({v.n.toLocaleString('es-CO')})
+                        </option>
+                    ))}
                 </select>
             ) : (
                 <div className="flex flex-col gap-0.5 overflow-y-auto max-h-[220px] -mx-1">
@@ -106,11 +110,11 @@ export function SlicerWidget({ title, config, filters, onSetFilter, onSetDateRan
                         </button>
                     )}
                     {values.map(v => {
-                        const sel = current.includes(v)
+                        const sel = current.includes(v.valor)
                         return (
                             <button
-                                key={v}
-                                onClick={() => toggleMulti(v)}
+                                key={v.valor}
+                                onClick={() => toggleMulti(v.valor)}
                                 className={`flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs text-left transition-colors ${
                                     sel ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 font-medium' : 'text-foreground hover:bg-accent'
                                 }`}
@@ -118,7 +122,13 @@ export function SlicerWidget({ title, config, filters, onSetFilter, onSetDateRan
                                 <span className={`flex h-3.5 w-3.5 items-center justify-center rounded border ${sel ? 'bg-emerald-500 border-emerald-500' : 'border-border'}`}>
                                     {sel && <Check className="h-2.5 w-2.5 text-white" />}
                                 </span>
-                                <span className="truncate">{v}</span>
+                                <span className="flex-1 truncate">{v.valor}</span>
+                                {/* El recuento es lo que convierte la lista en
+                                    información: un «(sin campaña) · 47» junto a
+                                    los demás delata el etiquetado de un vistazo. */}
+                                <span className="shrink-0 tabular-nums text-muted-foreground text-[10px]">
+                                    {v.n.toLocaleString('es-CO')}
+                                </span>
                             </button>
                         )
                     })}

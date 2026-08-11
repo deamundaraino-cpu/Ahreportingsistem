@@ -6,6 +6,11 @@
 
 // `bi/expr.ts` es puro (sin imports), así que respeta la regla de arriba.
 import { parseExpr, isExprError, evalExpr } from './bi/expr'
+// `bi-valores` no importa nada, así que la dependencia va en un solo sentido y
+// no hay ciclo. Es la ÚNICA forma de partir una selección guardada: tenerla
+// escrita cuatro veces fue lo que dejó que un valor con coma se rompiera en
+// silencio durante todo este tiempo.
+import { parseSeleccion } from './bi-valores'
 
 /**
  * Normalización fuerte de etiquetas: minúsculas, sin acentos, `_`/`-` como
@@ -1414,7 +1419,10 @@ export function matchFilterCondition(cell: string, op: FilterOp, target: string)
     const v = cell ?? ''
     const t = (target ?? '').trim()
     const lc = v.toLowerCase(), lt = t.toLowerCase()
-    const parts = t.split(',').map((s) => s.trim()).filter(Boolean)
+    // `parseSeleccion` en vez de `split(',')`: respeta las comas escapadas de los
+    // valores que llevan una dentro. Sin escapes se comporta idéntico, así que
+    // los filtros ya guardados se leen igual.
+    const parts = parseSeleccion(t)
     switch (op) {
         case 'eq':        return parts.some((x) => v === x)
         case 'neq':       return !parts.some((x) => v === x)
@@ -1441,7 +1449,7 @@ export function matchFilterConditionNorm(cell: string, op: FilterOp, target: str
     const v = normLabel(cell ?? '')
     const t = (target ?? '').trim()
     const lt = normLabel(t)
-    const parts = t.split(',').map((s) => normLabel(s)).filter(Boolean)
+    const parts = parseSeleccion(t).map((s) => normLabel(s)).filter(Boolean)
     switch (op) {
         case 'eq':        return parts.some((x) => v === x)
         case 'neq':       return !parts.some((x) => v === x)
@@ -1598,7 +1606,7 @@ export function platformScopeFromFilters(
         if (field !== 'utm_source' && field !== 'utm_medium') return null
         // Solo los operadores que AFIRMAN un valor delimitan la plataforma.
         if (op !== 'eq' && op !== 'contains' && op !== 'starts') return null
-        const parts = value.split(',').map(s => s.trim()).filter(Boolean)
+        const parts = parseSeleccion(value)
         if (!parts.length) return null
         const out: ('meta' | 'tiktok')[] = []
         for (const p of parts) {

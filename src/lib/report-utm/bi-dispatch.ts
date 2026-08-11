@@ -4,7 +4,8 @@
 // por token (/api/report-utm/bi/public/[token]/query), de modo que ambos
 // resuelven exactamente igual y no se desincronizan.
 
-import { runBiQuery, runFunnelQuery, runComparison, runPivotQuery, runDistinctValues } from './bi-query'
+import { runBiQuery, runFunnelQuery, runComparison, runPivotQuery, runValores } from './bi-query'
+import { aValoresPlanos } from './bi-valores'
 import {
     supportsPivot, PIVOT_METRICS, METRIC_META, isSheetDim,
     hasNonAttributableFilter, NON_ATTRIBUTABLE_FIELDS,
@@ -13,6 +14,7 @@ import { resolvePublicClienteId } from './campaign-resolver'
 import { computeDiagnostics } from './bi/diagnostics'
 import type { QueryDiagnostics } from './bi/diagnostics'
 import type { ParsedBiQuery } from './bi-query-params'
+import { esConsultaDeValores } from './bi-query-params'
 
 export interface DispatchResult {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -121,17 +123,26 @@ export async function dispatchBiQuery(rawParams: ParsedBiQuery): Promise<Dispatc
         return { data, meta }
     }
 
-    if (p.type === 'distinct') {
-        // Los valores distintos alimentan un desplegable: no hay métricas que
+    if (esConsultaDeValores(p.type)) {
+        // Enumerar valores alimenta un desplegable: no hay métricas que
         // explicar, así que no se diagnostica.
-        const data = await runDistinctValues({
+        //
+        // `source` y `limit` se reenvían de verdad. Antes se perdían aquí: el
+        // slicer los mandaba en la URL, el parseo no los leía y esta llamada no
+        // los pasaba, así que un slicer sobre ventas listaba valores de leads.
+        const r = await runValores({
             cliente_id: p.cliente_id,
             dimension: p.dimension,
             date_from: p.date_from,
             date_to: p.date_to,
             filters: p.filters,
+            source: p.source,
+            search: p.search,
+            limit: p.limit,
         })
-        return { data }
+        // `distinct` conserva su contrato histórico —un array de nombres— para
+        // que un widget servido desde la caché del navegador siga funcionando.
+        return { data: p.type === 'distinct' ? aValoresPlanos(r) : r }
     }
 
     if (p.type === 'pivot') {

@@ -29,6 +29,11 @@ import { utmDeFilaSheet, filaEsAtribuible } from '@/lib/sheets/atribucion'
 import { loadLeadCampos } from './lead-campos-db'
 import { bucketDeLeadRaw, ordenarBuckets } from './lead-campos'
 import type { LeadCampoDef } from './lead-campos'
+import {
+    sinValores, VACIO_HONESTO, plegarConteos, ordenarPorFrecuencia, parseSeleccion,
+    recortar, aValoresPlanos,
+} from './bi-valores'
+import type { ResultadoValores, ValorConConteo } from './bi-valores'
 
 // Dimensiones que SOLO existen en las tablas de ventas (no en lead_events). Al
 // agrupar por ellas, la query de leads se omite (no tienen esas columnas).
@@ -2319,208 +2324,304 @@ export function applyOneFilter(q: any, key: string, raw: string): any {
         case 'eq':
         default:
             // Multi-valor por comas → IN
+            // Se parte con `parseSeleccion`, que respeta las comas escapadas: un
+            // valor como `[VIDEOS_11,12Y13][ABIERTO]` es UNO solo, no dos.
             if (v.includes(',')) {
-                const vals = v.split(',').map(s => s.trim()).filter(Boolean)
+                const vals = parseSeleccion(v)
                 return vals.length ? q.in(col, vals) : q
             }
             return q.eq(col, v)
     }
 }
 
-// ── Valores distintos de una dimensión (para slicers) ─────────────────
+// ── Valores de una dimensión, con su recuento ─────────────────────────
+//
+// UN solo motor (`runValores`) con DOS proyecciones: la nueva, que lleva el
+// recuento de cada valor, y `runDistinctValues`, que devuelve solo los nombres
+// para los consumidores de siempre.
+//
+// Tener dos caminos separados es exactamente lo que produjo el fallo anterior:
+// `SlicerWidget` mandaba `source` y `limit`, el parseo de params no los leía y
+// el dispatcher no los reenviaba, así que un slicer sobre ventas listaba
+// valores de leads. Con una sola implementación no hay nada que desincronizar.
+//
+// ── LIMITACIÓN DECLARADA: `filters` no se aplica ─────────────────────
+// La versión anterior recortaba la lista con los filtros del informe, pero
+// ninguno de sus dos consumidores los enviaba nunca (ni `SlicerWidget` ni el
+// desplegable de campaña), así que en la práctica siempre iba vacío. Al bajar la
+// agregación a SQL ese recorte se pierde: honrarlo exigiría trasladar los seis
+// operadores de filtro a plpgsql, y una versión a medias daría listas que no
+// coinciden con lo que el motor calcula. Se deja fuera a propósito y se dice.
 
-export async function runDistinctValues(params: {
+export interface ParamsValores {
     cliente_id?: string
     dimension: BiDimension
     date_from?: string
     date_to?: string
+    /** Aceptado por compatibilidad de firma; NO se aplica (ver cabecera). */
     filters?: Record<string, string>
     source?: 'leads' | 'sales'
+    /** Búsqueda por subcadena, para cuando la lista viene truncada. */
+    search?: string
     limit?: number
-}): Promise<string[]> {
+}
+
+/** Cuántos valores pide el servidor por defecto. */
+export const LIMITE_VALORES = 200
+
+// ── Caché ─────────────────────────────────────────────────────────────
+// Se cachea la PROMESA, no el valor resuelto. Un informe con varios slicers
+// monta todos sus efectos a la vez: cacheando el valor, las N consultas salen a
+// la base antes de que ninguna termine y no se ahorra nada. Con la promesa, la
+// primera gana y las demás se enganchan a ella.
+const VALORES_TTL_MS = 60_000
+const valoresCache = new Map<string, { p: Promise<ResultadoValores>; ts: number }>()
+
+function claveCache(p: ParamsValores): string {
+    return JSON.stringify([
+        p.cliente_id ?? '', p.dimension, p.date_from ?? '', p.date_to ?? '',
+        p.source ?? 'leads', p.search ?? '', p.limit ?? LIMITE_VALORES,
+    ])
+}
+
+export async function runValores(params: ParamsValores): Promise<ResultadoValores> {
+    const key = claveCache(params)
+    const ahora = Date.now()
+    const hit = valoresCache.get(key)
+    if (hit && ahora - hit.ts <= VALORES_TTL_MS) return hit.p
+
+    const p = calcularValores(params)
+    if (valoresCache.size > 300) valoresCache.clear()
+    valoresCache.set(key, { p, ts: ahora })
+    // Un fallo no se queda cacheado un minuto entero: convertiría un error
+    // transitorio en una pantalla rota durante el resto de la sesión.
+    p.catch(() => { valoresCache.delete(key) })
+    return p
+}
+
+/** Proyección al contrato histórico: solo los nombres, en el mismo orden. */
+export async function runDistinctValues(params: ParamsValores): Promise<string[]> {
+    return aValoresPlanos(await runValores(params))
+}
+
+async function calcularValores(params: ParamsValores): Promise<ResultadoValores> {
     const dim = params.dimension
-    if (dim === 'none' || dim === 'date') return []
+    // «Total» y «Fecha» no son enumerables: una no tiene valores y la otra los
+    // tiene todos.
+    if (dim === 'none' || dim === 'date') return sinValores('dimension_no_listable')
 
     const supabase = await createAdminClient()
     const dateFrom = params.date_from ?? new Date(Date.now() - 90 * 86400_000).toISOString().slice(0, 10)
     const dateTo   = params.date_to   ?? new Date().toISOString().slice(0, 10)
-    const table = params.source === 'sales' ? 'sales_events' : 'lead_events'
+    const tabla = params.source === 'sales' ? 'sales_events' : 'lead_events'
+    const limite = Math.max(1, Math.min(params.limit ?? LIMITE_VALORES, 500))
+    const bounds = colombiaRangeBounds(dateFrom, dateTo)
+    const buscar = (params.search ?? '').trim().toLowerCase()
 
-    // Dimensiones de `public.hotmart_ventas`: viven en otra tabla y en otro
-    // esquema, así que se resuelven aparte antes de la ruta genérica.
-    const hmCol = HOTMART_DIM_COL[dim]
-    if (hmCol) {
-        if (!params.cliente_id) return []
-        const publicId = await resolvePublicClienteId(params.cliente_id)
-        if (!publicId) return []
-        const { data } = await supabase
-            .from('hotmart_ventas')
-            .select(hmCol)
-            .eq('cliente_id', publicId)
-            .gte('fecha_venta', dateFrom).lte('fecha_venta', dateTo)
-            .not(hmCol, 'is', null)
-            .limit(5000)
-        const set = new Set<string>()
-        for (const r of (data ?? []) as unknown as Record<string, unknown>[]) {
-            const v = String(r[hmCol] ?? '').trim()
-            if (v) set.add(v)
+    /** Recorta por búsqueda en memoria: las listas ya vienen acotadas. */
+    const filtrarPorBusqueda = (vs: ValorConConteo[]): ValorConConteo[] =>
+        buscar ? vs.filter(v => v.valor.toLowerCase().includes(buscar)) : vs
+
+    try {
+        // ── Hotmart ──────────────────────────────────────────────────
+        // Cuelga del cliente PÚBLICO, no del de report_utm: son dos espacios de
+        // identificadores distintos y por eso tiene su propia función.
+        const hmCol = HOTMART_DIM_COL[dim]
+        if (hmCol) {
+            if (!params.cliente_id) return sinValores('sin_cliente')
+            const publicId = await resolvePublicClienteId(params.cliente_id)
+            if (!publicId) return sinValores('dimension_no_listable')
+
+            const { data, error } = await supabase.rpc('hotmart_valores_conteo', {
+                p_cliente_publico_id: publicId,
+                p_columna: hmCol,
+                p_desde: dateFrom,
+                p_hasta: dateTo,
+                p_limite: limite,
+            })
+            if (error) return sinValores('error_consulta')
+            return desdeFilasRpc(data, limite, filtrarPorBusqueda)
         }
-        return Array.from(set).sort().slice(0, params.limit ?? 500)
-    }
 
-    // Dimensión de campo de lead: los valores son los BUCKETS del campo, en el
-    // orden que definió el analista. Se calculan sobre los leads del período —
-    // no se listan los del catálogo a secas — para que el slicer no ofrezca
-    // rangos que nadie respondió en el rango de fechas elegido.
-    const leadClave = parseLeadFieldDim(dim)
-    if (leadClave !== null) {
-        if (!params.cliente_id) return []
-        const campos = await loadLeadCampos(supabase.schema('report_utm'), params.cliente_id, { soloActivos: true })
-        const campo = campos.find(c => c.clave === leadClave)
-        if (!campo) return []
+        // ── Campo de lead del catálogo ───────────────────────────────
+        // SQL agrupa por el valor CRUDO —con un COALESCE sobre `claves_origen`
+        // que reproduce «la primera clave con valor»— y Node aplica el bucket.
+        // Repartir el bucketizado entre los dos lados es lo que permite que dos
+        // escrituras distintas de la misma respuesta sumen en la misma fila.
+        const leadClave = parseLeadFieldDim(dim)
+        if (leadClave !== null) {
+            if (!params.cliente_id) return sinValores('sin_cliente')
+            const campos = await loadLeadCampos(
+                supabase.schema('report_utm'), params.cliente_id, { soloActivos: true })
+            const campo = campos.find(c => c.clave === leadClave)
+            if (!campo || (campo.claves_origen ?? []).length === 0) {
+                return sinValores('dimension_no_listable')
+            }
 
-        const lifted = liftLeadFieldFilters({ filters: params.filters })
-        const rows = await fetchAllRows(() => {
-            let q = supabase
-                .schema('report_utm')
-                .from('lead_events')
-                .select('id,raw_fields')
-                .gte('created_at', colombiaRangeBounds(dateFrom, dateTo).gte)
-                .lt('created_at', colombiaRangeBounds(dateFrom, dateTo).lt)
-                .not('raw_fields', 'is', null)
-            if (params.cliente_id) q = q.eq('cliente_id', params.cliente_id)
-            return applyDimFilters(q, lifted.filters, leadFilterKey)
+            const { data, error } = await supabase.schema('report_utm').rpc('bi_valores_conteo', {
+                p_cliente_id: params.cliente_id,
+                p_tabla: 'lead_events',
+                p_desde: bounds.gte,
+                p_hasta: bounds.lt,
+                p_columna: null,
+                p_claves_json: campo.claves_origen,
+                p_limite: 500,
+            })
+            if (error) return sinValores('error_consulta')
+
+            const crudos = (data ?? []) as Array<{ valor: string; n: number }>
+            const plegado = plegarConteos(
+                crudos.map(r => ({ valor: String(r.valor), n: Number(r.n) })),
+                crudo => bucketDeValor(campo, crudo)
+            )
+            // El orden que declaró el analista manda sobre la frecuencia: los
+            // rangos van de menor a mayor porque alguien lo decidió, no porque
+            // uno tenga más respuestas.
+            const orden = ordenarPorFrecuencia(plegado, campo.valores_orden ?? undefined)
+            return recortar(filtrarPorBusqueda(orden), limite)
+        }
+
+        // ── Campo de Sheet ───────────────────────────────────────────
+        // Ya está materializado con su recuento (`filas`): no hace falta RPC.
+        const sheetClave = parseSheetDim(dim)
+        if (sheetClave !== null) {
+            if (!params.cliente_id) return sinValores('sin_cliente')
+            const publicId = await resolvePublicClienteId(params.cliente_id)
+            if (!publicId) return sinValores('dimension_no_listable')
+
+            const { campos } = await loadCamposCliente(supabase, publicId, { soloActivos: true })
+            const campo = campos.find(c => c.clave === sheetClave)
+            if (!campo) return sinValores('dimension_no_listable')
+
+            const { data, error } = await supabase.from('sheet_campo_valores_diarios')
+                .select('valor,filas')
+                .eq('campo_id', campo.id)
+                .gte('fecha', dateFrom).lte('fecha', dateTo)
+            if (error) return sinValores('error_consulta')
+
+            const porValor = new Map<string, number>()
+            for (const r of (data ?? []) as Record<string, unknown>[]) {
+                const v = String(r.valor ?? '').trim()
+                if (!v) continue
+                porValor.set(v, (porValor.get(v) ?? 0) + Number(r.filas ?? 0))
+            }
+            const orden = ordenarPorFrecuencia(porValor, campo.valores_orden ?? undefined)
+            return recortar(filtrarPorBusqueda(orden), limite)
+        }
+
+        // ── Campo de formulario (clave cruda de raw_fields) ──────────
+        const fieldKey = parseFieldDim(dim)
+        if (fieldKey !== null) {
+            // `sales_events` no tiene raw_fields: decirlo es más útil que
+            // devolver una lista vacía que parece «no hay respuestas».
+            if (params.source === 'sales') return sinValores('dimension_no_listable')
+
+            const { data, error } = await supabase.schema('report_utm').rpc('bi_valores_conteo', {
+                p_cliente_id: params.cliente_id ?? null,
+                p_tabla: 'lead_events',
+                p_desde: bounds.gte,
+                p_hasta: bounds.lt,
+                p_columna: null,
+                p_claves_json: [fieldKey],
+                p_limite: limite,
+            })
+            if (error) return sinValores('error_consulta')
+            return desdeFilasRpc(data, limite, filtrarPorBusqueda)
+        }
+
+        // ── Dimensión unificada (campaña / anuncio / conjunto) ───────
+        // Los valores tienen que ser los que el motor va a AGRUPAR, es decir el
+        // nombre REAL de la entidad, no el utm crudo: elegir un utm del
+        // desplegable devolvía 0 filas porque el motor agrupa por otra cosa.
+        //
+        // SQL pliega las 22.000 filas en unos cientos de tuplas UTM distintas y
+        // Node resuelve una vez por tupla. La cascada del resolver NO baja a
+        // SQL: duplicarla haría que el desplegable y el motor divergieran.
+        const unified = unifiedTarget(dim)
+        if (unified !== null) {
+            const resolver = params.cliente_id
+                ? await loadResolver(params.cliente_id, dateFrom, dateTo)
+                : null
+
+            const { data, error } = await supabase.schema('report_utm').rpc('bi_valores_utm', {
+                p_cliente_id: params.cliente_id ?? null,
+                p_tabla: tabla,
+                p_desde: bounds.gte,
+                p_hasta: bounds.lt,
+                p_limite: 5000,
+            })
+            if (error) return sinValores('error_consulta')
+
+            const porEtiqueta = new Map<string, number>()
+
+            // Entidades con gasto en el rango pero sin un solo lead: son
+            // filtrables igualmente y su recuento es CERO de verdad, no
+            // desconocido.
+            if (resolver) {
+                const conocidas = unified === 'campaign' ? resolver.campaignLabels()
+                    : unified === 'ad'                   ? resolver.adLabels()
+                    :                                      resolver.adsetLabels()
+                for (const n of conocidas) if (n.trim()) porEtiqueta.set(n, 0)
+            }
+
+            for (const r of (data ?? []) as Record<string, unknown>[]) {
+                const { label } = resolveEntityLabel(r, unified, resolver)
+                if (!label || label.startsWith('(sin ')) continue
+                porEtiqueta.set(label, (porEtiqueta.get(label) ?? 0) + Number(r.n ?? 0))
+            }
+
+            return recortar(filtrarPorBusqueda(ordenarPorFrecuencia(porEtiqueta)), limite)
+        }
+
+        // ── Columna directa ──────────────────────────────────────────
+        const col = dim === 'utm_campaign_raw' ? 'utm_campaign' : dim
+        const permitida = params.source === 'sales' ? salesFilterKey(col) : leadFilterKey(col)
+        if (!permitida) return sinValores('dimension_no_listable')
+
+        const { data, error } = await supabase.schema('report_utm').rpc('bi_valores_conteo', {
+            p_cliente_id: params.cliente_id ?? null,
+            p_tabla: tabla,
+            p_desde: bounds.gte,
+            p_hasta: bounds.lt,
+            p_columna: col,
+            p_claves_json: null,
+            p_limite: limite,
         })
-
-        const set = new Set<string>()
-        for (const r of rows) {
-            const b = bucketDeLeadRaw(campo, r.raw_fields as Record<string, unknown> | null)
-            if (b) set.add(b)
-        }
-        return ordenarBuckets(campo, Array.from(set)).slice(0, 500)
+        // Una columna que la RPC no admite para esta tabla llega aquí como
+        // error: es el caso del slicer de ventas pidiendo `form_name`.
+        if (error) return sinValores('dimension_no_listable')
+        return desdeFilasRpc(data, limite, filtrarPorBusqueda)
+    } catch {
+        // Incluye el 57014 de `statement_timeout`. Nunca se cae de vuelta al
+        // escaneo truncado antiguo: sería devolver datos sesgados como buenos.
+        return sinValores('error_consulta')
     }
+}
 
-    // Dimensión de campo de Sheet: los valores salen del desglose ya
-    // materializado, que está acotado por `max_valores`. No hace falta escanear
-    // las filas crudas ni deduplicar nada.
-    const sheetClave = parseSheetDim(dim)
-    if (sheetClave !== null) {
-        if (!params.cliente_id) return []
-        const publicId = await resolvePublicClienteId(params.cliente_id)
-        if (!publicId) return []
+/** Convierte la salida de una RPC de conteo en el resultado del motor. */
+function desdeFilasRpc(
+    data: unknown,
+    limite: number,
+    filtrar: (v: ValorConConteo[]) => ValorConConteo[]
+): ResultadoValores {
+    const filas = (data ?? []) as Array<{ valor: string; n: number; total_distintos: number }>
+    if (filas.length === 0) return VACIO_HONESTO
 
-        const { campos } = await loadCamposCliente(supabase, publicId, { soloActivos: true })
-        const campo = campos.find(c => c.clave === sheetClave)
-        if (!campo) return []
+    const valores: ValorConConteo[] = filas
+        .map(r => ({ valor: String(r.valor), n: Number(r.n) }))
+        .filter(v => v.valor.trim() !== '')
+    const filtrados = filtrar(valores)
 
-        const { data } = await supabase.from('sheet_campo_valores_diarios')
-            .select('valor')
-            .eq('campo_id', campo.id)
-            .gte('fecha', dateFrom).lte('fecha', dateTo)
-
-        const set = new Set<string>()
-        for (const r of (data ?? []) as Record<string, unknown>[]) {
-            const v = String(r.valor ?? '').trim()
-            if (v) set.add(v)
-        }
-
-        // El orden que definió el analista manda; lo que no esté en él va detrás,
-        // alfabético. Así "1-10, 11-20, 20-100" no sale ordenado como texto.
-        const orden = campo.valores_orden ?? []
-        const pos = (v: string) => { const i = orden.indexOf(v); return i === -1 ? orden.length : i }
-        return Array.from(set)
-            .sort((a, b) => pos(a) - pos(b) || a.localeCompare(b))
-            .slice(0, 500)
+    // `total_distintos` lo calcula la base sobre el conjunto ENTERO, así que
+    // sobrevive al LIMIT: es lo que permite decir «50 de 648» sin una segunda
+    // consulta y sin un `count` exacto.
+    const totalReal = Number(filas[0]?.total_distintos ?? valores.length)
+    const recortado = recortar(filtrados, limite)
+    return {
+        ...recortado,
+        total: filtrados.length === valores.length ? totalReal : filtrados.length,
+        truncado: recortado.truncado || totalReal > valores.length,
     }
-
-    // Dimensión de campo de formulario (raw_fields): las ventas no tienen
-    // raw_fields → los valores distintos siempre salen de lead_events.
-    const fieldKey = parseFieldDim(dim)
-    if (fieldKey !== null) {
-        const rows = await fetchAllRows(() => {
-            let q = supabase
-                .schema('report_utm')
-                .from('lead_events')
-                .select('id,raw_fields')
-                .gte('created_at', colombiaRangeBounds(dateFrom, dateTo).gte)
-                .lt('created_at', colombiaRangeBounds(dateFrom, dateTo).lt)
-                .not('raw_fields', 'is', null)
-            if (params.cliente_id) q = q.eq('cliente_id', params.cliente_id)
-            return applyDimFilters(q, params.filters, leadFilterKey)
-        })
-        const set = new Set<string>()
-        for (const r of rows) {
-            const rf = (r.raw_fields as Record<string, unknown> | null) ?? null
-            const v = rf ? rf[fieldKey] : null
-            if (v !== null && v !== undefined && String(v).trim()) set.add(String(v).trim())
-        }
-        return Array.from(set).sort((a, b) => a.localeCompare(b)).slice(0, 500)
-    }
-
-    // ── Dimensión unificada: los valores son los que el motor va a AGRUPAR ──
-    // Antes se listaban los utm_campaign crudos, así que elegir uno del slicer
-    // devolvía 0: el motor agrupa y filtra por el nombre real de la campaña.
-    // Ahora se devuelven los nombres reales (los que tienen gasto en el rango)
-    // unidos a los UTM que no cruzaron, que siguen siendo filtrables.
-    const unified = unifiedTarget(dim)
-    if (unified !== null) {
-        const resolver = params.cliente_id
-            ? await loadResolver(params.cliente_id, dateFrom, dateTo)
-            : null
-
-        const set = new Set<string>()
-        if (resolver) {
-            const known = unified === 'campaign' ? resolver.campaignLabels()
-                : unified === 'ad'               ? resolver.adLabels()
-                :                                  resolver.adsetLabels()
-            for (const n of known) if (n.trim()) set.add(n)
-        }
-
-        // Y lo que realmente aparece como fila: la etiqueta resuelta de cada lead
-        // del período. Cubre los UTM huérfanos (filas propias, elegibles como
-        // cualquier otra) y también las campañas con leads pero sin gasto en el
-        // rango, que el índice conoce pero no lista como activas.
-        const rows = await fetchAllRows(() => {
-            let q = supabase
-                .schema('report_utm')
-                .from(table)
-                .select(['id', ...UTM_RESOLVE_COLS].join(','))
-                .gte('created_at', colombiaRangeBounds(dateFrom, dateTo).gte)
-                .lt('created_at', colombiaRangeBounds(dateFrom, dateTo).lt)
-            if (params.cliente_id) q = q.eq('cliente_id', params.cliente_id)
-            return applyDimFilters(q, params.filters, params.source === 'sales' ? salesFilterKey : leadFilterKey)
-        })
-        for (const r of rows as Record<string, unknown>[]) {
-            const { label } = resolveEntityLabel(r, unified, resolver)
-            if (label && !label.startsWith('(sin ')) set.add(label)
-        }
-
-        return Array.from(set).sort((a, b) => a.localeCompare(b)).slice(0, 500)
-    }
-
-    const col = dim === 'utm_campaign_raw' ? 'utm_campaign' : dim === 'platform' ? 'platform' : dim
-
-    let q = supabase
-        .schema('report_utm')
-        .from(table)
-        .select(col)
-        .gte('created_at', colombiaRangeBounds(dateFrom, dateTo).gte)
-        .lt('created_at', colombiaRangeBounds(dateFrom, dateTo).lt)
-        .not(col, 'is', null)
-        .limit(params.limit ?? 5000)
-
-    if (params.cliente_id) q = q.eq('cliente_id', params.cliente_id)
-    q = applyDimFilters(q, params.filters, params.source === 'sales' ? salesFilterKey : leadFilterKey)
-
-    const { data, error } = await q
-    if (error || !data) return []
-
-    const set = new Set<string>()
-    for (const r of data as Record<string, unknown>[]) {
-        const v = r[col]
-        if (v !== null && v !== undefined && String(v).trim()) set.add(String(v))
-    }
-    return Array.from(set).sort((a, b) => a.localeCompare(b)).slice(0, 500)
 }
 
 // ── Funnel query (special: returns ordered stages) ────────────────────

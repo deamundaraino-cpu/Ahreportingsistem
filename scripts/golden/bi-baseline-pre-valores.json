@@ -1,5 +1,5 @@
 {
-  "generado": "2026-08-11T05:54:39.818Z",
+  "generado": "2026-08-11T02:47:25.002Z",
   "rango": {
     "desde": "2026-07-01",
     "hasta": "2026-07-31"
@@ -1239,13 +1239,13 @@
         ]
       },
       "distinct_campanas": [
+        "[12/07][EBOOK][VENTAS][HOTMART][PERPETUO][ADS GANADORES/NUEVOS JUL] - Copia",
         "[3|07][WEBINAR ASESORÍA][CHILE][C LEADS][CBO][ADVANTAGE]",
         "[3|07][WEBINAR ASESORÍA][CHILE][C LEADS][CBO][SIMILARES]",
         "[5|07][WEBINAR ASESORÍA][CHILE][C LEADS][CBO][P. TIBIO]",
         "[REORGANIZACION] [CAPTACION] [ VENTAS] [23 FEBRERO] - Copia 3",
-        "F2[23|07][ASESORIA TRIBUTARIA][C LEADS][AGENDAMIENTO][VIDS][P FRIO][ABO][JUL]",
         "{{campaign.name}}",
-        "[12/07][EBOOK][VENTAS][HOTMART][PERPETUO][ADS GANADORES/NUEVOS JUL] - Copia"
+        "F2[23|07][ASESORIA TRIBUTARIA][C LEADS][AGENDAMIENTO][VIDS][P FRIO][ABO][JUL]"
       ]
     },
     "3ab7fdde-6f3e-47f5-ab9f-29883591b1c2": {

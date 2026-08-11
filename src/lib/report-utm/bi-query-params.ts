@@ -10,12 +10,31 @@ import type {
 } from './bi-metadata'
 import { parseAdvancedFilter, advancedFilterHasConditions } from './bi-metadata'
 
-export type BiQueryType = 'standard' | 'funnel' | 'compare' | 'pivot' | 'distinct'
+export type BiQueryType = 'standard' | 'funnel' | 'compare' | 'pivot' | 'distinct' | 'valores'
 
-const VALID_TYPES: BiQueryType[] = ['standard', 'funnel', 'compare', 'pivot', 'distinct']
+const VALID_TYPES: BiQueryType[] = ['standard', 'funnel', 'compare', 'pivot', 'distinct', 'valores']
 
 /** Tope duro de filas por consulta (evita que un token público pida el universo). */
 export const MAX_QUERY_LIMIT = 500
+
+/**
+ * ¿Esta consulta ENUMERA los valores de una dimensión?
+ *
+ * `distinct` devuelve solo los nombres (contrato histórico) y `valores` los
+ * devuelve con su recuento, pero las dos exponen exactamente la misma
+ * información: qué valores existen para un cliente en un rango.
+ *
+ * Existe como función y no como comparación suelta porque el informe público
+ * restringe estas consultas a las dimensiones que su layout muestra en un
+ * slicer. Esa guarda estaba escrita contra el literal `'distinct'`, así que
+ * añadir un tipo nuevo habría abierto un agujero sin que nadie lo notara.
+ */
+export function esConsultaDeValores(t: BiQueryType): boolean {
+    return t === 'distinct' || t === 'valores'
+}
+
+/** Cuántos valores devuelve `type=valores` si no se pide otra cosa. */
+export const LIMITE_VALORES_DEFECTO = 200
 
 export interface ParsedBiQuery {
     type: BiQueryType
@@ -31,16 +50,36 @@ export interface ParsedBiQuery {
     filters: Record<string, string>
     calculated: CalculatedFieldDef[]
     advancedFilter?: AdvancedFilter
+    /**
+     * Tabla base al enumerar valores. El slicer YA lo enviaba y este parseo no
+     * lo leía, así que un slicer configurado sobre ventas listaba valores de
+     * leads. Se valida contra los dos literales en vez de castear.
+     */
+    source?: 'leads' | 'sales'
+    /** Búsqueda por subcadena, para cuando la lista de valores viene truncada. */
+    search?: string
 }
 
 export function parseBiQueryParams(sp: URLSearchParams): ParsedBiQuery {
     const rawType = sp.get('type') ?? 'standard'
     const type = (VALID_TYPES as string[]).includes(rawType) ? (rawType as BiQueryType) : 'standard'
 
-    const rawLimit = parseInt(sp.get('limit') ?? '500', 10)
+    // Enumerar valores tiene su propio defecto: 500 sería traer casi el universo
+    // de una dimensión cada vez que se abre un desplegable, y 200 ya cubre de
+    // sobra la columna más variada que hay hoy (648 valores en toda la base).
+    const defectoLimit = type === 'valores' ? LIMITE_VALORES_DEFECTO : MAX_QUERY_LIMIT
+    const rawLimit = parseInt(sp.get('limit') ?? String(defectoLimit), 10)
     const limit = Number.isFinite(rawLimit) && rawLimit > 0
         ? Math.min(rawLimit, MAX_QUERY_LIMIT)
-        : MAX_QUERY_LIMIT
+        : defectoLimit
+
+    const rawSource = sp.get('source')
+    const source = rawSource === 'sales' || rawSource === 'leads' ? rawSource : undefined
+
+    // Una búsqueda de un solo carácter devolvería casi todo y costaría lo mismo
+    // que no buscar; se descarta en vez de disparar la consulta.
+    const rawSearch = (sp.get('search') ?? '').trim().slice(0, 64)
+    const search = rawSearch.length >= 2 ? rawSearch : undefined
 
     // metrics puede venir como CSV o como múltiples ?metrics[]=
     const metricsRaw = sp.get('metrics') ?? sp.getAll('metrics[]').join(',')
@@ -76,5 +115,7 @@ export function parseBiQueryParams(sp: URLSearchParams): ParsedBiQuery {
         filters,
         calculated,
         advancedFilter,
+        source,
+        search,
     }
 }

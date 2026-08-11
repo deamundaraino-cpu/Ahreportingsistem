@@ -4,8 +4,11 @@ import { useState, useEffect } from 'react'
 import { Filter, RefreshCw, SlidersHorizontal, ChevronDown, X, Lock, Plus, Save, Check } from 'lucide-react'
 import type { BiFilters } from './BiTypes'
 import type { AdvancedFilter, FilterCondition, FilterOp, FormFieldMeta, SheetFieldMeta, LeadFieldMeta } from '@/lib/report-utm/bi-metadata'
-import { FILTER_OPS, FILTERABLE_BASE_DIMS, makeFieldDim, humanizeFieldKey, ADVANCED_FILTER_KEY, makeSheetDim, makeLeadFieldDim, parseLeadFieldDim } from '@/lib/report-utm/bi-metadata'
+import { FILTER_OPS, FILTERABLE_BASE_DIMS, makeFieldDim, humanizeFieldKey, ADVANCED_FILTER_KEY, makeSheetDim, makeLeadFieldDim } from '@/lib/report-utm/bi-metadata'
 import { HelpTip } from './HelpTip'
+import { esSeleccionPorCasillas } from '@/lib/report-utm/bi-valores'
+import { SelectorDeValores } from './SelectorDeValores'
+import { DEFAULT_BI_QUERY_BASE } from './BiQueryContext'
 
 interface Cliente {
     id: string
@@ -128,12 +131,13 @@ export function BiGlobalFilters({
         return () => { cancelled = true }
     }, [readonly, clienteId, dateFrom, dateTo])
 
-    /** Valores conocidos de un campo del constructor (vacío si son libres). */
-    const valoresDe = (field: string): string[] => {
-        const clave = parseLeadFieldDim(field)
-        if (clave) return leadFields.find(f => f.clave === clave)?.valores ?? []
-        return sheetFields.find(f => makeSheetDim(f.clave) === field)?.valores ?? []
-    }
+    // `valoresDe()` vivía aquí: devolvía los valores conocidos de un campo para
+    // ofrecerlos en un `<datalist>`, y solo sabía hacerlo con los campos de lead
+    // y de Sheet. Lo sustituye `SelectorDeValores`, que los lista para CUALQUIER
+    // dimensión, con su recuento y permitiendo marcar varios.
+    //
+    // `leadFields` y `sheetFields` siguen cargándose: alimentan las opciones de
+    // CAMPO del desplegable de la izquierda, que es otra cosa.
 
     // Campos de formulario del cliente → opciones extra del constructor.
     const [formFields, setFormFields] = useState<FormFieldMeta[]>([])
@@ -449,21 +453,36 @@ export function BiGlobalFilters({
                                                         <option key={o.value} value={o.value} title={o.label}>{o.short}</option>
                                                     ))}
                                                 </select>
-                                                {/* Un campo de lead trae sus valores ya agrupados: se
-                                                    ofrecen en lista para no tener que escribir de memoria
-                                                    "Entre $2.000.000 a $3.000.000" carácter a carácter. */}
-                                                <input
-                                                    type="text"
-                                                    list={valoresDe(c.field).length ? `bi-vals-${gi}-${ci}` : undefined}
-                                                    value={c.value}
-                                                    onChange={e => setCondition(gi, ci, { value: e.target.value })}
-                                                    placeholder="valor (coma = varios)"
-                                                    className="flex-1 min-w-[120px] px-2.5 py-1.5 text-xs rounded-lg bg-muted border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
-                                                />
-                                                {valoresDe(c.field).length > 0 && (
-                                                    <datalist id={`bi-vals-${gi}-${ci}`}>
-                                                        {valoresDe(c.field).map(v => <option key={v} value={v} />)}
-                                                    </datalist>
+                                                {/* Los valores se eligen de una lista con su recuento, en
+                                                    vez de escribirse de memoria. Antes solo los campos de
+                                                    lead y de Sheet traían sugerencias (y como `datalist`,
+                                                    que no deja ver cuántos hay ni marcar varios); para
+                                                    campaña, país o formulario había que acertar el texto
+                                                    exacto y un fallo daba un widget vacío sin explicación.
+
+                                                    Con «contiene», «empieza con» y «termina con» se
+                                                    conserva el texto libre: son operadores de subcadena y
+                                                    una lista de valores exactos no significa nada ahí. */}
+                                                {esSeleccionPorCasillas(c.op) ? (
+                                                    <div className="flex-1 min-w-[140px]">
+                                                        <SelectorDeValores
+                                                            dimension={c.field}
+                                                            value={c.value}
+                                                            onChange={v => setCondition(gi, ci, { value: v })}
+                                                            clienteId={clienteId}
+                                                            dateFrom={dateFrom}
+                                                            dateTo={dateTo}
+                                                            queryBase={DEFAULT_BI_QUERY_BASE}
+                                                        />
+                                                    </div>
+                                                ) : (
+                                                    <input
+                                                        type="text"
+                                                        value={c.value}
+                                                        onChange={e => setCondition(gi, ci, { value: e.target.value })}
+                                                        placeholder="valor (coma = varios)"
+                                                        className="flex-1 min-w-[120px] px-2.5 py-1.5 text-xs rounded-lg bg-muted border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
+                                                    />
                                                 )}
                                                 <button
                                                     onClick={() => removeCondition(gi, ci)}

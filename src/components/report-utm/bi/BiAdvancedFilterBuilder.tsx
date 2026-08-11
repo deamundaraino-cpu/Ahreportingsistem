@@ -3,6 +3,8 @@
 import { X, Plus } from 'lucide-react'
 import type { AdvancedFilter, FilterCondition, FilterOp } from '@/lib/report-utm/bi-metadata'
 import { FILTER_OPS } from '@/lib/report-utm/bi-metadata'
+import { esSeleccionPorCasillas } from '@/lib/report-utm/bi-valores'
+import { SelectorDeValores } from './SelectorDeValores'
 
 interface Props {
     /** Filtro avanzado controlado (grupos en Y, condiciones en O). */
@@ -10,6 +12,15 @@ interface Props {
     onChange: (af: AdvancedFilter) => void
     /** Opciones de campo (base + campos de formulario del cliente). */
     fieldOptions: { value: string; label: string }[]
+    /**
+     * Contexto para poder listar los valores de cada campo. TODO opcional a
+     * propósito: sin él el componente cae al campo de texto de siempre, así que
+     * un llamador que aún no lo pase sigue compilando y funcionando igual.
+     */
+    clienteId?: string
+    dateFrom?: string
+    dateTo?: string
+    queryBase?: string
 }
 
 /**
@@ -19,7 +30,9 @@ interface Props {
  * (p. ej. para filtros a nivel de widget). No incluye "Guardar" ni "Limpiar":
  * el estado se persiste con quien lo contenga.
  */
-export function BiAdvancedFilterBuilder({ value, onChange, fieldOptions }: Props) {
+export function BiAdvancedFilterBuilder({
+    value, onChange, fieldOptions, clienteId, dateFrom, dateTo, queryBase,
+}: Props) {
     const groups = value.groups ?? []
     const emit = (next: AdvancedFilter['groups']) => onChange({ groups: next })
 
@@ -88,13 +101,32 @@ export function BiAdvancedFilterBuilder({ value, onChange, fieldOptions }: Props
                                         <option key={o.value} value={o.value} title={o.label}>{o.short}</option>
                                     ))}
                                 </select>
-                                <input
-                                    type="text"
-                                    value={c.value}
-                                    onChange={e => setCondition(gi, ci, { value: e.target.value })}
-                                    placeholder="valor (coma = varios)"
-                                    className="flex-1 min-w-[120px] px-2.5 py-1.5 text-xs rounded-lg bg-muted border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
-                                />
+                                {/* Casillas solo con los operadores de
+                                    pertenencia: «contiene ∈ {a,b,c}» no
+                                    significa nada, y ofrecer valores exactos ahí
+                                    invitaría a construir un filtro que no hace
+                                    lo que parece. */}
+                                {esSeleccionPorCasillas(c.op) && queryBase ? (
+                                    <div className="flex-1 min-w-[140px]">
+                                        <SelectorDeValores
+                                            dimension={c.field}
+                                            value={c.value}
+                                            onChange={v => setCondition(gi, ci, { value: v })}
+                                            clienteId={clienteId}
+                                            dateFrom={dateFrom}
+                                            dateTo={dateTo}
+                                            queryBase={queryBase}
+                                        />
+                                    </div>
+                                ) : (
+                                    <input
+                                        type="text"
+                                        value={c.value}
+                                        onChange={e => setCondition(gi, ci, { value: e.target.value })}
+                                        placeholder="valor (coma = varios)"
+                                        className="flex-1 min-w-[120px] px-2.5 py-1.5 text-xs rounded-lg bg-muted border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
+                                    />
+                                )}
                                 <button
                                     type="button"
                                     onClick={() => removeCondition(gi, ci)}

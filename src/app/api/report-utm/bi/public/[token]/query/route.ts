@@ -17,7 +17,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/utils/supabase/server'
-import { parseBiQueryParams } from '@/lib/report-utm/bi-query-params'
+import { parseBiQueryParams, esConsultaDeValores } from '@/lib/report-utm/bi-query-params'
 import { dispatchBiQuery } from '@/lib/report-utm/bi-dispatch'
 import { sanitizeForClient } from '@/lib/report-utm/bi/diagnostics'
 import { ADVANCED_FILTER_KEY, parseAdvancedFilter, advancedFilterHasConditions } from '@/lib/report-utm/bi-metadata'
@@ -145,11 +145,21 @@ export async function GET(
             }
         }
 
-        // Enumerar valores de una dimensión solo si el informe la expone en un slicer.
-        if (parsed.type === 'distinct') {
+        // Enumerar valores de una dimensión solo si el informe la expone en un
+        // slicer. La condición pregunta por la FAMILIA de consulta, no por un
+        // literal: escrita contra `'distinct'`, añadir `'valores'` habría dejado
+        // el informe público enumerando cualquier columna sin que nada avisara.
+        if (esConsultaDeValores(parsed.type)) {
             const allowed = slicerDimensions(report.layout)
             if (!allowed.has(parsed.dimension as BiDimension)) {
-                return NextResponse.json({ data: [] })
+                // La respuesta respeta la FORMA del tipo pedido: devolver `[]` a
+                // un `type=valores` haría que el cliente leyera `.valores` de un
+                // array y lo interpretara como «no hay ninguno».
+                return NextResponse.json({
+                    data: parsed.type === 'distinct'
+                        ? []
+                        : { valores: [], total: 0, truncado: false, motivo: 'dimension_no_listable' },
+                })
             }
         }
 
