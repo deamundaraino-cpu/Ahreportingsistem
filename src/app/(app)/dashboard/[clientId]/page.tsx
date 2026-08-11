@@ -5,7 +5,7 @@ import { ConversionesOfflineCard } from "../components/ConversionesOfflineCard"
 import { PublicLinkButton } from "../components/PublicLinkButton"
 import { BitacorasSidebar } from "../components/BitacorasSidebar"
 import { getBitacoras } from "../../admin/settings/[id]/_actions"
-import { format, subDays } from "date-fns"
+import { colombiaToday, addDaysISO } from "@/lib/date-utils"
 import { createClient, createAdminClient } from "@/utils/supabase/server"
 import { redirect } from "next/navigation"
 import Link from "next/link"
@@ -18,9 +18,14 @@ export default async function DashboardPage(props: {
     const params = await props.params;
     const clientId = params.clientId;
     const searchParams = await props.searchParams;
-    const now = new Date()
-    const fallbackFrom = format(subDays(now, 30), 'yyyy-MM-dd')
-    const fallbackTo = format(now, 'yyyy-MM-dd')
+    // Hora Colombia, no la del servidor: en Vercel `new Date()` es UTC, así que a
+    // partir de las 19:00 el rango por defecto terminaba en MAÑANA y pintaba una
+    // fila futura en ceros. Y son 30 días inclusive (no 31) para que coincida con
+    // el preset "Últimos 30 días" del selector: si no, `getActivePreset` no lo
+    // reconocía y el botón decía "Personalizado".
+    const hoy = colombiaToday()
+    const fallbackFrom = addDaysISO(hoy, -29)
+    const fallbackTo = hoy
     const fromStr = typeof searchParams.from === 'string' ? searchParams.from : fallbackFrom
     const toStr = typeof searchParams.to === 'string' ? searchParams.to : fallbackTo
 

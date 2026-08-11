@@ -4,9 +4,8 @@ import { createAdminClient, createClient } from '@/utils/supabase/server';
 import { filterCampaignList, parseTabFilter } from '@/lib/campaign-filter';
 import { notifyUsers } from '@/lib/notifications/notify';
 import { sendWhatsAppNotification } from '@/lib/whatsapp/notify';
-import { getWeeksInRange, clampRangeToToday, colombiaToday } from '@/lib/date-utils';
+import { getWeeksInRange, clampRangeToToday, colombiaToday, addDaysISO } from '@/lib/date-utils';
 import { revalidatePath } from 'next/cache';
-import { format, addDays } from 'date-fns';
 import { headers } from 'next/headers';
 import { after } from 'next/server';
 import { loadCamposCliente } from '@/lib/sheets/campos-db';
@@ -1477,10 +1476,13 @@ export async function getMirrorDashboardData(token: string, from?: string, to?: 
 
   if (!cliente) return { error: 'Cliente no encontrado' };
 
-  // Use tab dates only if not provided in URL
-  const startStr =
-    from || activeTabObj?.fecha_inicio || format(addDays(new Date(), -30), 'yyyy-MM-dd');
-  const endStr = to || activeTabObj?.fecha_finalizacion || format(new Date(), 'yyyy-MM-dd');
+  // Use tab dates only if not provided in URL.
+  // Mismo criterio que el dashboard interno: hora Colombia y 30 días inclusive.
+  // `new Date()` era UTC en Vercel, así que a partir de las 19:00 el rango del
+  // enlace público terminaba en mañana.
+  const hoy = colombiaToday();
+  const startStr = from || activeTabObj?.fecha_inicio || addDaysISO(hoy, -29);
+  const endStr = to || activeTabObj?.fecha_finalizacion || hoy;
 
   // Mismo enriquecimiento que el dashboard interno: sin esto, una tarjeta con un
   // campo de Sheet salía en blanco en el enlace público del cliente.
