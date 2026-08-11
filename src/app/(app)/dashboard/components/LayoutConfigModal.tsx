@@ -1182,7 +1182,6 @@ export function SheetFilterPicker({
     conversionesOfflineRaw?: any[]
 }) {
     const hasSheets = googleSheetsConversiones && googleSheetsConversiones.length > 0
-    if (!hasSheets) return null
 
     const currentField = value?.field || ''
     const currentOp: SheetFilterOperator = value?.operator || 'equals'
@@ -1204,6 +1203,11 @@ export function SheetFilterPicker({
         })
         return Array.from(set).sort()
     }, [currentField, conversionesOfflineRaw])
+
+    // El early return va DESPUÉS de los hooks: googleSheetsConversiones llega de forma
+    // asíncrona, así que hasSheets pasa de false a true y saltarse el useMemo en el primer
+    // render rompía React con "Rendered more hooks than during the previous render".
+    if (!hasSheets) return null
 
     function handleFieldChange(field: string) {
         if (!field) {

@@ -397,19 +397,14 @@ function SingleMetricChart({
         )
     }, [sourceMetrics, formulas, periodicity, chart.dimension, chart.topN, chart.account_id, varContext, sourceMapping, platformSet, layoutCustomMetrics, chart.campaignFilter, campaignGroups, hasOwnFilter, chart.sheetFilter, effectiveKeyword])
 
-    if (!formulas.length) return null
-
-    const categories = formulas.map(getLabel)
-    const colors = (chart.colors?.length ? chart.colors : DEFAULT_COLORS)
-        .slice(0, categories.length).map(hex)
-
-    // Pie / donut / funnel / radial totals
-    const totalByCategory = categories.map((cat, i) => ({
-        name: cat,
-        value: data.reduce((s, r) => s + (r[cat] ?? 0), 0),
-        color: colors[i],
-        unit: localUnits[i] || 'number',
-    }))
+    // categories/colors se memoizan y viven ANTES del early return: `dimensionTotals`
+    // es un hook y depende de ellos, así que todos deben ejecutarse en cada render.
+    const categories = useMemo(() => formulas.map(getLabel), [formulas])
+    const colors = useMemo(
+        () => (chart.colors?.length ? chart.colors : DEFAULT_COLORS)
+            .slice(0, categories.length).map(hex),
+        [chart.colors, categories.length]
+    )
 
     // Slices for dimension-based circular charts
     const dimensionTotals = useMemo(() => {
@@ -422,6 +417,16 @@ function SingleMetricChart({
             unit: localUnits[0] || 'number',
         }))
     }, [chart.dimension, categories, data, colors, localUnits])
+
+    if (!formulas.length) return null
+
+    // Pie / donut / funnel / radial totals
+    const totalByCategory = categories.map((cat, i) => ({
+        name: cat,
+        value: data.reduce((s, r) => s + (r[cat] ?? 0), 0),
+        color: colors[i],
+        unit: localUnits[i] || 'number',
+    }))
 
     const isCartesian = ['area', 'stacked_area', 'bar', 'stacked_bar', 'line', 'composed'].includes(chart.type)
 
