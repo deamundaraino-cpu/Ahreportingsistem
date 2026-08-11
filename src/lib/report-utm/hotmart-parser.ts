@@ -1,55 +1,32 @@
 /**
- * Parser tolerante de payloads de Hotmart.
+ * Adaptador: `VentaHotmart` → la forma que espera el módulo report-utm.
  *
- * Hotmart cambia el shape entre versiones (1.x vs 2.x) y entre
- * eventos (PURCHASE_APPROVED, PURCHASE_REFUNDED, etc). Aceptamos
- * varias formas y guardamos siempre el raw_payload completo.
+ * Este archivo ERA el parser. Su lógica se ha ido entera a `src/lib/hotmart/`
+ * para que exista UN solo parser compartido por el webhook y por la API — antes
+ * había dos lecturas del mismo payload que no coincidían en nada.
+ *
+ * Lo que queda es la traducción a `ParsedHotmartEvent`, que siguen consumiendo
+ * `attribution-resolver`, `outbound-emitter`, `sale-notifications` y `meta-capi`
+ * sin enterarse del cambio.
+ *
+ * Tres bugs que desaparecen con la mudanza:
+ *   • `transaction_type` era SIEMPRE 'principal' (buscaba `purchase.is_bump` e
+ *     `is_upsell`, claves inexistentes en el payload 2.0.0 de Hotmart).
+ *   • Un evento desconocido se guardaba como venta APROBADA (`?? 'approved'`).
+ *   • `customer_phone` caía a `buyer.document`, y ese documento se enviaba
+ *     hasheado a Meta CAPI como teléfono.
  */
 
-type AnyObj = Record<string, unknown>
+import { parsearWebhook } from '@/lib/hotmart/parser'
+import type { EstadoVenta, VentaHotmart } from '@/lib/hotmart/tipos'
 
-function get(obj: unknown, path: (string | number)[]): unknown {
-    let cur: unknown = obj
-    for (const k of path) {
-        if (cur == null || typeof cur !== 'object') return undefined
-        cur = (cur as AnyObj)[k as string]
-    }
-    return cur
-}
-
-function asString(v: unknown): string | null {
-    if (v == null) return null
-    if (typeof v === 'string') return v.trim() || null
-    if (typeof v === 'number') return String(v)
-    return null
-}
-
-function asNumber(v: unknown): number | null {
-    if (v == null) return null
-    if (typeof v === 'number') return Number.isFinite(v) ? v : null
-    if (typeof v === 'string') {
-        const n = parseFloat(v)
-        return Number.isFinite(n) ? n : null
-    }
-    return null
-}
-
-const STATUS_MAP: Record<string, 'approved' | 'pending' | 'refunded' | 'chargeback'> = {
-    PURCHASE_APPROVED: 'approved',
-    PURCHASE_COMPLETE: 'approved',
-    PURCHASE_BILLET_PRINTED: 'pending',
-    PURCHASE_PROTEST: 'pending',
-    PURCHASE_REFUNDED: 'refunded',
-    PURCHASE_CHARGEBACK: 'chargeback',
-    PURCHASE_DELAYED: 'pending',
-    PURCHASE_CANCELED: 'refunded',
-}
+export type EstadoLegacy = 'approved' | 'pending' | 'refunded' | 'chargeback'
 
 export type ParsedHotmartEvent = {
     platform_sale_id: string
     amount: number
     currency: string
-    status: 'approved' | 'pending' | 'refunded' | 'chargeback'
+    status: EstadoLegacy
     sale_timestamp: string | null
     transaction_type: string | null
     product_id: string | null
@@ -67,117 +44,62 @@ export type ParsedHotmartEvent = {
     click_id: string | null
 }
 
-export function parseHotmartPayload(payload: unknown): ParsedHotmartEvent | { error: string } {
-    if (!payload || typeof payload !== 'object') {
-        return { error: 'Payload no es un objeto' }
-    }
+/**
+ * `sales_events.status` solo conoce cuatro valores. `hotmart_ventas` guarda el
+ * estado exacto (siete), así que aquí solo se pierde granularidad para la tabla
+ * heredada, no información.
+ */
+const ESTADO_LEGACY: Readonly<Record<EstadoVenta, EstadoLegacy>> = {
+    aprobada: 'approved',
+    completa: 'approved',
+    pendiente: 'pending',
+    // Nunca se llegó a cobrar: es lo más cercano a "sin resolver", y contarlo
+    // como reembolso inflaría la tasa de devoluciones.
+    expirada: 'pending',
+    reembolsada: 'refunded',
+    cancelada: 'refunded',
+    chargeback: 'chargeback',
+}
 
-    // Acepta v2 (data.purchase) y v1 (event.data.purchase) y formas custom
-    const purchase =
-        get(payload, ['data', 'purchase']) ??
-        get(payload, ['event', 'data', 'purchase']) ??
-        get(payload, ['purchase'])
-
-    if (!purchase || typeof purchase !== 'object') {
-        return { error: 'No se encontró data.purchase' }
-    }
-
-    const data = (get(payload, ['data']) ?? get(payload, ['event', 'data']) ?? {}) as AnyObj
-
-    // ID de la transacción (varios nombres posibles)
-    const platform_sale_id =
-        asString(get(purchase, ['transaction'])) ??
-        asString(get(purchase, ['id'])) ??
-        asString(get(purchase, ['order_id'])) ??
-        asString(get(purchase, ['order_ref']))
-
-    if (!platform_sale_id) {
-        return { error: 'No se encontró transaction id' }
-    }
-
-    // Precio
-    const amount =
-        asNumber(get(purchase, ['price', 'value'])) ??
-        asNumber(get(purchase, ['price'])) ??
-        asNumber(get(purchase, ['full_price', 'value'])) ??
-        0
-
-    const currency =
-        asString(get(purchase, ['price', 'currency_value'])) ??
-        asString(get(purchase, ['price', 'currency_code'])) ??
-        asString(get(purchase, ['currency'])) ??
-        'BRL'
-
-    // Status del evento
-    const eventName = asString(get(payload, ['event'])) ?? asString(get(payload, ['event_type'])) ?? ''
-    const purchaseStatus = asString(get(purchase, ['status']))
-    const status = STATUS_MAP[eventName] ?? STATUS_MAP[purchaseStatus ?? ''] ?? 'approved'
-
-    // Timestamp
-    const sale_timestamp =
-        asString(get(purchase, ['approved_date'])) ??
-        asString(get(purchase, ['order_date'])) ??
-        asString(get(purchase, ['date'])) ??
-        asString(get(payload, ['creation_date']))
-
-    // Tipo de transacción (principal / bump / upsell / subscription)
-    const isBump = Boolean(get(purchase, ['is_bump']) ?? get(purchase, ['bump']))
-    const isUpsell = Boolean(get(purchase, ['is_upsell']) ?? get(purchase, ['upsell']))
-    const isSub = Boolean(get(purchase, ['is_subscription']) ?? get(data, ['subscription']))
-    const transaction_type = isBump ? 'bump' : isUpsell ? 'upsell' : isSub ? 'subscription' : 'principal'
-
-    // Producto
-    const product_id = asString(get(data, ['product', 'id'])) ?? asString(get(data, ['product', 'ucode']))
-    const product_name = asString(get(data, ['product', 'name']))
-
-    // Cliente
-    const buyer = (get(data, ['buyer']) ?? get(payload, ['buyer'])) as AnyObj | undefined
-    const customer_name = asString(buyer?.name)
-    const customer_email = asString(buyer?.email)
-    const customer_phone =
-        asString(buyer?.checkout_phone) ?? asString(buyer?.phone) ?? asString(buyer?.document)
-    const customer_country =
-        asString(get(buyer, ['address', 'country'])) ?? asString(buyer?.country) ?? null
-
-    // UTMs — Hotmart los pasa en varios sitios:
-    //   purchase.tracking.* (v2),
-    //   purchase.customData.* (v1),
-    //   data.purchase.utm_* (custom checkouts)
-    const tracking = (get(purchase, ['tracking']) ?? {}) as AnyObj
-    const customData = (get(purchase, ['customData']) ?? get(purchase, ['custom_data']) ?? {}) as AnyObj
-
-    const pickUtm = (key: string, ...altKeys: string[]): string | null => {
-        const candidates = [key, ...altKeys]
-        for (const k of candidates) {
-            const v =
-                asString(customData[k]) ??
-                asString(tracking[k]) ??
-                asString(get(purchase, [k])) ??
-                asString(get(data, [k]))
-            if (v) return v
-        }
-        return null
-    }
-
+/** Traduce una venta ya parseada a la forma heredada. */
+export function aEventoLegacy(venta: VentaHotmart): ParsedHotmartEvent {
     return {
-        platform_sale_id,
-        amount,
-        currency,
-        status,
-        sale_timestamp,
-        transaction_type,
-        product_id,
-        product_name,
-        customer_name,
-        customer_email,
-        customer_phone,
-        customer_country,
-        utm_source: pickUtm('utm_source', 'source_sck', 'src'),
-        utm_medium: pickUtm('utm_medium'),
-        utm_campaign: pickUtm('utm_campaign', 'source'),
-        utm_content: pickUtm('utm_content', 'sck'),
-        utm_term: pickUtm('utm_term'),
-        utm_id: pickUtm('utm_id'),
-        click_id: pickUtm('fbclid', 'gclid', 'ttclid', 'click_id', 'xcod'),
+        platform_sale_id: venta.transaction_id,
+        amount: venta.bruto,
+        currency: venta.moneda ?? 'BRL',
+        status: ESTADO_LEGACY[venta.estado],
+        sale_timestamp: venta.aprobada_at ?? venta.orden_at ?? venta.evento_ts,
+        transaction_type: venta.tipo === 'sin_clasificar' ? null : venta.tipo,
+        product_id: venta.producto_id,
+        product_name: venta.producto_nombre,
+        customer_name: venta.comprador_nombre,
+        customer_email: venta.comprador_email,
+        customer_phone: venta.comprador_telefono,
+        customer_country: venta.comprador_pais ?? venta.checkout_pais,
+        utm_source: venta.utm_source,
+        utm_medium: venta.utm_medium,
+        utm_campaign: venta.utm_campaign,
+        utm_content: venta.utm_content,
+        utm_term: venta.utm_term,
+        utm_id: venta.utm_id,
+        click_id: venta.click_id,
     }
+}
+
+/**
+ * Compatibilidad con el llamador antiguo.
+ *
+ * Diferencia importante de comportamiento: los eventos que NO son ventas
+ * (suscripciones, Hotmart Club) devuelven `{ ignorado }` en vez de `{ error }`.
+ * Antes producían un 422 y escribían `last_error` en la integración, lo que
+ * dejaba la tarjeta de la UI en rojo permanente aunque la ingesta de ventas
+ * funcionara perfectamente.
+ */
+export function parseHotmartPayload(
+    payload: unknown,
+): ParsedHotmartEvent | { ignorado: string } | { error: string } {
+    const r = parsearWebhook(payload)
+    if (r.ok) return aEventoLegacy(r.venta)
+    if (r.motivo === 'no_venta') return { ignorado: r.evento }
+    return { error: r.detalle }
 }

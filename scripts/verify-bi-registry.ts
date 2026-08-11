@@ -121,7 +121,7 @@ seccion('Traducción de tokens legados')
 // ════════════════════════════════════════════════════════════
 
 const legacyMetrics = Object.keys(METRIC_META) as BiMetric[]
-check(`METRIC_META tiene ${legacyMetrics.length} métricas`, legacyMetrics.length === 72,
+check(`METRIC_META tiene ${legacyMetrics.length} métricas`, legacyMetrics.length === 81,
     String(legacyMetrics.length))
 
 const sinTraducir = legacyMetrics.filter(m => !LEGACY_MEASURE_IDS[m])
@@ -296,8 +296,8 @@ check(`los ${Object.keys(METRIC_GLOSSARY).length} textos del glosario se conserv
     glosarioMal.length === 0, glosarioMal.join(', '))
 
 const conGlosario = Object.keys(METRIC_GLOSSARY).length
-check(`el registro amplía el glosario de ${conGlosario} a las 72 métricas`,
-    REG.measures().length === 72 && sinHelp.length === 0)
+check(`el registro amplía el glosario de ${conGlosario} a las 81 métricas`,
+    REG.measures().length === 81 && sinHelp.length === 0)
 
 // ════════════════════════════════════════════════════════════
 seccion('Las dimensiones reproducen DIMENSION_META')
@@ -442,7 +442,7 @@ check('un snapshot no declara columna de rango', snapshotConFecha.length === 0,
 // en vez de devolver ceros. Es el fallo silencioso más caro del módulo.
 const porPublic = STATIC_SOURCES.filter(s => s.clientKey.scope === 'public').map(s => s.id)
 check('las fuentes que dependen de public_cliente_id están declaradas',
-    JSON.stringify(porPublic.sort()) === '["ads","cuenta","offline","sheet","subs"]',
+    JSON.stringify(porPublic.sort()) === '["ads","cuenta","hotmart","offline","sheet","subs"]',
     porPublic.join(', '))
 const porReportUtm = STATIC_SOURCES.filter(s => s.clientKey.scope === 'report_utm').map(s => s.id)
 check('leads y ventas cuelgan del cliente de report_utm',

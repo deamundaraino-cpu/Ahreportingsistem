@@ -103,6 +103,12 @@ export async function getMetricAvailability(params: AvailabilityParams): Promise
     let subsQ = db.from('hotmart_subscriptions_snapshot')
         .select('active_count, delayed_count, canceled_count, total_count, active_recurring_value')
         .lte('captured_date', dateTo).order('captured_date', { ascending: false }).limit(1)
+    // `fecha_venta` es un DATE ya en día Colombia: se compara directo, sin
+    // convertir zonas. Y NO se filtra por estado: los reembolsos también cuentan
+    // como "esta fuente tiene datos".
+    let hotmartQ = db.from('hotmart_ventas')
+        .select('estado, neto_productor_usd, bruto_usd')
+        .gte('fecha_venta', dateFrom).lte('fecha_venta', dateTo).limit(2000)
 
     if (params.cliente_id) {
         leadsQ.eq('cliente_id', params.cliente_id)
@@ -111,11 +117,24 @@ export async function getMetricAvailability(params: AvailabilityParams): Promise
     if (publicClienteId) {
         offlineQ = offlineQ.eq('cliente_id', publicClienteId)
         subsQ = subsQ.eq('cliente_id', publicClienteId)
+        hotmartQ = hotmartQ.eq('cliente_id', publicClienteId)
     }
 
-    const [leadsRes, salesRes, offlineRes, subsRes] = await Promise.all([
-        leadsQ, salesQ, offlineQ, subsQ,
+    const [leadsRes, salesRes, offlineRes, subsRes, hotmartRes] = await Promise.all([
+        leadsQ, salesQ, offlineQ, subsQ, publicClienteId ? hotmartQ : Promise.resolve({ data: [] }),
     ])
+
+    for (const v of (hotmartRes.data ?? []) as Array<Record<string, unknown>>) {
+        const estado = String(v.estado ?? '')
+        if (estado === 'reembolsada' || estado === 'chargeback') {
+            bump('hm_reembolsos', 1)
+            bump('hm_neto_reembolsado', Number(v.neto_productor_usd ?? 0))
+        } else if (estado === 'aprobada' || estado === 'completa') {
+            bump('hm_ventas', 1)
+            bump('hm_neto', Number(v.neto_productor_usd ?? 0))
+            bump('hm_bruto', Number(v.bruto_usd ?? 0))
+        }
+    }
 
     bump('leads_count', leadsRes.count ?? 0)
     for (const s of (salesRes.data ?? []) as unknown as Record<string, unknown>[]) {
@@ -207,6 +226,12 @@ export async function getMetricAvailability(params: AvailabilityParams): Promise
             case 'hotmart_roas':    out[metric] = has('spend') && hasHotmartRevenue(has); break
             case 'hotmart_roi':     out[metric] = has('spend') && hasHotmartRevenue(has); break
             case 'hotmart_cpa':     out[metric] = has('spend') && hasHotmartSales(has); break
+            // Ventas de Hotmart por transacción: las derivadas exigen sus DOS
+            // partes, igual que cpl/cpa. Con una sola, el número es engañoso.
+            case 'hm_tasa_reembolso': out[metric] = has('hm_neto') && has('hm_neto_reembolsado'); break
+            case 'hm_roas':           out[metric] = has('spend') && has('hm_neto'); break
+            case 'hm_cpa':            out[metric] = has('spend') && has('hm_ventas'); break
+            case 'hm_ticket_medio':   out[metric] = has('hm_neto') && has('hm_ventas'); break
             default:                out[metric] = has(metric)
         }
     }

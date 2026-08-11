@@ -8,6 +8,7 @@
 
 import { enqueueJob, enqueueRange, type SyncJobTipo } from './queue'
 import { colombiaToday, colombiaYesterday, COLOMBIA_UTC_OFFSET_MS } from '../date-utils'
+import { hotmartConectado } from '../hotmart/cliente'
 
 /** Prioridades: menor = antes. El sync manual (1) siempre adelanta al cron. */
 export const PRIORIDAD = {
@@ -188,6 +189,48 @@ export async function planReconciliacion(
 }
 
 /**
+ * Reconciliación de reembolsos de Hotmart.
+ *
+ * Existe porque `sales/history` filtra por FECHA DE COMPRA, no por fecha de
+ * cambio de estado: un reembolso del 10 de agosto sobre una compra del 3 de
+ * julio NO aparece al pedir el 10 de agosto. Sin esta pasada aparte, la vía de
+ * pull nunca veía una devolución y la venta contaba como facturación para
+ * siempre — ni el cierre de mes la detectaba, porque repide el mes con el mismo
+ * filtro.
+ *
+ * Ventana de 90 días: la mayoría de reembolsos de Hotmart caen en 7-30 días y
+ * los chargebacks tardan más.
+ */
+export async function planHotmartReconciliacion(
+    db: any,
+    opts?: { dias?: number; triggeredBy?: string },
+): Promise<PlanResult> {
+    const dias = opts?.dias ?? 90
+    const hoy = colombiaToday()
+    const start = new Date(Date.parse(`${hoy}T00:00:00Z`) - dias * 86_400_000).toISOString().slice(0, 10)
+
+    const { data: clientes, error } = await db.from('clientes').select('id, config_api')
+    if (error) throw new Error(`planHotmartReconciliacion: ${error.message}`)
+
+    let total = 0
+    for (const c of (clientes ?? []) as Array<{ id: string; config_api: any }>) {
+        if (!hotmartConectado(c.config_api)) continue
+        const job = await enqueueJob(db, {
+            tipo: 'hotmart_reconciliar',
+            clienteId: c.id,
+            start,
+            end: hoy,
+            params: { dias },
+            prioridad: PRIORIDAD.cierre,
+            triggeredBy: opts?.triggeredBy ?? 'hotmart_reconciliacion',
+        })
+        if (job) total++
+    }
+
+    return { encolados: total, detalle: { hotmart_reconciliar: total } }
+}
+
+/**
  * Garantiza que el plan diario esté encolado en la franja horaria actual.
  *
  * El scheduler del VPS (`sync-worker/`) es el planner primario, pero es un único
@@ -255,6 +298,7 @@ export async function limpiarHistorial(db: any, dias = 30): Promise<void> {
     await db.from('sync_runs').delete().lt('started_at', corte)
     await purgarPixelEvents(db)
     await purgarAdsDaily(db)
+    await purgarHotmart(db)
 }
 
 /** Días que se conservan del nivel ANUNCIO en `ads_daily`. */
@@ -293,6 +337,38 @@ export async function purgarAdsDaily(
     const borradas = Number(data ?? 0)
     if (borradas > 0) console.log(`[planner] ads_daily: ${borradas} fila(s) de nivel anuncio purgadas`)
     return borradas
+}
+
+/**
+ * Purgas de Hotmart (migración 065). NINGUNA borra ventas: son la verdad del
+ * negocio y el informe histórico no puede cambiar. Lo que caduca es el crudo y
+ * los datos personales.
+ *
+ * La tercera es la que PAGA el espacio de todo este módulo:
+ * `report_utm.sales_events.raw_payload` crecería sin techo (~4-6 KB por evento)
+ * en cuanto los webhooks empiecen a entrar de verdad — hoy esa tabla está a 0
+ * filas justamente porque no entran.
+ */
+export async function purgarHotmart(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    db: any,
+): Promise<{ raw: number; pii: number; salesRaw: number }> {
+    const llamar = async (fn: string, dias: number): Promise<number> => {
+        const { data, error } = await db.rpc(fn, { p_dias: dias })
+        if (error) {
+            // No es fatal: son purgas de espacio, no de exactitud.
+            console.error(`[planner] ${fn}:`, error.message)
+            return 0
+        }
+        return Number(data ?? 0)
+    }
+    const raw = await llamar('purgar_hotmart_raw', 180)
+    const pii = await llamar('purgar_hotmart_pii', 400)
+    const salesRaw = await llamar('purgar_sales_events_raw', 90)
+    if (raw + pii + salesRaw > 0) {
+        console.log(`[planner] Hotmart: ${raw} crudo(s), ${pii} PII, ${salesRaw} crudo(s) de sales_events purgados`)
+    }
+    return { raw, pii, salesRaw }
 }
 
 /** Días de `pixel_events` que se conservan. */

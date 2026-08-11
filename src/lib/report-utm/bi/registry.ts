@@ -14,6 +14,7 @@ import { parseExpr, isExprError } from './expr'
 
 import { LEADS_SOURCE } from './sources/leads'
 import { SALES_SOURCE } from './sources/sales'
+import { HOTMART_SOURCE } from './sources/hotmart'
 import { ADS_SOURCE } from './sources/ads'
 import { CUENTA_SOURCE } from './sources/cuenta'
 import { OFFLINE_SOURCE } from './sources/offline'
@@ -31,6 +32,10 @@ import { SUBS_SOURCE } from './sources/subs'
 export const STATIC_SOURCES: readonly DataSource[] = [
     LEADS_SOURCE,
     SALES_SOURCE,
+    // Va justo tras `sales` porque es su sucesora natural para Hotmart: misma
+    // granularidad (una fila por venta) pero con el dinero ya normalizado a
+    // dólares, la clasificación del embudo y los reembolsos.
+    HOTMART_SOURCE,
     ADS_SOURCE,
     CUENTA_SOURCE,
     OFFLINE_SOURCE,

@@ -99,21 +99,29 @@ export const AVAILABLE_METRICS: MetricOption[] = [
     { id: 'meta_cost_per_result',  label: 'Meta: Costo por Resultado' },
 
     // ── Hotmart ───────────────────────────────────────────────────────────────
+    // `hotmart_clics_link` se retiró: estaba aquí y en el motor de fórmulas, pero
+    // nunca tuvo columna ni escritor. Solo podía mostrar 0.
     { id: 'hotmart_pagos_iniciados',  label: 'Hotmart: Pagos Iniciados' },
-    { id: 'hotmart_clics_link',       label: 'Hotmart: Clics Link' },
 
     // ── Ventas · Totales globales ─────────────────────────────────────────────
     { id: 'ventas_principal',        label: 'Ventas: Neto Principal' },
     { id: 'ventas_bump',             label: 'Ventas: Neto Bump' },
     { id: 'ventas_upsell',           label: 'Ventas: Neto Upsell' },
+    { id: 'ventas_downsell',         label: 'Ventas: Neto Downsell' },
     { id: 'ventas_principal_bruto',  label: 'Ventas: Bruto Principal' },
     { id: 'ventas_bump_bruto',       label: 'Ventas: Bruto Bump' },
     { id: 'ventas_upsell_bruto',     label: 'Ventas: Bruto Upsell' },
+    { id: 'ventas_downsell_bruto',   label: 'Ventas: Bruto Downsell' },
     { id: 'ventas_principal_count',  label: 'Ventas: # Compras Principal' },
     { id: 'ventas_bump_count',       label: 'Ventas: # Compras Bump' },
     { id: 'ventas_upsell_count',     label: 'Ventas: # Compras Upsell' },
+    { id: 'ventas_downsell_count',   label: 'Ventas: # Compras Downsell' },
+    { id: 'ventas_reembolsado',       label: 'Ventas: Reembolsado' },
+    { id: 'ventas_reembolsado_count', label: 'Ventas: # Reembolsos' },
     { id: 'total_facturacion_bruta', label: 'Ventas: Facturación Bruta Total' },
     { id: 'total_facturacion_neta',  label: 'Ventas: Facturación Neta Total' },
+    { id: 'total_facturacion_neta_real', label: 'Ventas: Facturación Neta Real (tras reembolsos)' },
+    { id: 'total_tasa_reembolso',    label: 'Ventas: Tasa de Reembolso', format: 'percent' },
     { id: 'total_spend',             label: 'Ventas: Inversión Total (Meta + TikTok)' },
     { id: 'total_roas',              label: 'Ventas: ROAS Total (Meta + TikTok)' },
     { id: 'total_roi',               label: 'Ventas: ROI Total' },
@@ -132,6 +140,9 @@ export const AVAILABLE_METRICS: MetricOption[] = [
     { id: 'funnel_upsell_neto',        label: 'Funnel: Neto Upsell' },
     { id: 'funnel_upsell_bruto',       label: 'Funnel: Bruto Upsell' },
     { id: 'funnel_upsell_visits',      label: 'Funnel: Visitas Pág. Upsell' },
+    { id: 'funnel_downsell_count',     label: 'Funnel: # Downsells' },
+    { id: 'funnel_downsell_neto',      label: 'Funnel: Neto Downsell' },
+    { id: 'funnel_downsell_bruto',     label: 'Funnel: Bruto Downsell' },
     { id: 'funnel_pagos_iniciados',    label: 'Funnel: Pagos Iniciados (GA4)' },
     { id: 'funnel_facturacion_bruta',  label: 'Funnel: Facturación Bruta' },
     { id: 'funnel_facturacion_neta',   label: 'Funnel: Facturación Neta' },
@@ -147,6 +158,7 @@ export const AVAILABLE_METRICS: MetricOption[] = [
     { id: 'funnel_pct_pagos_compras',  label: 'Funnel: % Pagos→Compras' },
     { id: 'funnel_pct_conv_order',     label: 'Funnel: % Conv. Order Bump' },
     { id: 'funnel_pct_conv_upsell',    label: 'Funnel: % Conv. Upsell' },
+    { id: 'funnel_pct_conv_downsell',  label: 'Funnel: % Conv. Downsell' },
 
     // ── Google Analytics 4 ────────────────────────────────────────────────────
     { id: 'ga_sessions',              label: 'GA4: Sesiones' },

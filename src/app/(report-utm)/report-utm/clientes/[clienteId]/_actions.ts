@@ -17,6 +17,10 @@ type SyncResult = { ok: true; imported: number; forms: number } | { ok: false; e
 // getUserRole + roles de escritura compartidos en '@/lib/report-utm/auth'.
 const S2S_ALLOWED_ROLES = REPORT_UTM_WRITE_ROLES
 
+// El secreto del webhook de Hotmart se guarda CIFRADO (`webhook_secret_enc`).
+// Iba en claro desde la migración 012 aunque `encryption.ts` ya se importaba en
+// este mismo archivo para los tokens de Meta y Google. La columna en claro se
+// pone a NULL para que el cifrado no quede decorativo.
 export async function activateHotmartIntegrationAction(clienteId: string): Promise<ActionResult> {
     const supabase = await reportUtmClient()
     const secret = generateWebhookSecret()
@@ -27,7 +31,8 @@ export async function activateHotmartIntegrationAction(clienteId: string): Promi
             {
                 cliente_id: clienteId,
                 tipo: 'hotmart',
-                webhook_secret: secret,
+                webhook_secret_enc: encrypt(secret),
+                webhook_secret: null,
                 status: 'active',
                 last_error: null,
             },
@@ -46,7 +51,7 @@ export async function rotateHotmartSecretAction(clienteId: string): Promise<Acti
 
     const { error } = await supabase
         .from('integrations')
-        .update({ webhook_secret: secret, last_error: null })
+        .update({ webhook_secret_enc: encrypt(secret), webhook_secret: null, last_error: null })
         .eq('cliente_id', clienteId)
         .eq('tipo', 'hotmart')
 

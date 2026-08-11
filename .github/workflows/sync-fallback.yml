@@ -80,6 +80,23 @@ jobs:
             fi
           done
 
+      - name: Refrescar tokens de Hotmart
+        # Respaldo del scheduler del VPS. El endpoint existía desde hace meses y
+        # la documentación afirmaba que corría, pero no estaba en NINGÚN
+        # planificador: sin esto, el estado 'expired' nunca se escribe y el aviso
+        # a los administradores por token caducado no se dispara jamás.
+        #
+        # `continue-on-error`: un fallo de Hotmart no debe tumbar el drenado de
+        # la cola, que es la función principal de este workflow.
+        continue-on-error: true
+        run: |
+          response=$(curl -sS -w "\n%{http_code}" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "${{ env.APP_URL }}/api/cron/refresh-hotmart-tokens")
+          status=$(echo "$response" | tail -n1)
+          echo "HTTP $status"
+          echo "$response" | sed '$d'
+
       - name: Healthcheck del pipeline
         run: |
           # Verifica que el pipeline haya sincronizado con éxito recientemente.

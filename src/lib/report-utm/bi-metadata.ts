@@ -102,6 +102,19 @@ export type BiMetric =
     | 'ventas_principal_bruto'
     | 'ventas_bump_bruto'
     | 'ventas_upsell_bruto'
+    // ── Ventas Hotmart por transacción (public.hotmart_ventas) ──
+    // A diferencia de las `hotmart_*` de arriba, que leen el agregado diario de
+    // `metricas_diarias` y por eso NO se pueden repartir por campaña, estas
+    // vienen de una tabla con una fila por venta y sí cruzan.
+    | 'hm_ventas'
+    | 'hm_neto'
+    | 'hm_bruto'
+    | 'hm_reembolsos'
+    | 'hm_neto_reembolsado'
+    | 'hm_tasa_reembolso'
+    | 'hm_roas'
+    | 'hm_cpa'
+    | 'hm_ticket_medio'
     // ── Conversiones offline (conversiones_offline_diarias) ──
     | 'offline_leads'
     | 'offline_ventas'
@@ -190,6 +203,10 @@ export const ADDITIVE_METRICS: ReadonlySet<string> = new Set<string>([
     ...MANUAL_JSONB_METRICS.map(m => m.metric),
     ...OFFLINE_METRICS,
     'hotmart_revenue', 'hotmart_sales',
+    // Conteos e importes por transacción: aditivos. Los ratios de la misma
+    // fuente (tasa de reembolso, ROAS, CPA, ticket medio) NO están aquí: se
+    // recalculan sobre los totales de sus operandos.
+    'hm_ventas', 'hm_neto', 'hm_bruto', 'hm_reembolsos', 'hm_neto_reembolsado',
 ])
 
 /** ¿La fila "Total" de una tabla puede sumar esta métrica directamente? */
@@ -208,7 +225,7 @@ export const FUNNEL_STAGE_METRICS = [
     'impressions', 'reach', 'clicks', 'link_clicks', 'landing_page_views',
     'video_views', 'video_thruplay', 'leads_count', 'leads_form',
     'complete_registration', 'view_content', 'adds_to_cart',
-    'initiates_checkout', 'purchases', 'sales_count',
+    'initiates_checkout', 'purchases', 'sales_count', 'hm_ventas',
 ] as const
 
 /** Etapas por defecto del embudo cuando el widget no configura ninguna. */
@@ -220,7 +237,14 @@ export const DEFAULT_FUNNEL_STAGES: BiMetric[] = ['impressions', 'clicks', 'lead
  * cualquier otra métrica (gasto, campaña, GA4…) daría un conteo de filas sin
  * sentido. El editor y el endpoint restringen `dimension2` a estas.
  */
-export const PIVOT_METRICS: BiMetric[] = ['leads_count', 'sales_count', 'revenue']
+export const PIVOT_METRICS: BiMetric[] = [
+    'leads_count', 'sales_count', 'revenue',
+    // Las cinco medidas físicas de `hotmart_ventas`. Todas son o un conteo de
+    // filas o la suma de una columna, que es exactamente lo que el pivot sabe
+    // hacer; los ratios de la misma fuente quedan fuera porque no se pueden
+    // sumar por celda.
+    'hm_ventas', 'hm_neto', 'hm_bruto', 'hm_reembolsos', 'hm_neto_reembolsado',
+]
 
 /** ¿Esta métrica se puede usar con una dimensión secundaria (gráfica apilada)? */
 export function supportsPivot(metric: string): boolean {
@@ -258,6 +282,12 @@ export type BiDimension =
     | 'product_name'
     | 'transaction_type'
     | 'customer_country'
+    // ── public.hotmart_ventas ──
+    | 'hm_tipo'
+    | 'hm_oferta'
+    | 'hm_producto'
+    | 'hm_pais'
+    | 'hm_metodo_pago'
     // ── Dimensiones de anuncio/conjunto (solo gasto/métricas de campaña) ──
     | 'ad'
     | 'adset'
@@ -441,6 +471,21 @@ export const METRIC_META: Record<BiMetric, MetricMetaEntry> = {
     ventas_principal_bruto: { label: 'Ventas principal (bruto)',format: 'currency', group: 'hotmart', breakdown: 'total' },
     ventas_bump_bruto:      { label: 'Ventas bump (bruto)',     format: 'currency', group: 'hotmart', breakdown: 'total' },
     ventas_upsell_bruto:    { label: 'Ventas upsell (bruto)',   format: 'currency', group: 'hotmart', breakdown: 'total' },
+    // ── Ventas Hotmart por transacción (public.hotmart_ventas) ──
+    // `breakdown: 'any'` y no 'total': esta fuente tiene una fila por venta, con
+    // sus propios UTM, así que se desglosa por cualquiera de sus columnas Y por
+    // campaña. Es lo que las `hotmart_*` agregadas nunca pudieron hacer.
+    hm_ventas:              { label: 'Ventas Hotmart (#)',        format: 'number',   group: 'hotmart', breakdown: 'any' },
+    hm_neto:                { label: 'Facturación Hotmart (neto)',format: 'currency', group: 'hotmart', breakdown: 'any' },
+    hm_bruto:               { label: 'Facturación Hotmart (bruto)',format: 'currency',group: 'hotmart', breakdown: 'any' },
+    hm_reembolsos:          { label: 'Reembolsos (#)',            format: 'number',   group: 'hotmart', breakdown: 'any' },
+    hm_neto_reembolsado:    { label: 'Facturación reembolsada',   format: 'currency', group: 'hotmart', breakdown: 'any' },
+    hm_tasa_reembolso:      { label: 'Tasa de reembolso',         format: 'percent',  group: 'hotmart', breakdown: 'any' },
+    // Estas dos heredan el límite del gasto: `ads_daily` se desglosa por campaña,
+    // no por producto ni por país.
+    hm_roas:                { label: 'ROAS (Hotmart real)',       format: 'ratio',    group: 'hotmart', breakdown: 'campaign' },
+    hm_cpa:                 { label: 'CPA (Hotmart real)',        format: 'currency', group: 'hotmart', breakdown: 'campaign' },
+    hm_ticket_medio:        { label: 'Ticket medio',              format: 'currency', group: 'hotmart', breakdown: 'any' },
     // ── Conversiones offline (Google Sheets del cliente) ──
     offline_leads:          { label: 'Leads offline (Sheet)',        format: 'number',   group: 'offline', breakdown: 'total' },
     offline_ventas:         { label: 'Ventas offline (Sheet)',       format: 'number',   group: 'offline', breakdown: 'total' },
@@ -463,6 +508,7 @@ export const METRIC_META: Record<BiMetric, MetricMetaEntry> = {
 export const RECOMMENDED_METRICS: BiMetric[] = [
     'leads_count', 'sales_count', 'revenue', 'spend',
     'cpl', 'cpa', 'roas', 'clicks', 'impressions', 'ctr', 'cpc', 'cpm',
+    'hm_ventas', 'hm_neto', 'hm_roas', 'hm_cpa',
 ]
 
 /**
@@ -516,6 +562,12 @@ export const DIMENSION_META: Record<BiDimension, { label: string; hidden?: boole
     customer_country:  { label: 'País del cliente' },
     ad:                { label: 'Anuncio' },
     adset:             { label: 'Conjunto de anuncios' },
+    // ── Dimensiones de public.hotmart_ventas ──
+    hm_tipo:           { label: 'Tipo de venta (Hotmart)' },
+    hm_oferta:         { label: 'Oferta (Hotmart)' },
+    hm_producto:       { label: 'Producto (Hotmart)' },
+    hm_pais:           { label: 'País (Hotmart)' },
+    hm_metodo_pago:    { label: 'Método de pago' },
 }
 
 // ── Dimensiones unificadas (leads/ventas ↔ gasto) ─────────────────────
@@ -1658,6 +1710,19 @@ export const METRIC_GLOSSARY: Record<string, string> = {
     hotmart_roas:    'Retorno de la inversión usando la facturación de Hotmart: por cada $1 invertido en anuncios, cuántos $ se facturaron. Cuanto MÁS ALTO, mejor. Se calcula sobre el total del período, sin atribuir a una campaña concreta.',
     hotmart_cpa:     'Cuánto costó, en promedio, cada venta de Hotmart. Cuanto MÁS BAJO, mejor. Se calcula sobre el total del período, sin atribuir a una campaña concreta.',
     hotmart_roi:     'Ganancia sobre la inversión publicitaria: (facturación Hotmart − inversión) ÷ inversión. Un 100% significa que se recuperó el doble de lo invertido. Cuanto MÁS ALTO, mejor.',
+    // ── Ventas Hotmart por transacción ──
+    // Las de arriba leen el agregado diario y por eso dicen "sin atribuir a una
+    // campaña". Estas vienen de una fila por venta, con sus propios UTM, y sí se
+    // reparten por campaña.
+    hm_ventas:           'Cantidad de ventas cobradas de Hotmart en el período. No incluye las reembolsadas ni las pendientes de pago.',
+    hm_neto:             'Dinero que realmente llega a la cuenta: la comisión del productor, ya descontada la tarifa de Hotmart. Convertido a dólares.',
+    hm_bruto:            'Precio pagado por el comprador antes de comisiones, convertido a dólares.',
+    hm_reembolsos:       'Cantidad de ventas del período que acabaron reembolsadas o en contracargo. Se cuentan en la fecha de la VENTA, no en la del reembolso.',
+    hm_neto_reembolsado: 'Dinero neto de las ventas del período que acabaron devueltas. Se imputa a la fecha de la venta original para que el retorno de la campaña refleje lo que de verdad dejó.',
+    hm_tasa_reembolso:   'Qué porcentaje de la facturación acabó devuelta. Cuanto MÁS BAJO, mejor.',
+    hm_roas:             'Retorno de la inversión publicitaria con las ventas atribuidas a cada campaña: por cada $1 invertido, cuántos $ se facturaron. Cuanto MÁS ALTO, mejor. A diferencia del ROAS de cuenta, este SÍ se reparte por campaña.',
+    hm_cpa:              'Cuánto costó, en promedio, cada venta de Hotmart atribuida a la campaña. Cuanto MÁS BAJO, mejor.',
+    hm_ticket_medio:     'Facturación neta dividida entre el número de ventas: cuánto deja, en promedio, cada compra.',
     // ── Las tres métricas que se llaman "leads" y NO son comparables ──
     leads_form:    'Leads que reporta el píxel de Meta desde sus propios formularios. Puede no coincidir con “Leads (contactos)”: mide otra cosa, en otro sistema, y los mismos contactos pueden estar en ambas. No las sumes.',
     offline_leads: 'Leads que el equipo carga a mano en el Google Sheet del cliente. Se solapan con “Leads (contactos)” si el mismo contacto está en los dos sitios.',
@@ -1721,6 +1786,7 @@ export function metricGlossary(metric: string): string | undefined {
 export const LOWER_IS_BETTER = new Set([
     'cpl', 'cpa', 'cpc', 'cpm', 'spend', 'meta_spend', 'tiktok_spend',
     'ga_bounce_rate', 'frequency', 'hotmart_cpa',
+    'hm_cpa', 'hm_reembolsos', 'hm_neto_reembolsado', 'hm_tasa_reembolso',
 ])
 
 /** ¿Para esta métrica, bajar es mejorar? */
@@ -1750,6 +1816,8 @@ const GOAL_BY_METRIC: Record<string, { key: keyof ClienteGoals; mustNotExceed: b
     // Las variantes Hotmart miden lo mismo con otra fuente → misma meta.
     hotmart_cpa: { key: 'cpa_max',      mustNotExceed: true },
     hotmart_roas:{ key: 'roas_min',     mustNotExceed: false },
+    hm_cpa:      { key: 'cpa_max',      mustNotExceed: true },
+    hm_roas:     { key: 'roas_min',     mustNotExceed: false },
     leads_count: { key: 'leads_target', mustNotExceed: false },
     spend:       { key: 'budget',       mustNotExceed: true },
     meta_spend:  { key: 'budget',       mustNotExceed: true },

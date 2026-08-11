@@ -8,10 +8,19 @@ import { notifyUsers } from '@/lib/notifications/notify'
 import { colombiaToday, colombiaYesterday } from '@/lib/date-utils'
 import { metaFetch, tiktokFetch, hotmartFetch, ga4Run, setRetryDeadline } from '@/lib/rate-limit'
 import { evaluateAlertRules } from '@/lib/notifications/rules-engine'
-import { getUsdRate, preloadUsdRates } from '@/lib/fx'
+// La conversión de moneda de Hotmart se hace ahora en `src/lib/hotmart/moneda.ts`,
+// en lote y con el mismo invariante de siempre: sin tasa el importe es NULL,
+// nunca 0.
 import { importesCuadran, sumarCampanas } from '@/lib/sync/reconcile'
 import { expandirFila } from '@/lib/ads/ads-daily-writer'
 import { agruparPorForma, plataformasOmitidas } from '@/lib/sync/upsert-batches'
+import { hotmartConectado, obtenerToken } from '@/lib/hotmart/cliente'
+import { cargarFunnels } from '@/lib/hotmart/persistencia'
+import {
+    agregarDesdeHotmartVentas, desgloseVacio, registroVacio, sincronizarDiaHotmart,
+    type RegistroHotmart,
+} from '@/lib/hotmart/sync'
+import type { FunnelHotmart } from '@/lib/hotmart/clasificador'
 
 // Vercel Hobby corta las funciones a 60s: pedir 300 no las alarga, solo hacía que
 // los presupuestos internos (270s) nunca dispararan y la función muriera a mitad
@@ -295,132 +304,55 @@ export async function GET(request: Request) {
         const metaFormCatalogCache = new Map<string, Promise<Map<string, string>>>() // key: actId → (formId → name)
         const metaTargetingCache = new Map<string, Promise<Map<string, any[]>>>() // key: actId → (campaignId → regions)
 
+        // ─── Token de Hotmart ────────────────────────────────────────────────
+        // Toda la lógica (HotConnect + Basic, refresco y cifrado) vive en
+        // `src/lib/hotmart/cliente.ts`, compartida con el cron y el backfill.
+        // Antes eran ~80 líneas inline aquí, duplicadas casi literalmente en el
+        // cron de refresco de tokens.
         let hotmartAccessToken: string | null = null
-        if (config.hotmart_auth_mode === 'hotconnect') {
-            // ─── Modo HotConnect (OAuth authorization_code) ──────────────────────
-            // Usa el access_token guardado; si venció (o falta), lo refresca con el refresh_token.
-            const expiresMs = config.hotmart_token_expires_at ? new Date(config.hotmart_token_expires_at).getTime() : 0
-            const isExpired = !config.hotmart_access_token || !expiresMs || Number.isNaN(expiresMs) || expiresMs - Date.now() < 60_000
-            if (!isExpired) {
-                hotmartAccessToken = config.hotmart_access_token
+        try {
+            const auth = await obtenerToken(config)
+            hotmartAccessToken = auth.token
+            if (auth.token) {
                 platformLogs.hotmart = 'Preparado'
-            } else if (config.hotmart_refresh_token && process.env.HOTMART_APP_CLIENT_ID && process.env.HOTMART_APP_CLIENT_SECRET) {
-                try {
-                    const params = new URLSearchParams()
-                    params.set('grant_type', 'refresh_token')
-                    params.set('client_id', process.env.HOTMART_APP_CLIENT_ID)
-                    params.set('client_secret', process.env.HOTMART_APP_CLIENT_SECRET)
-                    params.set('refresh_token', config.hotmart_refresh_token)
-                    const tokenRes = await fetch('https://api-sec-vlc.hotmart.com/security/oauth/token', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                        body: params.toString(),
+                // Escritura ATÓMICA: el read-modify-write anterior reescribía el
+                // JSONB entero y pisaba lo que el cron de refresco guardara a la vez.
+                if (auth.parche) {
+                    await adminSupabase.rpc('fusionar_config_api', {
+                        p_cliente_id: cliente.id,
+                        p_parche: auth.parche,
                     })
-                    const tokenData = await tokenRes.json()
-                    if (tokenData.access_token) {
-                        hotmartAccessToken = tokenData.access_token
-                        const expiresIn = tokenData.expires_in ?? 6 * 60 * 60
-                        // Persistir el token refrescado para que el cron/UI lo reflejen.
-                        await adminSupabase.from('clientes').update({
-                            config_api: {
-                                ...config,
-                                hotmart_access_token: tokenData.access_token,
-                                hotmart_refresh_token: tokenData.refresh_token ?? config.hotmart_refresh_token,
-                                hotmart_token_expires_at: new Date(Date.now() + expiresIn * 1000).toISOString(),
-                                hotmart_connection_status: 'connected',
-                            },
-                        }).eq('id', cliente.id)
-                        log(`[Cliente ${cliente.nombre}] Token de Hotmart (HotConnect) refrescado.`)
-                        platformLogs.hotmart = 'Preparado'
-                    } else {
-                        log(`[Cliente ${cliente.nombre}] Error refrescando token HotConnect: ${JSON.stringify(tokenData)}`)
-                        platformLogs.hotmart = 'Error Auth'
-                    }
-                } catch (err: any) {
-                    log(`[Cliente ${cliente.nombre}] Catch Refresh HotConnect: ${err.message}`)
-                    platformLogs.hotmart = 'Fallo Critico'
+                    log(`[Cliente ${cliente.nombre}] Token de Hotmart refrescado y persistido cifrado.`)
                 }
-            } else {
-                log(`[Cliente ${cliente.nombre}] HotConnect sin refresh_token o app no configurada.`)
+            } else if (auth.motivo) {
+                log(`[Cliente ${cliente.nombre}] Hotmart: ${auth.motivo}`)
                 platformLogs.hotmart = 'Error Auth'
             }
-        } else {
-            // ─── Modo "pegar credenciales" (Basic / client_credentials) ──────────
-            const hotmartBasic = config.hotmart_basic ||
-                (config.hotmart_client_id && config.hotmart_client_secret
-                    ? Buffer.from(`${config.hotmart_client_id}:${config.hotmart_client_secret}`).toString('base64')
-                    : null)
-            if (hotmartBasic) {
-                try {
-                    const tokenRes = await fetch('https://api-sec-vlc.hotmart.com/security/oauth/token?grant_type=client_credentials', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/x-www-form-urlencoded',
-                            'Authorization': `Basic ${hotmartBasic}`
-                        }
-                    })
-                    const tokenData = await tokenRes.json()
-                    if (tokenData.access_token) {
-                        hotmartAccessToken = tokenData.access_token
-                        log(`[Cliente ${cliente.nombre}] Token de Hotmart obtenido.`)
-                        platformLogs.hotmart = 'Preparado'
-                    } else {
-                        log(`[Cliente ${cliente.nombre}] Error obteniendo token de Hotmart: ${JSON.stringify(tokenData)}`)
-                        platformLogs.hotmart = 'Error Auth'
-                    }
-                } catch (err: any) {
-                    log(`[Cliente ${cliente.nombre}] Catch Token Hotmart: ${err.message}`)
-                    platformLogs.hotmart = 'Fallo Critico'
-                }
-            } else {
-                log(`[Cliente ${cliente.nombre}] No tiene hotmart_basic ni hotmart_client_id/secret definidos.`)
-            }
+        } catch (err: any) {
+            log(`[Cliente ${cliente.nombre}] Catch Token Hotmart: ${err.message}`)
+            platformLogs.hotmart = 'Fallo Critico'
         }
 
         // ¿El cliente TIENE Hotmart conectado? Distingue "sin configurar" (escribir
         // ceros es correcto) de "configurado pero la auth falló" (hay que preservar).
-        const hotmartConfigured = config.hotmart_auth_mode === 'hotconnect'
-            ? !!(config.hotmart_access_token || config.hotmart_refresh_token)
-            : !!(config.hotmart_basic || (config.hotmart_client_id && config.hotmart_client_secret))
+        //
+        // El criterio vive ahora en un solo sitio: el dashboard usaba otro
+        // distinto (`hotmart_basic || hotmart_token`) que dejaba fuera a los
+        // clientes conectados por HotConnect, y esos perdían la resolución de los
+        // alias `$facturacion_*` del motor de fórmulas.
+        const hotmartConfigured = hotmartConectado(config)
 
         // ─── Cargar funnels Hotmart configurados por pestaña ────────────────────
-        // Cada cliente_tab puede tener hotmart_funnel = { enabled, principal_names[], bump_names[], upsell_names[], payment_page_url, upsell_page_url }
-        type FunnelConfig = {
-            tab_id: string
-            principal_patterns: string[]
-            bump_patterns: string[]
-            upsell_patterns: string[]
-            landing_page_urls: string[]
-            payment_page_url?: string
-            upsell_page_url?: string
-            principal_price_usd?: number
-        }
-        const hotmartFunnels: FunnelConfig[] = []
-        if (hotmartAccessToken) {
-            const { data: tabsData } = await adminSupabase
-                .from('cliente_tabs')
-                .select('id, hotmart_funnel')
-                .eq('cliente_id', cliente.id)
-            const cleanList = (arr: any): string[] => Array.isArray(arr)
-                ? arr.map((s: any) => String(s || '').toLowerCase().trim()).filter(Boolean)
-                : []
-            for (const tab of (tabsData || [])) {
-                const f = tab.hotmart_funnel as any
-                if (!f || !f.enabled) continue
-                hotmartFunnels.push({
-                    tab_id: tab.id,
-                    principal_patterns: cleanList(f.principal_names),
-                    bump_patterns: cleanList(f.bump_names),
-                    upsell_patterns: cleanList(f.upsell_names),
-                    landing_page_urls: Array.isArray(f.landing_page_urls) ? f.landing_page_urls.map((s: any) => String(s).trim()).filter(Boolean) : [],
-                    payment_page_url: f.payment_page_url || undefined,
-                    upsell_page_url: f.upsell_page_url || undefined,
-                    principal_price_usd: f.principal_price_usd ? Number(f.principal_price_usd) : undefined,
-                })
-            }
-            if (hotmartFunnels.length > 0) {
-                log(`[Cliente ${cliente.nombre}] ${hotmartFunnels.length} funnel(s) Hotmart configurados`)
-            }
+        // `cliente_tabs.hotmart_funnel`. El lector vive en
+        // `src/lib/hotmart/clasificador.ts` para que el webhook, el backfill y este
+        // worker interpreten la MISMA configuración: con dos lecturas distintas,
+        // una venta se clasificaba de una forma en vivo y de otra en el agregado.
+        //
+        // Se cargan aunque no haya token: la agregación desde `hotmart_ventas` los
+        // necesita, y esa no depende de la API.
+        const hotmartFunnels: FunnelHotmart[] = await cargarFunnels(adminSupabase, cliente.id)
+        if (hotmartFunnels.length > 0) {
+            log(`[Cliente ${cliente.nombre}] ${hotmartFunnels.length} funnel(s) Hotmart configurados`)
         }
 
         // ─── Snapshot de suscripciones Hotmart (estado actual, 1 vez por cliente) ──
@@ -509,25 +441,11 @@ export async function GET(request: Request) {
             }
         }
 
-        // Match SQL LIKE: % = .*, _ = .  case-insensitive
-        function matchesAny(name: string, patterns: string[]): boolean {
-            if (!patterns.length) return false
-            const lower = name.toLowerCase()
-            for (const p of patterns) {
-                if (!p) continue
-                if (!p.includes('%') && !p.includes('_')) {
-                    if (lower === p) return true
-                } else {
-                    const regexStr = p
-                        .replace(/[.+^${}()|[\]\\]/g, '\\$&')
-                        .replace(/%/g, '.*')
-                        .replace(/_/g, '.')
-                    const re = new RegExp(`^${regexStr}$`, 'i')
-                    if (re.test(lower)) return true
-                }
-            }
-            return false
-        }
+        // `matchesAny` (coincidencia estilo SQL LIKE sobre el nombre del producto)
+        // se movió LITERAL a `src/lib/hotmart/clasificador.ts`, donde ahora es el
+        // último paso de la cascada de clasificación. Vivía aquí y era el único
+        // mecanismo, por eso renombrar un producto en Hotmart mandaba sus ventas a
+        // `extras[]` sin ningún aviso.
 
         // ─── Helper: Fetch campaign targeting location from Meta ────────────────
         // El targeting es independiente de la fecha → se cachea por cuenta (actId)
@@ -1557,332 +1475,73 @@ export async function GET(request: Request) {
         // ─── Helper: Fetch Hotmart for a single date ────────────────────────
         // Devuelve totales globales + desglose por funnel (tab) + extras.
         // Pagos iniciados se mide desde GA4 (no se consulta WAITING_PAYMENT).
-        type FunnelBreakdown = {
-            principal: { count: number; gross: number; net: number }
-            bump:      { count: number; gross: number; net: number }
-            upsell:    { count: number; gross: number; net: number; page_visits: number }
-            pagos_iniciados: number
-            landing_sessions: number
-        }
-        type HotmartRecord = {
-            // Totales globales (suma de todos los funnels + extras)
-            principal: number          // neto producto principal
-            bump: number               // neto bump
-            upsell: number             // neto upsell
-            principal_count: number
-            bump_count: number
-            upsell_count: number
-            principal_bruto: number    // bruto producto principal
-            bump_bruto: number         // bruto order bump
-            upsell_bruto: number       // bruto upsell
-            ventas_count: number       // total transacciones procesadas
-            affiliate_net: number      // comisión de afiliado (USD) — fuente AFFILIATE
-            affiliate_count: number    // # de transacciones con comisión de afiliado
-            coproducer_net: number     // comisión de co-producción (USD) — fuente COPRODUCER
-            // Desglose JSON
-            by_tab: Record<string, FunnelBreakdown>
-            extras: Array<{ product_name: string; count: number; gross: number; net: number }>
-            /** false = la API falló o se agotó el tope de páginas → NO pisar la BD con ceros. */
-            apiSuccess: boolean
-            /** # de importes que no se pudieron convertir a USD (moneda sin tasa). */
-            unconverted_count: number
-            /** Monedas distintas de USD vistas en el día (diagnóstico). */
-            monedas: string[]
-        }
-        function emptyFunnelBreakdown(): FunnelBreakdown {
-            return {
-                principal: { count: 0, gross: 0, net: 0 },
-                bump:      { count: 0, gross: 0, net: 0 },
-                upsell:    { count: 0, gross: 0, net: 0, page_visits: 0 },
-                pagos_iniciados: 0,
-                landing_sessions: 0,
-            }
-        }
-
-        function emptyHotmartRecord(): HotmartRecord {
-            return {
-                principal: 0, bump: 0, upsell: 0,
-                principal_count: 0, bump_count: 0, upsell_count: 0,
-                principal_bruto: 0, bump_bruto: 0, upsell_bruto: 0, ventas_count: 0,
-                affiliate_net: 0, affiliate_count: 0, coproducer_net: 0,
-                by_tab: {},
-                extras: [],
-                apiSuccess: true,
-                unconverted_count: 0,
-                monedas: [],
-            }
-        }
-
-        async function fetchHotmart(targetDate: string): Promise<HotmartRecord> {
-            const record: HotmartRecord = emptyHotmartRecord()
-            // Inicializar breakdown por cada funnel configurado
-            for (const f of hotmartFunnels) {
-                record.by_tab[f.tab_id] = emptyFunnelBreakdown()
-            }
-
+        // ─── Hotmart ─────────────────────────────────────────────────────────
+        //
+        // Antes esto eran ~270 líneas inline: dos bucles de paginación con las
+        // guardas duplicadas, la conversión de moneda, la clasificación por
+        // nombre de producto y la acumulación, todo entrelazado. Ahora son dos
+        // pasos separados en `src/lib/hotmart/sync.ts`:
+        //
+        //   1. sincronizarDiaHotmart → API → public.hotmart_ventas
+        //   2. agregarDesdeHotmartVentas → tabla → este registro diario
+        //
+        // Separarlos permite reclasificar el histórico (cambiar el mapa de
+        // ofertas y reagregar) sin gastar una sola petición a Hotmart.
+        //
+        // ── LA TRAMPA DE LA TABLA INTERMEDIA ────────────────────────────
+        // Un fallo a media paginación deja `hotmart_ventas` PARCIALMENTE escrita.
+        // Agregar entonces daría un número bajo pero DISTINTO DE CERO, que se
+        // colaría por la guarda `hotmartInconsistent` (que solo mira si el conteo
+        // es 0) y pisaría las ventas buenas con una cifra a medias.
+        //
+        // Por eso, si `completo === false` NO se agrega: se devuelve un registro
+        // vacío con `apiSuccess: false` y la red de seguridad de siempre omite los
+        // campos de Hotmart del upsert, preservando lo que ya había.
+        async function fetchHotmart(targetDate: string): Promise<RegistroHotmart> {
             if (!hotmartAccessToken) {
                 log(`[Hotmart] Sin accessToken generado.`)
+                const r = registroVacio()
+                for (const f of hotmartFunnels) r.by_tab[f.tab_id] = desgloseVacio()
                 // Configurado pero sin token = fallo de auth, no "sin Hotmart":
                 // devolver ceros pisaría las ventas ya guardadas.
-                if (hotmartConfigured) record.apiSuccess = false
-                return record
+                if (hotmartConfigured) r.apiSuccess = false
+                return r
             }
             try {
-                const dayStart = new Date(`${targetDate}T00:00:00.000-05:00`).getTime()
-                const dayEnd = new Date(`${targetDate}T23:59:59.999-05:00`).getTime()
+                const sync = await sincronizarDiaHotmart(
+                    adminSupabase, cliente.id, targetDate, hotmartAccessToken, hotmartFunnels, log,
+                )
 
-                // PASO 1: Transacciones válidas aprobadas + capturar gross (purchase.price.value)
-                let pageToken = ""
-                let hasNext = true
-                // transaction_id → { gross_value, currency }
-                const txInfo = new Map<string, { gross: number; currency: string }>()
-
-                // Tope de seguridad: sin él, un next_page_token que Hotmart devuelva
-                // repetido (o nunca nulo) deja el loop girando hasta matar la función.
-                const MAX_SALES_PAGES = 60 // 60 × 100 = 6.000 transacciones/día
-                let salesPages = 0
-                const seenSalesTokens = new Set<string>()
-
-                while (hasNext) {
-                    if (salesPages >= MAX_SALES_PAGES) {
-                        log(`[Hotmart] ${targetDate} Tope de ${MAX_SALES_PAGES} páginas en history — datos incompletos, se preservan los previos.`)
-                        record.apiSuccess = false
-                        platformLogs.hotmart = 'Error paginación'
-                        break
-                    }
-                    salesPages++
-                    const url = new URL('https://developers.hotmart.com/payments/api/v1/sales/history')
-                    url.searchParams.append('start_date', dayStart.toString())
-                    url.searchParams.append('end_date', dayEnd.toString())
-                    url.searchParams.append('max_results', '100')
-                    url.searchParams.append('transaction_status', 'APPROVED')
-                    url.searchParams.append('transaction_status', 'COMPLETE')
-                    if (pageToken) url.searchParams.append('page_token', pageToken)
-
-                    const res = await hotmartFetch(url.toString(), {
-                        headers: { 'Authorization': `Bearer ${hotmartAccessToken}` }
-                    })
-                    const data = await res.json()
-
-                    if (data.error || data.message) {
-                        log(`[Hotmart] ${targetDate} API Error on History: ${JSON.stringify(data)}`)
-                        hasNext = false
-                        // Sin esto el día se guardaba en cero como si no hubiera ventas.
-                        record.apiSuccess = false
-                        platformLogs.hotmart = 'Error API'
-                        break
-                    }
-
-                    if (data.items) {
-                        data.items.forEach((item: any) => {
-                            const txId = item.purchase?.transaction
-                            if (txId) {
-                                const grossVal = Number(item.purchase?.price?.value ?? 0) || 0
-                                const grossCur = String(item.purchase?.price?.currency_code ?? '')
-                                txInfo.set(txId, { gross: grossVal, currency: grossCur })
-                            }
-                        })
-                    }
-                    pageToken = data.page_info?.next_page_token
-                    if (pageToken && seenSalesTokens.has(pageToken)) {
-                        log(`[Hotmart] ${targetDate} next_page_token repetido en history — se corta la paginación.`)
-                        record.apiSuccess = false
-                        break
-                    }
-                    if (pageToken) seenSalesTokens.add(pageToken)
-                    hasNext = !!pageToken
+                if (!sync.completo) {
+                    log(`[Hotmart] ${targetDate} sincronización INCOMPLETA (${sync.motivo ?? 'sin motivo'}) — no se agrega, se preservan los datos previos.`)
+                    platformLogs.hotmart = 'Error API'
+                    const r = registroVacio()
+                    for (const f of hotmartFunnels) r.by_tab[f.tab_id] = desgloseVacio()
+                    r.apiSuccess = false
+                    return r
                 }
 
-                // PASO 2: Comisiones de transacciones validadas + clasificar por funnel.
-                // Se descargan TODAS las páginas primero porque la conversión de moneda
-                // necesita conocer el conjunto de divisas antes de resolver las tasas
-                // (una sola llamada a la API de FX en lugar de una por transacción).
-                pageToken = ""
-                hasNext = true
-                let totalItemsProcessed = 0
-
-                // Acumulador temporal de extras: productName → {count, gross, net}
-                const extrasMap = new Map<string, { count: number; gross: number; net: number }>()
-
-                const MAX_COMMISSION_PAGES = 60
-                let commissionPages = 0
-                const seenCommissionTokens = new Set<string>()
-                const commissionItems: any[] = []
-
-                while (hasNext) {
-                    if (commissionPages >= MAX_COMMISSION_PAGES) {
-                        log(`[Hotmart] ${targetDate} Tope de ${MAX_COMMISSION_PAGES} páginas en commissions — datos incompletos, se preservan los previos.`)
-                        record.apiSuccess = false
-                        platformLogs.hotmart = 'Error paginación'
-                        break
-                    }
-                    commissionPages++
-                    const url2 = new URL('https://developers.hotmart.com/payments/api/v1/sales/commissions')
-                    url2.searchParams.append('start_date', dayStart.toString())
-                    url2.searchParams.append('end_date', dayEnd.toString())
-                    url2.searchParams.append('max_results', '100')
-                    if (pageToken) url2.searchParams.append('page_token', pageToken)
-
-                    const res2 = await hotmartFetch(url2.toString(), {
-                        headers: { 'Authorization': `Bearer ${hotmartAccessToken}` }
-                    })
-                    const data2 = await res2.json()
-
-                    // El loop de comisiones no validaba errores: una respuesta de error
-                    // se leía como "sin items" y el día quedaba en cero.
-                    if (data2.error || data2.message) {
-                        log(`[Hotmart] ${targetDate} API Error on Commissions: ${JSON.stringify(data2)}`)
-                        record.apiSuccess = false
-                        platformLogs.hotmart = 'Error API'
-                        break
-                    }
-
-                    if (Array.isArray(data2.items)) commissionItems.push(...data2.items)
-
-                    pageToken = data2.page_info?.next_page_token
-                    if (pageToken && seenCommissionTokens.has(pageToken)) {
-                        log(`[Hotmart] ${targetDate} next_page_token repetido en commissions — se corta la paginación.`)
-                        record.apiSuccess = false
-                        break
-                    }
-                    if (pageToken) seenCommissionTokens.add(pageToken)
-                    hasNext = !!pageToken
+                const registro = await agregarDesdeHotmartVentas(
+                    adminSupabase, cliente.id, targetDate, hotmartFunnels,
+                )
+                // Los importes sin tasa de cambio los detecta la agregación al leer
+                // `bruto_usd IS NULL`, no la descarga: así también salen a la luz los
+                // que quedaron sin convertir en corridas anteriores.
+                if (registro.unconverted_count > 0) {
+                    log(`[Hotmart] ${targetDate} ${registro.unconverted_count} importe(s) sin tasa de cambio (monedas: ${registro.monedas.join(', ')}) — quedaron fuera del total.`)
                 }
-
-                // ─── Tasas de cambio del día ───────────────────────────────
-                // Antes solo se sumaban los importes en USD y el resto entraba
-                // como 0: un cliente que vendía en COP/BRL veía ROAS 0.
-                const monedasVistas = new Set<string>()
-                for (const info of txInfo.values()) {
-                    if (info.currency) monedasVistas.add(info.currency.toUpperCase())
-                }
-                for (const item of commissionItems) {
-                    for (const c of (Array.isArray(item?.commissions) ? item.commissions : [])) {
-                        const cur = c?.commission?.currency_code
-                        if (cur) monedasVistas.add(String(cur).toUpperCase())
-                    }
-                }
-                record.monedas = Array.from(monedasVistas)
-                const noUsd = record.monedas.filter(m => m !== 'USD')
-                const rateMap = new Map<string, number>([['USD', 1]])
-                if (noUsd.length > 0) {
-                    await preloadUsdRates(adminSupabase, noUsd, targetDate)
-                    for (const m of noUsd) {
-                        const { rate } = await getUsdRate(adminSupabase, m, targetDate)
-                        if (rate) rateMap.set(m, rate)
-                    }
-                    log(`[Hotmart] ${targetDate} Monedas: ${record.monedas.join(', ')} — tasas resueltas: ${[...rateMap.keys()].join(', ')}`)
-                }
-                /** Convierte a USD; null = sin tasa (se cuenta, nunca se suma como 0). */
-                const toUsd = (value: number, currency: string): number | null => {
-                    const cur = String(currency || '').toUpperCase()
-                    if (!cur) return null
-                    const rate = rateMap.get(cur)
-                    if (!rate) return null
-                    return value * rate
-                }
-
-                commissionItems.forEach((item: any) => {
-                    const tx = item.transaction
-                    if (!txInfo.has(tx)) return
-                    totalItemsProcessed++
-                    record.ventas_count++
-
-                    let netUSD = 0
-                    let hadAffiliate = false
-                    if (item.commissions && Array.isArray(item.commissions)) {
-                        item.commissions.forEach((c: any) => {
-                            const raw = Number(c?.commission?.value) || 0
-                            const val = toUsd(raw, c?.commission?.currency_code)
-                            if (val === null) {
-                                if (raw !== 0) record.unconverted_count++
-                                return
-                            }
-                            if (c.source === 'PRODUCER') {
-                                netUSD += val
-                            } else if (c.source === 'AFFILIATE') {
-                                record.affiliate_net += val
-                                hadAffiliate = true
-                            } else if (c.source === 'COPRODUCER') {
-                                record.coproducer_net += val
-                            }
-                        })
-                    }
-                    if (hadAffiliate) record.affiliate_count++
-
-                    const prodName = String(item.product?.name || '').trim()
-                    const txMeta = txInfo.get(tx)!
-                    const grossConverted = toUsd(txMeta.gross, txMeta.currency)
-                    if (grossConverted === null && txMeta.gross !== 0) record.unconverted_count++
-                    const grossVal = grossConverted ?? 0
-
-                    // Buscar a qué funnel pertenece este producto y en qué rol
-                    let matched = false
-                    for (const f of hotmartFunnels) {
-                        if (matchesAny(prodName, f.principal_patterns)) {
-                            // Bruto: si hay precio configurado, usar precio × 1; si no, el valor convertido de la API
-                            const principalGross = f.principal_price_usd ?? grossVal
-                            record.by_tab[f.tab_id].principal.count++
-                            record.by_tab[f.tab_id].principal.net   += netUSD
-                            record.by_tab[f.tab_id].principal.gross += principalGross
-                            record.principal       += netUSD
-                            record.principal_count += 1
-                            record.principal_bruto += principalGross
-                            matched = true
-                            break
-                        }
-                        if (matchesAny(prodName, f.bump_patterns)) {
-                            record.by_tab[f.tab_id].bump.count++
-                            record.by_tab[f.tab_id].bump.net   += netUSD
-                            record.by_tab[f.tab_id].bump.gross += grossVal
-                            record.bump       += netUSD
-                            record.bump_count += 1
-                            record.bump_bruto += grossVal
-                            matched = true
-                            break
-                        }
-                        if (matchesAny(prodName, f.upsell_patterns)) {
-                            record.by_tab[f.tab_id].upsell.count++
-                            record.by_tab[f.tab_id].upsell.net   += netUSD
-                            record.by_tab[f.tab_id].upsell.gross += grossVal
-                            record.upsell        += netUSD
-                            record.upsell_count  += 1
-                            record.upsell_bruto  += grossVal
-                            matched = true
-                            break
-                        }
-                    }
-
-                    if (!matched) {
-                        // Producto extra → acumular en extras
-                        const key = prodName || '(Sin nombre)'
-                        const cur = extrasMap.get(key) || { count: 0, gross: 0, net: 0 }
-                        cur.count += 1
-                        cur.net   += netUSD
-                        cur.gross += grossVal
-                        extrasMap.set(key, cur)
-                    }
-                })
-
-                if (record.unconverted_count > 0) {
-                    log(`[Hotmart] ${targetDate} ${record.unconverted_count} importe(s) sin tasa de cambio (monedas: ${record.monedas.join(', ')}) — quedaron fuera del total.`)
-                }
-
-                // Volcar extras del map al array final
-                for (const [product_name, vals] of extrasMap.entries()) {
-                    record.extras.push({ product_name, ...vals })
-                }
-
-                log(`[Hotmart] ${targetDate} Procesados ${totalItemsProcessed} reg. Funnels: ${hotmartFunnels.length}, Extras: ${record.extras.length}, Principal USD: ${record.principal.toFixed(2)}, Bruto: ${record.principal_bruto.toFixed(2)}`)
-                if (record.apiSuccess) platformLogs.hotmart = 'Conectado OK'
+                log(`[Hotmart] ${targetDate} ${sync.ventas} tx traídas (${sync.escritas} escritas, ${sync.descartadas} descartadas por orden), ${registro.ventas_count} cobradas, cobertura ${registro.cobertura_pct}%`)
+                return registro
             } catch (e: any) {
                 log(`[Hotmart] Catch Error: ${e.message}`)
                 // Sin esto, una excepción a mitad de la paginación devolvía un record
                 // parcial en ceros que se upserteaba sobre las ventas reales.
-                record.apiSuccess = false
+                const r = registroVacio()
+                for (const f of hotmartFunnels) r.by_tab[f.tab_id] = desgloseVacio()
+                r.apiSuccess = false
                 platformLogs.hotmart = 'Error'
+                return r
             }
-            return record
         }
 
         // ─── Fetch GA4 ───
@@ -2035,8 +1694,8 @@ export async function GET(request: Request) {
          * que el guard de preservación usa para OMITIR esos campos del upsert. Así
          * un backfill de Meta no toca las ventas ni las sesiones ya guardadas.
          */
-        const skippedHotmartRecord = (): HotmartRecord => {
-            const r = emptyHotmartRecord()
+        const skippedHotmartRecord = (): RegistroHotmart => {
+            const r = registroVacio()
             r.apiSuccess = false
             return r
         }
@@ -2237,8 +1896,24 @@ export async function GET(request: Request) {
                 // tenga la plataforma configurada: un backfill acotado nunca debe
                 // tocar columnas que no pidió.
                 const hotmartApiFailed = (hotmartConfigured || !wantsPlatform('hotmart')) && !hotmartRecord.apiSuccess
+
+                // Caída RELATIVA: la guarda nueva que la tabla intermedia hace
+                // necesaria. La de siempre solo atrapa el cero absoluto, y ahora un
+                // fallo parcial puede dar un número bajo pero distinto de cero.
+                //
+                // Se descuentan los reembolsos del día antes de comparar: si el
+                // recuento baja porque hubo devoluciones, eso NO es una anomalía,
+                // es exactamente lo que este trabajo pretende reflejar.
+                const ventasPrevias = Number(prevRow?.ventas_principal_count ?? 0)
+                    + Number(prevRow?.ventas_bump_count ?? 0)
+                    + Number(prevRow?.ventas_upsell_count ?? 0)
+                    + Number(prevRow?.ventas_downsell_count ?? 0)
+                const ventasAhora = hotmartRecord.ventas_count + hotmartRecord.reembolsado_count
+                const caidaRelativa = hotmartConfigured && !hotmartApiFailed
+                    && ventasPrevias >= 5 && ventasAhora < ventasPrevias * 0.6
+
                 const hotmartInconsistent = hotmartConfigured && !hotmartApiFailed
-                    && hotmartRecord.ventas_count === 0 && hasHotmartData(prevRow)
+                    && ((hotmartRecord.ventas_count === 0 && hasHotmartData(prevRow)) || caidaRelativa)
                 const hotmartFailed = hotmartApiFailed || hotmartInconsistent
 
                 const ga4ApiFailed = gaRecord.configured && !gaRecord.apiSuccess
@@ -2253,7 +1928,12 @@ export async function GET(request: Request) {
                     inconsistencyAlerts.push({ cliente: cliente.nombre, platform: 'TikTok', fecha: targetDate, reason: tiktokApiFailed ? 'api_disconnected' : 'zero_vs_previous' })
                 }
                 if ((hotmartApiFailed || hotmartInconsistent) && hasHotmartData(prevRow)) {
-                    inconsistencyAlerts.push({ cliente: cliente.nombre, platform: 'Hotmart', fecha: targetDate, reason: hotmartApiFailed ? 'api_disconnected' : 'zero_vs_previous' })
+                    inconsistencyAlerts.push({
+                        cliente: cliente.nombre, platform: 'Hotmart', fecha: targetDate,
+                        reason: hotmartApiFailed ? 'api_disconnected'
+                            : caidaRelativa ? `caida_relativa:${ventasAhora}/${ventasPrevias}`
+                            : 'zero_vs_previous',
+                    })
                 }
                 if ((ga4ApiFailed || ga4Inconsistent) && hasGa4Data(prevRow)) {
                     inconsistencyAlerts.push({ cliente: cliente.nombre, platform: 'GA4', fecha: targetDate, reason: ga4ApiFailed ? 'api_disconnected' : 'zero_vs_previous' })
@@ -2367,12 +2047,18 @@ export async function GET(request: Request) {
                         ventas_principal: hotmartRecord.principal,
                         ventas_bump: hotmartRecord.bump,
                         ventas_upsell: hotmartRecord.upsell,
+                        ventas_downsell: hotmartRecord.downsell,
                         ventas_principal_count: hotmartRecord.principal_count,
                         ventas_bump_count: hotmartRecord.bump_count,
                         ventas_upsell_count: hotmartRecord.upsell_count,
+                        ventas_downsell_count: hotmartRecord.downsell_count,
                         ventas_principal_bruto: hotmartRecord.principal_bruto,
                         ventas_bump_bruto: hotmartRecord.bump_bruto,
                         ventas_upsell_bruto: hotmartRecord.upsell_bruto,
+                        ventas_downsell_bruto: hotmartRecord.downsell_bruto,
+                        // Imputados a la fecha de la VENTA, no a la del reembolso.
+                        ventas_reembolsado: hotmartRecord.reembolsado,
+                        ventas_reembolsado_count: hotmartRecord.reembolsado_count,
                     }),
                     // Pagos iniciados sale de GA4 (suma de payment_page_views por funnel).
                     ...(!ga4Failed && {

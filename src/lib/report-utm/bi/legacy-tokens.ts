@@ -97,6 +97,21 @@ export const LEGACY_MEASURE_IDS: Readonly<Record<string, string>> = {
     // `metricas_manuales`. Leerla de la columna daba 0 en todos los informes.
     ventas_cerradas: 'cuenta.ventas_cerradas',
 
+    // ── Ventas Hotmart por transacción (public.hotmart_ventas) ──
+    // Las `hotmart_*` de arriba NO se repuntan aquí a propósito: cambiar a qué
+    // apuntan movería los números de informes ya guardados y ya entregados por
+    // enlace público. Es una decisión de producto, con aviso a los clientes, no
+    // un efecto colateral de esta migración.
+    hm_ventas: 'hotmart.ventas',
+    hm_neto: 'hotmart.revenue_neto',
+    hm_bruto: 'hotmart.revenue_bruto',
+    hm_reembolsos: 'hotmart.reembolsos',
+    hm_neto_reembolsado: 'hotmart.revenue_reembolsado',
+    hm_tasa_reembolso: 'hotmart.tasa_reembolso',
+    hm_roas: 'hotmart.roas',
+    hm_cpa: 'hotmart.cpa',
+    hm_ticket_medio: 'hotmart.ticket_medio',
+
     // ── Offline ──
     offline_leads: 'offline.leads',
     offline_ventas: 'offline.ventas',
@@ -133,6 +148,11 @@ export const LEGACY_DIMENSION_IDS: Readonly<Record<string, string>> = {
     product_name: 'sales.product_name',
     transaction_type: 'sales.transaction_type',
     customer_country: 'sales.customer_country',
+    hm_tipo: 'hotmart.tipo',
+    hm_oferta: 'hotmart.oferta',
+    hm_producto: 'hotmart.producto',
+    hm_pais: 'hotmart.pais',
+    hm_metodo_pago: 'hotmart.metodo_pago',
     ad: 'ads.ad',
     adset: 'ads.adset',
 }

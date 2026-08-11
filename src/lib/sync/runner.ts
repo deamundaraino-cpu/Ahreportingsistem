@@ -105,6 +105,18 @@ function buildRequest(job: SyncJob, appUrl: string): { url: string; method: 'GET
             // heal=1: además de detectar, encola la reparación de los días malos.
             qs.set('heal', '1')
             return { url: `${base}/api/worker/reconcile?${qs}`, method: 'POST' }
+        case 'hotmart_ventas':
+        case 'hotmart_reconciliar': {
+            const p = new URLSearchParams()
+            if (job.cliente_id) p.set('cliente_id', job.cliente_id)
+            if (start) p.set('desde', start)
+            if (job.fecha_fin) p.set('hasta', job.fecha_fin)
+            p.set('modo',
+                job.tipo === 'hotmart_reconciliar' ? 'reconciliar'
+                : job.params?.reclasificar ? 'reclasificar'
+                : 'backfill')
+            return { url: `${base}/api/worker/hotmart?${p}`, method: 'GET' }
+        }
         default:
             throw new Error(`Tipo de job desconocido: ${job.tipo}`)
     }

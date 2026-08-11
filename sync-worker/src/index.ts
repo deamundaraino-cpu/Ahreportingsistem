@@ -123,6 +123,29 @@ async function encolarPlan(plan: 'diario' | 'intradia' | 'cierre_mes' | 'reconci
     }
 }
 
+/**
+ * Llama a un endpoint de cron de la app.
+ *
+ * Vercel Hobby solo admite 2 crons y los dos están ocupados
+ * (`refresh-meta-tokens` y `run-jobs`), así que los demás cuelgan de aquí.
+ */
+async function llamarCron(ruta: string, nombre: string): Promise<void> {
+    try {
+        const res = await fetch(`${APP_URL!.replace(/\/$/, '')}${ruta}`, {
+            headers: { Authorization: `Bearer ${CRON_SECRET}` },
+            signal: AbortSignal.timeout(60_000),
+        })
+        const body = await res.json().catch(() => ({}))
+        if (!res.ok) {
+            log(`[cron:${nombre}] ❌ HTTP ${res.status}`, body)
+            return
+        }
+        log(`[cron:${nombre}] ✓`, body)
+    } catch (e: any) {
+        log(`[cron:${nombre}] ❌ ${e?.message ?? e}`)
+    }
+}
+
 // Horarios en hora Colombia. Sustituyen a los 9 crons de vercel.json.
 const horarios: Array<{ expr: string; nombre: string; fn: () => Promise<void> }> = [
     // Plan completo de la mañana: ayer (ya cerrado) + hoy.
@@ -135,6 +158,18 @@ const horarios: Array<{ expr: string; nombre: string; fn: () => Promise<void> }>
     // con el gasto real de la cuenta y los repara. Sin esto, un día con el array
     // truncado se muestra en $0 para siempre.
     { expr: '0 3 * * 0', nombre: 'reconciliación de gasto Meta', fn: () => encolarPlan('reconciliacion') },
+    // Refresco de tokens de Hotmart (HotConnect).
+    //
+    // El endpoint existía desde hace meses y la documentación afirmaba que
+    // corría, pero NO estaba en ningún planificador: ni en vercel.json, ni aquí,
+    // ni en el workflow de respaldo. La conexión sobrevivía solo porque el
+    // worker refresca en línea cuando el token está a punto de vencer, con dos
+    // consecuencias: el estado 'expired' no se escribía nunca y el aviso a los
+    // administradores por token caducado NO se disparaba jamás.
+    //
+    // Cada 2 horas: los tokens de HotConnect son de vida corta y el umbral del
+    // endpoint es de 30 minutos, así que ninguno llega a caducar entre pasadas.
+    { expr: '0 */2 * * *', nombre: 'refresco de tokens Hotmart', fn: () => llamarCron('/api/cron/refresh-hotmart-tokens', 'hotmart-tokens') },
 ]
 
 // ─── Healthcheck HTTP ────────────────────────────────────────────────────────

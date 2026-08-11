@@ -3,8 +3,10 @@ import { NextResponse } from 'next/server'
 import { requireCronAuth } from '@/lib/cron-auth'
 import { createClient as createSSRClient } from '@/utils/supabase/server'
 import { notifyUsers } from '@/lib/notifications/notify'
+import { cifrarSecreto } from '@/lib/secretos'
+import { refreshTokenDe, HOTMART_AUTH_BASE } from '@/lib/hotmart/cliente'
 
-const TOKEN_URL = 'https://api-sec-vlc.hotmart.com/security/oauth/token'
+const TOKEN_URL = `${HOTMART_AUTH_BASE}/security/oauth/token`
 
 // Umbral: refrescar tokens que vencen en menos de N minutos.
 // Los tokens de Hotmart (HotConnect) son de vida corta, por eso el umbral es en minutos.
@@ -46,7 +48,8 @@ export async function GET(request: Request) {
 
     // Solo clientes en modo HotConnect con refresh_token.
     if (config.hotmart_auth_mode !== 'hotconnect') continue
-    const refreshToken: string | undefined = config.hotmart_refresh_token
+    // Lee de la clave cifrada o de la heredada en claro, indistintamente.
+    const refreshToken = refreshTokenDe(config).valor
     if (!refreshToken) continue
 
     const expiresAt: string | undefined = config.hotmart_token_expires_at
@@ -74,31 +77,36 @@ export async function GET(request: Request) {
 
       if (data.error || !data.access_token) {
         // Refresh token vencido o revocado: marcar para que la UI pida reconexión.
-        await supabase
-          .from('clientes')
-          .update({ config_api: { ...config, hotmart_connection_status: 'expired' } })
-          .eq('id', cliente.id)
+        // Vía RPC para no reescribir el JSONB entero y pisar lo que el worker
+        // pueda estar guardando a la vez.
+        await supabase.rpc('fusionar_config_api', {
+          p_cliente_id: cliente.id,
+          p_parche: { hotmart_connection_status: 'expired' },
+        })
         results.push({ id: cliente.id, nombre: cliente.nombre, status: 'failed', detail: data.error_description || data.error || 'Sin access_token' })
         continue
       }
 
       const newToken: string = data.access_token
+      // Hotmart rota el refresh token: quedarse con el viejo caduca la conexión
+      // en la siguiente vuelta.
       const newRefresh: string = data.refresh_token ?? refreshToken
       const expiresIn: number = data.expires_in ?? 6 * 60 * 60
       const newExpiresAt = new Date(now + expiresIn * 1000).toISOString()
 
-      await supabase
-        .from('clientes')
-        .update({
-          config_api: {
-            ...config,
-            hotmart_access_token: newToken,
-            hotmart_refresh_token: newRefresh,
-            hotmart_token_expires_at: newExpiresAt,
-            hotmart_connection_status: 'connected',
-          },
-        })
-        .eq('id', cliente.id)
+      await supabase.rpc('fusionar_config_api', {
+        p_cliente_id: cliente.id,
+        p_parche: {
+          hotmart_access_token_enc: cifrarSecreto(newToken),
+          hotmart_refresh_token_enc: cifrarSecreto(newRefresh),
+          // Se borran las copias en claro heredadas: dejarlas convertiría el
+          // cifrado en decorativo.
+          hotmart_access_token: null,
+          hotmart_refresh_token: null,
+          hotmart_token_expires_at: newExpiresAt,
+          hotmart_connection_status: 'connected',
+        },
+      })
 
       results.push({ id: cliente.id, nombre: cliente.nombre, status: 'refreshed', detail: newExpiresAt })
     } catch (err: any) {

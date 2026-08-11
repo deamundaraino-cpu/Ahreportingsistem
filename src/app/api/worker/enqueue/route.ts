@@ -2,7 +2,7 @@ import { createClient } from '@supabase/supabase-js'
 import { NextResponse } from 'next/server'
 import { requireCronAuth } from '@/lib/cron-auth'
 import { enqueueRange, enqueueJob, queueStats, type SyncJobTipo } from '@/lib/sync/queue'
-import { planDiario, planIntradia, planCierreMes, planReconciliacion, limpiarHistorial, PRIORIDAD } from '@/lib/sync/planner'
+import { planDiario, planIntradia, planCierreMes, planReconciliacion, planHotmartReconciliacion, limpiarHistorial, PRIORIDAD } from '@/lib/sync/planner'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -48,7 +48,17 @@ export async function POST(request: Request) {
         if (plan === 'reconciliacion') {
             const dias = Number(new URL(request.url).searchParams.get('dias')) || undefined
             const res = await planReconciliacion(db, { dias })
-            return NextResponse.json({ ok: true, plan, ...res, cola: await queueStats(db) })
+            // La reconciliación semanal aprovecha para buscar reembolsos de
+            // Hotmart: la API filtra por fecha de COMPRA, así que una devolución
+            // sobre una venta antigua no aparece en el sync diario y la venta
+            // contaría como facturación para siempre.
+            const hm = await planHotmartReconciliacion(db)
+            return NextResponse.json({
+                ok: true, plan,
+                encolados: res.encolados + hm.encolados,
+                detalle: { ...res.detalle, ...hm.detalle },
+                cola: await queueStats(db),
+            })
         }
 
         // Encolado explícito de un rango concreto.

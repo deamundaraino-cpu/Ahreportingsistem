@@ -253,4 +253,8 @@ export const TOLERANCIA_DIAS: Record<string, number> = {
     offline: 7,
     sheet: 7,
     subs: 7,
+    // La escribe el worker a diario en cuanto hay credenciales de Hotmart: dos
+    // días de silencio ya es un fallo. Muy distinta de `sales`, cuya tolerancia
+    // de 30 días existe porque depende de un webhook que puede no estar puesto.
+    hotmart: 2,
 }

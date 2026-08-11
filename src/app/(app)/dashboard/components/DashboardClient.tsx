@@ -718,35 +718,61 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
             enrichTikTokRow(enrichMetaRow(m, effectiveKeyword, data.campaignGroups), effectiveKeyword, data.campaignGroups)
         )
 
-        // Inyectar campos del funnel actual desde hotmart_funnel_data.by_tab[activeTabId]
+        // Inyectar campos del funnel desde hotmart_funnel_data.by_tab.
         // Esto permite que las fórmulas usen $funnel.* / funnel_principal_count / funnel_bump_neto, etc.
+        //
+        // En la VISTA GENERAL (sin pestaña activa) antes no se inyectaba nada, así
+        // que TODAS las `funnel_*` salían 0 en silencio y cualquier tarjeta que las
+        // usara mostraba un cero perfectamente creíble. Ahora se SUMAN todas las
+        // pestañas: es el equivalente honesto de "todos los embudos juntos".
         const tabId = activeTabObj?.id
-        if (tabId) {
-            return enriched.map((row: any) => {
-                const data = (row.hotmart_funnel_data as any) || {}
-                const fb = data.by_tab?.[tabId] || null
-                const landingSessions = fb?.landing_sessions ?? 0
-                return {
-                    ...row,
-                    // Si hay landing pages configuradas, reemplazar ga_sessions con las sesiones del funnel
-                    ...(landingSessions > 0 ? { ga_sessions: landingSessions } : {}),
-                    funnel_principal_count: fb?.principal?.count ?? 0,
-                    funnel_principal_neto:  fb?.principal?.net   ?? 0,
-                    funnel_principal_bruto: fb?.principal?.gross ?? 0,
-                    // Precio público configurado en el funnel del tab (para calcular bruta = precio × count)
-                    funnel_principal_price: Number(activeTabObj?.hotmart_funnel?.principal_price_usd ?? 0),
-                    funnel_bump_count:      fb?.bump?.count      ?? 0,
-                    funnel_bump_neto:       fb?.bump?.net        ?? 0,
-                    funnel_bump_bruto:      fb?.bump?.gross      ?? 0,
-                    funnel_upsell_count:    fb?.upsell?.count    ?? 0,
-                    funnel_upsell_neto:     fb?.upsell?.net      ?? 0,
-                    funnel_upsell_bruto:    fb?.upsell?.gross    ?? 0,
-                    funnel_upsell_visits:   fb?.upsell?.page_visits ?? 0,
-                    funnel_pagos_iniciados: fb?.pagos_iniciados  ?? 0,
+        return enriched.map((row: any) => {
+            const funnelData = (row.hotmart_funnel_data as any) || {}
+            const porTab: Record<string, any> = funnelData.by_tab ?? {}
+
+            let fb: any = null
+            if (tabId) {
+                fb = porTab[tabId] ?? null
+            } else {
+                const ids = Object.keys(porTab)
+                if (ids.length === 0) return row   // sin embudos: nada que inyectar
+                const suma = (camino: (b: any) => number) =>
+                    ids.reduce((acc, id) => acc + (Number(camino(porTab[id])) || 0), 0)
+                fb = {
+                    principal: { count: suma(b => b?.principal?.count), net: suma(b => b?.principal?.net), gross: suma(b => b?.principal?.gross) },
+                    bump: { count: suma(b => b?.bump?.count), net: suma(b => b?.bump?.net), gross: suma(b => b?.bump?.gross) },
+                    upsell: { count: suma(b => b?.upsell?.count), net: suma(b => b?.upsell?.net), gross: suma(b => b?.upsell?.gross), page_visits: suma(b => b?.upsell?.page_visits) },
+                    downsell: { count: suma(b => b?.downsell?.count), net: suma(b => b?.downsell?.net), gross: suma(b => b?.downsell?.gross) },
+                    pagos_iniciados: suma(b => b?.pagos_iniciados),
+                    // NO se suman las sesiones de landing entre pestañas: distintos
+                    // embudos pueden compartir landing y se contarían dos veces.
+                    landing_sessions: 0,
                 }
-            })
-        }
-        return enriched
+            }
+
+            const landingSessions = fb?.landing_sessions ?? 0
+            return {
+                ...row,
+                // Si hay landing pages configuradas, reemplazar ga_sessions con las sesiones del funnel
+                ...(landingSessions > 0 ? { ga_sessions: landingSessions } : {}),
+                funnel_principal_count: fb?.principal?.count ?? 0,
+                funnel_principal_neto:  fb?.principal?.net   ?? 0,
+                funnel_principal_bruto: fb?.principal?.gross ?? 0,
+                // Precio público configurado en el funnel del tab (para calcular bruta = precio × count)
+                funnel_principal_price: Number(activeTabObj?.hotmart_funnel?.principal_price_usd ?? 0),
+                funnel_bump_count:      fb?.bump?.count      ?? 0,
+                funnel_bump_neto:       fb?.bump?.net        ?? 0,
+                funnel_bump_bruto:      fb?.bump?.gross      ?? 0,
+                funnel_upsell_count:    fb?.upsell?.count    ?? 0,
+                funnel_upsell_neto:     fb?.upsell?.net      ?? 0,
+                funnel_upsell_bruto:    fb?.upsell?.gross    ?? 0,
+                funnel_upsell_visits:   fb?.upsell?.page_visits ?? 0,
+                funnel_downsell_count:  fb?.downsell?.count  ?? 0,
+                funnel_downsell_neto:   fb?.downsell?.net    ?? 0,
+                funnel_downsell_bruto:  fb?.downsell?.gross  ?? 0,
+                funnel_pagos_iniciados: fb?.pagos_iniciados  ?? 0,
+            }
+        })
     }, [baseRows, effectiveKeyword, activeTabObj, data.campaignGroups])
 
     // Previous period rows (no tab date filter needed — already a different date range)

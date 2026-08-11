@@ -90,19 +90,28 @@ export const FIELD_MAP: Record<string, string> = {
     tiktok_cpa: 'tiktok_cpa',
 
     // ── Hotmart ───────────────────────────────────────────────────────────
+    // `hotmart_clics_link` se retiró: estaba en el catálogo y aquí, pero NUNCA
+    // tuvo columna ni escritor, así que valía 0 siempre. Una métrica que solo
+    // puede mostrar cero es peor que ninguna.
     hotmart_pagos_iniciados: 'hotmart_pagos_iniciados',
-    hotmart_clics_link: 'hotmart_clics_link',
 
     // ── Ventas (totales globales — suma de todos los funnels + extras) ───
     ventas_principal: 'ventas_principal',
     ventas_bump: 'ventas_bump',
     ventas_upsell: 'ventas_upsell',
+    ventas_downsell: 'ventas_downsell',
     ventas_principal_count: 'ventas_principal_count',
     ventas_bump_count: 'ventas_bump_count',
     ventas_upsell_count: 'ventas_upsell_count',
+    ventas_downsell_count: 'ventas_downsell_count',
     ventas_principal_bruto: 'ventas_principal_bruto',
     ventas_bump_bruto:      'ventas_bump_bruto',
     ventas_upsell_bruto:    'ventas_upsell_bruto',
+    ventas_downsell_bruto:  'ventas_downsell_bruto',
+    // Neto de las ventas de ESE día que acabaron devueltas. Se imputa a la fecha
+    // de la venta, no a la del reembolso.
+    ventas_reembolsado:       'ventas_reembolsado',
+    ventas_reembolsado_count: 'ventas_reembolsado_count',
     ventas_cerradas:        'ventas_cerradas',
 
     // ── Funnel actual (inyectado por DashboardClient desde hotmart_funnel_data.by_tab[activeTabId]) ──
@@ -117,6 +126,9 @@ export const FIELD_MAP: Record<string, string> = {
     funnel_upsell_neto:     'funnel_upsell_neto',
     funnel_upsell_bruto:    'funnel_upsell_bruto',
     funnel_upsell_visits:   'funnel_upsell_visits',
+    funnel_downsell_count:  'funnel_downsell_count',
+    funnel_downsell_neto:   'funnel_downsell_neto',
+    funnel_downsell_bruto:  'funnel_downsell_bruto',
     funnel_pagos_iniciados: 'funnel_pagos_iniciados',
 
     // ── Manual ────────────────────────────────────────────────────────────
@@ -168,16 +180,20 @@ export const MACRO_MAP: Record<string, string> = {
     // Bruta = precio público fijo × nº ventas principal (19 USD × 5 = 95).
     // Requiere que el tab tenga principal_price_usd configurado; si no, devuelve 0.
     funnel_facturacion_bruta:   'funnel_principal_price * funnel_principal_count',
-    // Neta = sum de comisiones reales que llegan a la cuenta (principal + bump + upsell).
-    funnel_facturacion_neta:    'funnel_principal_neto + funnel_bump_neto + funnel_upsell_neto',
-    funnel_roas:                '(funnel_principal_neto + funnel_bump_neto + funnel_upsell_neto) / meta_spend',
-    funnel_roi:                 '((funnel_principal_neto + funnel_bump_neto + funnel_upsell_neto) - meta_spend) / meta_spend',
-    funnel_dinero_bolsa:        '(funnel_principal_neto + funnel_bump_neto + funnel_upsell_neto) - meta_spend',
+    // Neta = suma de comisiones reales que llegan a la cuenta. Incluye el
+    // DOWNSELL, que hasta ahora no existía en ninguna parte del repositorio.
+    funnel_facturacion_neta:    'funnel_principal_neto + funnel_bump_neto + funnel_upsell_neto + funnel_downsell_neto',
+    funnel_roas:                '(funnel_principal_neto + funnel_bump_neto + funnel_upsell_neto + funnel_downsell_neto) / meta_spend',
+    funnel_roi:                 '((funnel_principal_neto + funnel_bump_neto + funnel_upsell_neto + funnel_downsell_neto) - meta_spend) / meta_spend',
+    funnel_dinero_bolsa:        '(funnel_principal_neto + funnel_bump_neto + funnel_upsell_neto + funnel_downsell_neto) - meta_spend',
     funnel_costo_compra:        'meta_spend / funnel_principal_count',
     funnel_pct_pagos_compras:   '(funnel_principal_count / funnel_pagos_iniciados) * 100',
     funnel_pct_conversion:      '(funnel_principal_count / meta_link_clicks) * 100',
     funnel_pct_conv_order:      '(funnel_bump_count / funnel_principal_count) * 100',
     funnel_pct_conv_upsell:     '(funnel_upsell_count / funnel_upsell_visits) * 100',
+    // Un downsell se ofrece a quien RECHAZÓ el upsell: el denominador natural es
+    // el mismo tráfico de la página de upsell.
+    funnel_pct_conv_downsell:   '(funnel_downsell_count / funnel_upsell_visits) * 100',
     funnel_costo_pago:          'meta_spend / funnel_pagos_iniciados',
     funnel_pct_visitas_pagos:   '(funnel_pagos_iniciados / ga_sessions) * 100',
     funnel_costo_visita:        'meta_spend / ga_sessions',
@@ -202,13 +218,27 @@ export const MACRO_MAP: Record<string, string> = {
     // `meta_roas`, así que un cliente que invertía en las dos plataformas veía un
     // "ROAS total" inflado: el numerador incluía ventas traídas por TikTok, pero
     // el denominador ignoraba lo que costó TikTok.
+    //
+    // Las `total_*` incluyen ahora el DOWNSELL. Era un hueco real: el concepto no
+    // existía en ninguna parte del repositorio, así que un downsell se contaba
+    // como venta principal o se caía a `extras[]` y desaparecía del total.
     total_spend:                'meta_spend + tiktok_spend',
-    total_facturacion_neta:     'ventas_principal + ventas_bump + ventas_upsell',
-    total_facturacion_bruta:    'ventas_principal_bruto',
-    total_roas:                 '(ventas_principal + ventas_bump + ventas_upsell) / (meta_spend + tiktok_spend)',
-    total_roi:                  '((ventas_principal + ventas_bump + ventas_upsell) - (meta_spend + tiktok_spend)) / (meta_spend + tiktok_spend)',
-    total_dinero_bolsa:         '(ventas_principal + ventas_bump + ventas_upsell) - (meta_spend + tiktok_spend)',
+    total_facturacion_neta:     'ventas_principal + ventas_bump + ventas_upsell + ventas_downsell',
+    // `total_facturacion_bruta` era `ventas_principal_bruto` A SECAS, ignorando
+    // `ventas_bump_bruto` y `ventas_upsell_bruto` — dos columnas que la migración
+    // 010 creó y que el worker SÍ escribe desde entonces. El bruto que veía el
+    // cliente se quedaba corto en todo el importe de sus bumps y upsells.
+    total_facturacion_bruta:    'ventas_principal_bruto + ventas_bump_bruto + ventas_upsell_bruto + ventas_downsell_bruto',
+    total_roas:                 '(ventas_principal + ventas_bump + ventas_upsell + ventas_downsell) / (meta_spend + tiktok_spend)',
+    total_roi:                  '((ventas_principal + ventas_bump + ventas_upsell + ventas_downsell) - (meta_spend + tiktok_spend)) / (meta_spend + tiktok_spend)',
+    total_dinero_bolsa:         '(ventas_principal + ventas_bump + ventas_upsell + ventas_downsell) - (meta_spend + tiktok_spend)',
     total_costo_compra:         '(meta_spend + tiktok_spend) / ventas_principal_count',
+
+    // ── Reembolsos ──────────────────────────────────────────────────────
+    // Antes NO existían: la API se pedía filtrada a APPROVED+COMPLETE, así que
+    // una venta devuelta contaba como facturación para siempre.
+    total_facturacion_neta_real: '(ventas_principal + ventas_bump + ventas_upsell + ventas_downsell) - ventas_reembolsado',
+    total_tasa_reembolso:        'ventas_reembolsado / (ventas_principal + ventas_bump + ventas_upsell + ventas_downsell)',
 }
 
 // ── Semantic Aliases ─────────────────────────────────────────────────────────

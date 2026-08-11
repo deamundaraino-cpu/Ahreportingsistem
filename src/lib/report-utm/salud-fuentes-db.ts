@@ -88,6 +88,9 @@ export async function recogerSenales(cliente: {
     const subs = pid
         ? await ultimaFecha(db, 'hotmart_subscriptions_snapshot', 'captured_date', { cliente_id: pid })
         : { ultimaFecha: null, estado: 'vacia' as EstadoFuente }
+    const hotmart = pid
+        ? await ultimaFecha(db, 'hotmart_ventas', 'fecha_venta', { cliente_id: pid })
+        : { ultimaFecha: null, estado: 'vacia' as EstadoFuente }
 
     // ── Qué tiene configurado el cliente ─────────────────────────────
     // Sin esto el panel avisaría de siete fuentes muertas por cliente, cuando
@@ -143,6 +146,16 @@ export async function recogerSenales(cliente: {
         {
             id: 'subs', label: 'Suscripciones', ...subs, toleranciaDias: TOLERANCIA_DIAS.subs,
             configurada: tiene('hotmart_client_id'), requierePuente: true,
+        },
+        {
+            id: 'hotmart', label: 'Ventas Hotmart', ...hotmart, toleranciaDias: TOLERANCIA_DIAS.hotmart,
+            // Distinta de `sales`: aquella depende de que alguien configure el
+            // webhook y puede estar legítimamente en silencio. Esta la escribe el
+            // worker cada día en cuanto haya credenciales de Hotmart, así que dos
+            // días sin datos ya merecen aviso.
+            configurada: tiene('hotmart_client_id') || tiene('hotmart_basic') ||
+                tiene('hotmart_access_token_enc') || tiene('hotmart_refresh_token_enc'),
+            requierePuente: true,
         },
     ]
 

@@ -28,6 +28,18 @@ export type SyncJobTipo =
     | 'cierre_mes'
     /** Compara el gasto guardado contra el real de la cuenta y repara los días que divergen. */
     | 'reconciliar'
+    /**
+     * Trae las ventas de Hotmart de un rango a `public.hotmart_ventas`.
+     * Con `params.reclasificar` reescribe solo tipo/tab_id LEYENDO la tabla, sin
+     * gastar una sola petición a la API.
+     */
+    | 'hotmart_ventas'
+    /**
+     * Reescanea una ventana móvil buscando reembolsos y chargebacks.
+     * Hace falta un job aparte porque `sales/history` filtra por FECHA DE COMPRA:
+     * un reembolso de hoy sobre una compra de hace un mes no aparece hoy.
+     */
+    | 'hotmart_reconciliar'
 
 export type SyncJobEstado = 'pending' | 'running' | 'done' | 'error' | 'cancelled'
 

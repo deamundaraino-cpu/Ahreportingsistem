@@ -9,6 +9,8 @@ import { revalidatePath } from 'next/cache';
 import { headers } from 'next/headers';
 import { after } from 'next/server';
 import { loadCamposCliente } from '@/lib/sheets/campos-db';
+import { hotmartConectado } from '@/lib/hotmart/cliente';
+import { enqueueJob } from '@/lib/sync/queue';
 import { agregarDiarios, vistaIncluyeValor, clavesPlanasDelDia } from '@/lib/sheets/campos';
 import type { CampoValorDiario, CampoAgg, CampoFormato } from '@/lib/sheets/campos';
 import { mergeMetricasDelRango, agruparOfflinePorFecha } from '@/lib/dashboard/merge-metrics';
@@ -622,7 +624,11 @@ export async function getDashboardData(clientId: string, startStr: string, endSt
   // Basta el property id: la autenticación puede venir del OAuth de agencia
   // (sin ga_client_email). Mismo criterio que el worker y que getReportData.
   if (cfg.ga_property_id) availablePlatforms.add('ga4');
-  if (cfg.hotmart_basic || cfg.hotmart_token) availablePlatforms.add('hotmart');
+  // Criterio ÚNICO, compartido con el worker. Antes aquí se miraba solo
+  // `hotmart_basic || hotmart_token`, que deja fuera a los clientes conectados por
+  // HotConnect: esos perdían la resolución de los alias $facturacion_* del motor
+  // de fórmulas y sus ventas salían en 0 sin ningún aviso.
+  if (hotmartConectado(cfg)) availablePlatforms.add("hotmart");
   if (cfg.tiktok_advertiser_id && cfg.tiktok_access_token) availablePlatforms.add('tiktok');
 
   // Priority: client-specific layout → global assigned layout → null (classic)
@@ -776,8 +782,18 @@ export async function saveClienteTab(
       principal_names?: string[];
       bump_names?: string[];
       upsell_names?: string[];
+      downsell_names?: string[];
+      // Códigos de oferta de Hotmart. Ganan sobre los nombres: son estables y
+      // sobreviven a que alguien renombre el producto en la plataforma, que es
+      // lo que rompía la clasificación en silencio.
+      principal_offers?: string[];
+      bump_offers?: string[];
+      upsell_offers?: string[];
+      downsell_offers?: string[];
+      landing_page_urls?: string[];
       payment_page_url?: string;
       upsell_page_url?: string;
+      principal_price_usd?: number;
     } | null;
   }
 ) {
@@ -825,8 +841,92 @@ export async function saveClienteTab(
     if (error) return { error: error.message };
   }
 
+  // Si el embudo cambió, la clasificación de lo YA guardado queda obsoleta.
+  // Se encola una reclasificación en vez de recalcularla aquí: reescribe
+  // `tipo`/`tab_id` de todo el histórico leyendo `hotmart_ventas`, sin gastar
+  // una sola petición a la API de Hotmart.
+  if (payload.hotmart_funnel !== undefined) {
+    after(async () => {
+      try {
+        const hoy = colombiaToday();
+        await enqueueJob(supabase, {
+          tipo: 'hotmart_ventas',
+          clienteId,
+          start: addDaysISO(hoy, -365),
+          end: hoy,
+          params: { reclasificar: true },
+          prioridad: 5,
+          triggeredBy: 'config_funnel',
+        });
+      } catch (e) {
+        console.error('[saveClienteTab] no se pudo encolar la reclasificación', e);
+      }
+    });
+  }
+
   revalidatePath(`/dashboard/${clienteId}`);
   return { success: true };
+}
+
+/**
+ * Ofertas de Hotmart detectadas en las ventas del cliente.
+ *
+ * Nadie conoce de memoria un `offer.code`, así que la UI no puede pedir que se
+ * escriban a mano: se descubren de las ventas ya recibidas, con su volumen, y se
+ * asignan con un selector. Es la consulta que sirve `idx_hotmart_ventas_oferta`.
+ */
+export async function getOfertasHotmart(clienteId: string, dias = 90) {
+  const supabase = await createAdminClient();
+  const desde = addDaysISO(colombiaToday(), -dias);
+
+  const { data, error } = await supabase
+    .from('hotmart_ventas')
+    .select('oferta_codigo, producto_nombre, bruto_usd, fecha_venta, tipo, clasificacion_origen')
+    .eq('cliente_id', clienteId)
+    .gte('fecha_venta', desde)
+    .limit(5000);
+
+  if (error) return { error: error.message, ofertas: [], cobertura: null };
+
+  type Agregada = {
+    oferta_codigo: string | null;
+    producto_nombre: string | null;
+    ventas: number;
+    bruto_usd: number;
+    ultima: string;
+    tipo: string;
+  };
+  const mapa = new Map<string, Agregada>();
+  let clasificadas = 0;
+
+  for (const f of data ?? []) {
+    if (f.clasificacion_origen !== 'sin_clasificar') clasificadas++;
+    // Las ventas sin código de oferta se agrupan por nombre: son las que solo se
+    // pueden clasificar por el mecanismo heredado.
+    const clave = f.oferta_codigo ?? `sin-oferta:${f.producto_nombre ?? ''}`;
+    const cur = mapa.get(clave) ?? {
+      oferta_codigo: f.oferta_codigo,
+      producto_nombre: f.producto_nombre,
+      ventas: 0, bruto_usd: 0, ultima: f.fecha_venta, tipo: f.tipo,
+    };
+    cur.ventas++;
+    cur.bruto_usd += Number(f.bruto_usd ?? 0);
+    if (f.fecha_venta > cur.ultima) cur.ultima = f.fecha_venta;
+    if (!cur.producto_nombre && f.producto_nombre) cur.producto_nombre = f.producto_nombre;
+    mapa.set(clave, cur);
+  }
+
+  const total = (data ?? []).length;
+  return {
+    ofertas: Array.from(mapa.values()).sort((a, b) => b.ventas - a.ventas),
+    cobertura: {
+      total,
+      clasificadas,
+      // Por debajo del 95% conviene avisar antes de que nadie tome decisiones
+      // con el desglose por tipo.
+      pct: total === 0 ? 100 : Math.round((clasificadas / total) * 1000) / 10,
+    },
+  };
 }
 
 /**
@@ -1519,7 +1619,7 @@ export async function getMirrorDashboardData(token: string, from?: string, to?: 
   const availablePlatforms = new Set<string>(['meta']);
   const cfg = (cliente.config_api as any) || {};
   if (cfg.ga_property_id) availablePlatforms.add('ga4');
-  if (cfg.hotmart_token) availablePlatforms.add('hotmart');
+  if (hotmartConectado(cfg)) availablePlatforms.add("hotmart");
   if (cfg.tiktok_access_token) availablePlatforms.add('tiktok');
 
   // Filter tabs by public_tab_ids if configured on client token

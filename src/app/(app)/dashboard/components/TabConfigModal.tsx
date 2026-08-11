@@ -1,12 +1,12 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Button } from '@/components/ui/button'
 import { Trash2, ChevronDown, ChevronRight, Zap, Copy, Bookmark, Plus, X } from 'lucide-react'
-import { saveClienteTab, deleteClienteTab, duplicateClienteTab, saveTabAsTemplate } from '../_actions'
+import { saveClienteTab, deleteClienteTab, duplicateClienteTab, saveTabAsTemplate, getOfertasHotmart } from '../_actions'
 import { parseTabFilter, serializeTabFilter } from '@/lib/campaign-filter'
 import type { CampaignFilterOperator } from '@/lib/layout-types'
 import { toast } from 'sonner'
@@ -43,10 +43,35 @@ type HotmartFunnel = {
     principal_names?: string[]
     bump_names?: string[]
     upsell_names?: string[]
+    downsell_names?: string[]
+    /** Códigos de oferta. Ganan sobre los nombres. */
+    principal_offers?: string[]
+    bump_offers?: string[]
+    upsell_offers?: string[]
+    downsell_offers?: string[]
     landing_page_urls?: string[]
     payment_page_url?: string
     upsell_page_url?: string
     principal_price_usd?: number
+}
+
+/** Los cuatro roles del embudo, en el orden en que se muestran. */
+const ROLES_FUNNEL = [
+    { valor: 'principal', label: 'Principal' },
+    { valor: 'bump', label: 'Order bump' },
+    { valor: 'upsell', label: 'Upsell' },
+    { valor: 'downsell', label: 'Downsell' },
+    { valor: 'ignorar', label: 'Ignorar' },
+] as const
+type RolFunnel = (typeof ROLES_FUNNEL)[number]['valor']
+
+type OfertaDetectada = {
+    oferta_codigo: string | null
+    producto_nombre: string | null
+    ventas: number
+    bruto_usd: number
+    ultima: string
+    tipo: string
 }
 
 function arrayToText(arr?: string[]): string {
@@ -94,9 +119,51 @@ export function TabConfigModal({
     const [principalPriceUsd, setPrincipalPriceUsd] = useState<string>(initialFunnel.principal_price_usd?.toString() || '')
     const [bumpNames, setBumpNames] = useState<string>(arrayToText(initialFunnel.bump_names))
     const [upsellNames, setUpsellNames] = useState<string>(arrayToText(initialFunnel.upsell_names))
+    const [downsellNames, setDownsellNames] = useState<string>(arrayToText(initialFunnel.downsell_names))
     const [landingPageUrls, setLandingPageUrls] = useState<string>(arrayToText(initialFunnel.landing_page_urls))
     const [paymentPageUrl, setPaymentPageUrl] = useState<string>(initialFunnel.payment_page_url || '')
     const [upsellPageUrl, setUpsellPageUrl] = useState<string>(initialFunnel.upsell_page_url || '')
+
+    // ── Mapa de ofertas: código de Hotmart → rol del embudo ──────────────
+    // Es el mecanismo bueno. El de los nombres se queda como red de seguridad,
+    // pero se rompe en silencio en cuanto alguien renombra un producto en
+    // Hotmart: esas ventas dejan de clasificarse y desaparecen del desglose.
+    const [ofertas, setOfertas] = useState<OfertaDetectada[]>([])
+    const [cobertura, setCobertura] = useState<{ total: number; pct: number } | null>(null)
+    const [cargandoOfertas, setCargandoOfertas] = useState(false)
+    const [mapaOfertas, setMapaOfertas] = useState<Record<string, RolFunnel>>(() => {
+        const m: Record<string, RolFunnel> = {}
+        for (const c of initialFunnel.principal_offers ?? []) m[c] = 'principal'
+        for (const c of initialFunnel.bump_offers ?? []) m[c] = 'bump'
+        for (const c of initialFunnel.upsell_offers ?? []) m[c] = 'upsell'
+        for (const c of initialFunnel.downsell_offers ?? []) m[c] = 'downsell'
+        return m
+    })
+
+    // Las ofertas se descubren de las ventas ya recibidas: nadie conoce de
+    // memoria un `offer.code` para poder escribirlo a mano.
+    useEffect(() => {
+        if (!isOpen || !clienteHasHotmart || !funnelExpanded) return
+        let vivo = true
+        // Todos los setState van DENTRO de la función asíncrona: llamarlos en el
+        // cuerpo del efecto dispara un render en cascada.
+        const cargar = async () => {
+            setCargandoOfertas(true)
+            try {
+                const res = await getOfertasHotmart(clienteId)
+                if (!vivo) return
+                setOfertas((res.ofertas ?? []) as OfertaDetectada[])
+                setCobertura(res.cobertura ?? null)
+            } finally {
+                if (vivo) setCargandoOfertas(false)
+            }
+        }
+        void cargar()
+        return () => { vivo = false }
+    }, [isOpen, clienteHasHotmart, funnelExpanded, clienteId])
+
+    const ofertasPorRol = (rol: RolFunnel) =>
+        Object.entries(mapaOfertas).filter(([, r]) => r === rol).map(([c]) => c)
 
     const [saving, setSaving] = useState(false)
     const [duplicating, setDuplicating] = useState(false)
@@ -155,6 +222,12 @@ export function TabConfigModal({
                 principal_price_usd: principalPriceUsd ? parseFloat(principalPriceUsd) : undefined,
                 bump_names: textToArray(bumpNames),
                 upsell_names: textToArray(upsellNames),
+                downsell_names: textToArray(downsellNames),
+                // Los códigos de oferta ganan sobre los nombres al clasificar.
+                principal_offers: ofertasPorRol('principal'),
+                bump_offers: ofertasPorRol('bump'),
+                upsell_offers: ofertasPorRol('upsell'),
+                downsell_offers: ofertasPorRol('downsell'),
                 landing_page_urls: textToArray(landingPageUrls),
                 payment_page_url: paymentPageUrl.trim() || undefined,
                 upsell_page_url: upsellPageUrl.trim() || undefined,
@@ -376,8 +449,71 @@ export function TabConfigModal({
 
                                     {funnelEnabled && (
                                         <>
+                                            {/* ── Ofertas detectadas ──────────────────────────────
+                                                El mecanismo BUENO. El `offer.code` de Hotmart es
+                                                estable: sobrevive a que alguien renombre el producto,
+                                                que es justo lo que rompía la clasificación por nombre
+                                                sin dar ningún aviso. */}
+                                            <div className="border border-border rounded-lg p-3 space-y-3 bg-card/40">
+                                                <div className="flex items-center justify-between gap-2">
+                                                    <span className="text-xs font-semibold text-foreground/90">Ofertas detectadas (últimos 90 días)</span>
+                                                    {cobertura && (
+                                                        <span className={`text-[10px] px-1.5 py-0.5 rounded ${cobertura.pct >= 95 ? 'bg-emerald-500/15 text-emerald-500' : 'bg-amber-500/15 text-amber-500'}`}>
+                                                            {cobertura.pct}% clasificado
+                                                        </span>
+                                                    )}
+                                                </div>
+
+                                                {cargandoOfertas && (
+                                                    <p className="text-[11px] text-muted-foreground/70">Buscando ofertas…</p>
+                                                )}
+
+                                                {!cargandoOfertas && ofertas.length === 0 && (
+                                                    <p className="text-[11px] text-muted-foreground/70 leading-relaxed">
+                                                        Todavía no hay ventas registradas para este cliente. En cuanto entren, sus ofertas aparecerán aquí y podrás asignarlas sin escribir códigos a mano. Mientras tanto, usa los nombres de producto de abajo.
+                                                    </p>
+                                                )}
+
+                                                {!cargandoOfertas && ofertas.length > 0 && (
+                                                    <>
+                                                        <div className="space-y-1.5 max-h-56 overflow-y-auto">
+                                                            {ofertas.map(o => {
+                                                                const codigo = o.oferta_codigo
+                                                                return (
+                                                                    <div key={codigo ?? `n:${o.producto_nombre}`} className="flex items-center gap-2 text-[11px]">
+                                                                        <div className="min-w-0 flex-1">
+                                                                            <div className="truncate text-foreground/90">{o.producto_nombre || '(sin nombre)'}</div>
+                                                                            <div className="text-muted-foreground/60 font-mono truncate">
+                                                                                {codigo ?? 'sin código de oferta'} · {o.ventas} venta(s) · ${o.bruto_usd.toFixed(0)}
+                                                                            </div>
+                                                                        </div>
+                                                                        {codigo ? (
+                                                                            <select
+                                                                                value={mapaOfertas[codigo] ?? 'ignorar'}
+                                                                                onChange={e => setMapaOfertas(prev => ({ ...prev, [codigo]: e.target.value as RolFunnel }))}
+                                                                                className="bg-card border border-border rounded px-1.5 py-1 text-[11px] shrink-0"
+                                                                            >
+                                                                                {ROLES_FUNNEL.map(r => (
+                                                                                    <option key={r.valor} value={r.valor}>{r.label}</option>
+                                                                                ))}
+                                                                            </select>
+                                                                        ) : (
+                                                                            // Hotmart no mandó código: solo se puede clasificar por nombre.
+                                                                            <span className="text-[10px] text-muted-foreground/60 shrink-0">por nombre</span>
+                                                                        )}
+                                                                    </div>
+                                                                )
+                                                            })}
+                                                        </div>
+                                                        <p className="text-[10px] text-muted-foreground/70 leading-relaxed">
+                                                            Al guardar se reclasifica el histórico completo. No se llama a la API de Hotmart: se reescribe la clasificación de las ventas ya guardadas.
+                                                        </p>
+                                                    </>
+                                                )}
+                                            </div>
+
                                             <p className="text-xs text-muted-foreground/70 leading-relaxed">
-                                                Separa nombres de productos por comas. Soporta wildcards SQL <code className="bg-card px-1 rounded">%</code> (cualquier secuencia) y <code className="bg-card px-1 rounded">_</code> (un carácter). Ej. <code className="bg-card px-1 rounded">Camaradictos%</code>.
+                                                Nombres de producto (red de seguridad para las ventas sin oferta asignada). Separa por comas. Soporta wildcards SQL <code className="bg-card px-1 rounded">%</code> (cualquier secuencia) y <code className="bg-card px-1 rounded">_</code> (un carácter). Ej. <code className="bg-card px-1 rounded">Camaradictos%</code>.
                                             </p>
 
                                             <div className="space-y-2">
@@ -421,6 +557,17 @@ export function TabConfigModal({
                                                     onChange={e => setUpsellNames(e.target.value)}
                                                     className="bg-card border-border"
                                                 />
+                                            </div>
+
+                                            <div className="space-y-2">
+                                                <label className="text-xs font-semibold text-muted-foreground">Productos Downsell</label>
+                                                <Input
+                                                    placeholder="Ej. Downsell Photocards"
+                                                    value={downsellNames}
+                                                    onChange={e => setDownsellNames(e.target.value)}
+                                                    className="bg-card border-border"
+                                                />
+                                                <p className="text-[10px] text-muted-foreground/70">La oferta alternativa que se muestra a quien rechaza el upsell. Hasta ahora se contaba como venta principal o se perdía en «productos extras».</p>
                                             </div>
 
                                             <div className="border-t border-border pt-3 space-y-3">

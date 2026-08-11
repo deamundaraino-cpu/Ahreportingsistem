@@ -30,9 +30,32 @@ import { loadLeadCampos } from './lead-campos-db'
 import { bucketDeLeadRaw, ordenarBuckets } from './lead-campos'
 import type { LeadCampoDef } from './lead-campos'
 
-// Dimensiones que SOLO existen en sales_events (no en lead_events). Al agrupar
-// por ellas, la query de leads se omite (no tienen esas columnas).
-const SALES_ONLY_DIMS = new Set(['product_name', 'transaction_type', 'customer_country'])
+// Dimensiones que SOLO existen en las tablas de ventas (no en lead_events). Al
+// agrupar por ellas, la query de leads se omite (no tienen esas columnas).
+const SALES_ONLY_DIMS = new Set([
+    'product_name', 'transaction_type', 'customer_country',
+    // public.hotmart_ventas
+    'hm_tipo', 'hm_oferta', 'hm_producto', 'hm_pais', 'hm_metodo_pago',
+])
+
+/** Métricas físicas de `public.hotmart_ventas`. */
+const HOTMART_METRICS = [
+    'hm_ventas', 'hm_neto', 'hm_bruto', 'hm_reembolsos', 'hm_neto_reembolsado',
+] as const
+
+/** Todas las de la fuente `hotmart`, incluidas las derivadas. */
+const HOTMART_ALL_METRICS = [
+    ...HOTMART_METRICS, 'hm_tasa_reembolso', 'hm_roas', 'hm_cpa', 'hm_ticket_medio',
+] as const
+
+/** Dimensión histórica → columna de `hotmart_ventas`. */
+const HOTMART_DIM_COL: Readonly<Record<string, string>> = {
+    hm_tipo: 'tipo',
+    hm_oferta: 'oferta_codigo',
+    hm_producto: 'producto_nombre',
+    hm_pais: 'comprador_pais',
+    hm_metodo_pago: 'pago_tipo',
+}
 
 /** Campo UTM del que cuelga el filtro de cada entidad del reporting. */
 const ENTITY_FILTER_FIELD = {
@@ -174,11 +197,17 @@ export async function runBiQuery(params: BiQueryParams): Promise<BiQueryRow[]> {
     // (sales_events / metricas_diarias no tienen raw_fields) → se omiten cuando
     // se agrupa por campo para no romper el select ni inventar una fila "(total)".
     const needsSales = !isFieldDimQuery && !isSheetDimQuery && requires(['sales_count', 'revenue', 'cpa', 'roas', 'conversion_rate'])
+    // Ventas de Hotmart por transacción (public.hotmart_ventas). Fuente aparte de
+    // `sales`: cuelga de `public.clientes` vía el puente, tiene el dinero ya en
+    // dólares y distingue reembolsos.
+    const needsHotmart = !isFieldDimQuery && !isSheetDimQuery && requires([...HOTMART_ALL_METRICS])
     const needsAds   = !isFieldDimQuery && !isSheetDimQuery && requires([
         'spend', 'meta_spend', 'tiktok_spend', 'cpl', 'cpa', 'roas', 'clicks', 'impressions', 'cpc', 'cpm', 'frequency', 'ctr',
         ...AD_JSONB_METRICS, ...AD_SCALAR_METRICS, ...AD_RATE_METRICS,
         ...MANUAL_JSONB_METRICS.map(m => m.metric),
         'hotmart_revenue', 'hotmart_sales', 'hotmart_roas', 'hotmart_cpa', 'hotmart_roi',
+        // El ROAS y el CPA reales de Hotmart necesitan el gasto como denominador.
+        'hm_roas', 'hm_cpa',
     ])
     // Offline (día×cliente) y suscripciones (snapshot) son globales/por fecha,
     // no cruzan por dimensiones de lead/venta/anuncio.
@@ -231,6 +260,12 @@ export async function runBiQuery(params: BiQueryParams): Promise<BiQueryRow[]> {
         salesData = await querySalesDirect(supabase, params, dateFrom, dateTo, resolver, nocross)
     }
 
+    // ── HOTMART query (public.hotmart_ventas) ─────────────────────────
+    let hotmartData: HotmartRow[] = []
+    if (needsHotmart) {
+        hotmartData = await queryHotmartDirect(params, dateFrom, dateTo, resolver, nocross)
+    }
+
     // ── ADS query (metricas_diarias) ──────────────────────────────────
     let adsData: AdRow[] = []
     if (needsAds) {
@@ -262,7 +297,7 @@ export async function runBiQuery(params: BiQueryParams): Promise<BiQueryRow[]> {
     // ── Merge results ─────────────────────────────────────────────────
     return mergeResults(
         params, leadsData, salesData, adsData, fieldMetrics, offlineData, subsData, offlineFields,
-        sheetData, sheetFields, leadCampos, nocross
+        sheetData, sheetFields, leadCampos, nocross, hotmartData
     )
 }
 
@@ -703,6 +738,92 @@ async function querySalesDirect(
     return Array.from(map.entries())
         .map(([dim, v]) => ({ dim, ...v }))
         .sort((a, b) => b.revenue - a.revenue)
+}
+
+/** Una fila agregada de `public.hotmart_ventas`. */
+export interface HotmartRow {
+    dim: string | null
+    ventas: number
+    neto: number
+    bruto: number
+    reembolsos: number
+    neto_reembolsado: number
+}
+
+/**
+ * Ventas de Hotmart agregadas por dimensión.
+ *
+ * Tres diferencias deliberadas frente a `querySalesDirect`:
+ *
+ *  1. NO usa `rangoColombia`. `fecha_venta` es un DATE ya convertido al día
+ *     Colombia cuando se escribió, así que se filtra con `>=` y `<=` y nadie
+ *     vuelve a hacer aritmética de zonas. Aquí se acaban las tres definiciones
+ *     de "fecha de venta" que competían en el módulo.
+ *  2. NO filtra `status = 'approved'` de forma dura. Los estados se separan en
+ *     el acumulador para poder devolver, en la misma pasada, lo cobrado y lo
+ *     devuelto. Con el filtro duro los reembolsos eran invisibles.
+ *  3. Cuelga de `public.clientes` vía el puente `public_cliente_id`: sin él, la
+ *     fuente no es legible y el motor debe reportarlo, no devolver ceros.
+ */
+async function queryHotmartDirect(
+    params: BiQueryParams,
+    dateFrom: string,
+    dateTo: string,
+    resolver: CampaignResolver | null = null,
+    nocross: Set<string> = new Set()
+): Promise<HotmartRow[]> {
+    const publicId = params.cliente_id ? await resolvePublicClienteId(params.cliente_id) : null
+    // Sin puente no hay datos que leer. Devolver [] hace que `mergeResults` deje
+    // las métricas en null y que el diagnóstico diga `no_public_link`.
+    if (params.cliente_id && !publicId) return []
+
+    const supabase = await createAdminClient()
+    const unified = unifiedTarget(params.dimension)
+    const dimCol = HOTMART_DIM_COL[params.dimension]
+
+    const selectCols = new Set<string>([
+        'id', 'fecha_venta', 'estado', 'neto_productor_usd', 'bruto_usd',
+    ])
+    if (dimCol) selectCols.add(dimCol)
+    // Para cruzar por campaña/anuncio/conjunto hace falta el UTM de la venta: el
+    // resolver lo traduce al nombre real de la entidad.
+    if (unified) for (const c of UTM_RESOLVE_COLS) selectCols.add(c)
+
+    let q = supabase
+        .from('hotmart_ventas')
+        .select(Array.from(selectCols).join(','))
+        .gte('fecha_venta', dateFrom)
+        .lte('fecha_venta', dateTo)
+    if (publicId) q = q.eq('cliente_id', publicId)
+
+    const data = await fetchAllRows(() => q)
+
+    const map = new Map<string, HotmartRow>()
+    for (const r of data as Record<string, unknown>[]) {
+        const dim = dimCol
+            ? String(r[dimCol] ?? '(sin dato)')
+            : getDimValue(r, params.dimension, params.date_grouping, [], resolver, nocross, 'fecha_venta')
+
+        const entry = map.get(dim) ?? {
+            dim, ventas: 0, neto: 0, bruto: 0, reembolsos: 0, neto_reembolsado: 0,
+        }
+        const estado = String(r.estado ?? '')
+        const neto = Number(r.neto_productor_usd ?? 0) || 0
+        const bruto = Number(r.bruto_usd ?? 0) || 0
+
+        if (estado === 'reembolsada' || estado === 'chargeback') {
+            entry.reembolsos += 1
+            entry.neto_reembolsado += neto
+        } else if (estado === 'aprobada' || estado === 'completa') {
+            entry.ventas += 1
+            entry.neto += neto
+            entry.bruto += bruto
+        }
+        // Pendiente / expirada / cancelada: todavía no es dinero, no se cuenta.
+        map.set(dim, entry)
+    }
+
+    return Array.from(map.values()).sort((a, b) => b.neto - a.neto)
 }
 
 interface AdRow {
@@ -1648,11 +1769,13 @@ function mergeResults(
     sheetData: SheetRow[] = [],
     sheetFields: SheetReq[] = [],
     leadCampos: LeadCampoDef[] = [],
-    nocross: Set<string> = new Set()
+    nocross: Set<string> = new Set(),
+    hotmartData: HotmartRow[] = []
 ): BiQueryRow[] {
     const keys = new Set<string>()
     leadsData.forEach(r => keys.add(r.dim ?? 'total'))
     salesData.forEach(r => keys.add(r.dim ?? 'total'))
+    hotmartData.forEach(r => keys.add(r.dim ?? 'total'))
     adsData.forEach(r => keys.add(r.dim ?? 'total'))
     offlineData.forEach(r => keys.add(r.dim ?? 'total'))
     sheetData.forEach(r => keys.add(r.dim))
@@ -1741,6 +1864,27 @@ function mergeResults(
         if (params.metrics.includes('hotmart_roas')) row.hotmart_roas = spend > 0 && hotmartRevenue > 0 ? round2(hotmartRevenue / spend) : null
         if (params.metrics.includes('hotmart_cpa'))  row.hotmart_cpa  = spend > 0 && hotmartSales > 0 ? round2(spend / hotmartSales) : null
         if (params.metrics.includes('hotmart_roi'))  row.hotmart_roi  = spend > 0 && hotmartRevenue > 0 ? round2(((hotmartRevenue - spend) / spend) * 100) : null
+
+        // ── Ventas de Hotmart por transacción (public.hotmart_ventas) ──
+        // A diferencia de las tres de arriba, estas SÍ se reparten por campaña:
+        // vienen de una tabla con una fila por venta y sus propios UTM.
+        const hm = hotmartData.find(r => (r.dim ?? 'total') === key)
+        const hmVentas = hm?.ventas ?? 0
+        const hmNeto = round2(hm?.neto ?? 0)
+        const hmReembolsado = round2(hm?.neto_reembolsado ?? 0)
+        if (params.metrics.includes('hm_ventas'))           row.hm_ventas           = hmVentas
+        if (params.metrics.includes('hm_neto'))             row.hm_neto             = hmNeto
+        if (params.metrics.includes('hm_bruto'))            row.hm_bruto            = round2(hm?.bruto ?? 0)
+        if (params.metrics.includes('hm_reembolsos'))       row.hm_reembolsos       = hm?.reembolsos ?? 0
+        if (params.metrics.includes('hm_neto_reembolsado')) row.hm_neto_reembolsado = hmReembolsado
+        // Mismo criterio de null que el resto de ratios: sin denominador el valor
+        // es DESCONOCIDO, no cero. Un 0 se lee como "no se devolvió nada" / "no se
+        // recuperó nada", que es una afirmación que no podemos hacer.
+        if (params.metrics.includes('hm_tasa_reembolso')) row.hm_tasa_reembolso = hmNeto > 0 ? round2((hmReembolsado / hmNeto) * 100) : null
+        if (params.metrics.includes('hm_roas'))           row.hm_roas           = spend > 0 && hmNeto > 0 ? round2(hmNeto / spend) : null
+        if (params.metrics.includes('hm_cpa'))            row.hm_cpa            = spend > 0 && hmVentas > 0 ? round2(spend / hmVentas) : null
+        if (params.metrics.includes('hm_ticket_medio'))   row.hm_ticket_medio   = hmVentas > 0 ? round2(hmNeto / hmVentas) : null
+
         // Conversiones offline
         const off = offlineData.find(r => (r.dim ?? 'total') === key)
         if (params.metrics.includes('offline_leads'))   row.offline_leads   = off?.offline_leads   ?? 0
@@ -1804,6 +1948,23 @@ function mergeResults(
             baseValues.hotmart_roas = spend > 0 ? round2(hotmartRevenue / spend) : 0
             baseValues.hotmart_cpa  = hotmartSales > 0 && spend > 0 ? round2(spend / hotmartSales) : 0
             baseValues.hotmart_roi  = spend > 0 ? round2(((hotmartRevenue - spend) / spend) * 100) : 0
+            // Ventas de Hotmart por transacción. Este bloque es gemelo del de
+            // arriba y hay que tocar LOS DOS: si solo se toca uno, la métrica sale
+            // bien en la tabla y devuelve 0 dentro de un campo calculado.
+            //
+            // Aquí los ratios caen a 0 en vez de a null a propósito: un
+            // identificador ausente en una expresión sigue valiendo 0, que es el
+            // comportamiento con el que se guardaron los campos calculados
+            // existentes. Los null explícitos los aporta la fila, no esta tabla.
+            baseValues.hm_ventas           = hmVentas
+            baseValues.hm_neto             = hmNeto
+            baseValues.hm_bruto            = round2(hm?.bruto ?? 0)
+            baseValues.hm_reembolsos       = hm?.reembolsos ?? 0
+            baseValues.hm_neto_reembolsado = hmReembolsado
+            baseValues.hm_tasa_reembolso   = hmNeto > 0 ? round2((hmReembolsado / hmNeto) * 100) : 0
+            baseValues.hm_roas             = spend > 0 ? round2(hmNeto / spend) : 0
+            baseValues.hm_cpa              = hmVentas > 0 && spend > 0 ? round2(spend / hmVentas) : 0
+            baseValues.hm_ticket_medio     = hmVentas > 0 ? round2(hmNeto / hmVentas) : 0
             baseValues.offline_leads   = off?.offline_leads   ?? 0
             baseValues.offline_ventas  = off?.offline_ventas  ?? 0
             baseValues.offline_revenue = round2(off?.offline_revenue ?? 0)
@@ -2023,7 +2184,13 @@ function getDimValue(
     grouping?: DateGrouping,
     leadCampos: LeadCampoDef[] = [],
     resolver: CampaignResolver | null = null,
-    nocross?: Set<string>
+    nocross?: Set<string>,
+    /**
+     * Columna de la que sacar la fecha. Por defecto `created_at`, que es lo que
+     * tienen leads y ventas. `hotmart_ventas` trae `fecha_venta`, un DATE ya en
+     * día Colombia: `colombiaDateOf` lo devuelve intacto porque no lleva hora.
+     */
+    columnaFecha: string = 'created_at'
 ): string {
     if (dimension === 'none') return 'total'
     if (dimension === 'date') {
@@ -2034,7 +2201,7 @@ function getDimValue(
         // Colombia. Un lead de las 20:00 en Colombia es 01:00 UTC del día
         // siguiente, así que se comparaba contra el gasto del día equivocado.
         // Medido en julio 2026: el 26,9% de los leads caía en el día incorrecto.
-        return truncateDate(colombiaDateOf(row.created_at as string), grouping ?? 'day')
+        return truncateDate(colombiaDateOf(row[columnaFecha] as string), grouping ?? 'day')
     }
     // Dimensión unificada: la fila cuenta bajo el NOMBRE REAL de la campaña /
     // anuncio / conjunto al que cruza, que es la misma clave con la que se emite
@@ -2178,6 +2345,28 @@ export async function runDistinctValues(params: {
     const dateFrom = params.date_from ?? new Date(Date.now() - 90 * 86400_000).toISOString().slice(0, 10)
     const dateTo   = params.date_to   ?? new Date().toISOString().slice(0, 10)
     const table = params.source === 'sales' ? 'sales_events' : 'lead_events'
+
+    // Dimensiones de `public.hotmart_ventas`: viven en otra tabla y en otro
+    // esquema, así que se resuelven aparte antes de la ruta genérica.
+    const hmCol = HOTMART_DIM_COL[dim]
+    if (hmCol) {
+        if (!params.cliente_id) return []
+        const publicId = await resolvePublicClienteId(params.cliente_id)
+        if (!publicId) return []
+        const { data } = await supabase
+            .from('hotmart_ventas')
+            .select(hmCol)
+            .eq('cliente_id', publicId)
+            .gte('fecha_venta', dateFrom).lte('fecha_venta', dateTo)
+            .not(hmCol, 'is', null)
+            .limit(5000)
+        const set = new Set<string>()
+        for (const r of (data ?? []) as unknown as Record<string, unknown>[]) {
+            const v = String(r[hmCol] ?? '').trim()
+            if (v) set.add(v)
+        }
+        return Array.from(set).sort().slice(0, params.limit ?? 500)
+    }
 
     // Dimensión de campo de lead: los valores son los BUCKETS del campo, en el
     // orden que definió el analista. Se calculan sobre los leads del período —
