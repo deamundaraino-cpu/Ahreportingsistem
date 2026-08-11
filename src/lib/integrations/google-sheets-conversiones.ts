@@ -181,6 +181,16 @@ export interface ConversionRow {
   sheet_id: string
   /** Pestaña concreta de la que proviene la fila. */
   tab_name: string
+  /**
+   * Número de fila dentro de la pestaña, 1-indexado como en `SheetRawRow`.
+   *
+   * Es la tercera pata de la clave natural (cliente, sheet, pestaña, fila) que
+   * permite al sync escribir por UPSERT en vez de reinsertar el sheet entero.
+   * Sin él, `conversiones_offline` no tiene forma de identificar una fila: su
+   * contenido se repite —25.863 filas reales dan sólo 776 combinaciones
+   * distintas de (fecha, tipo, fuente, cantidad, valor, notas)—.
+   */
+  fila_num: number
 }
 
 export interface ConversionDiaria {
@@ -639,6 +649,9 @@ export function parseTabPayload(
     conversiones.push({
       fecha, tipo, cantidad, valor, fuente, notas, custom_fields,
       sheet_id: sheetId, tab_name: tabTitle,
+      // Mismo `i + 1` que la fila cruda de arriba: las dos salen de esta misma
+      // vuelta del bucle, así que comparten número de fila y con él la clave.
+      fila_num: i + 1,
     })
   }
 
@@ -693,16 +706,30 @@ async function parseTabRows(
  */
 export async function fetchConversionesFromSheet(
   config: ConversionesConfig
-): Promise<{ rows: ConversionRow[]; crudas: SheetRawRow[]; quality: TabSyncQuality[] }> {
+): Promise<{
+  rows: ConversionRow[]
+  crudas: SheetRawRow[]
+  quality: TabSyncQuality[]
+  /**
+   * Títulos de las pestañas leídas ENTERAS, tal y como quedan en `tab_name`.
+   *
+   * Es lo único que el sync puede podar sin riesgo: una pestaña que falló sale
+   * de aquí, así que conserva sus filas anteriores en vez de quedarse vacía por
+   * un error de lectura. Una pestaña leída bien pero con 0 filas sí entra —el
+   * Sheet está vacío de verdad y sus filas viejas deben irse—.
+   */
+  tabsLeidas: string[]
+}> {
   const sheetId = config.id || 'sheet_0'
   const tabs = normalizeTabs(config).filter(t => t.enabled)
-  if (tabs.length === 0) return { rows: [], crudas: [], quality: [] }
+  if (tabs.length === 0) return { rows: [], crudas: [], quality: [], tabsLeidas: [] }
 
   const doc = await loadDoc(config)
 
   const allRows: ConversionRow[] = []
   const allCrudas: SheetRawRow[] = []
   const quality: TabSyncQuality[] = []
+  const tabsLeidas: string[] = []
   let failed = 0
 
   for (const tab of tabs) {
@@ -712,6 +739,7 @@ export async function fetchConversionesFromSheet(
       allRows.push(...res.conversiones)
       allCrudas.push(...res.crudas)
       quality.push(res.quality)
+      tabsLeidas.push(res.quality.tab_name)
     } catch (err: any) {
       failed++
       quality.push({
@@ -726,7 +754,7 @@ export async function fetchConversionesFromSheet(
     throw new Error(quality.map(q => `${q.tab_name}: ${q.warnings.join('; ')}`).join(' | '))
   }
 
-  return { rows: allRows, crudas: allCrudas, quality }
+  return { rows: allRows, crudas: allCrudas, quality, tabsLeidas }
 }
 
 /**
@@ -862,17 +890,89 @@ export async function listGoogleSheets(): Promise<DriveSheet[]> {
   }))
 }
 
+/** Filas por llamada a las RPC de upsert (migración 069). */
+const UPSERT_TRAMO = 500
+
 /**
- * Inserta el lote de UNA tanda (un sheet entero, o una sola pestaña de él).
+ * Manda un tramo de filas a la RPC de upsert y devuelve cuántas escribió.
  *
- * Solo inserta: ni agrega ni retira lotes anteriores. Eso lo hace
- * `consolidarLoteSheet`, y va aparte porque un sync partido por pestañas manda
- * varias tandas con el MISMO `sync_batch_id` y el reemplazo no puede ocurrir
- * hasta que estén todas — si no, la primera pestaña borraría los datos viejos de
- * las otras dos y el sheet se quedaría a un tercio hasta el final.
+ * La RPC resuelve el diff en la propia sentencia: inserta las claves nuevas,
+ * actualiza las que cambiaron de hash y descarta —sin escribir— las idénticas.
+ * El número que devuelve es la métrica que interesa vigilar: en un Sheet que no
+ * se ha tocado tiene que ser 0.
+ */
+async function upsertTramos(
+  supabase: any,
+  rpc: string,
+  clienteId: string,
+  sheetId: string,
+  batchId: string,
+  filas: Record<string, unknown>[]
+): Promise<number> {
+  let escritas = 0
+  for (let i = 0; i < filas.length; i += UPSERT_TRAMO) {
+    const { data, error } = await supabase.rpc(rpc, {
+      p_cliente_id: clienteId,
+      p_sheet_id: sheetId,
+      p_batch: batchId,
+      p_filas: filas.slice(i, i + UPSERT_TRAMO),
+    })
+    if (error) throw new Error(error.message)
+    escritas += Number(data ?? 0)
+  }
+  return escritas
+}
+
+/** Poda una pestaña dejando vivas solo las filas cuyo número sigue en el Sheet. */
+async function podarTab(
+  supabase: any,
+  rpc: string,
+  clienteId: string,
+  sheetId: string,
+  tab: string,
+  vivas: number[]
+): Promise<void> {
+  const { error } = await supabase.rpc(rpc, {
+    p_cliente_id: clienteId,
+    p_sheet_id: sheetId,
+    p_tab_name: tab,
+    p_vivas: vivas,
+  })
+  if (error) throw new Error(error.message)
+}
+
+/**
+ * Escribe el lote de UNA tanda (un sheet entero, o una sola pestaña de él).
  *
- * `tabName` acota el deshacer: cuando falla una pestaña suelta se retira solo lo
- * suyo, no lo que ya habían dejado las pestañas anteriores del mismo lote.
+ * ── Por qué ya no es un INSERT ──────────────────────────────────
+ * Hasta la migración 069 esto insertaba el sheet ENTERO con un `sync_batch_id`
+ * nuevo y `consolidarLoteSheet` borraba después el lote anterior. Medido en
+ * producción: 1,5 millones de INSERT y 1,5 millones de DELETE para sostener
+ * 25.863 filas vivas —unas 37 reescrituras por fila superviviente—, aunque el
+ * Sheet no hubiera cambiado nada.
+ *
+ * Ahora se escribe por UPSERT contra la clave natural
+ * (cliente_id, sheet_id, tab_name, fila_num) y la RPC compara un hash del
+ * contenido: la fila que no cambió no se toca. Un sync sobre un Sheet estable
+ * escribe cero filas.
+ *
+ * ── Y por qué el borrado se hace aquí y no al consolidar ────────
+ * El criterio ya no es «lo que no lleve el lote de hoy» —que obligaba a esperar
+ * a tener todas las pestañas— sino «las filas de ESTA pestaña cuyo número ya no
+ * existe». Eso es local a la pestaña, así que se resuelve en el momento y una
+ * pestaña no puede borrar lo de otra por mucho que se adelante.
+ *
+ * `tabsSincronizadas` marca qué pestañas se han leído enteras en esta tanda.
+ * Sólo esas se podan: una pestaña que no se pudo leer conserva sus datos en vez
+ * de quedarse vacía. Si no se pasa, se deduce de las filas recibidas (más
+ * `tabName` cuando la tanda es de una sola pestaña).
+ *
+ * ── Qué pasa si falla a mitad ───────────────────────────────────
+ * Un UPSERT no se puede deshacer: la fila anterior ya no está para restaurarla.
+ * A cambio, el fallo no borra nada —la poda sólo corre si todos los tramos de
+ * esa tabla entraron—, así que la pestaña queda con una mezcla de filas nuevas
+ * y viejas y el siguiente sync la cuadra. Antes el fallo se deshacía entero,
+ * pero a cambio de reescribirlo todo en cada corrida.
  */
 export async function insertarLoteSheet(
   supabase: any,
@@ -881,61 +981,60 @@ export async function insertarLoteSheet(
   batchId: string,
   rows: ConversionRow[],
   crudas: SheetRawRow[] = [],
-  tabName?: string
+  tabName?: string,
+  tabsSincronizadas?: string[]
 ): Promise<{ rowsProcessed: number; rawProcessed: number; rawError?: string }> {
-  const rollback = async () => {
-    for (const t of ['conversiones_offline', 'sheet_filas']) {
-      let q = supabase.from(t).delete().eq('sync_batch_id', batchId).eq('sheet_id', sheetId)
-      if (tabName) q = q.eq('tab_name', tabName)
-      await q
-    }
-  }
+  const tabs = tabsSincronizadas ?? [
+    ...new Set([
+      ...(tabName ? [tabName] : []),
+      ...rows.map(r => r.tab_name),
+      ...crudas.map(r => r.tab_name),
+    ]),
+  ]
 
-  if (rows.length > 0) {
-    const toInsert = rows.map(r => ({
-      cliente_id: clienteId, fecha: r.fecha, tipo: r.tipo,
+  // ── Conversiones ──────────────────────────────────────────────
+  await upsertTramos(
+    supabase, 'conversiones_offline_upsert_lote', clienteId, sheetId, batchId,
+    rows.map(r => ({
+      tab_name: r.tab_name, fila_num: r.fila_num, fecha: r.fecha, tipo: r.tipo,
       cantidad: r.cantidad, valor: r.valor, fuente: r.fuente, notas: r.notas,
-      custom_fields: r.custom_fields, sync_batch_id: batchId,
-      sheet_id: sheetId, tab_name: r.tab_name,
+      custom_fields: r.custom_fields,
     }))
-    for (let i = 0; i < toInsert.length; i += 500) {
-      const { error } = await supabase.from('conversiones_offline').insert(toInsert.slice(i, i + 500))
-      if (error) {
-        await rollback()
-        throw new Error(`Error insertando conversiones: ${error.message}`)
-      }
-    }
+  ).catch((e: Error) => { throw new Error(`Error escribiendo conversiones: ${e.message}`) })
+
+  for (const tab of tabs) {
+    await podarTab(
+      supabase, 'conversiones_offline_podar_tab', clienteId, sheetId, tab,
+      rows.filter(r => r.tab_name === tab).map(r => r.fila_num)
+    ).catch((e: Error) => { throw new Error(`Error podando conversiones de "${tab}": ${e.message}`) })
   }
 
-  // Capa cruda: mismo lote que las conversiones, para que el replace posterior
-  // deje las tres tablas en el mismo estado.
-  //
+  // ── Capa cruda ────────────────────────────────────────────────
   // Un fallo aquí NO tumba el sheet: la capa cruda alimenta los campos de Sheet,
   // pero las conversiones y sus agregados ya están guardados y son lo que ven
-  // hoy dashboards e informes. Si falla (p. ej. la migración 057 todavía no está
-  // aplicada), se retira solo el lote crudo a medias y se dejan intactas las
-  // filas crudas anteriores — mejor una capa cruda desactualizada que ninguna.
+  // hoy dashboards e informes. Si falla (p. ej. la migración 069 todavía no
+  // está aplicada), se deja la capa cruda como estaba y se avisa — mejor una
+  // capa cruda desactualizada que ninguna.
   let rawOk = true
   let rawError: string | null = null
 
-  if (crudas.length > 0) {
-    const toInsert = crudas.map(r => ({
-      cliente_id: clienteId, sheet_id: sheetId, tab_name: r.tab_name,
-      fecha: r.fecha, fila_num: r.fila_num, valores: r.valores,
-      sync_batch_id: batchId,
-    }))
-    for (let i = 0; i < toInsert.length && rawOk; i += 500) {
-      const { error } = await supabase.from('sheet_filas').insert(toInsert.slice(i, i + 500))
-      if (error) {
-        rawOk = false
-        rawError = error.message
-        let q = supabase.from('sheet_filas').delete()
-          .eq('sync_batch_id', batchId).eq('sheet_id', sheetId)
-        if (tabName) q = q.eq('tab_name', tabName)
-        await q
-        console.error(`[conversiones] sheet ${sheetId}: no se pudo guardar la capa cruda:`, error.message)
-      }
+  try {
+    await upsertTramos(
+      supabase, 'sheet_filas_upsert_lote', clienteId, sheetId, batchId,
+      crudas.map(r => ({
+        tab_name: r.tab_name, fecha: r.fecha, fila_num: r.fila_num, valores: r.valores,
+      }))
+    )
+    for (const tab of tabs) {
+      await podarTab(
+        supabase, 'sheet_filas_podar_tab', clienteId, sheetId, tab,
+        crudas.filter(r => r.tab_name === tab).map(r => r.fila_num)
+      )
     }
+  } catch (e: unknown) {
+    rawOk = false
+    rawError = e instanceof Error ? e.message : 'Error desconocido'
+    console.error(`[conversiones] sheet ${sheetId}: no se pudo guardar la capa cruda:`, rawError)
   }
 
   return {
@@ -954,9 +1053,15 @@ export async function insertarLoteSheet(
  * dos pestañas que aporten al mismo día se pisarían la una a la otra si cada una
  * escribiera su agregado por separado.
  *
- * `conservarCrudas` evita retirar los lotes anteriores de `sheet_filas` cuando la
- * capa cruda de esta corrida quedó incompleta: mejor una capa cruda vieja que
- * ninguna.
+ * `conservarCrudas` evita retirar las pestañas huérfanas cuando la capa cruda de
+ * esta corrida quedó incompleta: mejor una capa cruda vieja que ninguna.
+ *
+ * `tabsVivas` son las pestañas que la CONFIGURACIÓN del sheet declara hoy. Todo
+ * lo que haya en la base bajo otra pestaña se retira: es lo que queda cuando se
+ * borra o deshabilita una pestaña, y desde la migración 069 ya no lo barre el
+ * reemplazo por lotes —que sólo miraba el `sync_batch_id`, no el nombre—.
+ * Se omite la poda si no se pasa la lista: sin ella no hay forma de distinguir
+ * "esta pestaña ya no existe" de "no sé qué pestañas hay".
  */
 export async function consolidarLoteSheet(
   supabase: any,
@@ -964,7 +1069,8 @@ export async function consolidarLoteSheet(
   sheetId: string,
   batchId: string,
   aggregates: ConversionDiaria[],
-  conservarCrudas = false
+  conservarCrudas = false,
+  tabsVivas?: string[]
 ): Promise<{ daysProcessed: number; replaceError?: string }> {
   if (aggregates.length > 0) {
     const toInsert = aggregates.map(a => ({
@@ -987,15 +1093,42 @@ export async function consolidarLoteSheet(
     }
   }
 
-  // El lote nuevo está completo: recién ahora se retira el anterior de este sheet.
-  const aReemplazar = ['conversiones_offline', 'conversiones_offline_diarias']
-  if (!conservarCrudas) aReemplazar.push('sheet_filas')
   const replaceErrors: string[] = []
-  for (const t of aReemplazar) {
-    const err = await borrarLotesAnteriores(supabase, t, clienteId, sheetId, batchId)
-    if (err) {
-      replaceErrors.push(`${t}: ${err}`)
-      console.error(`[conversiones] sheet ${sheetId}: no se pudo retirar el lote anterior de ${t}:`, err)
+
+  // `conversiones_offline_diarias` sigue con el reemplazo por lotes: son 518
+  // filas, se escriben por upsert sobre su propia clave única y el borrado del
+  // lote anterior cuesta lo que un índice. No compensa cambiarla.
+  //
+  // `conversiones_offline` y `sheet_filas` YA NO pasan por aquí: desde la
+  // migración 069 su borrado es la poda por número de fila que hace
+  // `insertarLoteSheet`, pestaña a pestaña. Dejar además el borrado por lote
+  // sería destructivo: las filas que no cambiaron conservan a propósito el
+  // `sync_batch_id` de un lote anterior —no se reescriben— y este barrido se
+  // las llevaría por delante.
+  const err = await borrarLotesAnteriores(
+    supabase, 'conversiones_offline_diarias', clienteId, sheetId, batchId
+  )
+  if (err) {
+    replaceErrors.push(`conversiones_offline_diarias: ${err}`)
+    console.error(
+      `[conversiones] sheet ${sheetId}: no se pudo retirar el lote anterior de agregados:`, err
+    )
+  }
+
+  // Pestañas retiradas de la config: lo único que la poda por fila no alcanza,
+  // porque a esa pestaña ya nadie la sincroniza.
+  if (!conservarCrudas && tabsVivas && tabsVivas.length > 0) {
+    const { error: podaErr } = await supabase.rpc('sheet_podar_tabs', {
+      p_cliente_id: clienteId,
+      p_sheet_id: sheetId,
+      p_tabs: tabsVivas,
+    })
+    if (podaErr) {
+      replaceErrors.push(`pestañas huérfanas: ${podaErr.message}`)
+      console.error(
+        `[conversiones] sheet ${sheetId}: no se pudieron retirar las pestañas huérfanas:`,
+        podaErr.message
+      )
     }
   }
 
@@ -1023,12 +1156,27 @@ export async function saveConversionesSheetToDb(
   sheetId: string,
   rows: ConversionRow[],
   aggregates: ConversionDiaria[],
-  crudas: SheetRawRow[] = []
+  crudas: SheetRawRow[] = [],
+  /**
+   * Pestañas leídas enteras (ver `fetchConversionesFromSheet`). Sólo esas se
+   * podan fila a fila.
+   */
+  tabsLeidas?: string[],
+  /**
+   * Si además se leyeron TODAS las configuradas. Sólo entonces `tabsLeidas` es
+   * la foto completa del sheet y se puede retirar lo que quede bajo otra
+   * pestaña; con una lectura parcial, esa poda borraría datos buenos de la
+   * pestaña que falló.
+   */
+  todasLeidas = false
 ): Promise<{ rowsProcessed: number; daysProcessed: number; rawProcessed: number; rawError?: string }> {
   const batchId = randomUUID()
-  const insertado = await insertarLoteSheet(supabase, clienteId, sheetId, batchId, rows, crudas)
+  const insertado = await insertarLoteSheet(
+    supabase, clienteId, sheetId, batchId, rows, crudas, undefined, tabsLeidas
+  )
   const cerrado = await consolidarLoteSheet(
-    supabase, clienteId, sheetId, batchId, aggregates, !!insertado.rawError
+    supabase, clienteId, sheetId, batchId, aggregates, !!insertado.rawError,
+    todasLeidas ? tabsLeidas : undefined
   )
 
   const motivos = [insertado.rawError, cerrado.replaceError].filter(Boolean)
@@ -1042,6 +1190,10 @@ export async function saveConversionesSheetToDb(
 
 /**
  * Retira los lotes anteriores de un sheet, uno por `sync_batch_id`.
+ *
+ * Desde la migración 069 sólo la usa `conversiones_offline_diarias`. Las otras
+ * dos tablas pasaron a poda por número de fila; aplicarles esto además borraría
+ * las filas que no cambiaron, que a propósito conservan un lote anterior.
  *
  * Antes era un solo `.neq('sync_batch_id', batchId)`. El plan lo resolvía con un
  * Index Scan por (cliente_id, sheet_id) y `sync_batch_id` como filtro, así que
@@ -1279,15 +1431,18 @@ export async function syncTabConversiones(
 
   // Se le pasa el sheet con esta única pestaña: `fetchConversionesFromSheet` abre
   // el documento y recorre las que reciba.
-  const { rows, crudas, quality } = await fetchConversionesFromSheet({ ...sheetCfg, tabs: [tab] })
+  const { rows, crudas, quality, tabsLeidas } = await fetchConversionesFromSheet({ ...sheetCfg, tabs: [tab] })
 
   const customCols = mergeTabCustomColumns([tab])
   const aggregates = computeConversionesAggregatesParcial(
     rows, Object.keys(customCols).length > 0 ? customCols : undefined
   )
 
+  // Se poda por `tabsLeidas`, no por `tab.sheet_name`: cuando la config deja el
+  // nombre vacío ("la primera pestaña"), el título real sólo se conoce tras
+  // abrir el documento, y es ese el que quedó en `tab_name`.
   const guardado = await insertarLoteSheet(
-    supabase, clienteId, sheetId, batchId, rows, crudas, tab.sheet_name
+    supabase, clienteId, sheetId, batchId, rows, crudas, tab.sheet_name, tabsLeidas
   )
 
   return {
@@ -1345,13 +1500,20 @@ export async function syncClienteConversiones(
     const sheetId = sheetCfg.id!
     const label = sheetCfg.name || sheetCfg.sheet_url
     try {
-      const { rows, crudas, quality } = await fetchConversionesFromSheet(sheetCfg)
+      const { rows, crudas, quality, tabsLeidas } = await fetchConversionesFromSheet(sheetCfg)
       const customCols = mergeTabCustomColumns(normalizeTabs(sheetCfg))
       const aggregates = computeConversionesAggregates(
         rows,
         Object.keys(customCols).length > 0 ? customCols : undefined
       )
-      const saved = await saveConversionesSheetToDb(supabase, clienteId, sheetId, rows, aggregates, crudas)
+      // La poda de pestañas huérfanas sólo es segura con el documento entero
+      // leído: si una pestaña falló, `tabsLeidas` no la incluye y retirar «todo
+      // lo que no esté en la lista» se llevaría precisamente sus datos buenos.
+      const habilitadas = normalizeTabs(sheetCfg).filter(t => t.enabled).length
+      const saved = await saveConversionesSheetToDb(
+        supabase, clienteId, sheetId, rows, aggregates, crudas,
+        tabsLeidas, tabsLeidas.length === habilitadas
+      )
       allRows.push(...rows)
 
       // La capa cruda es auxiliar: si falla, el sheet queda 'partial' con el
