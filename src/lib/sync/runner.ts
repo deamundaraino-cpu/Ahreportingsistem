@@ -83,6 +83,8 @@ function buildRequest(job: SyncJob, appUrl: string): { url: string; method: 'GET
     if (job.params?.refresh_days) qs.set('refresh_days', String(job.params.refresh_days))
     // Acota el sync a ciertas fuentes (la reconciliación solo repara Meta).
     if (job.params?.platforms) qs.set('platforms', String(job.params.platforms))
+    // Acota un job de Sheets a un documento concreto del cliente.
+    if (job.params?.sheet_id) qs.set('sheet_id', String(job.params.sheet_id))
 
     switch (job.tipo) {
         case 'metricas':
@@ -125,12 +127,14 @@ function buildRequest(job: SyncJob, appUrl: string): { url: string; method: 'GET
 async function executeJob(
     job: SyncJob,
     opts: RunnerOptions,
+    /** Techo para esta llamada concreta (ver `runJobs`). */
+    timeoutMs: number,
 ): Promise<{ ok: boolean; partial: boolean; resumeFrom?: string | null; body: any; message?: string }> {
     const { url, method } = buildRequest(job, opts.appUrl)
     const res = await fetch(url, {
         method,
         headers: { Authorization: `Bearer ${opts.cronSecret}` },
-        signal: AbortSignal.timeout(opts.requestTimeoutMs ?? 120_000),
+        signal: AbortSignal.timeout(timeoutMs),
     })
 
     let body: any = null
@@ -143,6 +147,21 @@ async function executeJob(
     if (!res.ok) {
         return { ok: false, partial: false, body, message: `HTTP ${res.status}: ${JSON.stringify(body).slice(0, 500)}` }
     }
+
+    /**
+     * Un 200 no basta. Los workers que iteran clientes por dentro (Sheets,
+     * meta_leads) atrapan el fallo de cada cliente para que uno malo no tumbe a
+     * los demás, y devolvían 200 aunque no se hubiera salvado ninguno: el job
+     * se marcaba `done` y la cola se veía verde sin haber escrito una fila.
+     * Quien pueda fallar por dentro lo declara con `ok: false`.
+     */
+    if (body?.ok === false) {
+        const detalle = Array.isArray(body?.errores) && body.errores.length > 0
+            ? body.errores.join(' | ')
+            : (body?.error ?? JSON.stringify(body).slice(0, 500))
+        return { ok: false, partial: false, body, message: `El worker no completó ningún cliente: ${detalle}`.slice(0, 500) }
+    }
+
     return {
         ok: true,
         partial: !!body?.partial,
@@ -191,12 +210,21 @@ async function recordRun(
 }
 
 /**
+ * Tiempo mínimo que debe quedar de presupuesto para que valga la pena reclamar
+ * otro job. Por debajo, la llamada moriría abortada y solo gastaría un intento.
+ */
+const MIN_JOB_MS = 5_000
+
+/**
  * Drena la cola hasta agotar el presupuesto o quedarse sin jobs.
  * Devuelve el resumen de lo procesado.
  */
 export async function runJobs(db: any, opts: RunnerOptions): Promise<RunnerResult> {
     const budgetMs = opts.budgetMs ?? 45_000
+    const requestTimeoutMs = opts.requestTimeoutMs ?? 120_000
     const startedLoop = Date.now()
+    /** Lo que queda de presupuesto del ciclo. */
+    const restante = () => budgetMs - (Date.now() - startedLoop)
     const result: RunnerResult = { claimed: 0, done: 0, failed: 0, requeued: 0, details: [] }
     /**
      * Jobs devueltos a la cola en este ciclo por tener el cliente ocupado.
@@ -206,9 +234,29 @@ export async function runJobs(db: any, opts: RunnerOptions): Promise<RunnerResul
      */
     const liberados = new Set<string>()
 
-    while (Date.now() - startedLoop < budgetMs) {
+    while (restante() > MIN_JOB_MS) {
         const job = await claimJob(db, opts.workerId, opts.leaseSeconds ?? 600)
         if (!job) break
+
+        /**
+         * Un job que ya superó sus intentos no debe volver a ejecutarse.
+         *
+         * `claim_sync_job` incrementa `intentos` también cuando recupera un job
+         * `running` con el lease vencido, y ese camino no pasa por `failJob`, que
+         * es quien decide el paso a 'error'. Un ejecutor que muere sin responder
+         * (la función de Vercel cortada a mitad) deja el job colgado, y al
+         * repetirse el ciclo `intentos` crece sin techo: en producción se vio un
+         * 7/3. Aquí se cierra ese camino.
+         */
+        if (job.intentos > job.max_intentos) {
+            const message = `Lease vencido ${job.intentos} veces sin respuesta del ejecutor (máx. ${job.max_intentos})`
+            // `failJob` ya lo da por agotado: `intentos > max_intentos` cumple su `>=`.
+            await failJob(db, job, message)
+            result.failed++
+            result.details.push({ jobId: job.id, tipo: job.tipo, estado: 'error', message })
+            await notifyExhausted(db, job, message)
+            continue
+        }
 
         // Dos corridas concurrentes del mismo cliente se pisan los datos.
         if (liberados.has(job.id) ||
@@ -224,7 +272,17 @@ export async function runJobs(db: any, opts: RunnerOptions): Promise<RunnerResul
 
         const startedAt = Date.now()
         try {
-            const exec = await executeJob(job, opts)
+            /**
+             * El timeout de la llamada se acota a lo que queda de ciclo.
+             *
+             * Con los valores fijos de antes, `/api/worker/run-jobs` podía
+             * arrancar un job en el segundo 39 de su presupuesto de 40 s y
+             * esperar por él otros 55: 95 s en total dentro de una función con
+             * `maxDuration = 60`. La función moría antes de poder marcar el
+             * fallo y el job quedaba 'running' hasta que venciera el lease —el
+             * origen de los intentos desbocados de arriba—.
+             */
+            const exec = await executeJob(job, opts, Math.min(requestTimeoutMs, restante()))
 
             if (!exec.ok) {
                 const exhausted = await failJob(db, job, exec.message ?? 'error desconocido')

@@ -52,10 +52,16 @@ async function run(request: Request) {
         ejecutor: 'vercel',
         // Margen dentro de los 60s de Hobby: al agotarse se deja la cola para la
         // siguiente llamada (los jobs no procesados siguen en 'pending').
-        budgetMs: 40_000,
+        //
+        // `budgetMs` es el techo REAL del ciclo: el runner acota el timeout de
+        // cada llamada a lo que quede de presupuesto, así que 50 s de budget no
+        // pueden convertirse en 50+50. Antes budget (40 s) y timeout (55 s) se
+        // sumaban y la función se pasaba de los 60 s de `maxDuration`, muriendo
+        // sin marcar el fallo del job.
+        budgetMs: 50_000,
         // Lease corto: si esta función muere a los 60s, el job vuelve a la cola pronto.
         leaseSeconds: 180,
-        requestTimeoutMs: 55_000,
+        requestTimeoutMs: 50_000,
     })
 
     return NextResponse.json({ ok: true, plan, ...result, cola: await queueStats(db) })

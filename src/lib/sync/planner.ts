@@ -9,6 +9,14 @@
 import { enqueueJob, enqueueRange, type SyncJobTipo } from './queue'
 import { colombiaToday, colombiaYesterday, COLOMBIA_UTC_OFFSET_MS } from '../date-utils'
 import { hotmartConectado } from '../hotmart/cliente'
+import { normalizeSheetConfigs } from '../integrations/google-sheets-conversiones'
+
+/** ¿El cliente tiene al menos un Google Sheet habilitado y con URL? */
+function tieneSheets(configApi: unknown): boolean {
+    const cfg = (configApi ?? {}) as { google_sheets_conversiones?: unknown }
+    return normalizeSheetConfigs(cfg.google_sheets_conversiones)
+        .some(s => s.enabled && s.sheet_url)
+}
 
 /** Prioridades: menor = antes. El sync manual (1) siempre adelanta al cron. */
 export const PRIORIDAD = {
@@ -34,7 +42,7 @@ export async function planDiario(db: any, opts?: { triggeredBy?: string }): Prom
     const ayer = colombiaYesterday()
     const detalle: Record<string, number> = {}
 
-    const { data: clientes, error } = await db.from('clientes').select('id')
+    const { data: clientes, error } = await db.from('clientes').select('id, config_api')
     if (error) throw new Error(`planDiario: ${error.message}`)
 
     let total = 0
@@ -51,10 +59,41 @@ export async function planDiario(db: any, opts?: { triggeredBy?: string }): Prom
     }
     detalle.metricas = total
 
-    // Estos tres iteran clientes internamente: un job global por tipo basta.
-    // `sheets_leads` se retiró en la migración 059: su hoja pasó a sincronizarse
-    // por `sheets_conversiones`, como el resto de Google Sheets.
-    const globales: SyncJobTipo[] = ['sheets_conversiones', 'meta_leads', 'utm_aggregate']
+    /**
+     * Sheets va por cliente, no en un único job global.
+     *
+     * Como job global recorría TODOS los clientes, TODOS sus documentos y TODAS
+     * sus pestañas dentro de una sola petición HTTP, y el drenador de Vercel lo
+     * espera con un `AbortSignal` que no llega a un minuto. Medido en
+     * producción: las corridas buenas tardaban 39-40 s y las malas morían a los
+     * 55 — el trabajo estaba justo en el borde, así que del 2 al 10 de agosto de
+     * 2026 falló entero un día tras otro ("The operation was aborted due to
+     * timeout") sin que ningún cliente concreto tuviera nada roto.
+     *
+     * Troceado por cliente, cada unidad es pequeña, el cliente lento no arrastra
+     * a los demás y el panel señala a QUIÉN le falla la hoja. `cliente_id`
+     * además reactiva el guard de `clienteOcupado`, que con un job global (con
+     * `cliente_id` NULL) no podía hacer nada.
+     */
+    let sheets = 0
+    for (const c of (clientes ?? []) as Array<{ id: string; config_api: unknown }>) {
+        if (!tieneSheets(c.config_api)) continue
+        const job = await enqueueJob(db, {
+            tipo: 'sheets_conversiones',
+            clienteId: c.id,
+            start: ayer,
+            end: hoy,
+            prioridad: PRIORIDAD.diario,
+            triggeredBy,
+        })
+        if (job) { total++; sheets++ }
+    }
+    if (sheets > 0) detalle.sheets_conversiones = sheets
+
+    // Estos dos sí iteran clientes internamente y son baratos: un job global por
+    // tipo basta. `sheets_leads` se retiró en la migración 059: su hoja pasó a
+    // sincronizarse por `sheets_conversiones`, como el resto de Google Sheets.
+    const globales: SyncJobTipo[] = ['meta_leads', 'utm_aggregate']
     for (const tipo of globales) {
         const job = await enqueueJob(db, {
             tipo,
@@ -291,10 +330,19 @@ export async function ensurePlanDiario(
     return { ensured: true, encolados: res.encolados, franja: franjaUtcIso }
 }
 
-/** Borra jobs y runs viejos. Llamar una vez al día desde el planner. */
+/**
+ * Borra jobs y runs viejos. Llamar una vez al día desde el planner.
+ *
+ * Los `error` se incluyen a propósito. Al quedar fuera se acumulaban sin fin en
+ * "Cola activa" —31 filas rojas de días distintos, todas del mismo fallo— y
+ * enterraban el problema del día entre las lápidas de las semanas anteriores. Un
+ * job fallido ya no es accionable pasado su día: el planner encola uno nuevo en
+ * cada franja, así que lo que importa es el último. Su historia permanece en
+ * `sync_runs`, que se purga con el mismo corte.
+ */
 export async function limpiarHistorial(db: any, dias = 30): Promise<void> {
     const corte = new Date(Date.now() - dias * 86_400_000).toISOString()
-    await db.from('sync_jobs').delete().in('estado', ['done', 'cancelled']).lt('updated_at', corte)
+    await db.from('sync_jobs').delete().in('estado', ['done', 'cancelled', 'error']).lt('updated_at', corte)
     await db.from('sync_runs').delete().lt('started_at', corte)
     await purgarPixelEvents(db)
     await purgarAdsDaily(db)

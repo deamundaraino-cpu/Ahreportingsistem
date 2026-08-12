@@ -64,7 +64,7 @@ Todo lo demás lo programa el scheduler del `sync-worker`.
 
 | Hora | Plan | Encola |
 |---|---|---|
-| 05:00 | `diario` | Métricas de ayer y hoy (todos los clientes) + Sheets + Meta Leads + agregación UTM |
+| 05:00 | `diario` | Métricas de ayer y hoy (todos los clientes) + Sheets (**un job por cliente**) + Meta Leads + agregación UTM |
 | 14:00 | `diario` | Segunda pasada: recoge las correcciones de atribución del día |
 | día 7, 03:00 | `cierre_mes` | Re-descarga forzada del mes anterior (ventana de 35 días) y congelado |
 | domingo, 03:00 | `reconciliacion` | Audita el gasto de Meta contra el real de cada cuenta y repara los días con desglose incompleto |
@@ -85,6 +85,23 @@ idempotentes, solo se repite la unidad en curso.
 Estados: `pending` → `running` → `done` | `error`. Un fallo con intentos
 restantes vuelve a `pending`; al agotar `max_intentos` queda en `error` y genera
 notificación.
+
+El runner descarta de entrada un job cuyos `intentos` ya superen `max_intentos`.
+Hace falta porque `claim_sync_job` incrementa el contador **también** al recuperar
+un job con el lease vencido, y ese camino no pasa por `failJob`, que es quien
+decide el salto a `error`: un ejecutor que muere sin responder dejaba el job
+girando y el contador crecía sin techo (se vio un `7/3` en el panel).
+
+Un job vale como `done` solo si el worker devuelve 2xx **y** el cuerpo no trae
+`ok: false`. Los workers que iteran clientes por dentro atrapan el fallo de cada
+uno para que un cliente roto no tumbe a los demás, así que un 200 no prueba que
+se haya escrito nada: cuando ninguno se completa lo declaran con `ok: false` y
+el runner lo trata como fallo.
+
+`limpiarHistorial` purga a los 30 días los jobs `done`, `cancelled` **y**
+`error`. Los fallidos se incluyen porque el planner encola uno nuevo en cada
+franja: pasado su día ya no son accionables y solo entierran el problema de hoy
+bajo las lápidas de las semanas anteriores.
 
 Tipos de job: `metricas`, `sheets_conversiones`, `meta_leads`, `utm_aggregate`,
 `cierre_mes`, `reconciliar`. El tipo `sheets_leads` ya no se encola (migración
@@ -115,9 +132,31 @@ de Hotmart o GA4 borraba ventas y sesiones reales).
 
 ### `/api/worker/google-sheets-conversiones` — conversiones offline
 Sincroniza conversiones offline hacia `conversiones_offline` y
-`conversiones_offline_diarias`. Usa `sync_batch_id`: se inserta el lote nuevo y
-solo al completarse se borra el anterior, de modo que un fallo a mitad deja los
-datos viejos intactos.
+`conversiones_offline_diarias`.
+
+Params: `client_id` (lo que encola el planner: **un job por cliente**) y
+`sheet_id` para acotarlo a un documento. El rango de fechas del job **no se
+usa** — un Sheet se lee entero siempre, porque su verdad es el documento y no
+una ventana temporal; el rango viaja en el job solo para situar la corrida en el
+panel.
+
+Escribe por **UPSERT** contra la clave natural `(cliente_id, sheet_id, tab_name,
+fila_num)` comparando un hash del contenido (migración 069): la fila que no
+cambió no se toca, así que un sync sobre un Sheet estable escribe cero filas. El
+borrado ya no es "todo lo que no lleve el lote de hoy" sino "las filas de esta
+pestaña cuyo número ya no existe", y solo se poda una pestaña que se haya leído
+entera. `conversiones_offline_diarias` sí conserva el reemplazo por
+`sync_batch_id`: son pocas filas y su clave única propia lo hace barato.
+
+> ⚠ El código y la migración 069 son inseparables: sin las RPC en la base, cada
+> escritura falla con `Could not find the function ...upsert_lote`. Ocurrió entre
+> el 11 y el 12 de agosto de 2026 — el código se desplegó y la migración no se
+> aplicó, y las tres hojas estuvieron dos días escribiendo cero filas.
+
+Devuelve **500** si ningún cliente se completó y 200 con `parcial: true` si unos
+sí y otros no. Antes devolvía 200 pasara lo que pasara: el runner solo mira el
+estado HTTP, así que marcaba el job `done` y la cola se veía verde mientras no se
+escribía una sola fila.
 
 Cada cliente puede tener **varios sheets** y cada sheet **varias pestañas**, con
 su propio mapeo de columnas (`config_api.google_sheets_conversiones[].tabs[]`;
