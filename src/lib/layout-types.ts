@@ -188,8 +188,68 @@ export interface RankingTableDef {
     showRank?: boolean
     campaignFilter?: CampaignFilterSpec
     formFilter?: FormFilterSpec
-    sheetFilter?: SheetFilterSpec
+    // Sin `sheetFilter`: estas tablas agregan por campaña/anuncio desde
+    // `meta_campaigns`/`meta_ads`, filas que no llevan datos offline. El campo
+    // existió sin UI ni lector y nunca pudo cambiar un número.
     account_id?: string
+}
+
+/**
+ * Bloque de desglose de leads por RESPUESTA de formulario.
+ *
+ * Responde "cuántos leads contestaron A, cuántos B y cuántos C", no "cuántos
+ * respondieron la pregunta". Los datos salen de `report_utm.lead_events`
+ * (raw_fields) plegados por la migración 071 y cruzados con las campañas reales
+ * por la cascada de `campaign-resolver`.
+ *
+ * ── Por qué NO lleva gasto ni CPL ────────────────────────────────────────────
+ * No es un descuido ni una fase 2. El gasto vive en `metricas_diarias`, agregado
+ * por día y campaña: una fila de gasto no sabe qué respondió cada lead, porque
+ * una respuesta de formulario no existe a nivel de anuncio. Repartirlo entre
+ * respuestas —proporcionalmente o como sea— produciría un CPL inventado con
+ * aspecto de dato medido, que es peor que no tenerlo.
+ *
+ * Es la misma decisión que ya toman los filtros por país, por formulario y por
+ * campo de lead en el BI, documentada en docs/17 ("El gasto no se recorta por
+ * respuesta") y docs/18 parte 5. Para el costo por lead de un segmento hay que
+ * compararlo a mano contra el gasto de su campaña.
+ */
+export interface LeadAnswerBlockDef {
+    id: string
+    title: string
+    /**
+     * De dónde sale la definición de la pregunta:
+     *  - 'catalogo' → `clave` referencia `report_utm.lead_campos`, así que el
+     *    nombre visible, la agrupación de respuestas equivalentes y su orden los
+     *    manda el analista.
+     *  - 'auto' → `clavesOrigen` viaja dentro del bloque y se sintetiza un campo
+     *    sin agrupación. Es lo que permite estrenar la feature en un cliente sin
+     *    configurar nada; el modal ofrece promoverlo al catálogo.
+     *
+     * A partir de aquí el resto del código NO distingue: los dos producen un
+     * `LeadCampoDef` y `bucketDeValor` solo necesita eso.
+     */
+    origen: 'catalogo' | 'auto'
+    /** Slug del campo del catálogo. Solo con `origen: 'catalogo'`. */
+    clave?: string
+    /** Claves de `raw_fields` ya normalizadas. Solo con `origen: 'auto'`. */
+    clavesOrigen?: string[]
+    /** Etiqueta visible. Con `origen: 'catalogo'` cae al `nombre` del catálogo. */
+    label?: string
+    /**
+     * `bars`  → una barra por respuesta, totales del período.
+     * `daily` → una fila por día: total del día y de qué está hecho
+     *           («hoy 40: 15 A, 5 B, 3 C, 17 sin responder»).
+     */
+    display?: 'bars' | 'daily'
+    topN?: number
+    /** Funde la cola larga en "Otras respuestas" en vez de esconderla. */
+    agruparResto?: boolean
+    showDelta?: boolean
+    showCsv?: boolean
+    ocultarVacios?: boolean
+    /** Filtro propio del bloque, encadenado DESPUÉS del filtro de la pestaña. */
+    campaignFilter?: CampaignFilterSpec
 }
 
 export interface MetricDef {
@@ -212,5 +272,6 @@ export interface ReportLayout {
     source_mapping?: Record<string, string>  // { "$visitas": "ga_sessions", "$pagos_iniciados": "hotmart_pagos_iniciados" }
     attribution_strategy?: AttributionStrategy
     ranking_tables?: RankingTableDef[]
+    lead_answer_blocks?: LeadAnswerBlockDef[]
 }
 

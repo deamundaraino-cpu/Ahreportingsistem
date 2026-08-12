@@ -9,6 +9,14 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 import type { SheetCampoResumen, SheetVistaResumen } from "@/app/(app)/dashboard/_actions"
+import { clavesDeCampo, claveSinRespuesta } from "./lead-answer-aggregation"
+
+/** Lo mínimo que necesita el catálogo de una pregunta para ofrecer sus métricas. */
+export interface LeadAnswerCampoResumen {
+    clave: string
+    nombre: string
+    buckets: string[]
+}
 
 /**
  * Una métrica ofrecible en un selector. `format` solo lo traen las que lo
@@ -183,14 +191,52 @@ export const AVAILABLE_METRICS: MetricOption[] = [
     { id: 'leads_calificados',    label: 'GSheets: Leads Calificados' },
     { id: 'leads_no_calificados', label: 'GSheets: Leads No Calificados' },
     { id: 'tasa_calificacion',    label: 'GSheets: Tasa de Calificación (%)' },
+
+    // ── Report-UTM ────────────────────────────────────────────────────────────
+    // Contactos reales del formulario (web + Meta Lead Ads unificados), no lo
+    // que reporta el píxel. NO se suma con `meta_leads`: miden lo mismo desde
+    // fuentes distintas y un lead puede estar en las dos.
+    { id: 'utm_leads', label: 'UTM Report: Leads (contactos)' },
 ]
 
 /** Build dynamic metric list merging static + catalog custom conversions */
+/**
+ * Métricas offline que DIVIDEN por `offline_ventas`.
+ *
+ * Si el Sheet no marca ninguna fila como `tipo = 'venta'` —lo habitual, porque
+ * la configuración recomendada es «Tipo fijo → Todas son leads»— el divisor es
+ * 0 permanente: la fórmula da Infinity, `evaluateFormula` devuelve null y la
+ * tarjeta pinta «–». Ofrecerlas en el selector solo lleva a montar métricas que
+ * nunca mostrarán un número, así que se ocultan hasta que haya ventas offline.
+ */
+const METRICAS_OFFLINE_POR_VENTA = new Set(['offline_cpa', 'offline_close_rate', 'offline_roas'])
+
+/**
+ * ¿Hay alguna conversión offline registrada como venta?
+ *
+ * Alimenta el `hayVentasOffline` de `buildAvailableMetrics`. El sync guarda el
+ * tipo ya en minúsculas, pero se normaliza igual: sale de una hoja de cálculo.
+ */
+export function tieneVentasOffline(
+    conversionesOfflineRaw: { tipo?: string | null }[] = []
+): boolean {
+    return conversionesOfflineRaw.some(r => String(r?.tipo ?? '').toLowerCase().trim() === 'venta')
+}
+
 export function buildAvailableMetrics(
     conversionesCatalogo: { conversion_key: string; label: string; field_id: string }[] = [],
     googleSheetsConversiones?: any[],
     sheetCampos: SheetCampoResumen[] = [],
-    sheetVistas: SheetVistaResumen[] = []
+    sheetVistas: SheetVistaResumen[] = [],
+    /** ¿El cliente tiene alguna conversión offline con `tipo = 'venta'`? */
+    hayVentasOffline = true,
+    /**
+     * Preguntas de formulario del cliente (`data.leadAnswers.campos`). Cada una
+     * aporta una métrica por respuesta más su «(sin respuesta)», de modo que el
+     * trafficker pueda usarlas en cualquier tarjeta, gráfica o columna y no solo
+     * dentro del bloque de respuestas.
+     */
+    leadAnswerCampos: LeadAnswerCampoResumen[] = []
 ): MetricOption[] {
     const dynamic = (conversionesCatalogo || []).map(c => ({ id: c.field_id, label: `Meta: ${c.label}` }))
 
@@ -204,7 +250,7 @@ export function buildAvailableMetrics(
         { id: 'offline_roas',         label: 'Offline: ROAS Real' },
         { id: 'total_leads',          label: 'Offline: Leads Totales' },
         { id: 'total_cpl',            label: 'Offline: CPL Real' },
-    ]
+    ].filter(m => hayVentasOffline || !METRICAS_OFFLINE_POR_VENTA.has(m.id))
 
     // Columnas adicionales de los Sheets. Se recorren TAMBIÉN las de cada pestaña:
     // la UI actual las escribe en `tabs[].custom_columns` y aquí solo se miraba el
@@ -244,6 +290,19 @@ export function buildAvailableMetrics(
         id: `sv_${v.clave}`, label: v.nombre, format: formatos[`sv_${v.clave}`],
     }))
 
+    // Respuestas de formulario (Report-UTM). Una métrica por respuesta, más el
+    // «(sin respuesta)» que hace que la suma cierre con `utm_leads`.
+    const respuestasMetrics: MetricOption[] = []
+    for (const campo of leadAnswerCampos) {
+        for (const { bucket, clave } of clavesDeCampo(campo)) {
+            respuestasMetrics.push({ id: clave, label: `${campo.nombre}: ${bucket}` })
+        }
+        respuestasMetrics.push({
+            id: claveSinRespuesta(campo),
+            label: `${campo.nombre}: (sin respuesta)`,
+        })
+    }
+
     const existing = new Set(AVAILABLE_METRICS.map(m => m.id))
     const extras = [
         ...dynamic,
@@ -251,6 +310,7 @@ export function buildAvailableMetrics(
         ...sheetCustomMetrics,
         ...camposMetrics,
         ...vistasMetrics,
+        ...respuestasMetrics,
     ].filter(d => !existing.has(d.id))
 
     return [...AVAILABLE_METRICS, ...extras]

@@ -84,6 +84,24 @@ ordena alfabéticamente y "Menos de $2M" acaba entre medio de los demás.
 
 ---
 
+## Uso en el General Overview
+
+Desde la migración 071, los campos de lead **también se consumen fuera del BI**:
+las pestañas de cada empresa en `/dashboard/[clientId]` pueden llevar un bloque
+de **Respuestas de formulario** que desglosa los leads por lo que contestaron.
+
+- Si el cliente tiene campos configurados aquí, el bloque los usa tal cual —con
+  el nombre, la agrupación y el orden que definiste—. Si no, autodetecta las
+  preguntas de opción y las muestra en crudo, y ofrece guardarlas en este
+  catálogo con un botón.
+- El bloque respeta el filtro de campañas y el rango de fechas de la pestaña, y
+  viaja al enlace público del cliente.
+- **Solo cuenta leads**, por la misma razón que se explica más abajo: el gasto no
+  se puede recortar por respuesta. Ahí el bloque no muestra 0, sino que declara
+  que no reparte inversión.
+
+Detalle en [doc 10 · Sistema de layouts](./10-sistema-de-layouts.md#desglose-por-respuesta-de-formulario-leadanswerblockdef).
+
 ## Uso en los informes
 
 El campo aparece de inmediato — no hay recálculo: el catálogo se aplica al
@@ -120,6 +138,7 @@ el gasto de la campaña.
 | Pieza | Dónde |
 |---|---|
 | Tabla | `report_utm.lead_campos` (migración `060`) |
+| Bloque del dashboard | `LeadAnswerBlockDef` + RPC `bi_respuestas_por_dia` (migración `071`) |
 | Lógica pura | [`src/lib/report-utm/lead-campos.ts`](../src/lib/report-utm/lead-campos.ts) |
 | Lectura/escritura y detección | [`src/lib/report-utm/lead-campos-db.ts`](../src/lib/report-utm/lead-campos-db.ts) |
 | Token del BI | `leadfield:<clave>` (dimensión y filtro) |

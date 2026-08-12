@@ -3,6 +3,7 @@
 import React, { useState, useMemo, useEffect } from 'react'
 import { ArrowLeft, Eye, EyeOff, ChevronDown, ChevronRight, Loader2 } from 'lucide-react'
 import { enrichMetaRow, parseTabFilter } from '@/lib/campaign-filter'
+import { enrichOfflineRow } from '@/lib/offline-filter'
 import { aggregateFormula, formatValue } from '@/lib/formula-engine'
 import type { CardDef } from '@/lib/layout-types'
 import { getArchiveMetrics } from '../_actions'
@@ -36,6 +37,11 @@ function computeCardValue(
     if (to) rows = rows.filter((m: any) => m.fecha <= to)
     const filter = card.campaignFilter ?? parseTabFilter(tab.keyword_meta)
     rows = rows.map((r: any) => enrichMetaRow(r, filter, campaignGroups))
+    // Mismo encadenado que el dashboard (DashboardClient: tarjetas): sin esto la
+    // misma tarjeta mostraba aquí el total sin segmentar y allí el filtrado.
+    if (card.sheetFilter) {
+        rows = rows.map(r => enrichOfflineRow(r, card.sheetFilter))
+    }
     return aggregateFormula(card.formula, rows, {}, {}, new Set(['meta']), {})
 }
 
@@ -68,17 +74,27 @@ export function TabArchiveView({
     const [archiveError, setArchiveError] = useState(false)
     const [tabDateOverrides, setTabDateOverrides] = useState<Record<string, { from: string; to: string }>>({})
 
+    // Las filas offline individuales solo se piden si alguna tarjeta las va a
+    // filtrar: el archivo va de 2020 a hoy y traerlas siempre son decenas de
+    // miles de objetos que nadie usa.
+    const necesitaFilasOffline = useMemo(
+        () => tabs.some(tab =>
+            resolveTabCards(tab, allLayouts, initialLayout).some(c => !!c.sheetFilter?.field)
+        ),
+        [tabs, allLayouts, initialLayout]
+    )
+
     useEffect(() => {
         setIsLoadingArchive(true)
         setArchiveError(false)
-        getArchiveMetrics(clientId)
+        getArchiveMetrics(clientId, necesitaFilasOffline)
             .then(result => {
                 if (result?.metrics) setArchiveMetrics(result.metrics)
                 else setArchiveError(true)
             })
             .catch(() => setArchiveError(true))
             .finally(() => setIsLoadingArchive(false))
-    }, [clientId])
+    }, [clientId, necesitaFilasOffline])
 
     function toggleExpand(tabId: string) {
         setExpandedTabIds(prev => {

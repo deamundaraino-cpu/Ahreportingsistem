@@ -350,6 +350,41 @@ export async function resolvePublicClienteId(rtmClienteId: string): Promise<stri
     return value
 }
 
+/**
+ * El camino INVERSO: cliente del dashboard (`public.clientes.id`) → cliente
+ * report_utm, o null si no está enlazado.
+ *
+ * Lo necesita todo lo que arranca en el dashboard y quiere leer leads: la ficha
+ * de cliente ya lo hacía con esta consulta copiada inline, y el bloque de
+ * respuestas la necesitaba otra vez. Con dos copias, el día que el enlace deje
+ * de ser 1:1 una de las dos se queda atrás.
+ *
+ * `.limit(1)` y no `.maybeSingle()`: nada en el esquema impide que dos clientes
+ * report_utm apunten al mismo `public_cliente_id`, y `maybeSingle()` lanzaría en
+ * ese caso en vez de escoger uno.
+ */
+const rtmIdCache = new Map<string, { value: string | null; ts: number }>()
+
+export async function resolveRtmClienteId(publicClienteId: string): Promise<string | null> {
+    if (!publicClienteId) return null
+    const now = Date.now()
+    const hit = rtmIdCache.get(publicClienteId)
+    if (hit && now - hit.ts <= PUBLIC_ID_TTL_MS) return hit.value
+
+    const supabase = await createAdminClient()
+    const { data, error } = await supabase
+        .schema('report_utm').from('clientes')
+        .select('id').eq('public_cliente_id', publicClienteId).limit(1)
+    // Igual que arriba: un error de red no se cachea, para no convertir un fallo
+    // puntual en un minuto entero de bloques vacíos.
+    if (error) return null
+
+    const value = data?.[0]?.id ?? null
+    if (rtmIdCache.size > 500) rtmIdCache.clear()
+    rtmIdCache.set(publicClienteId, { value, ts: now })
+    return value
+}
+
 // ── API pública del resolver ──────────────────────────────────────────
 
 /** Registro mínimo (lead o venta) que el resolver sabe cruzar. */

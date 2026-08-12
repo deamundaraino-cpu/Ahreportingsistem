@@ -7,6 +7,7 @@ import { BitacorasSidebar } from "../components/BitacorasSidebar"
 import { getBitacoras } from "../../admin/settings/[id]/_actions"
 import { colombiaToday, addDaysISO } from "@/lib/date-utils"
 import { createClient, createAdminClient } from "@/utils/supabase/server"
+import { resolveRtmClienteId } from "@/lib/report-utm/campaign-resolver"
 import { redirect } from "next/navigation"
 import Link from "next/link"
 import { PieChart } from "lucide-react"
@@ -56,12 +57,7 @@ export default async function DashboardPage(props: {
     // informes que filtrar, así que el botón simplemente no se muestra.
     const resolveInformesClienteId = async (): Promise<string | null> => {
         if (process.env.NEXT_PUBLIC_REPORT_UTM_ENABLED !== 'true') return null
-        // limit(1) y no maybeSingle(): nada impide que dos clientes report_utm
-        // apunten al mismo public_cliente_id.
-        const { data } = await adminSupabase
-            .schema('report_utm').from('clientes')
-            .select('id').eq('public_cliente_id', clientId).limit(1)
-        return data?.[0]?.id ?? null
+        return resolveRtmClienteId(clientId)
     }
 
     const [{ userRole, allowed, userId }, dashboardData, initialBitacoras, informesClienteId] = await Promise.all([

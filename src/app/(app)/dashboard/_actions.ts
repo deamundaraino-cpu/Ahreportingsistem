@@ -18,6 +18,14 @@ import { fetchAllRows } from '@/lib/supabase-paginate';
 import { normalizeSheetConfigs } from '@/lib/integrations/google-sheets-conversiones';
 import type { SyncConversionesResponse } from '@/lib/integrations/google-sheets-conversiones';
 import { leerJsonRespuesta, esTimeoutDeFetch } from '@/lib/fetch-json';
+import { resolveRtmClienteId } from '@/lib/report-utm/campaign-resolver';
+import { loadLeadCampos, saveLeadCampo } from '@/lib/report-utm/lead-campos-db';
+import { slugCampo } from '@/lib/report-utm/lead-campos';
+import { getUserRole } from '@/lib/report-utm/auth';
+import { cargarRespuestasLead, campoSintetico, datasetVacio } from '@/lib/report-utm/lead-answers-db';
+import type { LeadAnswerDataset } from '@/lib/report-utm/lead-answers-db';
+import type { LeadCampoDef } from '@/lib/report-utm/lead-campos';
+import type { LeadAnswerBlockDef } from '@/lib/layout-types';
 
 /** Un campo de Sheet tal como lo necesita la UI del dashboard. */
 export interface SheetCampoResumen {
@@ -519,6 +527,204 @@ async function getSheetCamposDelDia(
 }
 
 /**
+ * Recolecta los bloques de respuestas de un cliente: los del layout general MÁS
+ * los de todas sus pestañas.
+ *
+ * Se miran todas las pestañas y no solo la activa porque la carga es única: el
+ * usuario cambia de pestaña sin volver al servidor, así que un bloque que solo
+ * existe en la pestaña 3 tiene que venir en la misma tanda o saldría vacío hasta
+ * recargar. Se deduplica por la pregunta, no por el id del bloque: dos pestañas
+ * que miran el mismo campo comparten una sola consulta.
+ */
+function recolectarBloquesRespuesta(
+  layout: { lead_answer_blocks?: LeadAnswerBlockDef[] } | null | undefined,
+  tabs: { lead_answer_blocks?: LeadAnswerBlockDef[] | null }[] | null | undefined,
+): LeadAnswerBlockDef[] {
+  const vistos = new Set<string>();
+  const out: LeadAnswerBlockDef[] = [];
+  const añadir = (bloques: LeadAnswerBlockDef[] | null | undefined) => {
+    for (const b of bloques ?? []) {
+      const firma = b.origen === 'catalogo'
+        ? `c:${b.clave ?? ''}`
+        : `a:${[...(b.clavesOrigen ?? [])].sort().join('~')}`;
+      if (firma === 'c:' || firma === 'a:') continue;   // bloque recién creado, sin pregunta
+      if (vistos.has(firma)) continue;
+      vistos.add(firma);
+      out.push(b);
+    }
+  };
+  añadir(layout?.lead_answer_blocks);
+  for (const t of tabs ?? []) añadir(t.lead_answer_blocks);
+  return out;
+}
+
+/**
+ * ¿Alguna fórmula del cliente usa las métricas de Report-UTM (`utm_leads` o
+ * `lf__*`)?
+ *
+ * Decide si hace falta el total diario de contactos. Es una consulta que lee
+ * TODOS los leads del rango, y en el cliente más grande (Eduversio, 22.000 leads
+ * en un mes) eso son ~7.600 páginas de heap: 1 s en caliente, pero en frío se
+ * come el `statement_timeout` de 8 s. Cobrárselo a un cliente que no usa ninguna
+ * de estas métricas —Eduversio es justo uno: sus formularios no preguntan nada—
+ * sería pagar el peor caso por nada.
+ *
+ * Mismo patrón y misma razón que `layoutUsaSheetFilter`, incluidas las pestañas
+ * y las plantillas que estas referencian.
+ */
+type FuenteDeFormulas = {
+  columnas?: { formula?: string | null }[] | null;
+  tarjetas?: { formula?: string | null; targetFormula?: string | null }[] | null;
+  graficos?: { valueFormulas?: string[] | null }[] | null;
+  ranking_tables?: { columns?: { formula?: string | null }[] | null }[] | null;
+  custom_metrics?: { formula?: string | null }[] | null;
+};
+
+function layoutUsaRespuestasLead(
+  layout: FuenteDeFormulas | null | undefined,
+  tabs: (FuenteDeFormulas & { plantilla_id?: string | null })[] | null | undefined,
+  plantillas: (FuenteDeFormulas & { id?: string })[] | null | undefined,
+): boolean {
+  const usa = (f: string | null | undefined) =>
+    !!f && (f.includes('utm_leads') || f.includes('lf__'));
+
+  const revisar = (fuente: FuenteDeFormulas | null | undefined): boolean => {
+    if (!fuente) return false;
+    if ((fuente.columnas ?? []).some(c => usa(c?.formula))) return true;
+    if ((fuente.tarjetas ?? []).some(c => usa(c?.formula) || usa(c?.targetFormula))) return true;
+    if ((fuente.graficos ?? []).some(g => (g?.valueFormulas ?? []).some(usa))) return true;
+    if ((fuente.ranking_tables ?? []).some(r => (r?.columns ?? []).some(c => usa(c?.formula)))) return true;
+    if ((fuente.custom_metrics ?? []).some(m => usa(m?.formula))) return true;
+    return false;
+  };
+
+  if (revisar(layout)) return true;
+  for (const t of tabs ?? []) if (revisar(t)) return true;
+
+  const plantillasUsadas = new Set((tabs ?? []).map(t => t?.plantilla_id).filter(Boolean));
+  for (const p of plantillas ?? []) if (plantillasUsadas.has(p?.id) && revisar(p)) return true;
+
+  return false;
+}
+
+/**
+ * ¿Alguna columna, tarjeta o gráfico filtra por columna del Sheet?
+ *
+ * Decide si el periodo previo necesita `offline_rows`. Sin ellas
+ * `enrichOfflineRow` ve una lista vacía y devuelve 0 en todas las claves
+ * offline: el comparativo de una tarjeta con filtro salía 0 y el delta se
+ * ocultaba, sin que nada avisara. Cargarlas siempre serían decenas de miles de
+ * objetos para los clientes que no usan el filtro, de ahí la comprobación.
+ *
+ * Se miran también las pestañas y las plantillas que estas referencian, por la
+ * misma razón que en `recolectarBloquesRespuesta`: la carga es única.
+ */
+type BloqueFiltrable = { sheetFilter?: { field?: string } | null };
+type FuenteDeBloques = {
+  columnas?: BloqueFiltrable[] | null;
+  tarjetas?: BloqueFiltrable[] | null;
+  graficos?: BloqueFiltrable[] | null;
+};
+
+function layoutUsaSheetFilter(
+  layout: FuenteDeBloques | null | undefined,
+  tabs: (FuenteDeBloques & { plantilla_id?: string | null })[] | null | undefined,
+  plantillas: (FuenteDeBloques & { id?: string })[] | null | undefined,
+): boolean {
+  const conFiltro = (bloques: BloqueFiltrable[] | null | undefined) =>
+    Array.isArray(bloques) && bloques.some(b => !!b?.sheetFilter?.field);
+  const revisar = (fuente: FuenteDeBloques | null | undefined) =>
+    !!fuente && (conFiltro(fuente.columnas) || conFiltro(fuente.tarjetas) || conFiltro(fuente.graficos));
+
+  if (revisar(layout)) return true;
+  for (const t of tabs ?? []) if (revisar(t)) return true;
+
+  const plantillasUsadas = new Set((tabs ?? []).map(t => t?.plantilla_id).filter(Boolean));
+  for (const p of plantillas ?? []) if (plantillasUsadas.has(p?.id) && revisar(p)) return true;
+
+  return false;
+}
+
+/**
+ * Respuestas de formulario del cliente, listas para los bloques de respuestas.
+ *
+ * Espejo de `getSheetCamposDelDia`: carga un dato configurable por cliente y
+ * NUNCA lanza. Si falta la migración 071, si el cliente report_utm no está
+ * enlazado o si la RPC agota el tiempo, el dashboard tiene que seguir cargando
+ * exactamente igual que antes de esta feature.
+ *
+ * `clienteId` es el id PÚBLICO (`public.clientes.id`). El puente al espacio de
+ * report_utm se resuelve aquí dentro precisamente para que quien llama no tenga
+ * que saber que hay dos espacios de identidad.
+ */
+async function getRespuestasLeadDelDia(
+  clienteId: string,
+  startStr: string,
+  endStr: string,
+  bloques: LeadAnswerBlockDef[],
+  /** ¿Hay algún bloque o alguna fórmula que use estas métricas? */
+  conTotales: boolean,
+): Promise<LeadAnswerDataset> {
+  // Si no hay ni bloques ni fórmulas que lo usen, no se toca la red: el total
+  // diario es la consulta cara y no tiene sentido cobrársela a un cliente que no
+  // mide nada de esto.
+  if (bloques.length === 0 && !conTotales) return datasetVacio();
+  // Misma guarda que la ficha del cliente: sin el módulo activo no se toca la red.
+  if (process.env.NEXT_PUBLIC_REPORT_UTM_ENABLED !== 'true') return datasetVacio();
+
+  try {
+    const rtmClienteId = await resolveRtmClienteId(clienteId);
+    if (!rtmClienteId) return datasetVacio();
+
+    const supabase = await createAdminClient();
+    const rtm = supabase.schema('report_utm');
+
+    // El catálogo solo se lee si hay algún bloque que lo use.
+    const necesitaCatalogo = bloques.some(b => b.origen === 'catalogo');
+    const catalogo: LeadCampoDef[] = necesitaCatalogo
+      ? await loadLeadCampos(rtm, rtmClienteId, { soloActivos: true })
+      : [];
+
+    const campos: LeadCampoDef[] = [];
+    const origenes: Record<string, 'catalogo' | 'auto'> = {};
+    for (const b of bloques) {
+      if (b.origen === 'catalogo') {
+        const campo = catalogo.find(c => c.clave === b.clave);
+        // Un campo borrado del catálogo NO cae a 'auto' automáticamente: eso
+        // cambiaría las cifras del bloque sin avisar. Se omite y el componente
+        // muestra que la pregunta ya no existe.
+        if (!campo) continue;
+        campos.push(campo);
+        origenes[campo.clave] = 'catalogo';
+      } else {
+        const claves = b.clavesOrigen ?? [];
+        if (claves.length === 0) continue;
+        const clave = `auto:${[...claves].sort().join('~')}`;
+        if (origenes[clave]) continue;
+        campos.push(campoSintetico(clave, b.label || b.title || claves[0], claves));
+        origenes[clave] = 'auto';
+      }
+    }
+    // Sin campos NO se corta: `cargarRespuestasLead` sigue trayendo el total
+    // diario de contactos, que es lo que alimenta `utm_leads`.
+
+    // `all` abarca desde 2020: escanear el histórico entero reventaría el
+    // statement_timeout y no aporta nada a un desglose de respuestas.
+    const desde = startStr === 'all' ? addDaysISO(endStr, -365) : startStr;
+
+    // Un bloque de respuestas necesita el total sí o sí: sin él no puede calcular
+    // su `(sin respuesta)` y la tabla diaria no cerraría.
+    const necesitaTotales = conTotales || bloques.length > 0;
+
+    return await cargarRespuestasLead(
+      rtm, rtmClienteId, desde, endStr, campos, origenes, necesitaTotales);
+  } catch (err) {
+    console.error('[dashboard] respuestas de formulario no disponibles:', err);
+    return datasetVacio();
+  }
+}
+
+/**
  * Carga las filas de métricas de un rango YA enriquecidas (leads, conversiones
  * offline y campos de Sheet).
  *
@@ -532,13 +738,14 @@ async function cargarMetricasEnriquecidas(
   clienteId: string,
   startStr: string,
   endStr: string,
-  opts?: { incluirFilasOffline?: boolean }
+  opts?: { incluirFilasOffline?: boolean; leadAnswerBlocks?: LeadAnswerBlockDef[]; leadAnswerFormulas?: boolean }
 ): Promise<{
   metrics: any[]
   leadsRaw: any[]
   conversionesOfflineRaw: any[]
   sheetCampos: SheetCampoResumen[]
   sheetVistas: SheetVistaResumen[]
+  leadAnswers: LeadAnswerDataset
 }> {
   // Todas paginadas por keyset: sin esto PostgREST corta en ~1000 filas. Para
   // `metricas_diarias` es 1 fila/día (solo se nota en el archivo, que abarca
@@ -547,7 +754,7 @@ async function cargarMetricasEnriquecidas(
   const enRango = (q: any, col: string) =>
     startStr === 'all' ? q.lte(col, endStr) : q.gte(col, startStr).lte(col, endStr)
 
-  const [metricas, leads, offline, sheetData] = await Promise.all([
+  const [metricas, leads, offline, sheetData, leadAnswers] = await Promise.all([
     fetchAllRows(() => enRango(
       supabase.from('metricas_diarias').select('*').eq('cliente_id', clienteId), 'fecha')),
     fetchAllRows(() => enRango(
@@ -555,6 +762,7 @@ async function cargarMetricasEnriquecidas(
     fetchAllRows(() => enRango(
       supabase.from('conversiones_offline').select('*').eq('cliente_id', clienteId), 'fecha')),
     getSheetCamposDelDia(supabase, clienteId, startStr, endStr),
+    getRespuestasLeadDelDia(clienteId, startStr, endStr, opts?.leadAnswerBlocks ?? [], opts?.leadAnswerFormulas ?? false),
   ])
 
   const metrics = mergeMetricasDelRango({
@@ -566,12 +774,20 @@ async function cargarMetricasEnriquecidas(
     incluirFilasOffline: opts?.incluirFilasOffline,
   })
 
+  // `leadAnswers` viaja como campo HERMANO de `metrics`, no dentro de sus filas,
+  // y por eso `mergeMetricasDelRango` no se toca. Ese merge es "la única
+  // definición de qué claves ve una fórmula", y estas respuestas no son una clave
+  // escalar por día sino un cubo (día × campaña × bucket). Aplanarlas a algo como
+  // `leadanswer_rango_2m_3m` las convertiría en identificadores de fórmula, y en
+  // ese momento alguien escribiría `meta_spend / leadanswer_x` — reintroduciendo
+  // justo el reparto de gasto por respuesta que docs/17 y docs/18 rechazan.
   return {
     metrics,
     leadsRaw: leads,
     conversionesOfflineRaw: offline,
     sheetCampos: sheetData.campos,
     sheetVistas: sheetData.vistas,
+    leadAnswers,
   }
 }
 
@@ -648,17 +864,26 @@ export async function getDashboardData(clientId: string, startStr: string, endSt
       })()
     : null
 
+  // Los bloques de respuestas se recolectan del layout MÁS todas las pestañas:
+  // la carga es única y el usuario cambia de pestaña sin volver al servidor.
+  const leadAnswerBlocks = recolectarBloquesRespuesta(layout, tabsRes.data);
+  // El total diario solo se pide si alguna fórmula lo menciona (ver helper).
+  const leadAnswerFormulas = layoutUsaRespuestasLead(layout, tabsRes.data, allLayoutsRes.data);
+
   // El periodo anterior pasa por el MISMO enriquecimiento: si no, las tarjetas
   // con campos de Sheet, offline o leads se quedaban sin comparativo en silencio.
+  // Sus `offline_rows` solo se traen si algo filtra por Sheet (ver helper).
+  const previoNecesitaFilasOffline = layoutUsaSheetFilter(layout, tabsRes.data, allLayoutsRes.data);
   const [actual, previo] = await Promise.all([
-    cargarMetricasEnriquecidas(supabase, cliente.id, startStr, endStr),
+    cargarMetricasEnriquecidas(supabase, cliente.id, startStr, endStr,
+      { leadAnswerBlocks, leadAnswerFormulas }),
     rangoPrevio
       ? cargarMetricasEnriquecidas(supabase, cliente.id, rangoPrevio.desde, rangoPrevio.hasta,
-          { incluirFilasOffline: false })
+          { incluirFilasOffline: previoNecesitaFilasOffline, leadAnswerBlocks, leadAnswerFormulas })
       : Promise.resolve(null),
   ]);
 
-  const { metrics, leadsRaw, conversionesOfflineRaw, sheetCampos, sheetVistas } = actual;
+  const { metrics, leadsRaw, conversionesOfflineRaw, sheetCampos, sheetVistas, leadAnswers } = actual;
 
   const effectiveStart = startStr === 'all' ? '2020-01-01' : startStr;
   const weeks = getWeeksInRange(effectiveStart, endStr);
@@ -681,6 +906,8 @@ export async function getDashboardData(clientId: string, startStr: string, endSt
     layoutPublico: cliente.layout_publico || null,
     availablePlatforms: Array.from(availablePlatforms),
     campaignGroups: campaignGroupsRes.data || [],
+    leadAnswers,
+    prevLeadAnswers: previo?.leadAnswers ?? null,
   };
 }
 
@@ -737,6 +964,7 @@ export async function saveClienteLayout(
     custom_metrics?: any[];
     blocks_order?: string[];
     ranking_tables?: any[];
+    lead_answer_blocks?: any[];
   }
 ) {
   const supabase = await createAdminClient();
@@ -1008,6 +1236,7 @@ const TAB_VIZ_FIELDS = [
   'text_blocks',
   'custom_metrics',
   'ranking_tables',
+  'lead_answer_blocks',
   'blocks_order',
 ] as const;
 
@@ -1151,6 +1380,7 @@ export async function saveTabOverrides(
     custom_metrics?: any[] | null;
     blocks_order?: string[] | null;
     ranking_tables?: any[] | null;
+    lead_answer_blocks?: any[] | null;
   }
 ) {
   const supabase = await createAdminClient();
@@ -1164,6 +1394,7 @@ export async function saveTabOverrides(
       custom_metrics: payload.custom_metrics,
       blocks_order: payload.blocks_order,
       ranking_tables: payload.ranking_tables,
+      lead_answer_blocks: payload.lead_answer_blocks,
       updated_at: new Date().toISOString(),
     })
     .eq('id', tabId)
@@ -1183,6 +1414,7 @@ export async function updateLayoutPuzzleState(
     tarjetas?: any[];
     graficos?: any[];
     ranking_tables?: any[];
+    lead_answer_blocks?: any[];
     full_layout?: {
       nombre: string;
       columnas: any[];
@@ -1205,6 +1437,7 @@ export async function updateLayoutPuzzleState(
         ...(payload.tarjetas !== undefined && { tarjetas: payload.tarjetas }),
         ...(payload.graficos !== undefined && { graficos: payload.graficos }),
         ...(payload.ranking_tables !== undefined && { ranking_tables: payload.ranking_tables }),
+        ...(payload.lead_answer_blocks !== undefined && { lead_answer_blocks: payload.lead_answer_blocks }),
         updated_at: new Date().toISOString(),
       })
       .eq('id', tabId)
@@ -1230,6 +1463,7 @@ export async function updateLayoutPuzzleState(
           ...(payload.tarjetas !== undefined && { tarjetas: payload.tarjetas }),
           ...(payload.graficos !== undefined && { graficos: payload.graficos }),
           ...(payload.ranking_tables !== undefined && { ranking_tables: payload.ranking_tables }),
+          ...(payload.lead_answer_blocks !== undefined && { lead_answer_blocks: payload.lead_answer_blocks }),
           updated_at: new Date().toISOString(),
         })
         .eq('cliente_id', clienteId);
@@ -1537,6 +1771,11 @@ export async function getMirrorDashboardData(token: string, from?: string, to?: 
     activeTabObj = tab;
     // Use tab override if available
     if (tab.columnas && tab.tarjetas) {
+      // Todos los arrays de bloques que puede tener una pestaña, sin excepción.
+      // `ranking_tables` faltaba aquí desde la migración 018: una tabla de
+      // ranking configurada en una pestaña se veía en el dashboard interno y
+      // desaparecía en el enlace compartido al cliente, sin ningún error — el
+      // bloque simplemente no existía en el layout que llegaba al espejo.
       layout = {
         nombre: tab.nombre,
         columnas: tab.columnas,
@@ -1545,6 +1784,8 @@ export async function getMirrorDashboardData(token: string, from?: string, to?: 
         blocks_order: tab.blocks_order,
         text_blocks: tab.text_blocks,
         custom_metrics: tab.custom_metrics,
+        ranking_tables: tab.ranking_tables,
+        lead_answer_blocks: tab.lead_answer_blocks,
       };
     } else if (tab.plantilla_id) {
       const { data: global } = await supabase
@@ -1584,11 +1825,28 @@ export async function getMirrorDashboardData(token: string, from?: string, to?: 
   const startStr = from || activeTabObj?.fecha_inicio || addDaysISO(hoy, -29);
   const endStr = to || activeTabObj?.fecha_finalizacion || hoy;
 
+  // Las pestañas se piden aparte porque el enriquecimiento las necesita: en modo
+  // `tab_mirror` el espejo muestra varias, y un bloque de respuestas definido en
+  // la segunda saldría vacío si solo se mirara la activa. Solo el enriquecimiento
+  // espera a esta consulta (una tabla pequeña); el resto sigue en paralelo.
+  const tabsPromise = supabase
+    .from('cliente_tabs')
+    .select('*')
+    .eq('cliente_id', cliente.id)
+    .order('position', { ascending: true });
+
   // Mismo enriquecimiento que el dashboard interno: sin esto, una tarjeta con un
   // campo de Sheet salía en blanco en el enlace público del cliente.
   const [enriquecido, conversionesRes, campaignGroupsRes, tabsRes, allLayoutsRes] =
     await Promise.all([
-      cargarMetricasEnriquecidas(supabase, cliente.id, startStr, endStr),
+      tabsPromise.then((r: any) =>
+        cargarMetricasEnriquecidas(supabase, cliente.id, startStr, endStr, {
+          leadAnswerBlocks: recolectarBloquesRespuesta(layout, r.data),
+          // El espejo no conoce las plantillas globales, así que solo se miran el
+          // layout de la pestaña y las pestañas visibles. Es suficiente: lo que se
+          // comparte con el cliente es lo que hay en ese layout.
+          leadAnswerFormulas: layoutUsaRespuestasLead(layout, r.data, null),
+        })),
       supabase
         .from('meta_conversiones_catalogo')
         .select('conversion_key, label, field_id')
@@ -1604,15 +1862,11 @@ export async function getMirrorDashboardData(token: string, from?: string, to?: 
         )
         .eq('cliente_id', cliente.id)
         .order('nombre', { ascending: true }),
-      supabase
-        .from('cliente_tabs')
-        .select('*')
-        .eq('cliente_id', cliente.id)
-        .order('position', { ascending: true }),
+      tabsPromise,
       supabase.from('layouts_reporte').select('*').order('nombre'),
     ]);
 
-  const { metrics, conversionesOfflineRaw, sheetCampos, sheetVistas } = enriquecido;
+  const { metrics, conversionesOfflineRaw, sheetCampos, sheetVistas, leadAnswers } = enriquecido;
 
   const effectiveStart = startStr === 'all' ? '2020-01-01' : startStr;
   const weeks = getWeeksInRange(effectiveStart, endStr);
@@ -1644,6 +1898,11 @@ export async function getMirrorDashboardData(token: string, from?: string, to?: 
       conversionesOfflineRaw,
       sheetCampos,
       sheetVistas,
+      leadAnswers,
+      // El espejo no calcula periodo anterior, así que sus bloques de respuestas
+      // no muestran variación. Es coherente con el resto del enlace público, que
+      // tampoco compara tarjetas.
+      prevLeadAnswers: null,
       weeks,
       layout,
       tabs: allTabs,
@@ -1737,19 +1996,76 @@ export async function getOrCreatePublicToken(id: string, type: 'client' | 'tab')
 }
 
 /**
+ * Promueve una pregunta auto-detectada al catálogo de campos de lead.
+ *
+ * Es el camino de migración de los clientes que todavía no tienen nada
+ * configurado: el bloque estrena en modo 'auto' —valores crudos, sin agrupar— y
+ * cuando el analista ve que la pregunta le sirve, un botón la convierte en un
+ * campo de verdad, editable desde `/report-utm/clientes/[id]` con su nombre
+ * bonito, sus respuestas agrupadas y su orden.
+ *
+ * A partir de ahí el bloque pasa a `origen: 'catalogo'` y deja de depender del
+ * escaneo. Un campo del catálogo es también lo ÚNICO que puede unir la misma
+ * pregunta llegada con dos claves distintas (Meta y web).
+ */
+export async function promoverCampoLead(
+  publicClienteId: string,
+  input: { nombre: string; clavesOrigen: string[] },
+): Promise<{ error?: string; clave?: string }> {
+  const role = await getUserRole();
+  if (!role || !['superadmin', 'admin'].includes(role)) {
+    return { error: 'Solo un administrador puede crear campos de lead.' };
+  }
+  if (!input.nombre?.trim()) return { error: 'El campo necesita un nombre.' };
+  if ((input.clavesOrigen ?? []).length === 0) return { error: 'Selecciona al menos una pregunta.' };
+
+  const rtmClienteId = await resolveRtmClienteId(publicClienteId);
+  if (!rtmClienteId) return { error: 'Este cliente no está enlazado al módulo de informes.' };
+
+  const supabase = await createAdminClient();
+  const rtm = supabase.schema('report_utm');
+
+  // La clave se fija en el alta y no se reescribe nunca: es lo que queda
+  // guardado dentro del bloque y de los widgets del BI.
+  const clave = slugCampo(input.nombre);
+  const { error } = await saveLeadCampo(rtm, {
+    cliente_id: rtmClienteId,
+    clave,
+    nombre: input.nombre.trim(),
+    claves_origen: input.clavesOrigen,
+  });
+  if (error) return { error };
+
+  revalidatePath(`/dashboard/${publicClienteId}`);
+  return { clave };
+}
+
+/**
  * Historia completa del cliente para el archivo de pestañas.
  *
  * Pasa por el mismo enriquecimiento que el dashboard: sus tarjetas evalúan las
  * mismas fórmulas, así que sin esto las que usaban campos de Sheet u offline
- * mostraban 0. Sin `offline_rows`: el archivo no filtra por Sheet y cargarlas
- * sería traer decenas de miles de objetos para nada.
+ * mostraban 0.
+ *
+ * `conFilasOffline` lo decide quien llama, mirando si alguna tarjeta archivada
+ * tiene `sheetFilter`. El archivo abarca desde 2020, así que traer las filas
+ * individuales siempre serían decenas de miles de objetos para nada; pero sin
+ * ellas una tarjeta con filtro de Sheet mostraba aquí un número distinto al del
+ * dashboard, y eso sí es un dato equivocado.
+ *
+ * Sin bloques de respuestas por la misma razón, y una más: su vista no los
+ * pinta, así que la consulta sería un escaneo de años para algo que nadie mira.
  */
-export async function getArchiveMetrics(clientId: string): Promise<{ metrics: any[] } | null> {
+export async function getArchiveMetrics(
+  clientId: string,
+  conFilasOffline = false,
+): Promise<{ metrics: any[] } | null> {
   const supabase = await createAdminClient();
   try {
     const hoy = new Date().toISOString().split('T')[0];
     const { metrics } = await cargarMetricasEnriquecidas(
-      supabase, clientId, '2020-01-01', hoy, { incluirFilasOffline: false }
+      supabase, clientId, '2020-01-01', hoy,
+      { incluirFilasOffline: conFilasOffline, leadAnswerBlocks: [] }
     );
     return { metrics };
   } catch (err) {

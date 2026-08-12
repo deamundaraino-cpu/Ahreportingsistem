@@ -7,10 +7,11 @@ import { Input } from '@/components/ui/input'
 import {
     LayoutDashboard, X, GripVertical, ChevronRight,
     RotateCcw, Save, Loader2, Check,
-    ChevronLeft, Eye, EyeOff, LayoutPanelTop, Plus, Database, BarChart3, Copy
+    ChevronLeft, Eye, EyeOff, LayoutPanelTop, Plus, Database, BarChart3, Copy, Sheet as SheetIcon
 } from 'lucide-react'
 import { Popover, PopoverContent, PopoverTrigger, PopoverAnchor } from '@/components/ui/popover'
-import type { ColDef, CardDef, ChartDef, ChartType, ReportLayout, CardColor, CampaignFilterSpec, CampaignFilterOperator, SheetFilterSpec, SheetFilterOperator, RankingTableDef, RankingColumnDef, CardVariant, CardThreshold } from '@/lib/layout-types'
+import type { ColDef, CardDef, ChartDef, ChartType, ReportLayout, CardColor, CampaignFilterSpec, CampaignFilterOperator, SheetFilterSpec, SheetFilterOperator, RankingTableDef, RankingColumnDef, CardVariant, CardThreshold, LeadAnswerBlockDef } from '@/lib/layout-types'
+import { LeadAnswerEditor } from './LeadAnswerEditor'
 import { toast } from 'sonner'
 
 // El catálogo de métricas y las reglas de formato viven en un módulo puro
@@ -18,13 +19,13 @@ import { toast } from 'sonner'
 // import existente de este archivo cambie.
 export {
     AVAILABLE_METRICS, buildAvailableMetrics, buildMetricFormats,
-    getMetricType, applyMetricType,
+    getMetricType, applyMetricType, tieneVentasOffline,
 } from "@/lib/dashboard/metric-catalog"
 export type { MetricType, MetricFormatMap } from "@/lib/dashboard/metric-catalog"
 import {
-    AVAILABLE_METRICS, buildAvailableMetrics, applyMetricType, getMetricType,
+    AVAILABLE_METRICS, buildAvailableMetrics, applyMetricType, getMetricType, tieneVentasOffline,
 } from "@/lib/dashboard/metric-catalog"
-import type { MetricType, MetricOption } from "@/lib/dashboard/metric-catalog"
+import type { MetricType, MetricOption, LeadAnswerCampoResumen } from "@/lib/dashboard/metric-catalog"
 import type { SheetCampoResumen, SheetVistaResumen } from "../_actions"
 
 // ─── Formula Input component ──────────────────────────────────────────────────
@@ -239,8 +240,8 @@ function DraggableColumnRow({
 
                 {/* Row 2: type + highlight + campaign filter (only for non-fecha columns) */}
                 {col.formula !== 'fecha' && (
-                    <div className="flex flex-col gap-1 pl-6">
-                        <div className="flex items-center gap-2">
+                    <div className="flex flex-col gap-1 pl-6 min-w-0">
+                        <div className="flex flex-wrap items-center gap-2 min-w-0">
                             <MetricTypeSelector
                                 prefix={col.prefix}
                                 suffix={col.suffix}
@@ -396,8 +397,8 @@ function DraggableCardRow({
                 </div>
 
                 {/* Row 2: type selector + campaign filter + TikTok account */}
-                <div className="flex flex-col gap-1">
-                    <div className="flex items-center gap-2">
+                <div className="flex flex-col gap-1 min-w-0">
+                    <div className="flex flex-wrap items-center gap-2 min-w-0">
                         <MetricTypeSelector
                             prefix={card.prefix}
                             suffix={card.suffix}
@@ -805,7 +806,10 @@ function DraggableChartRow({
                             value={chart.dimension || ''}
                             onChange={(e) => {
                                 const dim = e.target.value || undefined
-                                onUpdate({ ...chart, dimension: dim as any })
+                                // Al pasar a agrupación por campaña/anuncio el filtro de
+                                // Sheet deja de tener efecto y su selector desaparece: se
+                                // limpia para no dejar configuración muerta guardada.
+                                onUpdate({ ...chart, dimension: dim as any, ...(dim ? { sheetFilter: undefined } : {}) })
                             }}
                             className="bg-background border border-border text-foreground/90 rounded px-1.5 py-0.5 outline-none hover:border-muted-foreground/30 cursor-pointer text-[9px]"
                         >
@@ -877,19 +881,24 @@ function DraggableChartRow({
                             onChange={v => onUpdate({ ...chart, account_id: v || undefined })}
                         />
                     )}
-                    <div className="flex items-center justify-between gap-2">
+                    <div className="flex flex-wrap items-center justify-between gap-2 min-w-0">
                         <CampaignFilterPicker
                             value={chart.campaignFilter}
                             onChange={v => onUpdate({ ...chart, campaignFilter: v })}
                             campaignGroups={campaignGroups}
                             campaignNames={campaignNames}
                         />
-                        <SheetFilterPicker
-                            value={chart.sheetFilter}
-                            onChange={v => onUpdate({ ...chart, sheetFilter: v })}
-                            googleSheetsConversiones={googleSheetsConversiones}
-                            conversionesOfflineRaw={conversionesOfflineRaw}
-                        />
+                        {/* Sin filtro de Sheet cuando el gráfico agrupa por campaña/anuncio:
+                            esas filas se construyen desde `meta_campaigns`/`meta_ads` y no
+                            llevan datos offline, así que el filtro no cambiaría nada. */}
+                        {!chart.dimension && (
+                            <SheetFilterPicker
+                                value={chart.sheetFilter}
+                                onChange={v => onUpdate({ ...chart, sheetFilter: v })}
+                                googleSheetsConversiones={googleSheetsConversiones}
+                                conversionesOfflineRaw={conversionesOfflineRaw}
+                            />
+                        )}
                         <div className="flex items-center gap-1 flex-shrink-0">
                             <span className="text-muted-foreground/70">Alto:</span>
                             <input
@@ -1186,6 +1195,11 @@ export function SheetFilterPicker({
     const currentField = value?.field || ''
     const currentOp: SheetFilterOperator = value?.operator || 'equals'
 
+    // Colapsado por defecto: los tres selects desplegados no caben junto al filtro
+    // de campaña y se salían de la tarjeta. Un filtro ya configurado nunca se
+    // oculta (ver `expanded` más abajo).
+    const [abierto, setAbierto] = useState(false)
+
     const uniqueValues = useMemo(() => {
         if (!currentField || !conversionesOfflineRaw || conversionesOfflineRaw.length === 0) return []
         const fieldKey = currentField.startsWith('sheet_') ? currentField.replace('sheet_', '') : currentField
@@ -1229,8 +1243,25 @@ export function SheetFilterPicker({
 
     const hasFilter = value !== undefined && !!value.field
 
+    // Un filtro activo se muestra siempre: si quedara plegado tras el icono, el
+    // usuario vería un número segmentado sin ninguna pista de por qué.
+    const expanded = abierto || hasFilter
+
+    if (!expanded) {
+        return (
+            <button
+                type="button"
+                onClick={() => setAbierto(true)}
+                title="Filtrar por columna del Sheet"
+                className="flex-shrink-0 flex items-center justify-center w-6 h-7 rounded border bg-card border-border text-muted-foreground/70 hover:text-muted-foreground transition"
+            >
+                <SheetIcon className="w-3 h-3" />
+            </button>
+        )
+    }
+
     return (
-        <div className="flex items-center gap-1.5 flex-shrink-0" title="Filtro de Google Sheets (opcional)">
+        <div className="flex items-center gap-1.5 min-w-0 flex-wrap" title="Filtro de Google Sheets (opcional)">
             <span className="text-[10px] text-muted-foreground/70 flex-shrink-0">Sheet:</span>
 
             {/* Field selector */}
@@ -1310,15 +1341,13 @@ export function SheetFilterPicker({
                 </>
             )}
 
-            {hasFilter && (
-                <button
-                    onClick={() => onChange(undefined)}
-                    title="Limpiar filtro de Sheet"
-                    className="text-muted-foreground/70 hover:text-red-400 transition flex-shrink-0"
-                >
-                    <X className="w-3 h-3" />
-                </button>
-            )}
+            <button
+                onClick={() => { onChange(undefined); setAbierto(false) }}
+                title={hasFilter ? 'Limpiar filtro de Sheet' : 'Cerrar filtro de Sheet'}
+                className="text-muted-foreground/70 hover:text-red-400 transition flex-shrink-0"
+            >
+                <X className="w-3 h-3" />
+            </button>
         </div>
     )
 }
@@ -1341,6 +1370,7 @@ export function LayoutConfigModal({
     campaignGroups = [],
     campaignNames = [],
     tiktokAccounts = [],
+    leadAnswerCampos = [],
 }: {
     clienteId: string
     currentLayout: ReportLayout | null
@@ -1359,9 +1389,15 @@ export function LayoutConfigModal({
     campaignGroups?: { id: string; nombre: string }[]
     campaignNames?: string[]
     tiktokAccounts?: { id: string; label: string; advertiser_id: string }[]
+    /** Preguntas de formulario: cada respuesta se ofrece como métrica `lf__*`. */
+    leadAnswerCampos?: LeadAnswerCampoResumen[]
 }) {
+    const hayVentasOffline = useMemo(
+        () => tieneVentasOffline(conversionesOfflineRaw), [conversionesOfflineRaw]
+    )
     const availableMetrics = buildAvailableMetrics(
-        conversionesCatalogo, googleSheetsConversiones, sheetCampos, sheetVistas
+        conversionesCatalogo, googleSheetsConversiones, sheetCampos, sheetVistas, hayVentasOffline,
+        leadAnswerCampos
     )
     const [step, setStep] = useState<'select' | 'edit'>(currentLayout ? 'edit' : 'select')
     const [workingLayout, setWorkingLayout] = useState<ReportLayout | null>(currentLayout)
@@ -1441,6 +1477,7 @@ export function LayoutConfigModal({
             'table',
             ...(layout.text_blocks || []).map(t => `text:${t.id}`),
             ...(layout.ranking_tables || []).map(r => `ranking:${r.id}`),
+            ...(layout.lead_answer_blocks || []).map(b => `leadanswer:${b.id}`),
         ]
         const savedOrder = layout.blocks_order || []
         const validSaved = savedOrder.filter(id => availableBlockIds.includes(id))
@@ -1671,6 +1708,45 @@ export function LayoutConfigModal({
         setWorkingLayout({ ...workingLayout, ranking_tables: tables, blocks_order: newOrder })
     }
 
+    // ── Bloques de respuestas de formulario ───────────────────────────────────
+    // Mismo trío de handlers que las tablas de ranking, con su prefijo propio.
+
+    function addLeadAnswerBlock() {
+        if (!workingLayout) return
+        // Nace sin pregunta: el picker de abajo es quien la elige, y es ahí donde
+        // se ve si el cliente ya tiene campos configurados o hay que detectarlos.
+        const nuevo: LeadAnswerBlockDef = {
+            id: crypto.randomUUID(),
+            title: 'Respuestas de formulario',
+            origen: 'auto',
+            clavesOrigen: [],
+            display: 'bars',
+            topN: 12,
+            agruparResto: true,
+            showDelta: true,
+            showCsv: true,
+        }
+        const bloques = [...(workingLayout.lead_answer_blocks || []), nuevo]
+        const newOrder = [...(workingLayout.blocks_order || []), `leadanswer:${nuevo.id}`]
+        setWorkingLayout({ ...workingLayout, lead_answer_blocks: bloques, blocks_order: newOrder })
+    }
+
+    function updateLeadAnswerBlock(index: number, bloque: LeadAnswerBlockDef) {
+        if (!workingLayout) return
+        const bloques = [...(workingLayout.lead_answer_blocks || [])]
+        bloques[index] = bloque
+        setWorkingLayout({ ...workingLayout, lead_answer_blocks: bloques })
+    }
+
+    function removeLeadAnswerBlock(index: number) {
+        if (!workingLayout) return
+        const bloque = (workingLayout.lead_answer_blocks || [])[index]
+        if (!bloque) return
+        const bloques = (workingLayout.lead_answer_blocks || []).filter((_, i) => i !== index)
+        const newOrder = (workingLayout.blocks_order || []).filter(id => id !== `leadanswer:${bloque.id}`)
+        setWorkingLayout({ ...workingLayout, lead_answer_blocks: bloques, blocks_order: newOrder })
+    }
+
     // ── Actions ───────────────────────────────────────────────────────────────
 
     async function handleSave() {
@@ -1687,6 +1763,7 @@ export function LayoutConfigModal({
                 custom_metrics: workingLayout.custom_metrics,
                 blocks_order: reconcileOrder(workingLayout),
                 ranking_tables: workingLayout.ranking_tables,
+                lead_answer_blocks: workingLayout.lead_answer_blocks,
             })
         } else {
             res = await saveClienteLayout(clienteId, {
@@ -1697,6 +1774,7 @@ export function LayoutConfigModal({
                 custom_metrics: workingLayout.custom_metrics,
                 blocks_order: reconcileOrder(workingLayout),
                 ranking_tables: workingLayout.ranking_tables,
+                lead_answer_blocks: workingLayout.lead_answer_blocks,
             })
         }
 
@@ -2267,6 +2345,46 @@ export function LayoutConfigModal({
                                 {(!workingLayout?.ranking_tables || workingLayout.ranking_tables.length === 0) && (
                                     <div className="border border-border border-dashed rounded-xl p-8 text-center bg-background/20">
                                         <p className="text-xs text-muted-foreground/70">No hay tablas de ranking. Haz clic en "Agregar tabla" para crear una.</p>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+
+                        {/* Respuestas de formulario */}
+                        <div className="pt-8 border-t border-border space-y-4">
+                            <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2">
+                                    <div className="w-1 h-4 bg-violet-500 rounded-full" />
+                                    <h3 className="text-sm font-bold text-foreground uppercase tracking-wider">Respuestas de Formulario</h3>
+                                </div>
+                                <button onClick={addLeadAnswerBlock} className="text-[10px] text-violet-600 dark:text-violet-400 hover:text-violet-300 flex items-center gap-1 bg-violet-500/10 px-2 py-1 rounded transition">
+                                    <Plus className="w-3 h-3" /> Agregar bloque
+                                </button>
+                            </div>
+
+                            <div className="space-y-4">
+                                {(workingLayout?.lead_answer_blocks || []).map((bloque, bi) => (
+                                    <div key={bloque.id} className="bg-card border border-border rounded-xl p-4 space-y-3">
+                                        <div className="flex items-start justify-end -mb-2">
+                                            <button onClick={() => removeLeadAnswerBlock(bi)} className="flex-shrink-0 text-muted-foreground/50 hover:text-red-400 transition">
+                                                <X className="w-3.5 h-3.5" />
+                                            </button>
+                                        </div>
+                                        <LeadAnswerEditor
+                                            def={bloque}
+                                            onChange={b => updateLeadAnswerBlock(bi, b)}
+                                            clienteId={clienteId}
+                                            campaignGroups={campaignGroups}
+                                            campaignNames={campaignNames}
+                                        />
+                                    </div>
+                                ))}
+                                {(!workingLayout?.lead_answer_blocks || workingLayout.lead_answer_blocks.length === 0) && (
+                                    <div className="border border-border border-dashed rounded-xl p-8 text-center bg-background/20">
+                                        <p className="text-xs text-muted-foreground/70">
+                                            Desglosa los leads por lo que respondieron en el formulario:
+                                            cuántos contestaron cada opción de una pregunta.
+                                        </p>
                                     </div>
                                 )}
                             </div>

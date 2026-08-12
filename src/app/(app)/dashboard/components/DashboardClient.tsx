@@ -27,12 +27,15 @@ const TabConfigModal = dynamic(
     () => import('./TabConfigModal').then(m => ({ default: m.TabConfigModal })),
     { loading: () => null }
 )
-import { LayoutDashboard, Settings2, Plus, Edit2, CalendarDays, Timer, BadgeDollarSign, Wallet, GripVertical, Search, X, Puzzle, Type, AlignLeft, AlignCenter, AlignRight, Trash2, Save, Loader2, Minus, Archive, Copy, BarChart3, Table2, CreditCard } from 'lucide-react'
-import type { ColDef, CardDef, ReportLayout, ChartDef, MetricDef, TextBlockDef, RankingTableDef } from '@/lib/layout-types'
+import { LayoutDashboard, Settings2, Plus, Edit2, CalendarDays, Timer, BadgeDollarSign, Wallet, GripVertical, Search, X, Puzzle, Type, AlignLeft, AlignCenter, AlignRight, Trash2, Save, Loader2, Minus, Archive, Copy, BarChart3, Table2, CreditCard, ListChecks } from 'lucide-react'
+import type { ColDef, CardDef, ReportLayout, ChartDef, MetricDef, TextBlockDef, RankingTableDef, LeadAnswerBlockDef } from '@/lib/layout-types'
 import { updateManualMetric, getTabTotalSpend, saveClienteLayout, saveTabOverrides, updateLayoutPuzzleState, toggleTabArchived } from '../_actions'
 import { SortableCard, SortableChart, SortableTable, SortableText } from './PuzzleComponents'
 import { CountryBreakdown } from './CountryBreakdown'
 import { RankingTableBlock } from './RankingTableBlock'
+import { LeadAnswerBlock } from './LeadAnswerBlock'
+import { campanasPermitidas, clavesDelDia } from '@/lib/dashboard/lead-answer-aggregation'
+import type { LeadAnswerDatasetLite } from '@/lib/dashboard/lead-answer-aggregation'
 import { TabArchiveView } from './TabArchiveView'
 
 const SupportModule = dynamic(
@@ -46,6 +49,31 @@ import { CSS } from '@dnd-kit/utilities'
 import { enrichMetaRow, enrichTikTokRow, parseTabFilter, tabFilterLabel, applyCompoundFilter } from '@/lib/campaign-filter'
 import { enrichOfflineRow } from '@/lib/offline-filter'
 import type { CampaignFilterSpec, TabCampaignFilter } from '@/lib/layout-types'
+
+/**
+ * Añade a cada fila del rango las claves de Report-UTM: `utm_leads` (contactos
+ * del día) y una por respuesta de cada pregunta configurada.
+ *
+ * Se hace AQUÍ y no en el servidor porque el recorte por campaña lo decide la
+ * pestaña activa, que el servidor no conoce. Es el mismo sitio y el mismo patrón
+ * que los campos `funnel_*`.
+ *
+ * A partir de aquí, el motor de fórmulas las trata como cualquier otra métrica:
+ * sirven en tarjetas, gráficas, columnas de tabla y tablas de ranking, y se
+ * pueden dividir por el gasto —que está recortado por la MISMA campaña— para
+ * obtener el costo por lead de un segmento.
+ */
+function inyectarRespuestas(
+    filas: any[],
+    ds: LeadAnswerDatasetLite | null | undefined,
+    keyword: string | TabCampaignFilter,
+    campaignGroups: any[] | undefined,
+): any[] {
+    if (!ds || (ds.campos.length === 0 && Object.keys(ds.totalesPorFecha ?? {}).length === 0)) return filas
+    // El filtro se evalúa una vez sobre el diccionario de campañas, no por fila.
+    const permitidas = campanasPermitidas(ds, keyword, undefined, campaignGroups)
+    return filas.map((row: any) => ({ ...row, ...clavesDelDia(ds, String(row.fecha ?? ''), permitidas) }))
+}
 
 // ─── Helper Functions ────────────────────────────────────────────────────────
 
@@ -432,6 +460,7 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                     blocks_order: activeTabObj.blocks_order ?? undefined,
                     custom_metrics: activeTabObj.custom_metrics ?? undefined,
                     ranking_tables: activeTabObj.ranking_tables ?? undefined,
+                    lead_answer_blocks: activeTabObj.lead_answer_blocks ?? undefined,
                 }
                 customized = true
             } else if (activeTabObj.plantilla_id) {
@@ -442,6 +471,7 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                         text_blocks: activeTabObj.text_blocks ?? found.text_blocks,
                         blocks_order: activeTabObj.blocks_order ?? found.blocks_order,
                         ranking_tables: activeTabObj.ranking_tables ?? found.ranking_tables,
+                        lead_answer_blocks: activeTabObj.lead_answer_blocks ?? found.lead_answer_blocks,
                     }
                     customized = false
                 }
@@ -452,6 +482,7 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                     text_blocks: activeTabObj.text_blocks ?? initialLayout.text_blocks,
                     blocks_order: activeTabObj.blocks_order ?? initialLayout.blocks_order,
                     ranking_tables: activeTabObj.ranking_tables ?? initialLayout.ranking_tables,
+                    lead_answer_blocks: activeTabObj.lead_answer_blocks ?? initialLayout.lead_answer_blocks,
                 }
             }
         }
@@ -467,6 +498,7 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
             'table',
             ...(activeLayout.text_blocks || []).map(t => `text:${t.id}`),
             ...(activeLayout.ranking_tables || []).map(r => `ranking:${r.id}`),
+            ...(activeLayout.lead_answer_blocks || []).map(b => `leadanswer:${b.id}`),
         ]
 
         // Reconcile with saved order: keep saved order but append new blocks, remove missing ones
@@ -516,6 +548,7 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                 tarjetas: activeLayout.tarjetas,
                 graficos: activeLayout.graficos || [],
                 ranking_tables: activeLayout.ranking_tables || [],
+                lead_answer_blocks: activeLayout.lead_answer_blocks || [],
                 // Necesario para crear fila en clientes_layouts si no existe aún
                 full_layout: activeTabId === 'general' ? {
                     nombre: activeLayout.nombre,
@@ -549,6 +582,9 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
         } else if (blockId.startsWith('ranking:')) {
             const rankingId = blockId.replace('ranking:', '')
             updates.ranking_tables = (base.ranking_tables || []).filter((b: any) => b.id !== rankingId)
+        } else if (blockId.startsWith('leadanswer:')) {
+            const answerId = blockId.replace('leadanswer:', '')
+            updates.lead_answer_blocks = (base.lead_answer_blocks || []).filter((b: any) => b.id !== answerId)
         }
         setTabLayoutOverrides(prev => ({
             ...prev,
@@ -594,6 +630,14 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
             const newOrder = [...currentOrder]
             newOrder.splice(insertAfterIdx + 1, 0, `ranking:${copy.id}`)
             updated = { ...layout, ranking_tables: [...(layout.ranking_tables || []), copy], blocks_order: newOrder }
+        } else if (blockId.startsWith('leadanswer:')) {
+            const origId = blockId.replace('leadanswer:', '')
+            const orig = (layout.lead_answer_blocks || []).find((b: any) => b.id === origId)
+            if (!orig) return
+            const copy = { ...orig, id: crypto.randomUUID(), title: `${orig.title} (copia)`, clavesOrigen: [...(orig.clavesOrigen || [])] }
+            const newOrder = [...currentOrder]
+            newOrder.splice(insertAfterIdx + 1, 0, `leadanswer:${copy.id}`)
+            updated = { ...layout, lead_answer_blocks: [...(layout.lead_answer_blocks || []), copy], blocks_order: newOrder }
         }
 
         if (!updated) return
@@ -606,6 +650,7 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
             custom_metrics: updated.custom_metrics,
             blocks_order: updated.blocks_order,
             ranking_tables: updated.ranking_tables,
+            lead_answer_blocks: updated.lead_answer_blocks,
         }
         if (activeTabId && activeTabId !== 'general') {
             await saveTabOverrides(cliente.id, activeTabId, payload)
@@ -614,7 +659,7 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
         }
     }
 
-    function handleAddNewBlock(type: 'card' | 'chart' | 'ranking' | 'text') {
+    function handleAddNewBlock(type: 'card' | 'chart' | 'ranking' | 'text' | 'leadanswer') {
         const newId = crypto.randomUUID()
         const base = { ...(tabLayoutOverrides[activeTabId] || activeLayout), blocks_order: orderedBlocks }
 
@@ -633,6 +678,16 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
             const newRanking: RankingTableDef = { id: newId, title: 'Nueva tabla', dimension: 'campaigns', topN: 10, sortOrder: 'desc', sortColumnIndex: 0, showRank: true, columns: [{ formula: 'meta_spend', label: 'Gasto', prefix: '$', suffix: '', decimals: 2 }] }
             updated = { ...base, ranking_tables: [...(base.ranking_tables || []), newRanking], blocks_order: [...orderedBlocks, `ranking:${newId}`] }
             target = { type: 'ranking', id: newId }
+        } else if (type === 'leadanswer') {
+            // Nace en 'auto' y sin pregunta: el picker del editor rápido —que se
+            // abre justo después— es quien la elige, y ahí es donde se ve si el
+            // cliente tiene campos ya configurados o hay que auto-detectarlos.
+            const newAnswer: LeadAnswerBlockDef = {
+                id: newId, title: 'Respuestas de formulario', origen: 'auto', clavesOrigen: [],
+                display: 'bars', topN: 12, agruparResto: true, showDelta: true, showCsv: true,
+            }
+            updated = { ...base, lead_answer_blocks: [...(base.lead_answer_blocks || []), newAnswer], blocks_order: [...orderedBlocks, `leadanswer:${newId}`] }
+            target = { type: 'leadanswer', id: newId }
         } else {
             const newText: TextBlockDef = { id: newId, blockType: 'text', content: 'Nueva sección', style: 'h2', align: 'left', color: 'white', colSpan: 4 }
             updated = { ...base, text_blocks: [...(base.text_blocks || []), newText], blocks_order: [...orderedBlocks, `text:${newId}`] }
@@ -726,7 +781,7 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
         // usara mostraba un cero perfectamente creíble. Ahora se SUMAN todas las
         // pestañas: es el equivalente honesto de "todos los embudos juntos".
         const tabId = activeTabObj?.id
-        return enriched.map((row: any) => {
+        const conFunnel = enriched.map((row: any) => {
             const funnelData = (row.hotmart_funnel_data as any) || {}
             const porTab: Record<string, any> = funnelData.by_tab ?? {}
 
@@ -773,15 +828,20 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                 funnel_pagos_iniciados: fb?.pagos_iniciados  ?? 0,
             }
         })
-    }, [baseRows, effectiveKeyword, activeTabObj, data.campaignGroups])
+
+        return inyectarRespuestas(conFunnel, data.leadAnswers, effectiveKeyword, data.campaignGroups)
+    }, [baseRows, effectiveKeyword, activeTabObj, data.campaignGroups, data.leadAnswers])
 
     // Previous period rows (no tab date filter needed — already a different date range)
     const prevFilteredMetrics = useMemo(() => {
         if (!prevMetrics.length) return []
-        return prevMetrics.map((m: any) =>
+        const enriched = prevMetrics.map((m: any) =>
             enrichTikTokRow(enrichMetaRow(m, effectiveKeyword, data.campaignGroups), effectiveKeyword, data.campaignGroups)
         )
-    }, [prevMetrics, effectiveKeyword, data.campaignGroups])
+        // El periodo anterior recibe las MISMAS claves: sin esto, una tarjeta con
+        // `utm_leads` mostraría su delta contra cero y siempre diría "+100%".
+        return inyectarRespuestas(enriched, data.prevLeadAnswers, effectiveKeyword, data.campaignGroups)
+    }, [prevMetrics, effectiveKeyword, data.campaignGroups, data.prevLeadAnswers])
 
     const visibleCols = useMemo(() => {
         return activeLayout.columnas.filter((c: ColDef) => !c.hidden)
@@ -1174,6 +1234,7 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                                         { type: 'card',    icon: <CreditCard className="w-3.5 h-3.5" />, label: 'Tarjeta' },
                                         { type: 'chart',   icon: <BarChart3  className="w-3.5 h-3.5" />, label: 'Gráfico' },
                                         { type: 'ranking', icon: <Table2     className="w-3.5 h-3.5" />, label: 'Tabla ranking' },
+                                        { type: 'leadanswer', icon: <ListChecks className="w-3.5 h-3.5" />, label: 'Respuestas de formulario' },
                                         { type: 'text',    icon: <Type       className="w-3.5 h-3.5" />, label: 'Texto / Sección' },
                                     ] as const).map(({ type, icon, label }) => (
                                         <button
@@ -1263,6 +1324,32 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                 <SortableContext items={orderedBlocks} strategy={verticalListSortingStrategy}>
                     <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                         {orderedBlocks.map(blockId => {
+                            if (blockId.startsWith('leadanswer:')) {
+                                const answerId = blockId.replace('leadanswer:', '')
+                                const answerDef = activeLayout.lead_answer_blocks?.find(b => b.id === answerId)
+                                if (!answerDef) return null
+                                // No pasa por `filteredMetrics`: el cubo de respuestas tiene su
+                                // propio grano (día × campaña × respuesta) y aplica el filtro de
+                                // la pestaña por su cuenta. Mezclarlo con las filas de métricas
+                                // sería inventar una unión que no existe.
+                                return (
+                                    <SortableTable key={blockId} id={blockId} isPuzzleMode={isPuzzleMode} title={answerDef.title} onQuickEdit={() => setQuickEditTarget({ type: 'leadanswer', id: answerId })} onDuplicate={() => handleDuplicateBlock(blockId)} onRemove={() => handleRemoveBlock(blockId)} isCollapsed={collapsedBlocks.has(blockId)} onToggleCollapse={() => toggleCollapse(blockId)}>
+                                        <LeadAnswerBlock
+                                            def={answerDef}
+                                            dataset={data.leadAnswers}
+                                            prevDataset={data.prevLeadAnswers}
+                                            effectiveKeyword={effectiveKeyword}
+                                            campaignGroups={data.campaignGroups || []}
+                                            fechaInicio={activeTabObj?.fecha_inicio}
+                                            fechaFin={activeTabObj?.fecha_finalizacion}
+                                            clienteNombre={cliente.nombre ?? ''}
+                                            pestanaNombre={activeTabObj?.nombre ?? 'Vista general'}
+                                            rangoLabel={`${searchParams.get('from') ?? ''} a ${searchParams.get('to') ?? ''}`.trim()}
+                                            filtroLabel={tabFilterLabel(activeTabObj?.keyword_meta)}
+                                        />
+                                    </SortableTable>
+                                )
+                            }
                             if (blockId.startsWith('ranking:')) {
                                 const rankingId = blockId.replace('ranking:', '')
                                 const rankingDef = activeLayout.ranking_tables?.find(r => r.id === rankingId)
@@ -1651,6 +1738,7 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                     conversionesOfflineRaw={data.conversionesOfflineRaw || []}
                     sheetCampos={data.sheetCampos || []}
                     sheetVistas={data.sheetVistas || []}
+                    leadAnswerCampos={data.leadAnswers?.campos || []}
                     campaignGroups={data.campaignGroups || []}
                     campaignNames={allCampaignNames}
                     onClose={() => setShowModal(false)}
@@ -1678,8 +1766,10 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                     tabId={activeTabId}
                     conversionesCatalogo={conversionesCatalogo}
                     googleSheetsConversiones={cliente.config_api?.google_sheets_conversiones}
+                    conversionesOfflineRaw={data.conversionesOfflineRaw || []}
                     sheetCampos={data.sheetCampos || []}
                     sheetVistas={data.sheetVistas || []}
+                    leadAnswerCampos={data.leadAnswers?.campos || []}
                     campaignGroups={data.campaignGroups || []}
                     campaignNames={allCampaignNames}
                     tiktokAccounts={tiktokAccounts}

@@ -11,10 +11,12 @@ import {
     CHART_TYPES, CHART_COLOR_OPTIONS, COLOR_OPTIONS, buildAvailableMetrics,
     TikTokAccountPicker, hasTikTokFormula,
 } from './LayoutConfigModal'
+import { LeadAnswerEditor } from './LeadAnswerEditor'
 import type {
-    ReportLayout, CardDef, ChartDef, TextBlockDef, RankingTableDef, ColDef,
+    ReportLayout, CardDef, ChartDef, TextBlockDef, RankingTableDef, ColDef, LeadAnswerBlockDef,
 } from '@/lib/layout-types'
-import type { MetricOption } from '@/lib/dashboard/metric-catalog'
+import { tieneVentasOffline } from '@/lib/dashboard/metric-catalog'
+import type { MetricOption, LeadAnswerCampoResumen } from '@/lib/dashboard/metric-catalog'
 import type { SheetCampoResumen, SheetVistaResumen } from '../_actions'
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
@@ -24,6 +26,7 @@ export type QuickEditTarget =
     | { type: 'chart'; id: string }
     | { type: 'text'; id: string }
     | { type: 'ranking'; id: string }
+    | { type: 'leadanswer'; id: string }
     | { type: 'table' }
 
 // ─── Card Editor ───────────────────────────────────────────────────────────────
@@ -611,9 +614,11 @@ export function QuickEditModal({
     campaignNames = [],
     conversionesCatalogo = [],
     googleSheetsConversiones = [],
+    conversionesOfflineRaw = [],
     sheetCampos = [],
     sheetVistas = [],
     tiktokAccounts = [],
+    leadAnswerCampos = [],
     onClose,
     onLayoutApplied,
 }: {
@@ -626,16 +631,23 @@ export function QuickEditModal({
     conversionesCatalogo?: { conversion_key: string; label: string; field_id: string }[]
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     googleSheetsConversiones?: any[]
+    /** Conversiones offline en crudo: deciden si se ofrecen las métricas que
+     *  dividen por `offline_ventas`. Mismo criterio que el Layout Builder. */
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    conversionesOfflineRaw?: any[]
     /** Campos de Sheet del cliente: la edición rápida ofrece las mismas métricas
      *  que el Layout Builder, o el mismo bloque tendría dos catálogos distintos. */
     sheetCampos?: SheetCampoResumen[]
     sheetVistas?: SheetVistaResumen[]
     tiktokAccounts?: { id: string; label: string; advertiser_id: string }[]
+    /** Preguntas de formulario: cada respuesta se ofrece como métrica `lf__*`. */
+    leadAnswerCampos?: LeadAnswerCampoResumen[]
     onClose: () => void
     onLayoutApplied: (layout: ReportLayout) => void
 }) {
     const availableMetrics = buildAvailableMetrics(
-        conversionesCatalogo, googleSheetsConversiones, sheetCampos, sheetVistas
+        conversionesCatalogo, googleSheetsConversiones, sheetCampos, sheetVistas,
+        tieneVentasOffline(conversionesOfflineRaw), leadAnswerCampos
     )
     const [loading, setLoading] = useState(false)
     const [saved, setSaved] = useState(false)
@@ -662,6 +674,11 @@ export function QuickEditModal({
             ? ((layout.ranking_tables ?? []).find(r => r.id === (target as any).id) ?? (layout.ranking_tables ?? [])[0])
             : (layout.ranking_tables ?? [])[0]
     )
+    const [leadAnswer, setLeadAnswer] = useState<LeadAnswerBlockDef>(() =>
+        target.type === 'leadanswer'
+            ? ((layout.lead_answer_blocks ?? []).find(b => b.id === (target as any).id) ?? (layout.lead_answer_blocks ?? [])[0])
+            : (layout.lead_answer_blocks ?? [])[0]
+    )
     const [columns, setColumns] = useState<ColDef[]>(() => [...layout.columnas])
 
     // ── Build updated layout ───────────────────────────────────────────────────
@@ -679,6 +696,9 @@ export function QuickEditModal({
         if (target.type === 'ranking') {
             return { ...layout, ranking_tables: (layout.ranking_tables ?? []).map(r => r.id === ranking.id ? ranking : r) }
         }
+        if (target.type === 'leadanswer') {
+            return { ...layout, lead_answer_blocks: (layout.lead_answer_blocks ?? []).map(b => b.id === leadAnswer.id ? leadAnswer : b) }
+        }
         return { ...layout, columnas: columns }
     }
 
@@ -695,6 +715,7 @@ export function QuickEditModal({
             custom_metrics: updated.custom_metrics,
             blocks_order: updated.blocks_order,
             ranking_tables: updated.ranking_tables,
+            lead_answer_blocks: updated.lead_answer_blocks,
         }
         const res = tabId && tabId !== 'general'
             ? await saveTabOverrides(clienteId, tabId, payload)
@@ -713,6 +734,7 @@ export function QuickEditModal({
         if (target.type === 'chart') return `Gráfico: ${chart?.title ?? ''}`
         if (target.type === 'text') return `Título / Texto`
         if (target.type === 'ranking') return `Tabla: ${ranking?.title ?? ''}`
+        if (target.type === 'leadanswer') return `Respuestas: ${leadAnswer?.title ?? ''}`
         return 'Columnas de tabla'
     })()
 
@@ -788,6 +810,15 @@ export function QuickEditModal({
                             campaignGroups={campaignGroups}
                             campaignNames={campaignNames}
                             tiktokAccounts={tiktokAccounts}
+                        />
+                    )}
+                    {target.type === 'leadanswer' && leadAnswer && (
+                        <LeadAnswerEditor
+                            def={leadAnswer}
+                            onChange={setLeadAnswer}
+                            clienteId={clienteId}
+                            campaignGroups={campaignGroups}
+                            campaignNames={campaignNames}
                         />
                     )}
                     {target.type === 'table' && (

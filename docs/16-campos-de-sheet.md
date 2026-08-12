@@ -68,6 +68,13 @@ Solo hay tres cosas que importan:
 El resto del mapeo (tipo, cantidad, valor, fuente, notas) déjalo vacío si tu hoja
 no tiene esas columnas.
 
+> Con `Todas son leads` ninguna fila llega como venta, así que `offline_ventas`
+> vale 0 permanentemente y las métricas que dividen por él —**Offline: CPA
+> Real**, **Close Rate** y **ROAS Real**— solo podrían mostrar `–`. Por eso el
+> selector de métricas no las ofrece hasta que el cliente tenga alguna
+> conversión offline con `tipo = 'venta'`: mapea una columna de tipo cuyo valor
+> sea `venta` en esas filas y aparecerán solas.
+
 > Pulsa **`Validar configuración`** antes de guardar: comprueba que el documento
 > es accesible, que las pestañas existen y que las columnas mapeadas están ahí.
 > De paso llena el autocompletado de los nombres de columna.
