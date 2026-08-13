@@ -1025,10 +1025,20 @@ export async function cloneLayoutForCliente(clienteId: string, globalLayoutId: s
 
 /**
  * Save updated columns/cards for a client's personal layout.
+ *
+ * `clientes_layouts` solo tiene fila cuando el cliente YA fue personalizado:
+ * hasta ese momento el dashboard pinta la plantilla global (`clientes.global_layout`)
+ * o el megalayout por defecto del cliente. Esto era un UPDATE ... WHERE cliente_id,
+ * que en ese caso afectaba 0 filas y volvía SIN error: la UI cantaba "Layout guardado
+ * correctamente" y al recargar reaparecía todo, incluidas las columnas recién
+ * eliminadas. Va como upsert sobre `cliente_layout_unique` (UNIQUE(cliente_id)) para
+ * que la primera personalización cree la fila.
  */
 export async function saveClienteLayout(
   clienteId: string,
   payload: {
+    /** Requerido en la tabla (NOT NULL); solo se usa al crear la fila. */
+    nombre?: string;
     columnas: any[];
     tarjetas: any[];
     graficos?: any[];
@@ -1041,13 +1051,29 @@ export async function saveClienteLayout(
 ) {
   const supabase = await createAdminClient();
 
-  const { error } = await supabase
+  const { nombre, ...bloques } = payload;
+
+  const { data, error } = await supabase
     .from('clientes_layouts')
-    .update({ ...payload, updated_at: new Date().toISOString() })
-    .eq('cliente_id', clienteId);
+    .upsert(
+      {
+        cliente_id: clienteId,
+        nombre: nombre?.trim() || 'Dashboard',
+        ...bloques,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: 'cliente_id' }
+    )
+    .select('id')
+    .maybeSingle();
 
   if (error) return { error: error.message };
+  // Sin fila devuelta no hubo escritura: mejor un error visible que un toast verde
+  // sobre un guardado fantasma.
+  if (!data) return { error: 'No se pudo guardar el layout: la escritura no devolvió ninguna fila.' };
+
   revalidatePath(`/dashboard/${clienteId}`);
+  revalidatePath('/dashboard');
   return { success: true };
 }
 
@@ -1456,7 +1482,7 @@ export async function saveTabOverrides(
   }
 ) {
   const supabase = await createAdminClient();
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from('cliente_tabs')
     .update({
       columnas: payload.columnas,
@@ -1470,10 +1496,17 @@ export async function saveTabOverrides(
       updated_at: new Date().toISOString(),
     })
     .eq('id', tabId)
-    .eq('cliente_id', clienteId);
+    .eq('cliente_id', clienteId)
+    .select('id')
+    .maybeSingle();
 
   if (error) return { error: error.message };
+  // Un UPDATE que no encuentra la pestaña vuelve sin error y con 0 filas: sin este
+  // control el modal mostraría "guardado" y los cambios se perderían en silencio.
+  if (!data) return { error: 'No se pudo guardar: la pestaña ya no existe.' };
+
   revalidatePath(`/dashboard/${clienteId}`);
+  revalidatePath('/dashboard');
   return { success: true };
 }
 

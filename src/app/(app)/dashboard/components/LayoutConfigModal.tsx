@@ -1774,6 +1774,9 @@ export function LayoutConfigModal({
             })
         } else {
             res = await saveClienteLayout(clienteId, {
+                // Necesario para la primera personalización: si el cliente aún no tiene
+                // fila en `clientes_layouts`, la acción la crea y `nombre` es NOT NULL.
+                nombre: workingLayout.nombre,
                 columnas: workingLayout.columnas,
                 tarjetas: workingLayout.tarjetas,
                 graficos: workingLayout.graficos,

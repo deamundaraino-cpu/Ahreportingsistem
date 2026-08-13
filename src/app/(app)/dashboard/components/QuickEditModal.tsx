@@ -708,6 +708,9 @@ export function QuickEditModal({
         const updated = buildUpdatedLayout()
         setLoading(true)
         const payload = {
+            // Igual que en LayoutConfigModal: `saveClienteLayout` crea la fila del
+            // cliente si aún no existe, y necesita el nombre del layout.
+            nombre: updated.nombre,
             columnas: updated.columnas,
             tarjetas: updated.tarjetas,
             graficos: updated.graficos,
