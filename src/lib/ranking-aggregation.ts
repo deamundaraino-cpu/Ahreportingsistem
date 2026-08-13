@@ -1,5 +1,8 @@
 import type { CampaignFilterSpec, CampaignFilterOperator } from './layout-types'
 import { filterCampaignList, type AnyCampaignFilter } from './campaign-filter'
+import { clavesDelDataset, desglosePorCampana, CLAVE_TOTAL_LEADS } from './dashboard/lead-answer-aggregation'
+import { CLAVE_CUBO, permitidasDelCubo } from './dashboard/lead-answer-row'
+import type { CuboRespuestasRef } from './dashboard/lead-answer-row'
 
 /** ¿La entrada (campaña/ad/adset) pasa el filtro de keyword/compuesto de la pestaña? */
 function passesKeyword(nameToCheck: string, campaignId: any, effectiveKeyword: AnyCampaignFilter, campaignGroups?: any[]): boolean {
@@ -11,6 +14,26 @@ function passesKeyword(nameToCheck: string, campaignId: any, effectiveKeyword: A
 export type RankingDimension =
     | 'campaigns' | 'ads' | 'adsets'
     | 'tiktok_campaigns' | 'tiktok_ads' | 'tiktok_adgroups'
+
+/**
+ * ¿Esta dimensión puede servir métricas de Report-UTM?
+ *
+ * Solo `campaigns`. El cubo de respuestas resuelve cada lead hasta su CAMPAÑA
+ * —la cascada de `campaign-resolver` no llega más abajo— porque un formulario no
+ * sabe qué anuncio concreto trajo al visitante. En anuncio y conjunto la única
+ * respuesta honesta es «no aplica»: un 0 diría que no hubo leads, que es falso.
+ */
+export function dimensionSoportaRespuestas(d: RankingDimension): boolean {
+    return d === 'campaigns'
+}
+
+/** Leads que el ranking no puede colgar de ninguna fila. Se declaran, no se pierden. */
+export interface LeadsFueraDeRanking {
+    /** Sin campaña identificada: quedan fuera en cuanto hay filtro. */
+    sinCampana: number
+    /** De campañas que existen en el cubo pero sin registro de gasto en el rango. */
+    fueraDeTabla: number
+}
 
 // Maps raw entry fields → meta_* formula keys
 const META_FIELD_MAP: { raw: string; meta: string; float?: boolean }[] = [
@@ -148,7 +171,104 @@ export function aggregateRankingRows(
         }
     }
 
+    // ── Respuestas de formulario ─────────────────────────────────────────────
+    // Solo en dimensión campaña: es hasta donde resuelve el cubo. En anuncio y
+    // conjunto NO se añade nada, y esa ausencia es deliberada — hace que la celda
+    // muestre «n/a» en vez de un 0 que afirmaría que no hubo leads.
+    if (dimension === 'campaigns') {
+        repartirRespuestas(groupMap, metrics, campaignFilter)
+    }
+
     return Array.from(groupMap.values())
+}
+
+/**
+ * Cuelga las claves de Report-UTM de cada campaña del ranking.
+ *
+ * El cruce va por `campaign_id` y cae al nombre normalizado: los dos lados salen
+ * de la misma tabla de campañas —el cubo toma su etiqueta de `resolver.campaignOf`,
+ * que devuelve el `name` del índice— y en producción el 100 % de las entradas de
+ * `meta_campaigns` traen id.
+ */
+function repartirRespuestas(
+    groupMap: Map<string, any>,
+    metrics: any[],
+    campaignFilter?: CampaignFilterSpec,
+): void {
+    const ref = metrics.find((r: any) => r?.[CLAVE_CUBO])?.[CLAVE_CUBO] as CuboRespuestasRef | undefined
+    if (!ref) return
+
+    const claves = clavesDelDataset(ref.ds)
+    if (claves.length === 0) return
+
+    // Índice de acumuladores por id y por nombre normalizado.
+    const porId = new Map<string, any>()
+    const porNombre = new Map<string, any>()
+    for (const acc of groupMap.values()) {
+        for (const clave of claves) if (acc[clave] === undefined) acc[clave] = 0
+        if (acc._id) porId.set(String(acc._id), acc)
+        if (acc._name) porNombre.set(normalizarNombre(String(acc._name)), acc)
+    }
+
+    const permitidas = permitidasDelCubo(ref, campaignFilter)
+
+    for (const row of metrics) {
+        const fecha = String(row?.fecha ?? '')
+        if (!fecha) continue
+        for (const { campaignId, nombre, valores } of desglosePorCampana(ref.ds, fecha, permitidas)) {
+            const acc = (campaignId && porId.get(campaignId)) ?? porNombre.get(normalizarNombre(nombre))
+            if (!acc) continue   // campaña sin gasto ese día: se declara aparte
+            for (const [clave, n] of Object.entries(valores)) {
+                acc[clave] = (acc[clave] ?? 0) + n
+            }
+        }
+    }
+}
+
+function normalizarNombre(s: string): string {
+    return s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/\s+/g, ' ').trim()
+}
+
+/**
+ * Contactos que no aparecen en ninguna fila del ranking.
+ *
+ * Se calculan aparte para no cambiar el tipo de retorno de `aggregateRankingRows`
+ * —lo consumen la tabla y las gráficas— y para poder declararlos al pie: un total
+ * que no cuadra con la suma de la tabla parece un fallo si nadie lo explica.
+ */
+export function leadsFueraDeRanking(
+    metrics: any[],
+    filas: any[],
+    campaignFilter?: CampaignFilterSpec,
+): LeadsFueraDeRanking {
+    const ref = metrics.find((r: any) => r?.[CLAVE_CUBO])?.[CLAVE_CUBO] as CuboRespuestasRef | undefined
+    if (!ref) return { sinCampana: 0, fueraDeTabla: 0 }
+
+    const porId = new Set<string>()
+    const porNombre = new Set<string>()
+    for (const acc of filas) {
+        if (acc._id) porId.add(String(acc._id))
+        if (acc._name) porNombre.add(normalizarNombre(String(acc._name)))
+    }
+
+    const permitidas = permitidasDelCubo(ref, campaignFilter)
+    // Sin filtro el índice 0 SÍ está permitido y sus leads cuentan en el total,
+    // pero siguen sin poder colgar de ninguna campaña: se cuentan aparte igual.
+    let sinCampana = 0
+    let fueraDeTabla = 0
+
+    for (const row of metrics) {
+        const fecha = String(row?.fecha ?? '')
+        if (!fecha) continue
+        for (const { campaignId, nombre, valores, esSinCampana } of desglosePorCampana(ref.ds, fecha, permitidas)) {
+            const n = valores[CLAVE_TOTAL_LEADS] ?? 0
+            if (!n) continue
+            if (esSinCampana) { sinCampana += n; continue }
+            const encontrada = (campaignId && porId.has(campaignId)) || porNombre.has(normalizarNombre(nombre))
+            if (!encontrada) fueraDeTabla += n
+        }
+    }
+    return { sinCampana, fueraDeTabla }
 }
 
 function aggregateTiktokRows(

@@ -20,7 +20,9 @@ import { es } from 'date-fns/locale'
 import type { ChartDef, TabCampaignFilter } from '@/lib/layout-types'
 import { enrichMetaRow, filterCampaignList } from '@/lib/campaign-filter'
 import { enrichOfflineRow } from '@/lib/offline-filter'
-import { aggregateRankingRows } from '@/lib/ranking-aggregation'
+import { aggregateRankingRows, dimensionSoportaRespuestas } from '@/lib/ranking-aggregation'
+import { reDerivarRespuestas, CLAVE_CUBO } from '@/lib/dashboard/lead-answer-row'
+import { formulaUsaRespuestas } from '@/lib/dashboard/lead-answer-aggregation'
 
 // ─── Palette ──────────────────────────────────────────────────────────────────
 const PALETTE: Record<string, string> = {
@@ -114,6 +116,11 @@ function buildGroupedData(
         let r = row
         if (hasFilter) {
             r = enrichMetaRow(r, campaignFilter!, campaignGroups)
+            // Igual que en `applyCompoundFilter`: `enrichMetaRow` solo recalcula
+            // las claves `meta_*`, así que sin esto una gráfica con filtro propio
+            // pintaba los contactos de todo el cliente contra un gasto recortado.
+            const leads = reDerivarRespuestas(r, campaignFilter!)
+            if (leads) r = { ...r, ...leads }
         }
         if (sheetFilter) {
             r = enrichOfflineRow(r, sheetFilter)
@@ -362,7 +369,26 @@ function SingleMetricChart({
     const sourceMetrics = (hasOwnFilter && rawMetrics) ? rawMetrics : metrics
 
     // Formulas
-    const formulas = useMemo(() => chart.valueFormulas.filter(Boolean), [chart.valueFormulas])
+    const todasLasFormulas = useMemo(() => chart.valueFormulas.filter(Boolean), [chart.valueFormulas])
+
+    /**
+     * Series que piden contactos de formulario en una dimensión que no los sirve.
+     *
+     * Se apartan ANTES de construir los datos. La alternativa —dejarlas pasar—
+     * las pinta en 0 por la coerción de `null → 0` de más abajo, y una línea
+     * plana en cero afirma que no hubo leads, que es falso: el cubo resuelve el
+     * lead a campaña, no a anuncio.
+     */
+    const formulasNoAplicables = useMemo(
+        () => (chart.dimension && !dimensionSoportaRespuestas(chart.dimension))
+            ? todasLasFormulas.filter(formulaUsaRespuestas)
+            : [],
+        [chart.dimension, todasLasFormulas],
+    )
+    const formulas = useMemo(
+        () => todasLasFormulas.filter(f => !formulasNoAplicables.includes(f)),
+        [todasLasFormulas, formulasNoAplicables],
+    )
 
     // Build grouped data — el campaignFilter se aplica por fila dentro de buildGroupedData
     // Build grouped data or dimension data
@@ -436,6 +462,13 @@ function SingleMetricChart({
             <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3 mb-4">
                 <div>
                     <h3 className="text-sm font-semibold text-foreground">{chart.title}</h3>
+                    {formulasNoAplicables.length > 0 && (
+                        <p className="text-[11px] text-amber-600 dark:text-amber-400 mt-1">
+                            {formulasNoAplicables.length === 1 ? 'Serie omitida' : `${formulasNoAplicables.length} series omitidas`}
+                            : los contactos de formulario solo se resuelven a campaña, no a anuncio
+                            ni a conjunto.
+                        </p>
+                    )}
                     <div className="flex flex-wrap gap-2.5 mt-2">
                         {categories.map((cat, i) => {
                             if (!isCartesian) {

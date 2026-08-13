@@ -261,7 +261,11 @@ export async function cargarRespuestasLead(
     if (!rtmClienteId) return datasetVacio()
     if (campos.length === 0 && !conTotales) return datasetVacio()
 
+    // El recorte por el tope NO puede ser silencioso: con campos venidos de
+    // fórmulas es fácil pasar de cuatro, y las preguntas sobrantes desaparecerían
+    // con aspecto de "no hay datos".
     const usados = campos.slice(0, MAX_CAMPOS_POR_CARGA)
+    const recortado = campos.length > MAX_CAMPOS_POR_CARGA
     const key = `${rtmClienteId}|${dateFrom}|${dateTo}|${conTotales ? 't' : ''}|${firmaDeCampos(usados)}`
     const now = Date.now()
     const hit = datasetCache.get(key)
@@ -315,7 +319,7 @@ export async function cargarRespuestasLead(
 
     const porFecha: Record<string, Array<Array<[number, number, number]>>> = {}
     const catalogo: LeadAnswerCatalogo[] = []
-    let incompleto = false
+    let incompleto = recortado
 
     // El total diario va en paralelo con los desgloses: es una consulta mucho más
     // barata (no toca `raw_fields`) y no depende de qué campos se pidan.

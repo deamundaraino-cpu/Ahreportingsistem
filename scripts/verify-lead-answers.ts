@@ -10,11 +10,16 @@
  *   npx tsx scripts/verify-lead-answers.ts
  */
 
+/* eslint-disable @typescript-eslint/no-explicit-any */
+
 import {
     agregarRespuestas, campanasPermitidas, fechasEnRango, SIN_CAMPANA, BUCKET_RESTO,
     clavesDelDia, clavesDeCampo, claveSinRespuesta, slugRespuesta, serieDiaria,
-    CLAVE_TOTAL_LEADS,
+    CLAVE_TOTAL_LEADS, PREFIJO_RESPUESTA, formulaUsaRespuestas, camposEnFormula,
 } from '../src/lib/dashboard/lead-answer-aggregation'
+import { refDeCubo, clavesYRefDelDia, reDerivarRespuestas } from '../src/lib/dashboard/lead-answer-row'
+import { buildAvailableMetrics, esSumandoDeSheet } from '../src/lib/dashboard/metric-catalog'
+import { aggregateRankingRows, dimensionSoportaRespuestas } from '../src/lib/ranking-aggregation'
 import type { LeadAnswerDatasetLite } from '../src/lib/dashboard/lead-answer-aggregation'
 import { campoSintetico } from '../src/lib/report-utm/lead-answers-db'
 import { bucketDeValor } from '../src/lib/report-utm/lead-campos'
@@ -57,6 +62,26 @@ const BASE = ds({
     '2026-07-15': [[[1, 1, 25], [2, 1, 15], [3, 0, 8]]],
     '2026-08-02': [[[0, 1, 5], [1, 2, 5]]],
 })
+
+/**
+ * Dos campañas reales el mismo día, con totales. Bogotá aporta 30 contactos (15
+ * de ellos en el primer bucket) y Medellín 10: es el fixture con el que se
+ * comprueba que un filtro de bloque recorta de verdad.
+ */
+const CON_TOTALES_2CAMP: LeadAnswerDatasetLite = {
+    ...ds({ '2026-07-01': [[[0, 1, 15], [1, 2, 4]]] }),
+    totalesPorFecha: { '2026-07-01': [[1, 30], [2, 10]] },
+}
+
+/** Réplica de la inyección del dashboard, para probar la fila tal como se usa. */
+function inyectarRespuestasParaTest(
+    dsx: LeadAnswerDatasetLite,
+    keyword: string,
+    groups: any[],
+): any[] {
+    const ref = refDeCubo(dsx, keyword, groups)
+    return [{ fecha: '2026-07-01', meta_spend: 100, ...clavesYRefDelDia(ref, '2026-07-01') }]
+}
 
 const DEF: LeadAnswerBlockDef = {
     id: 'b1', title: 'Rango de ingresos', origen: 'catalogo', clave: 'rango_ingresos',
@@ -369,6 +394,127 @@ seccion('Tabla diaria')
         dias.every(d => d.total === 0 || d.porBucket.every(n => n === 0)),
         JSON.stringify(dias))
 }
+
+// ════════════════════════════════════════════════════════════════
+seccion('El selector ofrece lo que el catálogo genera')
+// ════════════════════════════════════════════════════════════════
+// REGRESIÓN: el filtro del selector descartaba toda métrica cuyo id contuviera
+// `__`, una guarda pensada para los sumandos de Sheet. Escondía TODAS las
+// métricas por respuesta y nadie se enteraba: no había ni un test que cruzara el
+// catálogo con el predicado del selector.
+{
+    const campo = { clave: 'rango_de_ingresos', nombre: 'Rango de ingresos', buckets: BUCKETS }
+    const opciones = buildAvailableMetrics([], undefined, [], [], true, [campo])
+    const ofrecibles = opciones.filter(m => !esSumandoDeSheet(m.id)).map(m => m.id)
+
+    check('cada respuesta del campo se puede elegir en el selector',
+        clavesDeCampo(campo).every(({ clave }) => ofrecibles.includes(clave)),
+        clavesDeCampo(campo).map(c => c.clave).join(', '))
+    check('el (sin respuesta) también', ofrecibles.includes(claveSinRespuesta(campo)))
+    check('utm_leads también', ofrecibles.includes(CLAVE_TOTAL_LEADS))
+
+    check('los sumandos internos de Sheet siguen fuera',
+        esSumandoDeSheet('sf_x__num') && esSumandoDeSheet('sv_y__den') &&
+        esSumandoDeSheet('sf_x__min') && esSumandoDeSheet('sf_x__max'))
+    check('una métrica por respuesta NO se confunde con un sumando',
+        !esSumandoDeSheet('lf__rango__2m_3m') && !esSumandoDeSheet(claveSinRespuesta(campo)))
+    check('un campo de Sheet normal tampoco', !esSumandoDeSheet('sf_leads_calificados'))
+
+    // Un campo del que no se conocen los buckets no aporta nada: ofrecer solo su
+    // (sin respuesta) sería el complemento de un conjunto invisible.
+    const sinBuckets = buildAvailableMetrics([], undefined, [], [], true,
+        [{ clave: 'x', nombre: 'X', buckets: [], sinBuckets: true }])
+    check('un campo sin buckets conocidos no ofrece métricas',
+        !sinBuckets.some(m => m.id.startsWith(`${PREFIJO_RESPUESTA}x__`)))
+}
+
+// ════════════════════════════════════════════════════════════════
+seccion('El filtro de un BLOQUE recorta las claves de la fila')
+// ════════════════════════════════════════════════════════════════
+// REGRESIÓN: los escalares se calculaban con el filtro de la PESTAÑA y se
+// congelaban en la fila. `applyCompoundFilter` solo recalcula las claves
+// `meta_*`, así que una tarjeta con filtro propio dividía un gasto recortado
+// entre los leads de toda la pestaña: el CPL salía hundido y nada lo delataba.
+{
+    const filas = inyectarRespuestasParaTest(CON_TOTALES_2CAMP, '', [])
+    const fila = filas[0]
+    const antes = fila[CLAVE_TOTAL_LEADS]
+
+    check('sin filtro de bloque la fila trae el total de la pestaña', antes === 40, String(antes))
+
+    const conBloque = reDerivarRespuestas(fila, { type: 'keyword', operator: 'includes', value: 'Bogota' })!
+    check('con filtro de bloque el total baja al subconjunto',
+        conBloque[CLAVE_TOTAL_LEADS] === 30, String(conBloque[CLAVE_TOTAL_LEADS]))
+    check('las claves por respuesta también se recortan',
+        conBloque[clavesDeCampo(CON_TOTALES_2CAMP.campos[0])[0].clave] === 15,
+        JSON.stringify(conBloque))
+    check('(sin respuesta) se recalcula sobre el total recortado',
+        conBloque[claveSinRespuesta(CON_TOTALES_2CAMP.campos[0])] === 15)
+    check('la cuenta sigue cerrando tras recortar',
+        clavesDeCampo(CON_TOTALES_2CAMP.campos[0]).reduce((s, c) => s + (conBloque[c.clave] ?? 0), 0)
+        + conBloque[claveSinRespuesta(CON_TOTALES_2CAMP.campos[0])] === conBloque[CLAVE_TOTAL_LEADS])
+
+    check('la re-derivación NO muta la fila original', fila[CLAVE_TOTAL_LEADS] === antes)
+
+    // El filtro del bloque se ENCADENA sobre el de la pestaña, no lo sustituye.
+    const conPestana = inyectarRespuestasParaTest(CON_TOTALES_2CAMP, 'Medellin', [])[0]
+    const encadenado = reDerivarRespuestas(conPestana, { type: 'keyword', operator: 'includes', value: 'Bogota' })!
+    check('pestaña y bloque se encadenan (intersección vacía → 0)',
+        encadenado[CLAVE_TOTAL_LEADS] === 0, String(encadenado[CLAVE_TOTAL_LEADS]))
+
+    check('una fila sin cubo devuelve null, no un objeto vacío',
+        reDerivarRespuestas({ fecha: '2026-07-01' }, undefined) === null)
+}
+
+// ════════════════════════════════════════════════════════════════
+seccion('Rankings: reparto por campaña y "no aplica"')
+// ════════════════════════════════════════════════════════════════
+{
+    check('solo la dimensión de campañas sirve respuestas',
+        dimensionSoportaRespuestas('campaigns') &&
+        !dimensionSoportaRespuestas('ads') && !dimensionSoportaRespuestas('adsets') &&
+        !dimensionSoportaRespuestas('tiktok_campaigns'))
+
+    const filas = inyectarRespuestasParaTest(CON_TOTALES_2CAMP, '', [])
+    const conCampanas = filas.map(f => ({
+        ...f,
+        meta_campaigns: [
+            { campaign_id: 'c1', name: 'CAMP-Bogota-Renta', spend: '100', leads: '5' },
+            { campaign_id: 'c2', name: 'CAMP-Medellin-LP', spend: '50', leads: '2' },
+        ],
+        meta_ads: [{ ad_id: 'a1', ad_name: 'AD-1', campaign_name: 'CAMP-Bogota-Renta', spend: '100' }],
+    }))
+
+    const porCampana = aggregateRankingRows(conCampanas, 'campaigns', undefined, undefined, '', [])
+    const bogota = porCampana.find((r: any) => r._id === 'c1')
+    check('el ranking por campaña recibe los contactos',
+        bogota?.[CLAVE_TOTAL_LEADS] === 30, String(bogota?.[CLAVE_TOTAL_LEADS]))
+    check('y también las respuestas',
+        bogota?.[clavesDeCampo(CON_TOTALES_2CAMP.campos[0])[0].clave] === 15)
+    check('el reparto no pierde leads',
+        porCampana.reduce((s: number, r: any) => s + (r[CLAVE_TOTAL_LEADS] ?? 0), 0) === 40,
+        String(porCampana.reduce((s: number, r: any) => s + (r[CLAVE_TOTAL_LEADS] ?? 0), 0)))
+
+    const porAnuncio = aggregateRankingRows(conCampanas, 'ads', undefined, undefined, '', [])
+    check('el ranking por anuncio NO recibe claves de respuestas (ausencia deliberada)',
+        porAnuncio.every((r: any) => r[CLAVE_TOTAL_LEADS] === undefined))
+
+    check('formulaUsaRespuestas detecta las dos familias',
+        formulaUsaRespuestas('meta_spend / utm_leads') &&
+        formulaUsaRespuestas('lf__x__y') && !formulaUsaRespuestas('meta_spend / meta_leads'))
+    check('formulaUsaRespuestas no captura total_utm_leads por accidente',
+        !formulaUsaRespuestas('total_utm_leads'))
+}
+
+// ════════════════════════════════════════════════════════════════
+seccion('Resolución de campos mencionados por una fórmula')
+// ════════════════════════════════════════════════════════════════
+check('camposEnFormula resuelve contra el catálogo, sin ambigüedad',
+    camposEnFormula('lf__a_b__x + lf__c__y', ['a_b', 'c']).sort().join(',') === 'a_b,c')
+check('una clave que no está en el catálogo no se inventa',
+    camposEnFormula('lf__zzz__x', ['a', 'b']).length === 0)
+check('el prefijo tiene que ir seguido de __ para contar',
+    camposEnFormula('lf__ab__x', ['a']).length === 0)
 
 // ════════════════════════════════════════════════════════════════
 console.log(fallos === 0

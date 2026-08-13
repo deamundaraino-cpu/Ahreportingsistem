@@ -34,8 +34,8 @@ import { SortableCard, SortableChart, SortableTable, SortableText } from './Puzz
 import { CountryBreakdown } from './CountryBreakdown'
 import { RankingTableBlock } from './RankingTableBlock'
 import { LeadAnswerBlock } from './LeadAnswerBlock'
-import { campanasPermitidas, clavesDelDia } from '@/lib/dashboard/lead-answer-aggregation'
 import type { LeadAnswerDatasetLite } from '@/lib/dashboard/lead-answer-aggregation'
+import { refDeCubo, clavesYRefDelDia } from '@/lib/dashboard/lead-answer-row'
 import { TabArchiveView } from './TabArchiveView'
 
 const SupportModule = dynamic(
@@ -69,10 +69,12 @@ function inyectarRespuestas(
     keyword: string | TabCampaignFilter,
     campaignGroups: any[] | undefined,
 ): any[] {
-    if (!ds || (ds.campos.length === 0 && Object.keys(ds.totalesPorFecha ?? {}).length === 0)) return filas
-    // El filtro se evalúa una vez sobre el diccionario de campañas, no por fila.
-    const permitidas = campanasPermitidas(ds, keyword, undefined, campaignGroups)
-    return filas.map((row: any) => ({ ...row, ...clavesDelDia(ds, String(row.fecha ?? ''), permitidas) }))
+    const ref = refDeCubo(ds, keyword, campaignGroups)
+    if (!ref) return filas
+    // Además de los escalares, la fila se lleva el cubo POR REFERENCIA: es lo que
+    // permite que una tarjeta o una columna con `campaignFilter` propio recalcule
+    // estas cifras en vez de arrastrar las de toda la pestaña. Ver lead-answer-row.
+    return filas.map((row: any) => ({ ...row, ...clavesYRefDelDia(ref, String(row.fecha ?? '')) }))
 }
 
 // ─── Helper Functions ────────────────────────────────────────────────────────
@@ -843,6 +845,39 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
         return inyectarRespuestas(enriched, data.prevLeadAnswers, effectiveKeyword, data.campaignGroups)
     }, [prevMetrics, effectiveKeyword, data.campaignGroups, data.prevLeadAnswers])
 
+    /**
+     * Las mismas filas que `baseRows`, pero con las claves de Report-UTM SIN el
+     * filtro de la pestaña.
+     *
+     * Es lo que consume una gráfica que tiene `campaignFilter` propio: su filtro
+     * SUSTITUYE al de la pestaña, no lo encadena (MetricCharts elige `rawMetrics`
+     * precisamente por eso). Inyectarlas con `effectiveKeyword` daría un
+     * `rawMetrics` que no es raw y volvería a descuadrar en silencio.
+     */
+    const baseRowsConRespuestas = useMemo(
+        () => inyectarRespuestas(baseRows, data.leadAnswers, '', data.campaignGroups),
+        [baseRows, data.leadAnswers, data.campaignGroups],
+    )
+
+    /** Referencia del cubo con el filtro de la pestaña, para las filas de relleno. */
+    const refCuboPestana = useMemo(
+        () => refDeCubo(data.leadAnswers, effectiveKeyword, data.campaignGroups),
+        [data.leadAnswers, effectiveKeyword, data.campaignGroups],
+    )
+
+    /**
+     * Preguntas ofrecibles en los selectores de métrica.
+     *
+     * El cubo manda cuando está cargado —sus buckets salen de los datos y son la
+     * lista real—; el catálogo del cliente aporta las que ningún bloque declara,
+     * para poder construir una tarjeta sin tener que añadir antes un bloque.
+     */
+    const leadAnswerCampos = useMemo(() => {
+        const delCubo = data.leadAnswers?.campos ?? []
+        const vistos = new Set(delCubo.map((c: any) => c.clave))
+        return [...delCubo, ...(data.leadAnswerCatalogo ?? []).filter((c: any) => !vistos.has(c.clave))]
+    }, [data.leadAnswers, data.leadAnswerCatalogo])
+
     const visibleCols = useMemo(() => {
         return activeLayout.columnas.filter((c: ColDef) => !c.hidden)
     }, [activeLayout.columnas])
@@ -1391,7 +1426,7 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                                     sourceMapping={sourceMapping}
                                     platformSet={platformSet}
                                     layoutCustomMetrics={layoutCustomMetrics}
-                                    rawMetrics={baseRows}
+                                    rawMetrics={baseRowsConRespuestas}
                                     campaignGroups={data.campaignGroups}
                                     effectiveKeyword={effectiveKeyword}
                                     onRemove={() => handleRemoveBlock(blockId)}
@@ -1562,7 +1597,11 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                                                                 const dayStr = format(currentDate, 'yyyy-MM-dd')
                                                                 const raw = filteredMetrics.find((m: any) => m.fecha === dayStr) || {
                                                                     fecha: dayStr, meta_spend: 0, meta_impressions: 0, meta_clicks: 0, meta_campaigns: [],
-                                                                    hotmart_pagos_iniciados: 0, ventas_principal: 0, ventas_bump: 0, ventas_upsell: 0
+                                                                    hotmart_pagos_iniciados: 0, ventas_principal: 0, ventas_bump: 0, ventas_upsell: 0,
+                                                                    // Un día puede tener formularios y NO tener fila de inversión. Sin
+                                                                    // estas claves ese día mostraba `—` en vez de sus contactos, que el
+                                                                    // cubo sí conoce.
+                                                                    ...clavesYRefDelDia(refCuboPestana, dayStr),
                                                                 }
                                                                 weekRows.push(raw)
 
@@ -1684,7 +1723,7 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                                     metrics={filteredMetrics}
                                     weeks={weeks}
                                     varContext={varContext}
-                                    rawMetrics={baseRows}
+                                    rawMetrics={baseRowsConRespuestas}
                                     campaignGroups={data.campaignGroups}
                                     effectiveKeyword={effectiveKeyword}
                                     sourceMapping={sourceMapping}
@@ -1738,7 +1777,7 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                     conversionesOfflineRaw={data.conversionesOfflineRaw || []}
                     sheetCampos={data.sheetCampos || []}
                     sheetVistas={data.sheetVistas || []}
-                    leadAnswerCampos={data.leadAnswers?.campos || []}
+                    leadAnswerCampos={leadAnswerCampos}
                     campaignGroups={data.campaignGroups || []}
                     campaignNames={allCampaignNames}
                     onClose={() => setShowModal(false)}
@@ -1769,7 +1808,7 @@ function DynamicDashboard({ data, initialLayout, isCustomized, isPublic, initial
                     conversionesOfflineRaw={data.conversionesOfflineRaw || []}
                     sheetCampos={data.sheetCampos || []}
                     sheetVistas={data.sheetVistas || []}
-                    leadAnswerCampos={data.leadAnswers?.campos || []}
+                    leadAnswerCampos={leadAnswerCampos}
                     campaignGroups={data.campaignGroups || []}
                     campaignNames={allCampaignNames}
                     tiktokAccounts={tiktokAccounts}

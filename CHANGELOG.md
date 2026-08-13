@@ -68,6 +68,28 @@ y el proyecto adhiere a [Versionado Semántico](https://semver.org/lang/es/):
   ningún error en el enlace compartido al cliente. Presente desde la migración
   018.
 
+- **Las métricas de respuestas no aparecían en el selector.** El filtro del
+  desplegable descartaba toda métrica cuyo id contuviera `__`, una guarda pensada
+  para los sumandos internos de los campos de Sheet. Escondía las
+  `lf__<campo>__<respuesta>` enteras, así que solo se podían usar escribiendo la
+  fórmula a mano. La comprobación pasa a ser por prefijo y sufijo — y de paso se
+  descubrió que la guarda genérica no protegía de nada: `buildAvailableMetrics`
+  nunca ha emitido esos sumandos.
+- **El filtro de campaña de una tarjeta o columna no recortaba sus contactos.**
+  `applyCompoundFilter` solo recalcula las claves `meta_*`/`tiktok_*`, así que una
+  tarjeta `meta_spend / utm_leads` con filtro propio dividía un gasto ya recortado
+  entre los leads de TODA la pestaña: el CPL salía sistemáticamente hundido y nada
+  lo delataba. Ahora la fila lleva el cubo por referencia y las claves se
+  re-derivan con el filtro del bloque encadenado al de la pestaña.
+- **Rankings y gráficas por dimensión** mostraban `—` o —peor— un 0 literal en
+  estas métricas. En dimensión Campaña ahora se reparten de verdad; en Anuncio y
+  Conjunto declaran `n/a` con el motivo, porque un lead se resuelve a campaña y no
+  a anuncio.
+- **Gráficas con filtro de campaña propio** salían planas en 0: consumían las
+  filas previas a la inyección. Reciben las suyas, y con el filtro de pestaña
+  **sin** aplicar, que es lo que su contrato significa.
+- **Días con formularios pero sin inversión** mostraban `—` en vez de sus
+  contactos: la fila de relleno no llevaba las claves.
 - **Truncado silencioso en las consultas de respuestas.** PostgREST corta las
   respuestas de RPC en 1.000 filas igual que las de tabla, así que el desglose de
   un cliente con más combinaciones mostraba de menos —cuadrando consigo mismo, lo

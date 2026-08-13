@@ -1,4 +1,5 @@
 import type { CampaignFilterOperator, CampaignFilterSpec, TabCampaignFilter } from './layout-types'
+import { reDerivarRespuestas } from './dashboard/lead-answer-row'
 
 /** Filtro admitido en todo el pipeline: string simple, un spec, o compuesto Y/O. */
 export type AnyCampaignFilter = string | CampaignFilterSpec | TabCampaignFilter | undefined
@@ -327,6 +328,13 @@ export function applyCompoundFilter(
         const kw = filterCampaignList(row.tiktok_campaigns, keyword, campaignGroups)
         out = enrichTikTokRow({ ...out, tiktok_campaigns: kw }, campaignFilter, campaignGroups)
     }
+    // Respuestas de formulario: se re-derivan del cubo que la fila lleva por
+    // referencia. Antes NO se tocaban —`enrichMetaRow` solo reescribe las claves
+    // `meta_*`—, así que una tarjeta `meta_spend / utm_leads` con filtro propio
+    // dividía un gasto ya recortado entre los leads de toda la pestaña, y el CPL
+    // salía hundido sin ningún aviso.
+    const leads = reDerivarRespuestas(out, campaignFilter)
+    if (leads) out = { ...out, ...leads }
     return out
 }
 

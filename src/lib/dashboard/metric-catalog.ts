@@ -10,12 +10,42 @@
 
 import type { SheetCampoResumen, SheetVistaResumen } from "@/app/(app)/dashboard/_actions"
 import { clavesDeCampo, claveSinRespuesta } from "./lead-answer-aggregation"
+import { SUFIJO_NUM, SUFIJO_DEN, SUFIJO_MIN, SUFIJO_MAX } from "@/lib/sheets/campos"
+
+const SUMANDOS_DE_SHEET = [SUFIJO_NUM, SUFIJO_DEN, SUFIJO_MIN, SUFIJO_MAX]
+
+/**
+ * ¿Es un sumando interno de un campo de Sheet, y por tanto no una métrica que se
+ * pueda elegir?
+ *
+ * Los campos no aditivos llevan sus sumandos dentro de la fila (`sf_x__num`,
+ * `sf_x__den`, `__min`, `__max`) para poder reagregarse a cualquier grano; no son
+ * métricas.
+ *
+ * Se comprueba por PREFIJO y SUFIJO, no por la subcadena `__`. El selector usaba
+ * `id.includes('__')` y eso escondía TODAS las métricas por respuesta
+ * (`lf__<campo>__<respuesta>`), que son perfectamente elegibles. Además la guarda
+ * genérica no protegía de nada: `buildAvailableMetrics` nunca ha emitido los
+ * sumandos —construye `sf_<clave>` sin sufijo—, así que su único efecto real era
+ * el daño colateral.
+ */
+export function esSumandoDeSheet(id: string): boolean {
+    return (id.startsWith('sf_') || id.startsWith('sv_')) && SUMANDOS_DE_SHEET.some(s => id.endsWith(s))
+}
 
 /** Lo mínimo que necesita el catálogo de una pregunta para ofrecer sus métricas. */
 export interface LeadAnswerCampoResumen {
     clave: string
     nombre: string
     buckets: string[]
+    /**
+     * El catálogo no sabe qué respuestas produce esta pregunta: no tiene ningún
+     * valor agrupado. Solo se puede ofrecer su `(sin respuesta)`… que sin las
+     * demás sería el complemento de un conjunto invisible, así que no se ofrece
+     * nada y la UI explica cómo arreglarlo. Se descubre añadiendo un bloque de
+     * respuestas, o agrupando los valores en Report-UTM.
+     */
+    sinBuckets?: boolean
 }
 
 /**
@@ -294,6 +324,10 @@ export function buildAvailableMetrics(
     // «(sin respuesta)» que hace que la suma cierre con `utm_leads`.
     const respuestasMetrics: MetricOption[] = []
     for (const campo of leadAnswerCampos) {
+        // Un campo del que no se conocen los buckets no aporta nada elegible:
+        // ofrecer solo su `(sin respuesta)` sería ofrecer el complemento de un
+        // conjunto que el analista no puede ver.
+        if (campo.sinBuckets || campo.buckets.length === 0) continue
         for (const { bucket, clave } of clavesDeCampo(campo)) {
             respuestasMetrics.push({ id: clave, label: `${campo.nombre}: ${bucket}` })
         }

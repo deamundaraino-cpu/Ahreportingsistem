@@ -24,7 +24,9 @@ export {
 export type { MetricType, MetricFormatMap } from "@/lib/dashboard/metric-catalog"
 import {
     AVAILABLE_METRICS, buildAvailableMetrics, applyMetricType, getMetricType, tieneVentasOffline,
+    esSumandoDeSheet,
 } from "@/lib/dashboard/metric-catalog"
+import { CLAVE_TOTAL_LEADS, PREFIJO_RESPUESTA } from "@/lib/dashboard/lead-answer-aggregation"
 import type { MetricType, MetricOption, LeadAnswerCampoResumen } from "@/lib/dashboard/metric-catalog"
 import type { SheetCampoResumen, SheetVistaResumen } from "../_actions"
 
@@ -47,7 +49,7 @@ export function FormulaInput({ value, onChange, disabled, availableMetrics, onMe
 }) {
     const inputRef = useRef<HTMLInputElement>(null)
     const [search, setSearch] = useState('')
-    const [activeTab, setActiveTab] = useState<'all' | 'meta' | 'tiktok' | 'ventas' | 'ga4' | 'offline' | 'campos'>('all')
+    const [activeTab, setActiveTab] = useState<'all' | 'meta' | 'tiktok' | 'ventas' | 'ga4' | 'offline' | 'campos' | 'respuestas'>('all')
     const metrics = availableMetrics || AVAILABLE_METRICS
 
     const insertMetric = (metricId: string) => {
@@ -67,15 +69,19 @@ export function FormulaInput({ value, onChange, disabled, availableMetrics, onMe
     // Los campos de Sheet no encajan en ninguna categoría existente: su id no
     // empieza por `offline_`/`sheet_` y su etiqueta es el nombre libre que puso
     // el analista. La pestaña solo aparece si el cliente tiene alguno.
-    type FormulaTab = 'all' | 'meta' | 'tiktok' | 'ventas' | 'ga4' | 'offline' | 'campos'
+    type FormulaTab = 'all' | 'meta' | 'tiktok' | 'ventas' | 'ga4' | 'offline' | 'campos' | 'respuestas'
+    const esRespuesta = (id: string) => id === CLAVE_TOTAL_LEADS || id.startsWith(PREFIJO_RESPUESTA)
     const hayCampos = metrics.some(m => esCampoDeSheet(m.id))
+    const hayRespuestas = metrics.some(m => esRespuesta(m.id))
     const tabs: FormulaTab[] = ['all', 'meta', 'tiktok', 'ventas', 'ga4', 'offline']
     if (hayCampos) tabs.push('campos')
+    if (hayRespuestas) tabs.push('respuestas')
 
     const filteredMetrics = metrics.filter(m => {
-        // `__` está reservado para los sumandos internos de las métricas no
-        // aditivas: no son métricas elegibles.
-        if (m.id.includes('__')) return false
+        // Los sumandos internos de los campos de Sheet no son métricas elegibles.
+        // La comprobación es por prefijo+sufijo y no por la subcadena `__`: con
+        // `includes('__')` se escondían también TODAS las métricas por respuesta.
+        if (esSumandoDeSheet(m.id)) return false
         const matchesSearch = m.label.toLowerCase().includes(search.toLowerCase()) || m.id.toLowerCase().includes(search.toLowerCase())
         if (!matchesSearch) return false
         if (activeTab === 'all') return true
@@ -85,6 +91,7 @@ export function FormulaInput({ value, onChange, disabled, availableMetrics, onMe
         if (activeTab === 'ga4') return m.id.startsWith('ga_')
         if (activeTab === 'offline') return m.id.startsWith('offline_') || m.id.startsWith('sheet_') || m.label.startsWith('Offline:') || m.label.startsWith('GSheets:')
         if (activeTab === 'campos') return esCampoDeSheet(m.id)
+        if (activeTab === 'respuestas') return esRespuesta(m.id)
         return true
     })
 
@@ -122,7 +129,7 @@ export function FormulaInput({ value, onChange, disabled, availableMetrics, onMe
                                     onClick={() => setActiveTab(tab)}
                                     className={`px-1.5 py-0.5 rounded transition whitespace-nowrap flex-shrink-0 ${activeTab === tab ? 'bg-indigo-600 text-white font-semibold' : 'text-muted-foreground hover:text-foreground'}`}
                                 >
-                                    {tab === 'all' ? 'Todos' : tab === 'ventas' ? 'Ventas' : tab === 'ga4' ? 'GA4' : tab === 'tiktok' ? 'TikTok' : tab === 'offline' ? 'Offline' : tab === 'campos' ? 'Campos' : 'Meta'}
+                                    {tab === 'all' ? 'Todos' : tab === 'ventas' ? 'Ventas' : tab === 'ga4' ? 'GA4' : tab === 'tiktok' ? 'TikTok' : tab === 'offline' ? 'Offline' : tab === 'campos' ? 'Campos' : tab === 'respuestas' ? 'Respuestas' : 'Meta'}
                                 </button>
                             ))}
                         </div>

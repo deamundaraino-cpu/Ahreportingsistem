@@ -97,6 +97,110 @@ export function claveSinRespuesta(campo: Pick<LeadAnswerCatalogoLite, 'clave'>):
 }
 
 /**
+ * ¿Esta fórmula usa métricas de Report-UTM?
+ *
+ * `\b` alrededor de `utm_leads` para no capturar cosas como `total_utm_leads`.
+ * Lo usan los bloques que no pueden servirlas —rankings por anuncio, gráficas por
+ * dimensión— para decir «no aplica» en vez de pintar un cero.
+ */
+export function formulaUsaRespuestas(f: string | null | undefined): boolean {
+    if (!f) return false
+    return new RegExp(`\\b${CLAVE_TOTAL_LEADS}\\b`).test(f) || f.includes(PREFIJO_RESPUESTA)
+}
+
+/**
+ * Claves de campo que menciona una fórmula, resueltas CONTRA EL CATÁLOGO real.
+ *
+ * No se parsea `lf__(.+?)__(.+)` con una expresión regular sola porque la clave y
+ * el slug son ambos `[a-z0-9_]+`: en `lf__a__b__c` el corte es ambiguo. Con la
+ * lista de claves conocidas la resolución es exacta.
+ */
+export function camposEnFormula(f: string | null | undefined, claves: string[]): string[] {
+    if (!f) return []
+    return claves.filter(c => f.includes(`${PREFIJO_RESPUESTA}${c}__`))
+}
+
+/** Todas las claves que emite un dataset, en orden estable. */
+export function clavesDelDataset(ds: LeadAnswerDatasetLite): string[] {
+    const claves: string[] = []
+    if (ds.totalesPorFecha) claves.push(CLAVE_TOTAL_LEADS)
+    for (const campo of ds.campos) {
+        for (const { clave } of clavesDeCampo(campo)) claves.push(clave)
+        if (ds.totalesPorFecha) claves.push(claveSinRespuesta(campo))
+    }
+    return claves
+}
+
+/** Lo que aporta UNA campaña a UN día, ya filtrado. */
+export interface AporteDeCampana {
+    campaignId: string | null
+    nombre: string
+    valores: Record<string, number>
+    esSinCampana: boolean
+}
+
+/**
+ * Desglose de un día repartido por campaña.
+ *
+ * Lo necesitan las tablas de ranking, cuyo grano es la campaña y no el día: sin
+ * esto sus acumuladores no tenían por dónde recibir estas cifras y la columna
+ * salía vacía.
+ */
+export function desglosePorCampana(
+    ds: LeadAnswerDatasetLite,
+    fecha: string,
+    permitidas: Set<number>,
+): AporteDeCampana[] {
+    const porCampana = new Map<number, Record<string, number>>()
+    const dame = (i: number) => {
+        let v = porCampana.get(i)
+        if (!v) { v = {}; porCampana.set(i, v) }
+        return v
+    }
+
+    const totales = ds.totalesPorFecha?.[fecha]
+    for (const [iCampana, n] of totales ?? []) {
+        if (!permitidas.has(iCampana)) continue
+        const v = dame(iCampana)
+        v[CLAVE_TOTAL_LEADS] = (v[CLAVE_TOTAL_LEADS] ?? 0) + n
+    }
+
+    const delDia = ds.porFecha[fecha]
+    const respondieron = ds.campos.map(() => new Map<number, number>())
+    ds.campos.forEach((campo, iCampo) => {
+        const claves = clavesDeCampo(campo)
+        for (const [iBucket, iCampana, n] of delDia?.[iCampo] ?? []) {
+            if (!permitidas.has(iCampana)) continue
+            const c = claves[iBucket]
+            if (!c) continue
+            const v = dame(iCampana)
+            v[c.clave] = (v[c.clave] ?? 0) + n
+            respondieron[iCampo].set(iCampana, (respondieron[iCampo].get(iCampana) ?? 0) + n)
+        }
+    })
+
+    // `(sin respuesta)` se resuelve POR CAMPAÑA y en una pasada aparte, cuando ya
+    // se conocen todas las del día: una campaña puede aparecer por primera vez en
+    // el último campo y quedarse sin el `(sin respuesta)` de los anteriores.
+    if (totales) {
+        for (const [iCampana, valores] of porCampana) {
+            const total = valores[CLAVE_TOTAL_LEADS] ?? 0
+            ds.campos.forEach((campo, iCampo) => {
+                valores[claveSinRespuesta(campo)] =
+                    Math.max(0, total - (respondieron[iCampo].get(iCampana) ?? 0))
+            })
+        }
+    }
+
+    return [...porCampana.entries()].map(([iCampana, valores]) => ({
+        campaignId: ds.campanaIds[iCampana] ?? null,
+        nombre: ds.campanas[iCampana] ?? SIN_CAMPANA,
+        valores,
+        esSinCampana: iCampana === 0,
+    }))
+}
+
+/**
  * Claves numéricas que aporta un DÍA a la fila de métricas, ya recortadas por el
  * filtro de campañas activo.
  *

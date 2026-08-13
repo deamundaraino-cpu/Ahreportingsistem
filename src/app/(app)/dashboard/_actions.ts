@@ -19,6 +19,9 @@ import { normalizeSheetConfigs } from '@/lib/integrations/google-sheets-conversi
 import type { SyncConversionesResponse } from '@/lib/integrations/google-sheets-conversiones';
 import { leerJsonRespuesta, esTimeoutDeFetch } from '@/lib/fetch-json';
 import { resolveRtmClienteId } from '@/lib/report-utm/campaign-resolver';
+import { formulaUsaRespuestas, camposEnFormula } from '@/lib/dashboard/lead-answer-aggregation';
+import { BUCKET_OTROS } from '@/lib/report-utm/lead-campos';
+import type { LeadAnswerCampoResumen } from '@/lib/dashboard/metric-catalog';
 import { loadLeadCampos, saveLeadCampo } from '@/lib/report-utm/lead-campos-db';
 import { slugCampo } from '@/lib/report-utm/lead-campos';
 import { getUserRole } from '@/lib/report-utm/auth';
@@ -584,27 +587,68 @@ function layoutUsaRespuestasLead(
   layout: FuenteDeFormulas | null | undefined,
   tabs: (FuenteDeFormulas & { plantilla_id?: string | null })[] | null | undefined,
   plantillas: (FuenteDeFormulas & { id?: string })[] | null | undefined,
-): boolean {
-  const usa = (f: string | null | undefined) =>
-    !!f && (f.includes('utm_leads') || f.includes('lf__'));
+  /** Claves del catálogo del cliente, para resolver `lf__<clave>__<x>` sin ambigüedad. */
+  clavesCatalogo: string[] = [],
+): { usaTotales: boolean; claves: string[] } {
+  let usaTotales = false;
+  const claves = new Set<string>();
 
-  const revisar = (fuente: FuenteDeFormulas | null | undefined): boolean => {
-    if (!fuente) return false;
-    if ((fuente.columnas ?? []).some(c => usa(c?.formula))) return true;
-    if ((fuente.tarjetas ?? []).some(c => usa(c?.formula) || usa(c?.targetFormula))) return true;
-    if ((fuente.graficos ?? []).some(g => (g?.valueFormulas ?? []).some(usa))) return true;
-    if ((fuente.ranking_tables ?? []).some(r => (r?.columns ?? []).some(c => usa(c?.formula)))) return true;
-    if ((fuente.custom_metrics ?? []).some(m => usa(m?.formula))) return true;
-    return false;
+  const usa = (f: string | null | undefined) => {
+    if (!f) return;
+    if (formulaUsaRespuestas(f)) usaTotales = true;
+    for (const c of camposEnFormula(f, clavesCatalogo)) claves.add(c);
   };
 
-  if (revisar(layout)) return true;
-  for (const t of tabs ?? []) if (revisar(t)) return true;
+  const revisar = (fuente: FuenteDeFormulas | null | undefined) => {
+    if (!fuente) return;
+    for (const c of fuente.columnas ?? []) usa(c?.formula);
+    for (const c of fuente.tarjetas ?? []) { usa(c?.formula); usa(c?.targetFormula); }
+    for (const g of fuente.graficos ?? []) for (const f of g?.valueFormulas ?? []) usa(f);
+    for (const r of fuente.ranking_tables ?? []) for (const c of r?.columns ?? []) usa(c?.formula);
+    for (const m of fuente.custom_metrics ?? []) usa(m?.formula);
+  };
+
+  revisar(layout);
+  for (const t of tabs ?? []) revisar(t);
 
   const plantillasUsadas = new Set((tabs ?? []).map(t => t?.plantilla_id).filter(Boolean));
-  for (const p of plantillas ?? []) if (plantillasUsadas.has(p?.id) && revisar(p)) return true;
+  for (const p of plantillas ?? []) if (plantillasUsadas.has(p?.id)) revisar(p);
 
-  return false;
+  return { usaTotales, claves: [...claves] };
+}
+
+/**
+ * Catálogo de preguntas del cliente, para el selector de métricas.
+ *
+ * Se lee SIN escanear leads: `report_utm.lead_campos` es una tabla pequeña. Con
+ * esto, las respuestas configuradas se pueden elegir en cualquier tarjeta o
+ * columna aunque la pestaña no tenga ningún bloque de respuestas.
+ *
+ * Los buckets salen de `valores_map` —los valores a los que el analista mapeó las
+ * respuestas crudas— porque `valores_orden` está vacío en todos los campos reales.
+ * Eso tiene dos consecuencias que la UI debe declarar:
+ *
+ *   • un campo sin `valores_map` no aporta ninguna respuesta ofrecible (`sinBuckets`);
+ *   • con `sin_mapear: 'crudo'` la lista NUNCA es completa, porque hay buckets que
+ *     solo emergen de los datos. El catálogo sirve para DESCUBRIR; la cifra
+ *     correcta la da siempre el cubo, que sí los conoce todos.
+ */
+async function getCatalogoRespuestas(clienteId: string): Promise<LeadAnswerCampoResumen[]> {
+  if (process.env.NEXT_PUBLIC_REPORT_UTM_ENABLED !== 'true') return [];
+  try {
+    const rtmClienteId = await resolveRtmClienteId(clienteId);
+    if (!rtmClienteId) return [];
+    const supabase = await createAdminClient();
+    const campos = await loadLeadCampos(supabase.schema('report_utm'), rtmClienteId, { soloActivos: true });
+    return campos.map(c => {
+      const buckets = [...new Set(Object.values(c.valores_map ?? {}))].filter(Boolean) as string[];
+      if (c.sin_mapear === 'otros') buckets.push(BUCKET_OTROS);
+      return { clave: c.clave, nombre: c.nombre, buckets, sinBuckets: buckets.length === 0 };
+    });
+  } catch (err) {
+    console.error('[dashboard] catálogo de respuestas no disponible:', err);
+    return [];
+  }
 }
 
 /**
@@ -664,6 +708,8 @@ async function getRespuestasLeadDelDia(
   bloques: LeadAnswerBlockDef[],
   /** ¿Hay algún bloque o alguna fórmula que use estas métricas? */
   conTotales: boolean,
+  /** Claves del catálogo que mencionan las fórmulas, además de los bloques. */
+  clavesDeFormulas: string[] = [],
 ): Promise<LeadAnswerDataset> {
   // Si no hay ni bloques ni fórmulas que lo usen, no se toca la red: el total
   // diario es la consulta cara y no tiene sentido cobrársela a un cliente que no
@@ -679,8 +725,10 @@ async function getRespuestasLeadDelDia(
     const supabase = await createAdminClient();
     const rtm = supabase.schema('report_utm');
 
-    // El catálogo solo se lee si hay algún bloque que lo use.
-    const necesitaCatalogo = bloques.some(b => b.origen === 'catalogo');
+    // El catálogo se lee si lo usa un bloque o si alguna fórmula nombra una de
+    // sus claves: una tarjeta puede apuntar a una pregunta sin que exista ningún
+    // bloque de respuestas en la pestaña.
+    const necesitaCatalogo = bloques.some(b => b.origen === 'catalogo') || clavesDeFormulas.length > 0;
     const catalogo: LeadCampoDef[] = necesitaCatalogo
       ? await loadLeadCampos(rtm, rtmClienteId, { soloActivos: true })
       : [];
@@ -705,6 +753,17 @@ async function getRespuestasLeadDelDia(
         origenes[clave] = 'auto';
       }
     }
+    // Campos que solo pide una fórmula, sin bloque que los declare. Van DESPUÉS
+    // de los bloques para que, si hay que recortar por el tope, se conserve lo
+    // que está pintado en la pestaña.
+    for (const clave of clavesDeFormulas) {
+      if (origenes[clave]) continue;
+      const campo = catalogo.find(c => c.clave === clave);
+      if (!campo) continue;
+      campos.push(campo);
+      origenes[clave] = 'catalogo';
+    }
+
     // Sin campos NO se corta: `cargarRespuestasLead` sigue trayendo el total
     // diario de contactos, que es lo que alimenta `utm_leads`.
 
@@ -738,7 +797,13 @@ async function cargarMetricasEnriquecidas(
   clienteId: string,
   startStr: string,
   endStr: string,
-  opts?: { incluirFilasOffline?: boolean; leadAnswerBlocks?: LeadAnswerBlockDef[]; leadAnswerFormulas?: boolean }
+  opts?: {
+    incluirFilasOffline?: boolean
+    leadAnswerBlocks?: LeadAnswerBlockDef[]
+    leadAnswerFormulas?: boolean
+    /** Claves del catálogo que mencionan las fórmulas del layout. */
+    leadAnswerClaves?: string[]
+  }
 ): Promise<{
   metrics: any[]
   leadsRaw: any[]
@@ -762,7 +827,8 @@ async function cargarMetricasEnriquecidas(
     fetchAllRows(() => enRango(
       supabase.from('conversiones_offline').select('*').eq('cliente_id', clienteId), 'fecha')),
     getSheetCamposDelDia(supabase, clienteId, startStr, endStr),
-    getRespuestasLeadDelDia(clienteId, startStr, endStr, opts?.leadAnswerBlocks ?? [], opts?.leadAnswerFormulas ?? false),
+    getRespuestasLeadDelDia(clienteId, startStr, endStr, opts?.leadAnswerBlocks ?? [],
+      opts?.leadAnswerFormulas ?? false, opts?.leadAnswerClaves ?? []),
   ])
 
   const metrics = mergeMetricasDelRango({
@@ -867,8 +933,12 @@ export async function getDashboardData(clientId: string, startStr: string, endSt
   // Los bloques de respuestas se recolectan del layout MÁS todas las pestañas:
   // la carga es única y el usuario cambia de pestaña sin volver al servidor.
   const leadAnswerBlocks = recolectarBloquesRespuesta(layout, tabsRes.data);
+  // El catálogo del cliente alimenta el selector de métricas y resuelve las
+  // claves `lf__<clave>__<x>` que mencionen las fórmulas. No escanea leads.
+  const leadAnswerCatalogo = await getCatalogoRespuestas(clientId);
   // El total diario solo se pide si alguna fórmula lo menciona (ver helper).
-  const leadAnswerFormulas = layoutUsaRespuestasLead(layout, tabsRes.data, allLayoutsRes.data);
+  const leadAnswerUso = layoutUsaRespuestasLead(
+    layout, tabsRes.data, allLayoutsRes.data, leadAnswerCatalogo.map(c => c.clave));
 
   // El periodo anterior pasa por el MISMO enriquecimiento: si no, las tarjetas
   // con campos de Sheet, offline o leads se quedaban sin comparativo en silencio.
@@ -876,10 +946,11 @@ export async function getDashboardData(clientId: string, startStr: string, endSt
   const previoNecesitaFilasOffline = layoutUsaSheetFilter(layout, tabsRes.data, allLayoutsRes.data);
   const [actual, previo] = await Promise.all([
     cargarMetricasEnriquecidas(supabase, cliente.id, startStr, endStr,
-      { leadAnswerBlocks, leadAnswerFormulas }),
+      { leadAnswerBlocks, leadAnswerFormulas: leadAnswerUso.usaTotales, leadAnswerClaves: leadAnswerUso.claves }),
     rangoPrevio
       ? cargarMetricasEnriquecidas(supabase, cliente.id, rangoPrevio.desde, rangoPrevio.hasta,
-          { incluirFilasOffline: previoNecesitaFilasOffline, leadAnswerBlocks, leadAnswerFormulas })
+          { incluirFilasOffline: previoNecesitaFilasOffline, leadAnswerBlocks,
+            leadAnswerFormulas: leadAnswerUso.usaTotales, leadAnswerClaves: leadAnswerUso.claves })
       : Promise.resolve(null),
   ]);
 
@@ -908,6 +979,7 @@ export async function getDashboardData(clientId: string, startStr: string, endSt
     campaignGroups: campaignGroupsRes.data || [],
     leadAnswers,
     prevLeadAnswers: previo?.leadAnswers ?? null,
+    leadAnswerCatalogo,
   };
 }
 
@@ -1845,7 +1917,7 @@ export async function getMirrorDashboardData(token: string, from?: string, to?: 
           // El espejo no conoce las plantillas globales, así que solo se miran el
           // layout de la pestaña y las pestañas visibles. Es suficiente: lo que se
           // comparte con el cliente es lo que hay en ese layout.
-          leadAnswerFormulas: layoutUsaRespuestasLead(layout, r.data, null),
+          leadAnswerFormulas: layoutUsaRespuestasLead(layout, r.data, null).usaTotales,
         })),
       supabase
         .from('meta_conversiones_catalogo')

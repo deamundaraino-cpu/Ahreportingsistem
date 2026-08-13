@@ -4,7 +4,8 @@ import React, { useMemo, useEffect, useState, useRef } from 'react'
 import { ExternalLink, ChevronUp, ChevronDown, ChevronsUpDown, Layers, X } from 'lucide-react'
 import type { RankingTableDef, TabCampaignFilter } from '@/lib/layout-types'
 import { evaluateFormula, formatValue } from '@/lib/formula-engine'
-import { aggregateRankingRows } from '@/lib/ranking-aggregation'
+import { aggregateRankingRows, dimensionSoportaRespuestas, leadsFueraDeRanking } from '@/lib/ranking-aggregation'
+import { formulaUsaRespuestas } from '@/lib/dashboard/lead-answer-aggregation'
 
 interface Props {
     def: RankingTableDef
@@ -82,6 +83,29 @@ export function RankingTableBlock({ def, metrics, campaignGroups, sourceMapping,
     }, [allAggregated])
 
     const isTikTok = def.dimension.startsWith('tiktok_')
+
+    /**
+     * Columnas que piden métricas de Report-UTM en una dimensión que no las sirve.
+     *
+     * El cubo resuelve cada lead hasta su CAMPAÑA: un formulario no sabe qué
+     * anuncio concreto trajo al visitante. En anuncio y conjunto la celda dice
+     * «n/a» — un 0 afirmaría que no hubo leads, que es falso.
+     */
+    const columnasNoAplican = useMemo(() => {
+        if (dimensionSoportaRespuestas(def.dimension)) return new Set<number>()
+        return new Set(def.columns.map((c, i) => formulaUsaRespuestas(c.formula) ? i : -1).filter(i => i >= 0))
+    }, [def.dimension, def.columns])
+
+    const MOTIVO_NO_APLICA =
+        'Los contactos de Report-UTM se resuelven a CAMPAÑA, no a anuncio ni a conjunto: ' +
+        'un formulario no sabe qué anuncio trajo al visitante. Cambia la dimensión de la ' +
+        'tabla a «Campañas» para ver esta columna.'
+
+    /** Contactos que no cuelgan de ninguna fila de la tabla. Se declaran al pie. */
+    const fueraDeTabla = useMemo(
+        () => leadsFueraDeRanking(metrics, allAggregated, def.campaignFilter),
+        [metrics, allAggregated, def.campaignFilter],
+    )
 
     const rows = useMemo(() => {
         const platforms = isTikTok ? new Set(['tiktok']) : new Set(['meta'])
@@ -372,6 +396,13 @@ export function RankingTableBlock({ def, metrics, campaignGroups, sourceMapping,
                                     </div>
                                 </td>
                                 {def.columns.map((col, i) => {
+                                    if (columnasNoAplican.has(i)) {
+                                        return (
+                                            <td key={col.label} className="px-3 py-2 text-right font-mono text-muted-foreground/50" title={MOTIVO_NO_APLICA}>
+                                                n/a
+                                            </td>
+                                        )
+                                    }
                                     const val = colValues[i]
                                     const range = heatmapRanges[i]
                                     let bgStyle: React.CSSProperties = {}
@@ -390,6 +421,24 @@ export function RankingTableBlock({ def, metrics, campaignGroups, sourceMapping,
                     </tbody>
                 </table>
             </div>
+
+            {/* Pies informativos: un total que no cuadra con la suma de la tabla
+                parece un fallo si nadie lo explica. */}
+            {columnasNoAplican.size > 0 && (
+                <p className="px-3 pb-2 text-[11px] text-muted-foreground/70">
+                    {columnasNoAplican.size === 1 ? 'Una columna mide' : `${columnasNoAplican.size} columnas miden`}{' '}
+                    contactos de formulario, que solo se resuelven a campaña. Cambia la dimensión
+                    a «Campañas» para verlas.
+                </p>
+            )}
+            {(fueraDeTabla.sinCampana > 0 || fueraDeTabla.fueraDeTabla > 0) && (
+                <p className="px-3 pb-2 text-[11px] text-muted-foreground/70">
+                    {fueraDeTabla.sinCampana + fueraDeTabla.fueraDeTabla} contactos no aparecen en
+                    esta tabla
+                    {fueraDeTabla.sinCampana > 0 && `: ${fueraDeTabla.sinCampana} sin campaña identificada`}
+                    {fueraDeTabla.fueraDeTabla > 0 && `${fueraDeTabla.sinCampana > 0 ? ' y ' : ': '}${fueraDeTabla.fueraDeTabla} de campañas sin gasto registrado en el período`}.
+                </p>
+            )}
         </div>
     )
 }

@@ -198,13 +198,38 @@ preguntarse dónde está el resto.
 > distintas —el contacto real del formulario frente a lo que reporta el píxel— y
 > un lead puede estar en las dos.
 
-Las claves se inyectan en el **cliente**, dentro del mismo `useMemo` que ya
-recorta las filas por campaña (igual que los campos `funnel_*`). Eso importa:
-`enrichMetaRow` solo recalcula las claves `meta_*`, así que una clave emitida
-desde el servidor pasaría sin filtrar y una tarjeta en una pestaña de campaña
-mostraría los contactos de todo el cliente junto a un gasto que sí está
-recortado. Al recortarse las dos por la misma campaña, `meta_spend / lf__x` sí
-significa algo: **el costo por lead de ese segmento**.
+### Dónde funcionan, exactamente
+
+| Sitio | Estado |
+|---|---|
+| Tarjetas superiores (valor, delta, sparkline, progreso) | ✅ |
+| Columnas de tabla (resumen, celda diaria, fila semanal) | ✅ |
+| Gráficas por fecha, con o sin filtro propio | ✅ |
+| Tablas de ranking y gráficas **por dimensión Campaña** | ✅ |
+| Tablas de ranking y gráficas por **Anuncio / Conjunto** | `n/a` con aviso |
+| Archivo de pestañas | `—` |
+
+**Anuncio y conjunto no aplican, y no es un hueco:** el cubo resuelve cada lead
+hasta su **campaña** porque un formulario no sabe qué anuncio trajo al visitante.
+La celda dice `n/a` y la serie se omite del gráfico con una nota — un 0 afirmaría
+que no hubo leads, que es falso.
+
+En el **archivo** las claves no existen (no se carga el cubo para rangos de
+años), así que las fórmulas dan `—`. Es deliberado: un 0 diría «no hubo
+contactos» en vez de «no se consultó».
+
+### Cómo se recortan por campaña
+
+Cada fila lleva el cubo **por referencia** (`__leadAnswers`, no numérica: el motor
+de fórmulas la ignora igual que ignora `meta_campaigns`), y `applyCompoundFilter`
+re-deriva las claves cuando un bloque tiene su propio filtro.
+
+Eso importa: `enrichMetaRow` solo recalcula las claves `meta_*`. Sin la
+re-derivación, una tarjeta `meta_spend / utm_leads` **con filtro propio** dividía
+un gasto ya recortado entre los contactos de toda la pestaña y devolvía un CPL
+hundido, sin ningún aviso. Al recortarse numerador y denominador por la misma
+campaña, `meta_spend / lf__x` sí significa algo: **el costo por lead de ese
+segmento**.
 
 Coste: el total diario es la consulta cara (lee todos los leads del rango), así
 que solo se pide si hay un bloque de respuestas **o** alguna fórmula menciona
