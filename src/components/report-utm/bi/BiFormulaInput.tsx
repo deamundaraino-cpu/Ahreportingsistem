@@ -11,10 +11,10 @@ import { useRef, useState } from 'react'
 import { Search, Plus, X } from 'lucide-react'
 import {
     METRIC_META, humanizeFieldKey, fieldMetricAlias, offlineFieldAlias,
-    sheetFieldAlias, sheetViewAlias,
+    sheetFieldAlias, sheetViewAlias, leadSegAlias,
 } from '@/lib/report-utm/bi-metadata'
 import type {
-    BiMetric, FormFieldMeta, OfflineFieldMeta, SheetFieldMeta, SheetViewMeta,
+    BiMetric, FormFieldMeta, OfflineFieldMeta, SheetFieldMeta, SheetViewMeta, LeadSegmentoMeta,
 } from '@/lib/report-utm/bi-metadata'
 
 interface Props {
@@ -28,6 +28,8 @@ interface Props {
     sheetFields?: SheetFieldMeta[]
     /** Vistas guardadas de esos campos, con sus alias sv__. */
     sheetViews?: SheetViewMeta[]
+    /** Segmentos de campo de lead, con sus alias lseg__. */
+    leadSegments?: LeadSegmentoMeta[]
     placeholder?: string
 }
 
@@ -38,7 +40,8 @@ function buildGroups(
     formFields: FormFieldMeta[],
     offlineFields: OfflineFieldMeta[],
     sheetFields: SheetFieldMeta[],
-    sheetViews: SheetViewMeta[]
+    sheetViews: SheetViewMeta[],
+    leadSegments: LeadSegmentoMeta[]
 ): { title: string; items: MetricOption[] }[] {
     const of = (keys: string[]): MetricOption[] =>
         keys.filter(k => METRIC_META[k as BiMetric])
@@ -91,12 +94,21 @@ function buildGroups(
         label: v.nombre,
     }))
 
+    // Segmentos de campo de lead (alias lseg__<clave>): «Rango de ingresos: Desde
+    // 2M». Dividir el gasto por uno de estos da el CPL de ese tipo de lead, que es
+    // la fórmula por la que existe toda la familia.
+    const segmentosLead: MetricOption[] = leadSegments.map(s => ({
+        key: leadSegAlias(s.clave),
+        label: s.campo_nombre ? `${s.campo_nombre}: ${s.nombre}` : s.nombre,
+    }))
+
     return [
         { title: 'Núcleo', items: nucleo },
         { title: 'Campaña (Meta / TikTok)', items: campana },
         { title: 'Hotmart', items: hotmart },
         { title: 'Google Analytics', items: ga },
         { title: 'Offline', items: offline },
+        { title: 'Segmentos de lead', items: segmentosLead },
         { title: 'Campos de Sheet', items: camposSheet },
         { title: 'Vistas de Sheet', items: vistasSheet },
         { title: 'Columnas de Sheets', items: columnasSheet },
@@ -107,13 +119,13 @@ function buildGroups(
 
 export function BiFormulaInput({
     value, onChange, formFields = [], offlineFields = [],
-    sheetFields = [], sheetViews = [], placeholder,
+    sheetFields = [], sheetViews = [], leadSegments = [], placeholder,
 }: Props) {
     const inputRef = useRef<HTMLInputElement>(null)
     const [open, setOpen] = useState(false)
     const [search, setSearch] = useState('')
 
-    const groups = buildGroups(formFields, offlineFields, sheetFields, sheetViews)
+    const groups = buildGroups(formFields, offlineFields, sheetFields, sheetViews, leadSegments)
     const q = search.trim().toLowerCase()
     const filtered = q
         ? groups

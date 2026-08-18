@@ -25,7 +25,7 @@
 
 import { colombiaRangeBounds } from '@/lib/colombia-date'
 import { bucketDeValor, ordenarBuckets } from './lead-campos'
-import type { LeadCampoDef } from './lead-campos'
+import type { LeadCampoDef, LeadSegmentoLite } from './lead-campos'
 import { loadResolver, SIN_CAMPANA } from './campaign-resolver'
 import type { CampaignResolver } from './campaign-resolver'
 
@@ -58,6 +58,12 @@ export interface LeadAnswerCatalogo {
     origen: 'catalogo' | 'auto'
     /** Leads del período que respondieron este campo. */
     cobertura: number
+    /**
+     * Segmentos definidos sobre este campo («Desde 2M» = estos tres buckets).
+     * Solo los tiene un campo del catálogo: uno autodetectado no existe en la
+     * base, así que nadie ha podido definirle un segmento.
+     */
+    segmentos?: LeadSegmentoLite[]
 }
 
 /**
@@ -208,6 +214,23 @@ function pruneCache(now: number): void {
 }
 
 /** Firma estable de los campos pedidos, para no servir un dataset de otra consulta. */
+/**
+ * Firma de los segmentos que van a viajar en el cubo. Entra en la clave de caché
+ * junto a la de los campos: sin ella, editar los buckets de un segmento seguiría
+ * devolviendo el cubo anterior durante el TTL, y la tarjeta mostraría el número
+ * de antes sin ninguna señal de que está caducado.
+ */
+function firmaDeSegmentos(
+    campos: LeadCampoDef[],
+    porCampo: Record<string, LeadSegmentoLite[]>,
+): string {
+    return campos
+        .map(c => (porCampo[c.clave] ?? [])
+            .map(s => `${s.clave}:${s.operador}:${s.valores.join('~')}`)
+            .join(','))
+        .join('|')
+}
+
 function firmaDeCampos(campos: LeadCampoDef[]): string {
     return campos
         .map(c => `${c.clave}:${c.claves_origen.join('~')}:${Object.keys(c.valores_map ?? {}).length}:${c.sin_mapear}`)
@@ -255,6 +278,12 @@ export async function cargarRespuestasLead(
      * mencione `utm_leads`/`lf__`. Ver `layoutUsaRespuestasLead`.
      */
     conTotales = true,
+    /**
+     * Segmentos del cliente, indexados por la clave de su campo padre. No cuestan
+     * ninguna consulta extra aquí: el cubo ya viene desglosado por bucket, así que
+     * un segmento es una suma sobre un subconjunto de índices.
+     */
+    segmentosPorCampo: Record<string, LeadSegmentoLite[]> = {},
 ): Promise<LeadAnswerDataset> {
     // Sin campos SÍ se sigue si se piden totales: `utm_leads` tiene que existir
     // aunque el cliente no tenga ninguna pregunta configurada.
@@ -266,7 +295,7 @@ export async function cargarRespuestasLead(
     // con aspecto de "no hay datos".
     const usados = campos.slice(0, MAX_CAMPOS_POR_CARGA)
     const recortado = campos.length > MAX_CAMPOS_POR_CARGA
-    const key = `${rtmClienteId}|${dateFrom}|${dateTo}|${conTotales ? 't' : ''}|${firmaDeCampos(usados)}`
+    const key = `${rtmClienteId}|${dateFrom}|${dateTo}|${conTotales ? 't' : ''}|${firmaDeCampos(usados)}|${firmaDeSegmentos(usados, segmentosPorCampo)}`
     const now = Date.now()
     const hit = datasetCache.get(key)
     if (hit && now - hit.ts <= DATASET_TTL_MS) return hit.ds
@@ -427,6 +456,7 @@ export async function cargarRespuestasLead(
             claves_origen: campo.claves_origen ?? [],
             origen: origenes[campo.clave] ?? 'catalogo',
             cobertura,
+            segmentos: segmentosPorCampo[campo.clave],
         })
     })
 

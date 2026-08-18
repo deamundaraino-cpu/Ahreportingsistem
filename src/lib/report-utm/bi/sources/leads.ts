@@ -29,7 +29,9 @@ export const LEADS_SOURCE: DataSource = {
     // `String(created_at).slice(0,10)`, que es el día UTC, mientras el gasto usa
     // `metricas_diarias.fecha` (un DATE) y la app muestra en America/Bogota.
     dateType: 'timestamptz',
-    dynamicLoader: ['raw_field', 'lead_campo'],
+    // `lead_segmento` es la ÚNICA medida dinámica de esta fuente: las otras dos
+    // familias son dimensiones. Ver migración 073.
+    dynamicLoader: ['raw_field', 'lead_campo', 'lead_segmento'],
     fields: [
         // ── Medidas ──────────────────────────────────────────────────────
         measure(S, 'count', 'Leads (contactos)',

@@ -4,8 +4,9 @@ import { useCallback, useEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { ListFilter, Plus, Pencil, Trash2, Loader2, AlertCircle, RefreshCw } from 'lucide-react'
 import { LeadCampoEditorDialog } from './LeadCampoEditorDialog'
+import { LeadSegmentosEditor } from './LeadSegmentosEditor'
 import { bucketDeValor, ordenarBuckets } from '@/lib/report-utm/lead-campos'
-import type { LeadCampoDef, ClaveDetectada } from '@/lib/report-utm/lead-campos'
+import type { LeadCampoDef, LeadSegmentoDef, ClaveDetectada } from '@/lib/report-utm/lead-campos'
 
 /**
  * Campos de lead del cliente: las preguntas de sus formularios convertidas en
@@ -18,6 +19,8 @@ import type { LeadCampoDef, ClaveDetectada } from '@/lib/report-utm/lead-campos'
  */
 export function LeadCamposCard({ clienteId }: { clienteId: string }) {
     const [campos, setCampos] = useState<LeadCampoDef[]>([])
+    const [segmentos, setSegmentos] = useState<LeadSegmentoDef[]>([])
+    const [guardandoSeg, setGuardandoSeg] = useState(false)
     const [detectadas, setDetectadas] = useState<ClaveDetectada[]>([])
     const [leadsEscaneados, setLeadsEscaneados] = useState(0)
     const [cargando, setCargando] = useState(true)
@@ -31,8 +34,9 @@ export function LeadCamposCard({ clienteId }: { clienteId: string }) {
         setCargando(true)
         setError(null)
         try {
-            const [resCampos, resDet] = await Promise.all([
+            const [resCampos, resSeg, resDet] = await Promise.all([
                 fetch(`/api/report-utm/lead-campos?cliente_id=${clienteId}`),
+                fetch(`/api/report-utm/lead-campos/segmentos?cliente_id=${clienteId}`),
                 // La detección escanea leads: solo se rehace a petición o en la
                 // primera carga, no en cada guardado.
                 opts?.redetectar || detectadas.length === 0
@@ -42,6 +46,11 @@ export function LeadCamposCard({ clienteId }: { clienteId: string }) {
             const jsonCampos = await resCampos.json()
             if (!resCampos.ok) throw new Error(jsonCampos?.error ?? 'No se pudo leer el catálogo.')
             setCampos(jsonCampos.data ?? [])
+
+            // Los segmentos no rompen la card si falta la migración 073: la API
+            // devuelve lista vacía y la sección simplemente no ofrece nada.
+            const jsonSeg = await resSeg.json().catch(() => ({}))
+            setSegmentos(resSeg.ok ? (jsonSeg.data ?? []) : [])
 
             if (resDet) {
                 const jsonDet = await resDet.json()
@@ -82,6 +91,29 @@ export function LeadCamposCard({ clienteId }: { clienteId: string }) {
         const res = await fetch(`/api/report-utm/lead-campos?id=${campo.id}`, { method: 'DELETE' })
         if (res.ok) await cargar()
         else setError('No se pudo borrar el campo.')
+    }
+
+    async function guardarSegmento(borrador: Partial<LeadSegmentoDef>) {
+        setGuardandoSeg(true)
+        try {
+            const res = await fetch('/api/report-utm/lead-campos/segmentos', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ...borrador, cliente_id: clienteId }),
+            })
+            const json = await res.json().catch(() => ({}))
+            if (!res.ok) { setError(json?.error ?? 'No se pudo guardar el segmento.'); return }
+            await cargar()
+        } finally {
+            setGuardandoSeg(false)
+        }
+    }
+
+    async function borrarSegmento(id: string) {
+        if (!confirm('¿Borrar el segmento? Las tarjetas y fórmulas que lo usen dejarán de tener datos.')) return
+        const res = await fetch(`/api/report-utm/lead-campos/segmentos?id=${id}`, { method: 'DELETE' })
+        if (res.ok) await cargar()
+        else setError('No se pudo borrar el segmento.')
     }
 
     /** Valores que produce un campo, para el resumen de la lista. */
@@ -128,7 +160,9 @@ export function LeadCamposCard({ clienteId }: { clienteId: string }) {
             <p className="text-xs text-muted-foreground mb-4">
                 Convierte las respuestas de los formularios (rango de ingresos, plazo de compra…) en
                 dimensiones de los informes: agrupar por ellas, filtrar por una respuesta concreta y
-                cruzarlas con el resto de métricas.
+                cruzarlas con el resto de métricas. Cada campo puede además tener <strong>segmentos</strong>
+                («Desde 2M»), que sí son métricas: van en una tarjeta, en una columna o dentro de una
+                fórmula, y dividir el gasto por uno da el costo por lead de ese tipo.
                 {detectadas.length > 0 && (
                     <> Se detectaron <strong>{detectadas.length}</strong> preguntas en {leadsEscaneados} leads del último año.</>
                 )}
@@ -156,7 +190,8 @@ export function LeadCamposCard({ clienteId }: { clienteId: string }) {
                     {campos.map(campo => {
                         const valores = resumenValores(campo)
                         return (
-                            <div key={campo.id} className="flex items-start gap-3 px-3 py-2.5 hover:bg-accent/40">
+                            <div key={campo.id} className="px-3 py-2.5 hover:bg-accent/40">
+                            <div className="flex items-start gap-3">
                                 <div className="min-w-0 flex-1">
                                     <p className="text-xs font-medium text-foreground">
                                         {campo.nombre}
@@ -189,6 +224,23 @@ export function LeadCamposCard({ clienteId }: { clienteId: string }) {
                                 >
                                     <Trash2 className="w-3 h-3" />
                                 </Button>
+                            </div>
+
+                            {/* Segmentos: lo que convierte este campo en una MÉTRICA
+                                («Desde 2M») además de en una dimensión. */}
+                            <div className="mt-2 pl-1">
+                                <p className="text-[10px] uppercase tracking-wider text-muted-foreground/60 mb-1.5">
+                                    Segmentos · métricas de este campo
+                                </p>
+                                <LeadSegmentosEditor
+                                    campo={campo}
+                                    buckets={valores}
+                                    segmentos={segmentos}
+                                    guardando={guardandoSeg}
+                                    onGuardar={(s) => void guardarSegmento(s)}
+                                    onBorrar={(id) => void borrarSegmento(id)}
+                                />
+                            </div>
                             </div>
                         )
                     })}

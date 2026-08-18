@@ -244,3 +244,106 @@ export function esValorPlaceholder(valor: string): boolean {
         v.startsWith('<test lead')            // leads de prueba de Meta
     )
 }
+
+// ── Segmentos: una respuesta (o un grupo de respuestas) como MÉTRICA ──
+//
+// Un campo de lead es una DIMENSIÓN: agrupa los leads por lo que contestaron.
+// Un "segmento" es un subconjunto con nombre de sus buckets —«Desde 2M» = estos
+// tres— que se ofrece como MEDIDA: un número que se puede poner en una tarjeta,
+// en una columna o dentro de una fórmula.
+//
+// Existe porque los acumuladores («todos los que ganan ≥ 2M») no son un bucket:
+// son varios. Sin esto, la única salida era crear un campo de lead por umbral,
+// que es exactamente lo que hay hoy en producción (ver migración 073).
+//
+// Un segmento SOLAPA buckets a propósito, así que nunca entra en la suma
+// «respuestas + sin_respuesta = utm_leads» del dashboard.
+
+/** Definición de un segmento (fila de `report_utm.lead_campo_segmentos`). */
+export interface LeadSegmentoDef {
+    id: string
+    cliente_id: string
+    campo_id: string
+    /** Clave del campo padre, desnormalizada para no volver a la base por cada fila. */
+    campo_clave: string
+    clave: string
+    nombre: string
+    descripcion: string | null
+    operador: 'in' | 'not_in'
+    /** Buckets del campo padre que incluye (o excluye, con `not_in`). */
+    valores: string[]
+    activo: boolean
+    orden: number
+}
+
+/**
+ * Lo mínimo que hace falta de un segmento para contarlo: su clave y a qué
+ * buckets pertenece. Es lo que viaja dentro del cubo del dashboard, donde el
+ * payload se paga por byte.
+ */
+export interface LeadSegmentoLite {
+    clave: string
+    nombre: string
+    operador: 'in' | 'not_in'
+    valores: string[]
+}
+
+/** Metadata de un segmento que viaja al navegador (editor de widgets y fórmulas). */
+export interface LeadSegmentoMeta {
+    clave: string
+    nombre: string
+    /** Clave del campo padre, para etiquetar «<Campo>: <Segmento>». */
+    campo_clave: string
+    campo_nombre?: string
+    operador: 'in' | 'not_in'
+    valores: string[]
+    /** Leads del período que caen dentro del segmento. */
+    cobertura: number
+}
+
+/**
+ * ¿El bucket entra en el segmento? Gemelo de `vistaIncluyeValor` de los campos
+ * de Sheet: si los dos divergieran, el mismo subconjunto contaría distinto según
+ * de dónde saliera el dato.
+ */
+export function segmentoIncluyeBucket(
+    seg: Pick<LeadSegmentoDef, 'valores' | 'operador'>,
+    bucket: string
+): boolean {
+    const dentro = (seg.valores ?? []).includes(bucket)
+    return seg.operador === 'not_in' ? !dentro : dentro
+}
+
+/**
+ * ¿Este lead cuenta para el segmento?
+ *
+ * Un lead que NO respondió la pregunta no entra en ningún segmento, tampoco en
+ * uno `not_in`. Es deliberado: «no respondió» no es «no es de este grupo», y
+ * contarlo inflaría el complemento con gente de la que no se sabe nada.
+ */
+export function cuentaEnSegmento(
+    seg: Pick<LeadSegmentoDef, 'valores' | 'operador'>,
+    campo: LeadCampoDef,
+    idx: Map<string, unknown>
+): boolean {
+    const bucket = bucketDeLead(campo, idx)
+    if (bucket === null) return false
+    return segmentoIncluyeBucket(seg, bucket)
+}
+
+/**
+ * Buckets desde `desde` hasta el final de `valores_orden`: el «≥ X» de un solo
+ * clic. Es literalmente lo que Goodprop construyó a mano cuatro veces.
+ *
+ * Devuelve lista vacía si el bucket no está en el orden configurado: sin orden
+ * no hay «hacia arriba» que valga, y adivinarlo alfabéticamente pondría
+ * «Menos de $2M» en medio de los demás.
+ */
+export function bucketsAcumulados(
+    campo: Pick<LeadCampoDef, 'valores_orden'>,
+    desde: string
+): string[] {
+    const orden = campo.valores_orden ?? []
+    const i = orden.indexOf(desde)
+    return i === -1 ? [] : orden.slice(i)
+}

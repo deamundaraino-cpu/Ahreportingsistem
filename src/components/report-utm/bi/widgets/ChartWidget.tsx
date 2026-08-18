@@ -13,7 +13,7 @@ import type { BiMetric, BiDimension, BiQueryRow, BiPivotRow } from '@/lib/report
 import {
     METRIC_META, DIMENSION_META, applyValueFilters,
     fieldMetricLabel, fieldMetricFormat, fieldDimLabel, leadFieldLabel, isFieldMetric, metricGlossary,
-    offlineFieldLabel, offlineFieldFormat, sheetFieldLabel, sheetFieldFormat,
+    offlineFieldLabel, offlineFieldFormat, sheetFieldLabel, sheetFieldFormat, leadSegLabel,
     supportsPivot,
 } from '@/lib/report-utm/bi-metadata'
 import { useBiQueryBase } from '../BiQueryContext'
@@ -159,7 +159,7 @@ export function ChartWidget({ title, type, config, filters, calculatedFields = [
     }, [queryBase, metric, formula, calcField?.expression, dimension, dimension2, usePivot, grouping, limit, sort, filterSig])
 
     const dimLabel = DIMENSION_META[dimension]?.label ?? leadFieldLabel(dimension) ?? fieldDimLabel(dimension) ?? dimension
-    const metLabel = formula ? formula : (METRIC_META[metric as BiMetric]?.label ?? fieldMetricLabel(metric) ?? offlineFieldLabel(metric) ?? sheetFieldLabel(metric) ?? calcField?.name ?? metric)
+    const metLabel = formula ? formula : (METRIC_META[metric as BiMetric]?.label ?? fieldMetricLabel(metric) ?? offlineFieldLabel(metric) ?? sheetFieldLabel(metric) ?? leadSegLabel(metric) ?? calcField?.name ?? metric)
 
     const chartData = applyValueFilters(rows, config.value_filters).map(r => ({
         name:  r.dimension_value ?? 'Total',

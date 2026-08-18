@@ -22,12 +22,12 @@ import { resolveRtmClienteId } from '@/lib/report-utm/campaign-resolver';
 import { formulaUsaRespuestas, camposEnFormula } from '@/lib/dashboard/lead-answer-aggregation';
 import { BUCKET_OTROS } from '@/lib/report-utm/lead-campos';
 import type { LeadAnswerCampoResumen } from '@/lib/dashboard/metric-catalog';
-import { loadLeadCampos, saveLeadCampo } from '@/lib/report-utm/lead-campos-db';
+import { loadLeadCampos, loadLeadSegmentos, saveLeadCampo } from '@/lib/report-utm/lead-campos-db';
 import { slugCampo } from '@/lib/report-utm/lead-campos';
 import { getUserRole } from '@/lib/report-utm/auth';
 import { cargarRespuestasLead, campoSintetico, datasetVacio } from '@/lib/report-utm/lead-answers-db';
 import type { LeadAnswerDataset } from '@/lib/report-utm/lead-answers-db';
-import type { LeadCampoDef } from '@/lib/report-utm/lead-campos';
+import type { LeadCampoDef, LeadSegmentoLite } from '@/lib/report-utm/lead-campos';
 import type { LeadAnswerBlockDef } from '@/lib/layout-types';
 
 /** Un campo de Sheet tal como lo necesita la UI del dashboard. */
@@ -589,6 +589,12 @@ function layoutUsaRespuestasLead(
   plantillas: (FuenteDeFormulas & { id?: string })[] | null | undefined,
   /** Claves del catálogo del cliente, para resolver `lf__<clave>__<x>` sin ambigüedad. */
   clavesCatalogo: string[] = [],
+  /**
+   * Segmentos del cliente con su campo padre. Un segmento se nombra por SU clave
+   * (`lseg__desde_2m`), así que sin esto una tarjeta que solo use un segmento
+   * pediría un dataset sin el campo que lo bucketiza y mostraría 0.
+   */
+  segmentos: { clave: string; campoClave: string }[] = [],
 ): { usaTotales: boolean; claves: string[] } {
   let usaTotales = false;
   const claves = new Set<string>();
@@ -596,7 +602,7 @@ function layoutUsaRespuestasLead(
   const usa = (f: string | null | undefined) => {
     if (!f) return;
     if (formulaUsaRespuestas(f)) usaTotales = true;
-    for (const c of camposEnFormula(f, clavesCatalogo)) claves.add(c);
+    for (const c of camposEnFormula(f, clavesCatalogo, segmentos)) claves.add(c);
   };
 
   const revisar = (fuente: FuenteDeFormulas | null | undefined) => {
@@ -639,11 +645,22 @@ async function getCatalogoRespuestas(clienteId: string): Promise<LeadAnswerCampo
     const rtmClienteId = await resolveRtmClienteId(clienteId);
     if (!rtmClienteId) return [];
     const supabase = await createAdminClient();
-    const campos = await loadLeadCampos(supabase.schema('report_utm'), rtmClienteId, { soloActivos: true });
+    const rtm = supabase.schema('report_utm');
+    const campos = await loadLeadCampos(rtm, rtmClienteId, { soloActivos: true });
+    const porCampo: Record<string, { clave: string; nombre: string }[]> = {};
+    for (const s of await loadLeadSegmentos(rtm, rtmClienteId, campos, { soloActivos: true })) {
+      (porCampo[s.campo_clave] ??= []).push({ clave: s.clave, nombre: s.nombre });
+    }
     return campos.map(c => {
       const buckets = [...new Set(Object.values(c.valores_map ?? {}))].filter(Boolean) as string[];
       if (c.sin_mapear === 'otros') buckets.push(BUCKET_OTROS);
-      return { clave: c.clave, nombre: c.nombre, buckets, sinBuckets: buckets.length === 0 };
+      return {
+        clave: c.clave, nombre: c.nombre, buckets, sinBuckets: buckets.length === 0,
+        // Un segmento SÍ es ofrecible aunque el campo salga `sinBuckets`: lleva su
+        // propia lista de buckets, que es justo la información que al catálogo le
+        // falta cuando `valores_map` está vacío.
+        segmentos: (porCampo[c.clave] ?? []).map(s => ({ clave: s.clave, nombre: s.nombre })),
+      };
     });
   } catch (err) {
     console.error('[dashboard] catálogo de respuestas no disponible:', err);
@@ -732,6 +749,16 @@ async function getRespuestasLeadDelDia(
     const catalogo: LeadCampoDef[] = necesitaCatalogo
       ? await loadLeadCampos(rtm, rtmClienteId, { soloActivos: true })
       : [];
+    // Los segmentos viajan DENTRO del cubo, indexados por su campo padre: no son
+    // otra consulta al cubo, solo una suma más sobre los buckets que ya trae.
+    const segmentosPorCampo: Record<string, LeadSegmentoLite[]> = {};
+    if (catalogo.length > 0) {
+      for (const s of await loadLeadSegmentos(rtm, rtmClienteId, catalogo, { soloActivos: true })) {
+        (segmentosPorCampo[s.campo_clave] ??= []).push({
+          clave: s.clave, nombre: s.nombre, operador: s.operador, valores: s.valores,
+        });
+      }
+    }
 
     const campos: LeadCampoDef[] = [];
     const origenes: Record<string, 'catalogo' | 'auto'> = {};
@@ -776,7 +803,7 @@ async function getRespuestasLeadDelDia(
     const necesitaTotales = conTotales || bloques.length > 0;
 
     return await cargarRespuestasLead(
-      rtm, rtmClienteId, desde, endStr, campos, origenes, necesitaTotales);
+      rtm, rtmClienteId, desde, endStr, campos, origenes, necesitaTotales, segmentosPorCampo);
   } catch (err) {
     console.error('[dashboard] respuestas de formulario no disponibles:', err);
     return datasetVacio();
@@ -938,7 +965,8 @@ export async function getDashboardData(clientId: string, startStr: string, endSt
   const leadAnswerCatalogo = await getCatalogoRespuestas(clientId);
   // El total diario solo se pide si alguna fórmula lo menciona (ver helper).
   const leadAnswerUso = layoutUsaRespuestasLead(
-    layout, tabsRes.data, allLayoutsRes.data, leadAnswerCatalogo.map(c => c.clave));
+    layout, tabsRes.data, allLayoutsRes.data, leadAnswerCatalogo.map(c => c.clave),
+    leadAnswerCatalogo.flatMap(c => (c.segmentos ?? []).map(s => ({ clave: s.clave, campoClave: c.clave }))));
 
   // El periodo anterior pasa por el MISMO enriquecimiento: si no, las tarjetas
   // con campos de Sheet, offline o leads se quedaban sin comparativo en silencio.

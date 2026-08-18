@@ -82,6 +82,39 @@ cual, mandarlo a `(otros)` o ignorarlo.
 Sube y baja los buckets hasta dejarlos de menor a mayor. Sin esto, la tabla los
 ordena alfabéticamente y "Menos de $2M" acaba entre medio de los demás.
 
+Además, sin orden no se pueden crear **acumulados**: el paso siguiente necesita
+saber qué es "hacia arriba".
+
+### 5. Segmentos: convertir una respuesta en una métrica
+
+Un campo es una **dimensión**: agrupa y filtra. Un **segmento** es un subconjunto
+con nombre de sus buckets —"Desde 2M" = estos tres— y sí es una **métrica**: va en
+una tarjeta, en una columna de tabla, en una etapa de embudo y dentro de una
+fórmula.
+
+Existe porque un acumulado ("todos los que ganan ≥ 2M") no es un bucket, son
+varios. Sin esto la única salida era crear **un campo de lead por umbral**, que es
+exactamente lo que había en producción: Goodprop tenía cuatro campos sobre la
+misma pregunta y Cris tributario tres, todos fingiendo ser contadores.
+
+Debajo de cada campo, en la misma card, hay tres formas de crearlos:
+
+- **Añadir segmento** — eliges los buckets a mano. El desplegable `Excepto`
+  invierte la selección ("todos menos los que no respondieron el rango alto").
+- **Una métrica por respuesta** — un segmento por cada bucket, de un clic. Es lo
+  que quieres para una pregunta categórica (ubicación, canal, perfil), donde no
+  hay ningún "desde X" que tenga sentido.
+- **Acumulado desde…** — crea "Desde $2M" con ese bucket y todos los posteriores
+  del orden que definiste en el paso 4. Es el atajo que sustituye al campo por
+  umbral.
+
+Un lead que **no respondió** la pregunta no entra en ningún segmento, tampoco en
+uno de tipo `Excepto`: "no contestó" no es "no es de este grupo".
+
+Los segmentos **solapan** buckets a propósito, así que no entran en la suma
+`respuestas + (sin respuesta) = utm_leads` del bloque del dashboard, que sigue
+cerrando igual.
+
 ---
 
 ## Uso en el General Overview
@@ -102,6 +135,10 @@ de **Respuestas de formulario** que desglosa los leads por lo que contestaron.
 
 Detalle en [doc 10 · Sistema de layouts](./10-sistema-de-layouts.md#desglose-por-respuesta-de-formulario-leadanswerblockdef).
 
+> **¿Buscas cómo usarlo, no cómo configurarlo?** La guía práctica con recetas,
+> ejemplos copiables y el catálogo actual de cada cliente está en
+> [doc 19 · Guía de segmentos de lead](./19-guia-segmentos-de-lead.md).
+
 ## Uso en los informes
 
 El campo aparece de inmediato — no hay recálculo: el catálogo se aplica al
@@ -118,18 +155,33 @@ consultar, así que editar una agrupación se ve en el informe al recargar.
 - **Tabla dinámica**: como dimensión secundaria, ej. `Campaña × Rango de
   ingresos`.
 
-### Límite conocido: el gasto no se recorta por respuesta
+### Filtrar anula el gasto; medir con un segmento no
 
-`metricas_diarias` está preagregada por día×cliente y el único puente hacia UTM
-es el nombre de campaña. Un rango de ingresos no existe a nivel de anuncio, así
-que **con un filtro de campo de lead activo el gasto y sus derivados (CPL, CPA,
-ROAS) se muestran en 0**, con el aviso correspondiente en el informe. Los leads y
-las ventas sí quedan filtrados.
+Es la distinción que hay que tener clara, porque decide qué se puede pedir.
 
-Es la misma limitación que ya tenían los filtros por país, formulario o campo
-crudo, y es deliberada: repartir el gasto entre respuestas daría un CPL
-inventado. Para el costo por lead de un segmento hay que compararlo a mano contra
-el gasto de la campaña.
+**Un filtro** por campo de lead deja el gasto y sus derivados (CPL, CPA, ROAS)
+**en 0**, con el aviso correspondiente en el informe. Los leads y las ventas sí
+quedan filtrados. `metricas_diarias` está preagregada por día×cliente y el único
+puente hacia UTM es el nombre de campaña: un rango de ingresos no existe a nivel
+de anuncio, así que repartir el gasto entre respuestas daría un CPL inventado con
+aspecto de dato medido. Misma limitación que los filtros por país, formulario o
+campo crudo, y es deliberada.
+
+**Una métrica de segmento no es un filtro.** No recorta el ámbito de la consulta,
+así que el gasto se sigue trayendo entero:
+
+```
+spend / lseg__ingresos_desde_2m      → costo por lead de más de 2M
+```
+
+Numerador y denominador quedan recortados por el mismo ámbito (la campaña, la
+fecha, el filtro que tenga el widget), así que la división significa algo. No
+reparte nada: responde «cuánto me cuesta conseguir un lead de este tipo», que es
+justo lo que se optimiza. Es la misma decisión que
+[doc 10](./10-sistema-de-layouts.md) ya documenta para `meta_spend / lf__x`.
+
+Por eso un segmento **no se ofrece como filtro ni como dimensión**: para filtrar
+está el campo con su valor, que sí es honesto sobre el gasto.
 
 ---
 
@@ -137,14 +189,23 @@ el gasto de la campaña.
 
 | Pieza | Dónde |
 |---|---|
-| Tabla | `report_utm.lead_campos` (migración `060`) |
+| Tabla del campo | `report_utm.lead_campos` (migración `060`) |
+| Tabla del segmento | `report_utm.lead_campo_segmentos` (migración `073`) |
 | Bloque del dashboard | `LeadAnswerBlockDef` + RPC `bi_respuestas_por_dia` (migración `071`) |
 | Lógica pura | [`src/lib/report-utm/lead-campos.ts`](../src/lib/report-utm/lead-campos.ts) |
 | Lectura/escritura y detección | [`src/lib/report-utm/lead-campos-db.ts`](../src/lib/report-utm/lead-campos-db.ts) |
-| Token del BI | `leadfield:<clave>` (dimensión y filtro) |
-| API | `/api/report-utm/lead-campos`, `/lead-campos/detectar`, `/api/report-utm/bi/lead-fields` |
-| UI | [`LeadCamposCard`](../src/components/report-utm/LeadCamposCard.tsx) |
-| Comprobaciones | `npx tsx scripts/verify-lead-campos.ts` |
+| Token del campo | `leadfield:<clave>` (dimensión y filtro) |
+| Token del segmento | `leadseg:<clave>` (métrica) · alias de fórmula `lseg__<clave>` |
+| Métrica por respuesta | `lf__<campo>__<respuesta>` — solo en el dashboard, derivada de los buckets |
+| API | `/api/report-utm/lead-campos`, `/lead-campos/detectar`, `/lead-campos/segmentos`, `/api/report-utm/bi/lead-fields` |
+| UI | [`LeadCamposCard`](../src/components/report-utm/LeadCamposCard.tsx) + [`LeadSegmentosEditor`](../src/components/report-utm/LeadSegmentosEditor.tsx) |
+| Comprobaciones | `npx tsx scripts/verify-lead-segmentos.ts` (puro) · `verify-lead-segmentos-db.ts` (datos reales) · `verify-lead-campos.ts` |
+| Migración de datos | `npx tsx scripts/migrar-segmentos-lead.ts` (informe · `--aplicar` · `--revertir`) |
+
+El alias del segmento es **la misma cadena en el BI y en el dashboard**
+(`lseg__<clave>`), a diferencia de los campos de Sheet (`sf__` / `sf_`), que
+divergen por una colisión histórica con el prefijo `sheet_`. Quien aprende un
+alias en una pantalla lo escribe igual en la otra.
 
 La `clave` es un slug estable que se fija en el alta: es lo que queda guardado
 dentro de los widgets, así que **renombrar el campo no rompe los informes ya

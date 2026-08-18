@@ -26,7 +26,7 @@ import {
     AVAILABLE_METRICS, buildAvailableMetrics, applyMetricType, getMetricType, tieneVentasOffline,
     esSumandoDeSheet,
 } from "@/lib/dashboard/metric-catalog"
-import { CLAVE_TOTAL_LEADS, PREFIJO_RESPUESTA } from "@/lib/dashboard/lead-answer-aggregation"
+import { CLAVE_TOTAL_LEADS, PREFIJO_RESPUESTA, PREFIJO_SEGMENTO } from "@/lib/dashboard/lead-answer-aggregation"
 import type { MetricType, MetricOption, LeadAnswerCampoResumen } from "@/lib/dashboard/metric-catalog"
 import type { SheetCampoResumen, SheetVistaResumen } from "../_actions"
 
@@ -70,7 +70,8 @@ export function FormulaInput({ value, onChange, disabled, availableMetrics, onMe
     // empieza por `offline_`/`sheet_` y su etiqueta es el nombre libre que puso
     // el analista. La pestaña solo aparece si el cliente tiene alguno.
     type FormulaTab = 'all' | 'meta' | 'tiktok' | 'ventas' | 'ga4' | 'offline' | 'campos' | 'respuestas'
-    const esRespuesta = (id: string) => id === CLAVE_TOTAL_LEADS || id.startsWith(PREFIJO_RESPUESTA)
+    const esRespuesta = (id: string) =>
+        id === CLAVE_TOTAL_LEADS || id.startsWith(PREFIJO_RESPUESTA) || id.startsWith(PREFIJO_SEGMENTO)
     const hayCampos = metrics.some(m => esCampoDeSheet(m.id))
     const hayRespuestas = metrics.some(m => esRespuesta(m.id))
     const tabs: FormulaTab[] = ['all', 'meta', 'tiktok', 'ventas', 'ga4', 'offline']

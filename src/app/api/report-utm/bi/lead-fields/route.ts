@@ -2,9 +2,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { reportUtmAdminClient } from '@/lib/report-utm/client'
 import { fetchAllRows } from '@/lib/report-utm/bi-query'
-import { loadLeadCampos } from '@/lib/report-utm/lead-campos-db'
-import { bucketDeLeadRaw, ordenarBuckets } from '@/lib/report-utm/lead-campos'
-import type { LeadFieldMeta } from '@/lib/report-utm/bi-metadata'
+import { loadLeadCampos, loadLeadSegmentos } from '@/lib/report-utm/lead-campos-db'
+import { bucketDeLeadRaw, ordenarBuckets, segmentoIncluyeBucket } from '@/lib/report-utm/lead-campos'
+import type { LeadFieldMeta, LeadSegmentoMeta } from '@/lib/report-utm/bi-metadata'
 import { colombiaRangeBounds } from '@/lib/colombia-date'
 
 export const dynamic = 'force-dynamic'
@@ -41,7 +41,11 @@ export async function GET(req: NextRequest) {
     try {
         const rtm = await reportUtmAdminClient()
         const campos = await loadLeadCampos(rtm, clienteId, { soloActivos: true })
-        if (campos.length === 0) return NextResponse.json({ data: [] })
+        if (campos.length === 0) return NextResponse.json({ data: [], segments: [] })
+        // Los segmentos viajan en una clave HERMANA de `data`, no dentro de cada
+        // campo: todo lo que hoy lee `json.data` (constructor de filtros, chips)
+        // sigue funcionando sin tocarlo.
+        const segmentos = await loadLeadSegmentos(rtm, clienteId, campos, { soloActivos: true })
 
         const rows = await fetchAllRows(
             () =>
@@ -56,7 +60,12 @@ export async function GET(req: NextRequest) {
             MAX_LEADS
         )
 
+        // La cobertura de cada segmento se calcula en la MISMA pasada que ya hace
+        // el campo: coste cero, y permite atenuar en el editor un segmento que no
+        // recoge a nadie en el período elegido.
+        const coberturaSeg = new Map<string, number>()
         const data: LeadFieldMeta[] = campos.map(campo => {
+            const susSegmentos = segmentos.filter(s => s.campo_clave === campo.clave)
             const set = new Set<string>()
             let cobertura = 0
             for (const r of rows) {
@@ -64,6 +73,9 @@ export async function GET(req: NextRequest) {
                 if (!b) continue
                 cobertura++
                 if (set.size < campo.max_valores + 1) set.add(b)
+                for (const s of susSegmentos) {
+                    if (segmentoIncluyeBucket(s, b)) coberturaSeg.set(s.clave, (coberturaSeg.get(s.clave) ?? 0) + 1)
+                }
             }
             return {
                 clave: campo.clave,
@@ -76,7 +88,18 @@ export async function GET(req: NextRequest) {
             }
         })
 
-        return NextResponse.json({ data })
+        const porClave = new Map(campos.map(c => [c.clave, c.nombre]))
+        const segments: LeadSegmentoMeta[] = segmentos.map(s => ({
+            clave: s.clave,
+            nombre: s.nombre,
+            campo_clave: s.campo_clave,
+            campo_nombre: porClave.get(s.campo_clave),
+            operador: s.operador,
+            valores: s.valores,
+            cobertura: coberturaSeg.get(s.clave) ?? 0,
+        }))
+
+        return NextResponse.json({ data, segments })
     } catch (err) {
         console.error('[bi/lead-fields]', err)
         return NextResponse.json({ error: 'Query error' }, { status: 500 })

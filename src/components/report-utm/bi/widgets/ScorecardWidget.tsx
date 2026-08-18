@@ -7,7 +7,7 @@ import { WIDGET_FORMULA_KEY } from '../BiTypes'
 import type { BiMetric, ClienteGoals, GoalStatus } from '@/lib/report-utm/bi-metadata'
 import {
     METRIC_META, fieldMetricLabel, fieldMetricFormat,
-    offlineFieldLabel, offlineFieldFormat, sheetFieldLabel, sheetFieldFormat,
+    offlineFieldLabel, offlineFieldFormat, sheetFieldLabel, sheetFieldFormat, leadSegLabel,
     metricGlossary, isLowerBetter, evaluateGoal,
 } from '@/lib/report-utm/bi-metadata'
 import { fetchClienteGoals } from '@/lib/report-utm/client-goals'
@@ -70,7 +70,7 @@ export function ScorecardWidget({ title, config, filters, calculatedFields = [] 
     const decimals = formula ? config.formula_decimals : calcField?.decimals
     const label = formula
         ? formula
-        : (METRIC_META[metric as BiMetric]?.label ?? fieldMetricLabel(metric) ?? offlineFieldLabel(metric) ?? sheetFieldLabel(metric) ?? calcField?.name ?? metric)
+        : (METRIC_META[metric as BiMetric]?.label ?? fieldMetricLabel(metric) ?? offlineFieldLabel(metric) ?? sheetFieldLabel(metric) ?? leadSegLabel(metric) ?? calcField?.name ?? metric)
 
     useEffect(() => {
         setLoading(true)

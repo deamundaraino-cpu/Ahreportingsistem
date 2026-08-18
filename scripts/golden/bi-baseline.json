@@ -1,5 +1,5 @@
 {
-  "generado": "2026-08-11T05:54:39.818Z",
+  "generado": "2026-08-18T21:10:25.272Z",
   "rango": {
     "desde": "2026-07-01",
     "hasta": "2026-07-31"
@@ -110,7 +110,7 @@
         "filas": [
           {
             "__dim": null,
-            "offline_leads": 989,
+            "offline_leads": 990,
             "offline_ventas": 0,
             "offline_revenue": 0
           }

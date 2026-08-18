@@ -135,6 +135,10 @@ sobre **un cliente y un rango de fechas**.
 | `Producto` · `Tipo de transacción` | Columnas de las ventas |
 | Campos de formulario, de lead y de Sheet | Los que definas por cliente |
 
+> Un **segmento** de campo de lead (`lseg__…`) no aparece aquí a propósito: es una
+> métrica, no una dimensión. Para partir las filas por la respuesta se usa el
+> campo; para contar un subconjunto, el segmento.
+
 > **`Campaña` vs `Campaña UTM (crudo)`** — la primera agrupa por el nombre real y
 > trae el gasto. La segunda muestra el UTM literal y **no cruza con el gasto**.
 > Úsala solo para diagnosticar etiquetado.
@@ -186,6 +190,24 @@ esa identidad.
 
 **Requisito**: que el Sheet sea una exportación de Meta Lead Ads (con esas
 columnas). Un Sheet de CRM llenado a mano no las tiene y caerá en `(sin campaña)`.
+
+### «¿Cuánto me cuesta un lead de más de 2M?»
+
+La que antes obligaba a crear un campo de lead por umbral.
+
+```
+Widget:     scorecard
+Fórmula:    spend / lseg__ingresos_desde_2m
+Dimensión:  Total  (o Campaña, para verlo campaña a campaña)
+```
+
+El segmento se define una vez en la ficha del cliente (**Campos de lead → tu
+pregunta → Acumulado desde…**) y a partir de ahí sale en la lista de métricas y
+en la de fórmulas, en los informes y en el dashboard.
+
+Aquí el gasto **no** se anula: un segmento es una medida, no un filtro, así que
+numerador y denominador quedan recortados por el mismo ámbito. Ver
+[doc 17](./17-campos-de-lead.md#filtrar-anula-el-gasto-medir-con-un-segmento-no).
 
 ### «¿Qué tipo de lead me trae cada campaña?»
 
@@ -244,12 +266,18 @@ Merece la pena conocerlas para no perder tiempo:
 
 | Petición | Por qué no |
 |---|---|
-| Gasto por país / formulario / campo de lead | Anuncios no tiene esas columnas |
+| Gasto **desglosado** por país / formulario / campo de lead | Anuncios no tiene esas columnas |
 | Sesiones GA4 por campaña | Cuenta está agregada por día, sin desglose |
 | Conversiones offline por campaña | Ídem — usa un **campo de Sheet**, que sí cruza |
 | Suscripciones en una serie temporal | Es una foto, no una serie |
 | Contar filas de una fuente diaria | Solo el grano de fila se cuenta |
 | ROAS real hoy | `sales_events` está vacío (ver Parte 7) |
+
+> **Ojo con la primera fila.** Lo que no se puede es *repartir* el gasto entre las
+> respuestas. **Dividir** el gasto total del ámbito por un segmento de lead sí se
+> puede, y es la receta de abajo: `spend / lseg__ingresos_desde_2m`. La diferencia
+> es que un segmento es una MÉTRICA y no recorta la consulta, mientras que un
+> filtro `leadfield:` sí — y por eso ese sigue dejando el gasto en 0.
 
 ---
 
@@ -345,7 +373,8 @@ pero aparecen en las fórmulas y en los informes guardados.
 | `sheetdim:<clave>` | Campo de Sheet como dimensión | — |
 | `field:<clave>` | Campo de formulario como dimensión | — |
 | `fieldagg:<agg>:<clave>` | Campo de formulario como métrica | — |
-| `leadfield:<clave>` | Campo de lead unificado | — |
+| `leadfield:<clave>` | Campo de lead como dimensión | — |
+| `leadseg:<clave>` | Segmento de un campo de lead, como métrica | `lseg__<clave>` |
 | `offfield:<tipo>:<clave>` | Columna de conversiones offline | `off__<clave>` |
 
 `<agg>` es `count`, `sum`, `avg`, `min` o `max`. La agregación viaja **dentro**

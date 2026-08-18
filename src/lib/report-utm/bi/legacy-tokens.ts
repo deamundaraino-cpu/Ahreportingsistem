@@ -159,7 +159,7 @@ export const LEGACY_DIMENSION_IDS: Readonly<Record<string, string>> = {
 
 /** Prefijos de las familias de tokens dinámicos. */
 const DYNAMIC_PREFIXES = [
-    'field:', 'fieldagg:', 'leadfield:', 'offfield:',
+    'field:', 'fieldagg:', 'leadfield:', 'leadseg:', 'offfield:',
     'sheetdim:', 'sheetagg:', 'sheetview:',
 ] as const
 
@@ -183,6 +183,7 @@ export function isDynamicToken(token: string): boolean {
  *   field:<k>            → leads.raw__<k>
  *   fieldagg:<agg>:<k>   → leads.raw__<k>__<agg>
  *   leadfield:<k>        → leads.campo__<k>
+ *   leadseg:<k>          → leads.segmento__<k>
  *   offfield:<tipo>:<k>  → offline.custom__<k>
  *   sheetdim:<k>         → sheet.<k>
  *   sheetagg:<agg>:<k>   → sheet.<k>__<agg>
@@ -198,7 +199,10 @@ export function migrateDynamicToken(token: string): string | null {
         return `leads.raw__${body.slice(i + 1)}__${body.slice(0, i)}`
     }
     if (token.startsWith('field:')) return `leads.raw__${rest('field:')}`
+    // Antes que `leadfield:` no hace falta ordenar nada —los prefijos no son
+    // prefijo uno de otro—, pero sí van juntos para que se lean como familia.
     if (token.startsWith('leadfield:')) return `leads.campo__${rest('leadfield:')}`
+    if (token.startsWith('leadseg:')) return `leads.segmento__${rest('leadseg:')}`
     if (token.startsWith('offfield:')) {
         const body = rest('offfield:')
         const i = body.indexOf(':')

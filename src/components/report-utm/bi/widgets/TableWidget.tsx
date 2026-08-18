@@ -11,6 +11,7 @@ import {
     isAdditiveMetric,
     isOfflineFieldMetric, parseOfflineFieldMetric, offlineFieldLabel, offlineFieldFormat,
     isSheetToken, sheetFieldLabel, sheetFieldFormat,
+    isLeadSegMetric, leadSegLabel,
 } from '@/lib/report-utm/bi-metadata'
 import { useBiQueryBase } from '../BiQueryContext'
 import { appendWidgetFilters, widgetFilterSignature } from '../widgetQuery'
@@ -77,6 +78,8 @@ export function TableWidget({ title, config, filters, calculatedFields = [], h =
     const offlineFieldCols = colKeys.filter(isOfflineFieldMetric)
     // Campos y vistas de Sheet (sheetagg:/sheetview:).
     const sheetCols = colKeys.filter(isSheetToken)
+    // Segmentos de campo de lead (leadseg:<clave>).
+    const leadSegCols = colKeys.filter(isLeadSegMetric)
     const usedCalc = colKeys.filter(k => calcMap.has(k)).map(k => calcMap.get(k)!)
 
     function colLabel(key: string): string {
@@ -84,6 +87,7 @@ export function TableWidget({ title, config, filters, calculatedFields = [], h =
             ?? fieldMetricLabel(key)
             ?? offlineFieldLabel(key)
             ?? sheetFieldLabel(key)
+            ?? leadSegLabel(key)
             ?? calcMap.get(key)?.name ?? key
     }
     function colFormat(key: string): ColFormat {
@@ -110,7 +114,11 @@ export function TableWidget({ title, config, filters, calculatedFields = [], h =
         }
 
         const params = new URLSearchParams({
-            metrics: [...baseMetrics, ...fieldMetricCols, ...offlineFieldCols].join(','),
+            // `sheetCols` faltaba aquí: se calculaba arriba y se leía abajo, pero
+            // nunca se PEDÍA al motor, así que una columna de campo de Sheet
+            // llegaba siempre vacía. Los segmentos de lead caerían en el mismo
+            // agujero, así que entran los dos.
+            metrics: [...baseMetrics, ...fieldMetricCols, ...offlineFieldCols, ...sheetCols, ...leadSegCols].join(','),
             dimension,
             limit: String(rowLimit),
             sort: config.sort === 'asc' ? 'asc' : 'desc',

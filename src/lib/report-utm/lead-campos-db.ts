@@ -15,7 +15,7 @@ import { fetchAllRows } from '@/lib/supabase-paginate'
 import {
     normalizarClaveLead, normalizarValorCrudo, esClaveOfrecible,
 } from './lead-campos'
-import type { LeadCampoDef, ClaveDetectada, CampoValorCrudo } from './lead-campos'
+import type { LeadCampoDef, LeadSegmentoDef, ClaveDetectada, CampoValorCrudo } from './lead-campos'
 import { colombiaRangeBounds } from '@/lib/colombia-date'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -140,6 +140,120 @@ export async function saveLeadCampo(db: any, input: LeadCampoInput): Promise<{ e
 
 export async function deleteLeadCampo(db: any, id: string): Promise<{ error?: string }> {
     const { error } = await db.from('lead_campos').delete().eq('id', id)
+    return error ? { error: error.message } : {}
+}
+
+// ── Segmentos (report_utm.lead_campo_segmentos, migración 073) ────────
+
+function toSegmento(row: any, porId: Map<string, LeadCampoDef>): LeadSegmentoDef {
+    return {
+        id: row.id,
+        cliente_id: row.cliente_id,
+        campo_id: row.campo_id,
+        // Desnormalizado en la carga y no en un join por fila: el motor necesita
+        // la clave del campo padre en cada evaluación de cada lead.
+        campo_clave: porId.get(row.campo_id)?.clave ?? '',
+        clave: row.clave,
+        nombre: row.nombre,
+        descripcion: row.descripcion ?? null,
+        operador: row.operador === 'not_in' ? 'not_in' : 'in',
+        valores: Array.isArray(row.valores) ? row.valores : [],
+        activo: row.activo !== false,
+        orden: row.orden ?? 0,
+    }
+}
+
+/**
+ * Segmentos de un cliente. Igual que `loadLeadCampos`, si falta la migración 073
+ * devuelve lista vacía en vez de lanzar: el resto del módulo tiene que seguir
+ * funcionando exactamente como antes de esta feature.
+ *
+ * `campos` se pasa ya cargado para resolver `campo_clave` sin una consulta más;
+ * un segmento cuyo campo padre no esté en la lista se descarta, porque sin
+ * bucketizador no hay nada que contar.
+ */
+export async function loadLeadSegmentos(
+    db: any,
+    clienteId: string,
+    campos: LeadCampoDef[],
+    opts?: { soloActivos?: boolean }
+): Promise<LeadSegmentoDef[]> {
+    if (!clienteId) return []
+    let q = db.from('lead_campo_segmentos').select('*').eq('cliente_id', clienteId)
+    if (opts?.soloActivos) q = q.eq('activo', true)
+
+    const { data, error } = await q.order('orden', { ascending: true })
+    if (error) {
+        if (!esTablaAusente(error)) console.error('[lead-campos] error leyendo segmentos:', error.message)
+        return []
+    }
+    const porId = new Map(campos.map(c => [c.id, c]))
+    return (data ?? []).map((r: any) => toSegmento(r, porId)).filter((s: LeadSegmentoDef) => !!s.campo_clave)
+}
+
+export interface LeadSegmentoInput {
+    id?: string
+    cliente_id: string
+    campo_id: string
+    clave: string
+    nombre: string
+    descripcion?: string | null
+    operador?: 'in' | 'not_in'
+    valores?: string[]
+    activo?: boolean
+    orden?: number
+}
+
+/**
+ * Alta o edición de un segmento. La `clave` se fija en el alta y no se reescribe:
+ * es lo que queda guardado dentro de los widgets de `bi_reports` y dentro de las
+ * fórmulas de las pestañas del dashboard.
+ */
+export async function saveLeadSegmento(db: any, input: LeadSegmentoInput): Promise<{ error?: string; id?: string }> {
+    if (!input.nombre?.trim()) return { error: 'El segmento necesita un nombre.' }
+    if (!input.campo_id) return { error: 'El segmento necesita un campo de lead.' }
+    const valores = Array.from(new Set((input.valores ?? []).filter(v => typeof v === 'string' && v !== '')))
+    const operador = input.operador === 'not_in' ? 'not_in' : 'in'
+    // Un `in` sin buckets no cuenta nada; un `not_in` sin buckets sí tiene
+    // sentido (todos los que respondieron), así que solo se exige en el primero.
+    if (operador === 'in' && valores.length === 0) {
+        return { error: 'Elige al menos una respuesta para el segmento.' }
+    }
+
+    const payload = {
+        cliente_id: input.cliente_id,
+        campo_id: input.campo_id,
+        nombre: input.nombre.trim(),
+        descripcion: input.descripcion?.trim() || null,
+        operador,
+        valores,
+        activo: input.activo !== false,
+        orden: input.orden ?? 0,
+    }
+
+    if (input.id) {
+        const { error } = await db.from('lead_campo_segmentos').update(payload).eq('id', input.id)
+        if (error) return { error: error.message }
+        return { id: input.id }
+    }
+
+    const { data, error } = await db
+        .from('lead_campo_segmentos')
+        .insert({ ...payload, clave: input.clave })
+        .select('id')
+        .single()
+    if (error) {
+        if (esTablaAusente(error)) {
+            return { error: 'Falta aplicar la migración 073 (report_utm.lead_campo_segmentos) en Supabase.' }
+        }
+        if (error.code === '23505') return { error: 'Ya existe un segmento con esa clave para este cliente.' }
+        return { error: error.message }
+    }
+    return { id: data?.id }
+}
+
+export async function deleteLeadSegmento(db: any, id: string): Promise<{ error?: string }> {
+    const { error } = await db.from('lead_campo_segmentos').delete().eq('id', id)
     return error ? { error: error.message } : {}
 }
 

@@ -9,7 +9,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 import type { SheetCampoResumen, SheetVistaResumen } from "@/app/(app)/dashboard/_actions"
-import { clavesDeCampo, claveSinRespuesta } from "./lead-answer-aggregation"
+import { clavesDeCampo, claveSinRespuesta, claveSegmento } from "./lead-answer-aggregation"
 import { SUFIJO_NUM, SUFIJO_DEN, SUFIJO_MIN, SUFIJO_MAX } from "@/lib/sheets/campos"
 
 const SUMANDOS_DE_SHEET = [SUFIJO_NUM, SUFIJO_DEN, SUFIJO_MIN, SUFIJO_MAX]
@@ -46,6 +46,12 @@ export interface LeadAnswerCampoResumen {
      * respuestas, o agrupando los valores en Report-UTM.
      */
     sinBuckets?: boolean
+    /**
+     * Segmentos definidos sobre esta pregunta («Desde 2M»). Se ofrecen como
+     * métrica INCLUSO si `sinBuckets`: un segmento lleva su propia lista de
+     * buckets, que es exactamente lo que al catálogo le falta en ese caso.
+     */
+    segmentos?: { clave: string; nombre: string }[]
 }
 
 /**
@@ -324,6 +330,14 @@ export function buildAvailableMetrics(
     // «(sin respuesta)» que hace que la suma cierre con `utm_leads`.
     const respuestasMetrics: MetricOption[] = []
     for (const campo of leadAnswerCampos) {
+        // Un SEGMENTO sí se ofrece aunque el campo salga `sinBuckets`: lleva su
+        // propia lista de buckets, que es justo lo que le falta al catálogo.
+        for (const seg of campo.segmentos ?? []) {
+            respuestasMetrics.push({
+                id: claveSegmento(seg),
+                label: `${campo.nombre}: ${seg.nombre}`,
+            })
+        }
         // Un campo del que no se conocen los buckets no aporta nada elegible:
         // ofrecer solo su `(sin respuesta)` sería ofrecer el complemento de un
         // conjunto que el analista no puede ver.

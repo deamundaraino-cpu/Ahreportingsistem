@@ -165,7 +165,7 @@ export async function dispatchBiQuery(rawParams: ParsedBiQuery): Promise<Dispatc
         if (!supportsPivot(p.metrics[0])) {
             const validas = PIVOT_METRICS.map(m => METRIC_META[m]?.label ?? m).join(', ')
             return {
-                error: `La dimensión secundaria solo admite: ${validas}.`,
+                error: `La dimensión secundaria solo admite: ${validas} y los segmentos de campo de lead.`,
                 status: 400,
             }
         }

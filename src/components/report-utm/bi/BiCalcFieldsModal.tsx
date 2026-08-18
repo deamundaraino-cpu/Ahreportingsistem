@@ -3,9 +3,9 @@
 import { useState, useEffect } from 'react'
 import { X, Plus, Trash2, Calculator, Pencil, Copy, Check } from 'lucide-react'
 import type { CalculatedField } from './BiTypes'
-import type { FormFieldMeta } from '@/lib/report-utm/bi-metadata'
 import { evaluateExpression } from '@/lib/report-utm/bi-metadata'
 import { BiFormulaInput } from './BiFormulaInput'
+import { useBiClientFields } from './useBiClientFields'
 import { HelpTip } from './HelpTip'
 
 interface Props {
@@ -42,23 +42,17 @@ export function BiCalcFieldsModal({ fields: initial, clienteId, dateFrom, dateTo
     const [decimals, setDecimals] = useState<string>('')
     /** id del campo que se está editando; null = alta de uno nuevo. */
     const [editingId, setEditingId] = useState<string | null>(null)
-    const [formFields, setFormFields] = useState<FormFieldMeta[]>([])
+    // Antes este modal solo pedía `/bi/form-fields` y pasaba `formFields` al
+    // input, así que los alias `sf__`, `sv__`, `off__` y `lseg__` no salían en
+    // ninguna lista: solo funcionaban si te los sabías de memoria. El hook es el
+    // mismo que usa el editor de widgets, de modo que las dos pantallas no pueden
+    // volver a ofrecer catálogos distintos.
+    const {
+        formFields, leadSegments, offlineFields, sheetFields, sheetViews,
+    } = useBiClientFields(clienteId, dateFrom, dateTo)
     // Vista previa con datos reales del cliente/rango.
     const [realPreview, setRealPreview] = useState<number | null>(null)
     const [previewing, setPreviewing] = useState(false)
-
-    useEffect(() => {
-        if (!clienteId) { setFormFields([]); return }
-        const params = new URLSearchParams({ cliente_id: clienteId })
-        if (dateFrom) params.set('date_from', dateFrom)
-        if (dateTo)   params.set('date_to', dateTo)
-        let cancelled = false
-        fetch(`/api/report-utm/bi/form-fields?${params}`)
-            .then(r => r.json())
-            .then(json => { if (!cancelled) setFormFields(json.data ?? []) })
-            .catch(() => { if (!cancelled) setFormFields([]) })
-        return () => { cancelled = true }
-    }, [clienteId, dateFrom, dateTo])
 
     // Previsualización con los datos REALES del cliente y rango (debounced), en
     // vez de números de ejemplo: así se ve si la fórmula da un valor plausible.
@@ -255,7 +249,15 @@ export function BiCalcFieldsModal({ fields: initial, clienteId, dateFrom, dateTo
                         )}
                         <div>
                             <label className="block text-[10px] font-medium text-muted-foreground mb-1">Expresión</label>
-                            <BiFormulaInput value={expr} onChange={setExpr} formFields={formFields} />
+                            <BiFormulaInput
+                                value={expr}
+                                onChange={setExpr}
+                                formFields={formFields}
+                                offlineFields={offlineFields}
+                                sheetFields={sheetFields}
+                                sheetViews={sheetViews}
+                                leadSegments={leadSegments}
+                            />
                             <div className="flex items-center justify-between mt-1.5 gap-2">
                                 <p className="text-[10px] text-muted-foreground min-w-0 truncate">
                                     {sampleValue === null && expr

@@ -16,6 +16,13 @@
 import { filterCampaignList } from '@/lib/campaign-filter'
 import type { AnyCampaignFilter } from '@/lib/campaign-filter'
 import type { CampaignFilterSpec, LeadAnswerBlockDef } from '@/lib/layout-types'
+// `lead-campos` es puro (solo depende de `sheets/campos`, que no importa nada),
+// así que se puede usar aquí sin romper la regla de este archivo. Se importa la
+// regla de pertenencia en vez de copiarla: si divergiera, el mismo segmento
+// contaría distinto en el dashboard y en los informes.
+import { segmentoIncluyeBucket } from '@/lib/report-utm/lead-campos'
+import type { LeadSegmentoLite } from '@/lib/report-utm/lead-campos'
+export type { LeadSegmentoLite }
 
 /** Etiqueta del diccionario reservada a los leads que no cruzaron campaña. */
 export const SIN_CAMPANA = '(sin campaña)'
@@ -30,6 +37,8 @@ export interface LeadAnswerCatalogoLite {
     claves_origen: string[]
     origen: 'catalogo' | 'auto'
     cobertura: number
+    /** Segmentos definidos sobre este campo. Un campo autodetectado no tiene. */
+    segmentos?: LeadSegmentoLite[]
 }
 
 export interface LeadAnswerDatasetLite {
@@ -51,6 +60,24 @@ export const PREFIJO_RESPUESTA = 'lf__'
 
 /** Sufijo del bucket de los que no respondieron esa pregunta. */
 export const SUFIJO_SIN_RESPUESTA = 'sin_respuesta'
+
+/**
+ * Prefijo de las claves de SEGMENTO: `lseg__<clave>`.
+ *
+ * Es la misma cadena que el alias del BI, a propósito: quien aprende
+ * `lseg__desde_2m` en una pestaña lo escribe igual en un informe. Los campos de
+ * Sheet divergen (`sf_` aquí, `sf__` allí) por una colisión histórica con el
+ * prefijo `sheet_`; aquí no hay ninguna, así que no se hereda la incoherencia.
+ *
+ * Un segmento SOLAPA buckets, así que NO entra en la suma
+ * «respuestas + sin_respuesta = utm_leads». Ver `clavesDelDia`.
+ */
+export const PREFIJO_SEGMENTO = 'lseg__'
+
+/** Clave de fórmula de un segmento. */
+export function claveSegmento(seg: Pick<LeadSegmentoLite, 'clave'>): string {
+    return `${PREFIJO_SEGMENTO}${seg.clave}`
+}
 
 /**
  * Etiqueta de respuesta → fragmento de clave de fórmula.
@@ -105,7 +132,8 @@ export function claveSinRespuesta(campo: Pick<LeadAnswerCatalogoLite, 'clave'>):
  */
 export function formulaUsaRespuestas(f: string | null | undefined): boolean {
     if (!f) return false
-    return new RegExp(`\\b${CLAVE_TOTAL_LEADS}\\b`).test(f) || f.includes(PREFIJO_RESPUESTA)
+    return new RegExp(`\\b${CLAVE_TOTAL_LEADS}\\b`).test(f) ||
+        f.includes(PREFIJO_RESPUESTA) || f.includes(PREFIJO_SEGMENTO)
 }
 
 /**
@@ -115,9 +143,20 @@ export function formulaUsaRespuestas(f: string | null | undefined): boolean {
  * el slug son ambos `[a-z0-9_]+`: en `lf__a__b__c` el corte es ambiguo. Con la
  * lista de claves conocidas la resolución es exacta.
  */
-export function camposEnFormula(f: string | null | undefined, claves: string[]): string[] {
+export function camposEnFormula(
+    f: string | null | undefined,
+    claves: string[],
+    segmentos: { clave: string; campoClave: string }[] = [],
+): string[] {
     if (!f) return []
-    return claves.filter(c => f.includes(`${PREFIJO_RESPUESTA}${c}__`))
+    const out = new Set(claves.filter(c => f.includes(`${PREFIJO_RESPUESTA}${c}__`)))
+    // Un segmento se nombra por SU clave, no por la del campo, pero para contarlo
+    // hace falta cargar el campo padre. Sin esto, una tarjeta cuya única métrica
+    // es `lseg__desde_2m` pediría un dataset sin ese campo y mostraría 0.
+    for (const s of segmentos) {
+        if (f.includes(`${PREFIJO_SEGMENTO}${s.clave}`)) out.add(s.campoClave)
+    }
+    return [...out]
 }
 
 /** Todas las claves que emite un dataset, en orden estable. */
@@ -127,6 +166,7 @@ export function clavesDelDataset(ds: LeadAnswerDatasetLite): string[] {
     for (const campo of ds.campos) {
         for (const { clave } of clavesDeCampo(campo)) claves.push(clave)
         if (ds.totalesPorFecha) claves.push(claveSinRespuesta(campo))
+        for (const seg of campo.segmentos ?? []) claves.push(claveSegmento(seg))
     }
     return claves
 }
@@ -169,6 +209,7 @@ export function desglosePorCampana(
     const respondieron = ds.campos.map(() => new Map<number, number>())
     ds.campos.forEach((campo, iCampo) => {
         const claves = clavesDeCampo(campo)
+        const segmentos = campo.segmentos ?? []
         for (const [iBucket, iCampana, n] of delDia?.[iCampo] ?? []) {
             if (!permitidas.has(iCampana)) continue
             const c = claves[iBucket]
@@ -176,6 +217,13 @@ export function desglosePorCampana(
             const v = dame(iCampana)
             v[c.clave] = (v[c.clave] ?? 0) + n
             respondieron[iCampo].set(iCampana, (respondieron[iCampo].get(iCampana) ?? 0) + n)
+            // Igual que en `clavesDelDia`: los segmentos suman aparte y no entran
+            // en `respondieron`, porque solapan buckets.
+            for (const seg of segmentos) {
+                if (!segmentoIncluyeBucket(seg, c.bucket)) continue
+                const k = claveSegmento(seg)
+                v[k] = (v[k] ?? 0) + n
+            }
         }
     })
 
@@ -236,6 +284,8 @@ export function clavesDelDia(
         // respuesta apareciera solo los días que tuvo leads, una gráfica por
         // fecha dibujaría huecos en vez de ceros.
         for (const { clave } of claves) out[clave] = 0
+        const segmentos = campo.segmentos ?? []
+        for (const seg of segmentos) out[claveSegmento(seg)] = 0
 
         let respondieron = 0
         for (const [iBucket, iCampana, n] of delDia?.[iCampo] ?? []) {
@@ -244,6 +294,13 @@ export function clavesDelDia(
             if (!c) continue
             out[c.clave] += n
             respondieron += n
+            // Los segmentos se acumulan aquí pero NO tocan `respondieron`: solapan
+            // buckets a propósito, así que sumarlos rompería el invariante
+            // «respuestas + sin_respuesta = utm_leads» y dejaría el
+            // `(sin respuesta)` en negativo (tapado por el Math.max de abajo).
+            for (const seg of segmentos) {
+                if (segmentoIncluyeBucket(seg, c.bucket)) out[claveSegmento(seg)] += n
+            }
         }
 
         // El que cierra la cuenta: total del día − los que respondieron.

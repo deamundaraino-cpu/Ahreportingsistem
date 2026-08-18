@@ -28,6 +28,7 @@ Plataforma multi-cliente para agencias de publicidad que **consolida métricas d
 | 16 | [Campos de Sheet](./16-campos-de-sheet.md) | Guía paso a paso: conectar un Google Sheet y convertir sus columnas en métricas |
 | 17 | [Campos de lead](./17-campos-de-lead.md) | Convertir las respuestas de los formularios en dimensiones y filtros de los informes |
 | 18 | [Fuentes de datos y cruces](./18-fuentes-y-cruces.md) | Qué cruza con qué y por qué, recetario de widgets y diagnóstico de informes vacíos |
+| 19 | [Guía: segmentos de lead](./19-guia-segmentos-de-lead.md) | Medir con las respuestas de los formularios: crear segmentos, usarlos en widgets y fórmulas, y el catálogo actual por cliente |
 
 ---
 

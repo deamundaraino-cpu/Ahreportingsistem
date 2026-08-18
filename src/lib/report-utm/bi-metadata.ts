@@ -11,6 +11,12 @@ import { parseExpr, isExprError, evalExpr } from './bi/expr'
 // escrita cuatro veces fue lo que dejó que un valor con coma se rompiera en
 // silencio durante todo este tiempo.
 import { parseSeleccion } from './bi-valores'
+// `lead-campos` es lógica pura sobre `sheets/campos` (que no importa nada), así
+// que la dependencia va en un solo sentido y no arrastra servidor al bundle. Se
+// importa el tipo del segmento en vez de duplicarlo: a diferencia de
+// `LeadFieldMeta`, aquí no hay una copia histórica que respetar.
+import type { LeadSegmentoMeta } from './lead-campos'
+export type { LeadSegmentoMeta }
 
 /**
  * Normalización fuerte de etiquetas: minúsculas, sin acentos, `_`/`-` como
@@ -218,6 +224,9 @@ export const ADDITIVE_METRICS: ReadonlySet<string> = new Set<string>([
 export function isAdditiveMetric(metric: string): boolean {
     // Los campos de Sheet lo deciden por su agregación (ver isAdditiveSheetToken).
     if (isSheetToken(metric)) return isAdditiveSheetToken(metric)
+    // Un segmento de lead es un CONTEO de contactos: siempre aditivo. Sin esta
+    // rama la fila "Total" de la tabla dejaría su columna en blanco.
+    if (isLeadSegMetric(metric)) return true
     return ADDITIVE_METRICS.has(metric)
 }
 
@@ -253,7 +262,24 @@ export const PIVOT_METRICS: BiMetric[] = [
 
 /** ¿Esta métrica se puede usar con una dimensión secundaria (gráfica apilada)? */
 export function supportsPivot(metric: string): boolean {
+    // Un segmento de lead cuenta filas de `lead_events`, que es justo el grano que
+    // el pivot sabe manejar. No está en PIVOT_METRICS porque es un token dinámico
+    // por cliente, no una entrada del catálogo fijo.
+    if (isLeadSegMetric(metric)) return true
     return (PIVOT_METRICS as string[]).includes(metric)
+}
+
+/**
+ * ¿Esta métrica vale como ETAPA de un embudo?
+ *
+ * `FUNNEL_STAGE_METRICS` es la lista fija del catálogo; los segmentos de lead se
+ * aceptan además porque son conteos aditivos y, con segmentos acumulados, salen
+ * ordenados de mayor a menor por construcción: «Leads totales → Desde 1.3M →
+ * Desde 1.6M → Desde 2M» es literalmente un embudo de calificación.
+ */
+export function esEtapaDeEmbudo(metric: string): boolean {
+    if (isLeadSegMetric(metric)) return true
+    return (FUNNEL_STAGE_METRICS as readonly string[]).includes(metric)
 }
 
 export type BiDimension =
@@ -829,12 +855,15 @@ export function extractFieldMetricAliases(
 // El token guarda solo la `clave` (slug estable), así que renombrar el campo no
 // rompe los widgets ya guardados.
 //
-// NO existe alias de expresión calculada para estos campos, y no es un olvido: un
+// El campo en sí NO tiene alias de expresión calculada, y no es un olvido: un
 // campo de lead es una DIMENSIÓN (agrupa por bucket), no una medida — no lleva
-// agregación, así que no hay ningún número que un `lf__<clave>` pudiera devolver.
-// Para medir un campo numérico del formulario está `fieldagg:<agg>:<clave>`
-// (alias `f_<agg>__<clave>`), que sí agrega. Un comentario anterior aquí anunciaba
-// un alias `lf__<clave>` que nunca se implementó: quien lo usara obtenía 0.
+// agregación, así que no hay ningún número que un `leadfield:<clave>` suelto
+// pudiera devolver. Para medir un campo numérico del formulario está
+// `fieldagg:<agg>:<clave>` (alias `f_<agg>__<clave>`), que sí agrega.
+//
+// Lo que SÍ mide es un SEGMENTO del campo — «Desde 2M» = estos tres buckets —,
+// que tiene su propio token `leadseg:<clave>` y su alias `lseg__<clave>`. Ver el
+// bloque de más abajo y la migración 073.
 
 export const LEAD_FIELD_PREFIX = 'leadfield:'
 
@@ -874,6 +903,73 @@ export interface LeadFieldMeta {
     /** Leads del período que responden este campo. */
     cobertura: number
     alta_cardinalidad: boolean
+}
+
+// ── Segmentos de campo de lead (report_utm.lead_campo_segmentos) ──────
+// Un SEGMENTO es un subconjunto con nombre de los buckets de un campo —«Desde
+// 2M» = estos tres— ofrecido como MÉTRICA:
+//   • Métrica: "leadseg:<clave>"   · alias de fórmula: "lseg__<clave>"
+//
+// Es el equivalente de `sheetview:<clave>` para los campos de lead, y existe por
+// la misma razón: un acumulado («todos los que ganan ≥ 2M») no es un bucket, son
+// varios. Sin él, la única salida era crear un campo de lead por umbral — que es
+// exactamente lo que hay hoy en producción (ver migración 073).
+//
+// El alias es `lseg__` y no `ls__` a propósito: `lf__` y `ls__` se diferencian en
+// una letra, los dos son de lead, y el motor de fórmulas resuelve un
+// identificador desconocido como 0. Una errata sería un cero silencioso.
+//
+// DOS INVARIANTES que no se pueden romper:
+//   1. Un segmento NO se ofrece como filtro ni como dimensión. Es una medida, así
+//      que no recorta el ámbito de la consulta y por eso `spend / lseg__x` NO
+//      activa la regla del gasto no atribuible (`hasNonAttributableFilter`), que
+//      sigue anulando el gasto con un filtro `leadfield:` activo. Esa distinción
+//      —filtro anula, métrica no— es la razón de ser de esta familia.
+//   2. Un segmento SOLAPA buckets, así que nunca entra en la suma del dashboard
+//      «respuestas + sin_respuesta = utm_leads».
+
+export const LEAD_SEG_PREFIX = 'leadseg:'
+
+export function makeLeadSegMetric(clave: string): string {
+    return `${LEAD_SEG_PREFIX}${clave}`
+}
+export function isLeadSegMetric(token: string): boolean {
+    return typeof token === 'string' && token.startsWith(LEAD_SEG_PREFIX)
+}
+export function parseLeadSegMetric(token: string): string | null {
+    if (!isLeadSegMetric(token)) return null
+    const clave = token.slice(LEAD_SEG_PREFIX.length)
+    return clave || null
+}
+
+/** Alias identificador-safe de un segmento, para expresiones calc. */
+export function leadSegAlias(clave: string): string {
+    return `lseg__${clave.toLowerCase().replace(/[^a-z0-9_]/g, '_')}`
+}
+
+/** Extrae de una expresión calc los segmentos de lead referenciados por alias. */
+export function extractLeadSegAliases(expression: string): { clave: string; alias: string }[] {
+    const out: { clave: string; alias: string }[] = []
+    const re = /\blseg__([a-z0-9_]+)\b/gi
+    let m: RegExpExecArray | null
+    while ((m = re.exec(expression)) !== null) {
+        const clave = m[1].toLowerCase()
+        out.push({ clave, alias: `lseg__${clave}` })
+    }
+    return out
+}
+
+/**
+ * Etiqueta legible de un token de segmento. null si no lo es. Se prefija con el
+ * nombre del campo padre —«Rango de ingresos: Desde 2M»— porque un segmento sin
+ * su pregunta no se entiende en una columna de tabla.
+ */
+export function leadSegLabel(token: string, segs: LeadSegmentoMeta[] = []): string | null {
+    const clave = parseLeadSegMetric(token)
+    if (clave === null) return null
+    const seg = segs.find(s => s.clave === clave)
+    if (!seg) return humanizeFieldKey(clave)
+    return seg.campo_nombre ? `${seg.campo_nombre}: ${seg.nombre}` : seg.nombre
 }
 
 // ── Columnas adicionales de Sheets offline (custom_fields JSONB) ──────

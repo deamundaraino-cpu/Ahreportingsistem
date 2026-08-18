@@ -4,7 +4,7 @@ import type { BiMetric, BiDimension, DateGrouping, BiQueryParams, BiQueryRow, Bi
 import {
     evaluateExpression, parseFilterValue, AD_JSONB_METRICS, AD_SCALAR_METRICS, AD_RATE_METRICS,
     MANUAL_JSONB_METRICS, OFFLINE_METRICS, SUBS_METRICS,
-    METRIC_META, FUNNEL_STAGE_METRICS, DEFAULT_FUNNEL_STAGES,
+    METRIC_META, DEFAULT_FUNNEL_STAGES,
     isFieldDim, parseFieldDim, parseFieldMetric,
     extractFieldMetricAliases, parseFieldNumber,
     parseOfflineFieldMetric, extractOfflineFieldAliases,
@@ -13,6 +13,7 @@ import {
     ENTITY_FILTER_FIELDS, splitEntityGroups,
     platformScopeFromFilters, unifiedTarget, round2,
     parseSheetDim, parseSheetMetric, parseSheetView, extractSheetAliases,
+    parseLeadSegMetric, extractLeadSegAliases, leadSegAlias, isLeadSegMetric, leadSegLabel, esEtapaDeEmbudo,
     sheetFieldAlias, sheetViewAlias,
     isLeadFieldDim, parseLeadFieldDim,
 } from './bi-metadata'
@@ -26,9 +27,11 @@ import {
 } from '@/lib/sheets/campos'
 import type { SheetCampoDef, SheetRawRow, CampoValorDiario } from '@/lib/sheets/campos'
 import { utmDeFilaSheet, filaEsAtribuible } from '@/lib/sheets/atribucion'
-import { loadLeadCampos } from './lead-campos-db'
-import { bucketDeLeadRaw, ordenarBuckets } from './lead-campos'
-import type { LeadCampoDef } from './lead-campos'
+import { loadLeadCampos, loadLeadSegmentos } from './lead-campos-db'
+import {
+    bucketDeLeadRaw, ordenarBuckets, bucketDeLead, indexarRawFields, segmentoIncluyeBucket, cuentaEnSegmento,
+} from './lead-campos'
+import type { LeadCampoDef, LeadSegmentoDef, LeadSegmentoMeta } from './lead-campos'
 import {
     sinValores, VACIO_HONESTO, plegarConteos, ordenarPorFrecuencia, parseSeleccion,
     recortar, aValoresPlanos,
@@ -110,9 +113,34 @@ export async function runBiQuery(params: BiQueryParams): Promise<BiQueryRow[]> {
     // ── Campos de lead del catálogo ───────────────────────────────────
     // Se cargan antes que nada porque deciden cómo se agrupa y se filtra, y los
     // filtros planos se pasan al avanzado para que el motor tenga un solo camino.
-    const leadCampos = await loadLeadCamposSiHaceFalta(supabase, params)
+    const { campos: leadCampos, segmentos: leadSegmentos } = await loadLeadCamposSiHaceFalta(supabase, params)
     params = liftLeadFieldFilters(params)
     const leadFieldClave = parseLeadFieldDim(params.dimension)
+
+    // ── Segmentos de campo de lead (leadseg:<clave>) ──────────────────
+    // Un segmento es una MEDIDA —«cuántos leads dijeron ≥ 2M»—, no una dimensión
+    // ni un filtro. Esa diferencia es deliberada y sostiene toda la feature: al no
+    // recortar el ámbito de la consulta NO entra en `isFieldDimQuery`, así que el
+    // gasto se sigue trayendo entero y `spend / lseg__x` es el costo por lead de
+    // ese segmento. Un refactor que junte esta lista con `fieldMetrics` rompería
+    // exactamente eso y dejaría el gasto en 0 sin ningún aviso.
+    const leadSegReqs = new Map<string, LeadSegReq>()
+    const addSeg = (clave: string, outKey: string) => {
+        if (leadSegReqs.has(outKey)) return
+        const def = leadSegmentos.find(s => s.clave === clave)
+        // Un alias que no resuelve a ningún segmento se descarta en vez de vaciar
+        // el informe: mismo criterio que `advCellValue` con un campo borrado.
+        if (!def) return
+        leadSegReqs.set(outKey, { clave, campoClave: def.campo_clave, outKey })
+    }
+    for (const m of params.metrics) {
+        const c = parseLeadSegMetric(m)
+        if (c) addSeg(c, m)
+    }
+    for (const cf of params.calculated ?? []) {
+        for (const a of extractLeadSegAliases(cf.expression)) addSeg(a.clave, a.alias)
+    }
+    const leadSegs = Array.from(leadSegReqs.values())
 
     // Tokens requeridos = métricas pedidas ∪ identificadores referenciados en las
     // expresiones de campos calculados. Así un scorecard/gráfica cuyo único "metric"
@@ -197,7 +225,7 @@ export async function runBiQuery(params: BiQueryParams): Promise<BiQueryRow[]> {
     // 'leads_total' sigue en la lista solo por compatibilidad: se retiró del
     // catálogo en la migración 045 (era un duplicado exacto de leads_count), pero
     // un campo calculado guardado puede seguir nombrándola.
-    const needsLeads = (requires(['leads_count', 'leads_total', 'cpl', 'conversion_rate']) || isFieldDimQuery || fieldMetrics.length > 0) && !isSalesOnlyDim && !isSheetDimQuery
+    const needsLeads = (requires(['leads_count', 'leads_total', 'cpl', 'conversion_rate']) || isFieldDimQuery || fieldMetrics.length > 0 || leadSegs.length > 0) && !isSalesOnlyDim && !isSheetDimQuery
     // Las ventas y el gasto no se pueden desglosar por un campo de formulario
     // (sales_events / metricas_diarias no tienen raw_fields) → se omiten cuando
     // se agrupa por campo para no romper el select ni inventar una fila "(total)".
@@ -256,7 +284,7 @@ export async function runBiQuery(params: BiQueryParams): Promise<BiQueryRow[]> {
     const nocross = new Set<string>()
     let leadsData: LeadAgg[] = []
     if (needsLeads) {
-        leadsData = await queryLeadsDirect(supabase, params, dateFrom, dateTo, fieldMetrics, leadCampos, resolver, nocross)
+        leadsData = await queryLeadsDirect(supabase, params, dateFrom, dateTo, fieldMetrics, leadCampos, resolver, nocross, leadSegs, leadSegmentos)
     }
 
     // ── SALES query ───────────────────────────────────────────────────
@@ -302,7 +330,7 @@ export async function runBiQuery(params: BiQueryParams): Promise<BiQueryRow[]> {
     // ── Merge results ─────────────────────────────────────────────────
     return mergeResults(
         params, leadsData, salesData, adsData, fieldMetrics, offlineData, subsData, offlineFields,
-        sheetData, sheetFields, leadCampos, nocross, hotmartData
+        sheetData, sheetFields, leadCampos, nocross, hotmartData, leadSegs
     )
 }
 
@@ -319,7 +347,15 @@ function hasAnyEntityFilter(
 
 interface FieldMetricReq { agg: FieldAgg; key: string; outKey: string }
 interface FieldAcc { sum: number; n: number; min: number; max: number; present: number }
-interface LeadAgg { dim: string | null; count: number; fields: Record<string, FieldAcc> }
+/** Un segmento pedido: su clave, la del campo padre que lo bucketiza y el token de salida. */
+interface LeadSegReq { clave: string; campoClave: string; outKey: string }
+interface LeadAgg {
+    dim: string | null
+    count: number
+    fields: Record<string, FieldAcc>
+    /** Conteo por segmento pedido, indexado por su `outKey`. */
+    segs: Record<string, number>
+}
 
 function newFieldAcc(): FieldAcc {
     return { sum: 0, n: 0, min: Infinity, max: -Infinity, present: 0 }
@@ -387,19 +423,57 @@ function collectLeadFieldClaves(params: {
 }
 
 /**
- * Carga el catálogo de campos de lead del cliente si la consulta lo necesita.
- * Sin cliente o sin referencias devuelve lista vacía sin tocar la base: la
- * inmensa mayoría de los widgets no usan campos de lead y no deben pagar por
- * esta feature.
+ * Claves de SEGMENTO referenciadas por una consulta: en las métricas pedidas y
+ * por alias dentro de las expresiones de campos calculados.
+ *
+ * Solo mira cadenas, no toca la base. Es la guarda que hace que un informe que no
+ * usa segmentos no pague absolutamente nada por esta feature.
+ */
+function collectLeadSegClaves(params: {
+    metrics?: readonly string[]
+    calculated?: { expression: string }[]
+}): string[] {
+    const out = new Set<string>()
+    for (const m of params.metrics ?? []) {
+        const c = parseLeadSegMetric(m)
+        if (c) out.add(c)
+    }
+    for (const cf of params.calculated ?? []) {
+        for (const a of extractLeadSegAliases(cf.expression)) out.add(a.clave)
+    }
+    return Array.from(out)
+}
+
+/**
+ * Carga el catálogo de campos de lead del cliente —y sus segmentos— si la
+ * consulta lo necesita. Sin cliente o sin referencias devuelve listas vacías sin
+ * tocar la base: la inmensa mayoría de los widgets no usan campos de lead y no
+ * deben pagar por esta feature.
+ *
+ * Un segmento necesita SIEMPRE su campo padre para bucketizar, así que en cuanto
+ * hay una referencia de cualquiera de los dos tipos se cargan las dos tablas.
  */
 async function loadLeadCamposSiHaceFalta(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     supabase: any,
-    params: { cliente_id?: string; dimension?: string; dimension2?: string; filters?: Record<string, string>; advancedFilter?: AdvancedFilter }
-): Promise<LeadCampoDef[]> {
-    if (!params.cliente_id) return []
-    if (collectLeadFieldClaves(params).length === 0) return []
-    return loadLeadCampos(supabase.schema('report_utm'), params.cliente_id)
+    params: {
+        cliente_id?: string; dimension?: string; dimension2?: string
+        filters?: Record<string, string>; advancedFilter?: AdvancedFilter
+        metrics?: readonly string[]; calculated?: { expression: string }[]
+    }
+): Promise<{ campos: LeadCampoDef[]; segmentos: LeadSegmentoDef[] }> {
+    const vacio = { campos: [], segmentos: [] }
+    if (!params.cliente_id) return vacio
+    const porDimension = collectLeadFieldClaves(params).length > 0
+    const porSegmento = collectLeadSegClaves(params).length > 0
+    if (!porDimension && !porSegmento) return vacio
+
+    const db = supabase.schema('report_utm')
+    const campos = await loadLeadCampos(db, params.cliente_id)
+    // Solo se leen los segmentos si alguien los pidió: agrupar por un campo de
+    // lead es mucho más común y no necesita esta segunda consulta.
+    const segmentos = porSegmento ? await loadLeadSegmentos(db, params.cliente_id, campos) : []
+    return { campos, segmentos }
 }
 
 /**
@@ -590,7 +664,9 @@ async function queryLeadsDirect(
     fieldMetrics: FieldMetricReq[],
     leadCampos: LeadCampoDef[] = [],
     resolver: CampaignResolver | null = null,
-    nocross: Set<string> = new Set()
+    nocross: Set<string> = new Set(),
+    leadSegs: LeadSegReq[] = [],
+    leadSegmentos: LeadSegmentoDef[] = []
 ): Promise<LeadAgg[]> {
     const plan = buildEntityFilterPlan(params, resolver)
     // Con el filtro de entidad resuelto en memoria, no debe aplicarse además por
@@ -619,16 +695,20 @@ async function queryLeadsDirect(
     const advCols = collectAdvancedColumns(adv, 'leads')
     const hasAdv = advancedFilterHasConditions(adv) && (advCols.cols.length > 0 || advCols.needsRawFields)
     const needsRawFields = isFieldDim(params.dimension) || isLeadFieldDim(params.dimension) ||
-        fieldKeys.length > 0 || advCols.needsRawFields
+        fieldKeys.length > 0 || advCols.needsRawFields || leadSegs.length > 0
     const unified = unifiedTarget(params.dimension)
 
     // Total sin agregar campos, filtro avanzado ni entidades: conteo EXACTO.
-    if (params.dimension === 'none' && fieldKeys.length === 0 && !hasAdv && !plan.inMemory) {
+    //
+    // Un segmento obliga a renunciar a este atajo: hay que mirar `raw_fields` lead
+    // a lead para saber cuál cae dentro. Es el mismo escaneo que ya paga cualquier
+    // dimensión `leadfield:`, y solo se paga cuando el widget pide un segmento.
+    if (params.dimension === 'none' && fieldKeys.length === 0 && !hasAdv && !plan.inMemory && leadSegs.length === 0) {
         const { count, error } = await applyBase(
             supabase.schema('report_utm').from('lead_events').select('id', { count: 'exact', head: true })
         )
         if (error) return []
-        return [{ dim: 'total', count: count ?? 0, fields: {} }]
+        return [{ dim: 'total', count: count ?? 0, fields: {}, segs: {} }]
     }
 
     // Agrupado / métricas de campo / filtro avanzado: traer filas (paginado) y agrupar.
@@ -639,7 +719,7 @@ async function queryLeadsDirect(
     )
     if (hasAdv) rows = rows.filter(r => evalAdvancedRow(r, adv, 'leads', leadCampos))
     if (plan.inMemory) rows = rows.filter(r => rowPassesEntityFilters(r, plan, resolver!))
-    return aggregateLeads(rows, params.dimension, params.date_grouping, fieldKeys, leadCampos, resolver, nocross)
+    return aggregateLeads(rows, params.dimension, params.date_grouping, fieldKeys, leadCampos, resolver, nocross, leadSegs, leadSegmentos)
 }
 
 function buildLeadSelect(
@@ -670,20 +750,57 @@ function aggregateLeads(
     fieldKeys: string[],
     leadCampos: LeadCampoDef[] = [],
     resolver: CampaignResolver | null = null,
-    nocross: Set<string> = new Set()
+    nocross: Set<string> = new Set(),
+    leadSegs: LeadSegReq[] = [],
+    leadSegmentos: LeadSegmentoDef[] = []
 ): LeadAgg[] {
+    // Los segmentos se agrupan por campo padre: Goodprop tiene cuatro sobre una
+    // sola pregunta, y recalcular el bucket una vez por segmento multiplicaría por
+    // cuatro el trabajo en decenas de miles de leads.
+    const porCampo = new Map<string, { campo: LeadCampoDef; segs: { def: LeadSegmentoDef; outKey: string }[] }>()
+    for (const req of leadSegs) {
+        const campo = leadCampos.find(c => c.clave === req.campoClave)
+        const def = leadSegmentos.find(s => s.clave === req.clave)
+        if (!campo || !def) continue
+        let e = porCampo.get(campo.clave)
+        if (!e) { e = { campo, segs: [] }; porCampo.set(campo.clave, e) }
+        e.segs.push({ def, outKey: req.outKey })
+    }
+    const hayCampos = fieldKeys.length > 0
+    const haySegs = porCampo.size > 0
+
     const map = new Map<string, LeadAgg>()
     for (const r of rows) {
         const dim = getDimValue(r, dimension, grouping, leadCampos, resolver, nocross)
         let entry = map.get(dim)
-        if (!entry) { entry = { dim, count: 0, fields: {} }; map.set(dim, entry) }
+        if (!entry) {
+            entry = { dim, count: 0, fields: {}, segs: {} }
+            // Los segmentos se inicializan en 0 en cada grupo: una serie por fecha
+            // con huecos dibujaría cortes donde solo hubo días sin ese tipo de lead.
+            for (const req of leadSegs) entry.segs[req.outKey] = 0
+            map.set(dim, entry)
+        }
         entry.count++
-        if (fieldKeys.length) {
+        if (hayCampos || haySegs) {
             const rf = (r.raw_fields as Record<string, unknown> | null) ?? null
-            for (const key of fieldKeys) {
-                let acc = entry.fields[key]
-                if (!acc) { acc = newFieldAcc(); entry.fields[key] = acc }
-                accumulateField(acc, rf ? rf[key] : null)
+            if (hayCampos) {
+                for (const key of fieldKeys) {
+                    let acc = entry.fields[key]
+                    if (!acc) { acc = newFieldAcc(); entry.fields[key] = acc }
+                    accumulateField(acc, rf ? rf[key] : null)
+                }
+            }
+            if (haySegs) {
+                const idx = indexarRawFields(rf)
+                for (const { campo, segs } of porCampo.values()) {
+                    const bucket = bucketDeLead(campo, idx)
+                    // Sin respuesta no entra en ningún segmento, tampoco en un
+                    // `not_in`: «no contestó» no es «no es de este grupo».
+                    if (bucket === null) continue
+                    for (const s of segs) {
+                        if (segmentoIncluyeBucket(s.def, bucket)) entry.segs[s.outKey]++
+                    }
+                }
             }
         }
     }
@@ -1775,7 +1892,8 @@ function mergeResults(
     sheetFields: SheetReq[] = [],
     leadCampos: LeadCampoDef[] = [],
     nocross: Set<string> = new Set(),
-    hotmartData: HotmartRow[] = []
+    hotmartData: HotmartRow[] = [],
+    leadSegs: LeadSegReq[] = []
 ): BiQueryRow[] {
     const keys = new Set<string>()
     leadsData.forEach(r => keys.add(r.dim ?? 'total'))
@@ -1913,6 +2031,17 @@ function mergeResults(
             sheetValues[sf.outKey] = v
             if ((params.metrics as string[]).includes(sf.outKey)) row[sf.outKey] = v
         }
+        // Segmentos de campo de lead: se emiten por su token `leadseg:<clave>` y
+        // quedan disponibles por el alias `lseg__<clave>` para las fórmulas. Los
+        // dos, no uno: emitir solo el token deja la métrica bien en la tabla y
+        // devolviendo 0 dentro de un campo calculado.
+        const segValues: Record<string, number> = {}
+        for (const ls of leadSegs) {
+            const v = lead?.segs[ls.outKey] ?? 0
+            segValues[ls.outKey] = v
+            segValues[leadSegAlias(ls.clave)] = v
+            if ((params.metrics as string[]).includes(ls.outKey)) row[ls.outKey] = v
+        }
         // Suscripciones (snapshot): solo en la fila global "(total)"
         if (subsData && key === 'total') {
             for (const k of SUBS_METRICS) {
@@ -1942,6 +2071,7 @@ function mergeResults(
                 frequency: reach > 0 ? round2(impressions / reach) : 0,
                 ctr: impressions > 0 ? round2((clicks / impressions) * 100) : 0,
                 ...fieldValues,   // aliases f_<agg>__<clave> disponibles en la expresión
+                ...segValues,     // token leadseg:<clave> Y alias lseg__<clave>
             }
             for (const k of AD_JSONB_METRICS) baseValues[k] = Number(ad?.[k] ?? 0)
             for (const k of AD_SCALAR_METRICS) baseValues[k] = Number(ad?.[k] ?? 0)
@@ -2084,12 +2214,20 @@ export async function runPivotQuery(
     metric: BiMetric
 ): Promise<{ rows: BiPivotRow[]; seriesKeys: string[] }> {
     const supabase = await createAdminClient()
-    const leadCampos = await loadLeadCamposSiHaceFalta(supabase, params)
+    const { campos: leadCampos, segmentos: leadSegmentos } = await loadLeadCamposSiHaceFalta(supabase, params)
     params = liftLeadFieldFilters(params)
     const dateFrom = params.date_from ?? new Date(Date.now() - 30 * 86400_000).toISOString().slice(0, 10)
     const dateTo   = params.date_to   ?? new Date().toISOString().slice(0, 10)
     const dim1 = params.dimension
     const dim2 = params.dimension2!
+
+    // Un segmento cuenta filas de `lead_events` como `leads_count`, pero solo las
+    // que caen en sus buckets. Si el segmento no existe (borrado tras guardar el
+    // widget) la celda vale 0: contar todas las filas afirmaría que todos los
+    // leads son de ese tipo, que es peor que un cero.
+    const segClave = parseLeadSegMetric(metric)
+    const segDef = segClave ? leadSegmentos.find(s => s.clave === segClave) ?? null : null
+    const segCampo = segDef ? leadCampos.find(c => c.clave === segDef.campo_clave) ?? null : null
 
     const isSales = metric === 'sales_count' || metric === 'revenue'
     const table = isSales ? 'sales_events' : 'lead_events'
@@ -2111,6 +2249,7 @@ export async function runPivotQuery(
     // Ventas no tienen raw_fields → una dimensión de campo sobre ventas cae en
     // "(sin valor)"; solo lead_events puede desglosar por campo de formulario.
     if (!isSales && (esDimDeCampo(dim1) || esDimDeCampo(dim2))) cols.add('raw_fields')
+    if (segClave) cols.add('raw_fields')
 
     // Columnas necesarias para el filtro avanzado en esta tabla.
     const adv = params.advancedFilter
@@ -2151,7 +2290,12 @@ export async function runPivotQuery(
         seriesSet.add(k2)
         if (!pivot.has(k1)) pivot.set(k1, new Map())
         const inner = pivot.get(k1)!
-        const add = metric === 'revenue' ? Number(r.amount ?? 0) : 1
+        let add = metric === 'revenue' ? Number(r.amount ?? 0) : 1
+        if (segClave) {
+            add = segDef && segCampo &&
+                cuentaEnSegmento(segDef, segCampo, indexarRawFields(r.raw_fields as Record<string, unknown> | null))
+                ? 1 : 0
+        }
         inner.set(k2, (inner.get(k2) ?? 0) + add)
     }
 
@@ -2632,7 +2776,7 @@ export async function runFunnelQuery(params: {
     date_to?: string
     filters?: Record<string, string>
     advancedFilter?: AdvancedFilter
-    /** Etapas del embudo, en orden. Se filtran contra FUNNEL_STAGE_METRICS. */
+    /** Etapas del embudo, en orden. Se filtran con `esEtapaDeEmbudo`. */
     metrics?: BiMetric[]
 }): Promise<{ stage: string; value: number; label: string }[]> {
     const dateFrom = params.date_from ?? new Date(Date.now() - 30 * 86400_000).toISOString().slice(0, 10)
@@ -2640,38 +2784,59 @@ export async function runFunnelQuery(params: {
 
     // Etapas válidas del widget; si no configura ninguna (o todas son inválidas)
     // se usa el embudo clásico impresiones → clics → leads → ventas.
-    const allowed = new Set<string>(FUNNEL_STAGE_METRICS)
-    const requested = (params.metrics ?? []).filter(m => allowed.has(m))
-    const stages: BiMetric[] = requested.length >= 2 ? requested : DEFAULT_FUNNEL_STAGES
+    //
+    // `esEtapaDeEmbudo` acepta además los segmentos de lead: con segmentos
+    // acumulados, «Leads totales → Desde 1.3M → Desde 1.6M → Desde 2M» es un
+    // embudo de calificación que sale ordenado de mayor a menor por construcción.
+    const requested = ((params.metrics ?? []) as string[]).filter(esEtapaDeEmbudo)
+    const stages: string[] = requested.length >= 2 ? requested : (DEFAULT_FUNNEL_STAGES as string[])
 
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { metrics: _ignored, ...queryParams } = params
 
     // Las tres fuentes (gasto/campaña, leads, ventas) se consultan por separado
     // porque cada una tiene su propia tabla; solo se piden las que hagan falta.
-    const adsMetrics   = stages.filter(m => m !== 'leads_count' && m !== 'sales_count')
-    const needsLeads   = stages.includes('leads_count')
-    const needsSales   = stages.includes('sales_count')
+    // Los segmentos cuelgan de `lead_events`, así que viajan con los leads: una
+    // sola consulta paga el escaneo de `raw_fields` para todas las etapas.
+    const segStages   = stages.filter(isLeadSegMetric)
+    const adsMetrics  = stages.filter(m => m !== 'leads_count' && m !== 'sales_count' && !isLeadSegMetric(m))
+    const leadMetrics = [...(stages.includes('leads_count') ? ['leads_count'] : []), ...segStages]
+    const needsSales  = stages.includes('sales_count')
 
     const [adsResult, leadsResult, salesResult] = await Promise.all([
         adsMetrics.length
-            ? runBiQuery({ ...queryParams, metrics: adsMetrics, dimension: 'none', date_from: dateFrom, date_to: dateTo })
+            ? runBiQuery({ ...queryParams, metrics: adsMetrics as BiMetric[], dimension: 'none', date_from: dateFrom, date_to: dateTo })
             : Promise.resolve([] as BiQueryRow[]),
-        needsLeads
-            ? runBiQuery({ ...queryParams, metrics: ['leads_count'], dimension: 'none', date_from: dateFrom, date_to: dateTo })
+        leadMetrics.length
+            ? runBiQuery({ ...queryParams, metrics: leadMetrics as BiMetric[], dimension: 'none', date_from: dateFrom, date_to: dateTo })
             : Promise.resolve([] as BiQueryRow[]),
         needsSales
             ? runBiQuery({ ...queryParams, metrics: ['sales_count'], dimension: 'none', date_from: dateFrom, date_to: dateTo })
             : Promise.resolve([] as BiQueryRow[]),
     ])
 
+    // Nombre del segmento para la etiqueta de la etapa. Se lee una sola vez y solo
+    // si hay algún segmento en el embudo: sin esto la etapa mostraría el token.
+    let segMeta: LeadSegmentoMeta[] = []
+    if (segStages.length > 0 && params.cliente_id) {
+        const db = (await createAdminClient()).schema('report_utm')
+        const campos = await loadLeadCampos(db, params.cliente_id)
+        const porClave = new Map(campos.map(c => [c.clave, c.nombre]))
+        segMeta = (await loadLeadSegmentos(db, params.cliente_id, campos)).map(s => ({
+            clave: s.clave, nombre: s.nombre, campo_clave: s.campo_clave,
+            campo_nombre: porClave.get(s.campo_clave), operador: s.operador,
+            valores: s.valores, cobertura: 0,
+        }))
+    }
+
     return stages.map(metric => {
-        const source = metric === 'leads_count' ? leadsResult
-            : metric === 'sales_count' ? salesResult
+        const source = metric === 'sales_count' ? salesResult
+            : (metric === 'leads_count' || isLeadSegMetric(metric)) ? leadsResult
             : adsResult
         return {
             stage: metric,
             value: Number(source[0]?.[metric] ?? 0),
-            label: METRIC_META[metric]?.label ?? metric,
+            label: leadSegLabel(metric, segMeta) ?? METRIC_META[metric as BiMetric]?.label ?? metric,
         }
     })
 }

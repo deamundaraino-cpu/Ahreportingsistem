@@ -88,6 +88,7 @@ export type FieldGroup =
 export type DynamicOrigin =
     | 'raw_field'      // clave cruda de lead_events.raw_fields
     | 'lead_campo'     // report_utm.lead_campos (claves unificadas + buckets)
+    | 'lead_segmento'  // report_utm.lead_campo_segmentos (subconjunto de buckets, como MEDIDA)
     | 'sheet_campo'    // public.sheet_campos
     | 'sheet_vista'    // public.sheet_campo_vistas
     | 'offline_custom' // conversiones_offline_diarias.custom_fields

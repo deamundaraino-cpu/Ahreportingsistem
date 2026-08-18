@@ -189,10 +189,15 @@ Además del bloque, Report-UTM aporta métricas que el trafficker puede usar en
 | `utm_leads` | Contactos del día según `lead_events` (web + Meta Lead Ads unificados) |
 | `lf__<campo>__<respuesta>` | Leads del día que contestaron esa respuesta |
 | `lf__<campo>__sin_respuesta` | Leads del día que no contestaron esa pregunta |
+| `lseg__<segmento>` | Leads del día que caen en un **segmento** del campo — «Desde 2M» = varios buckets a la vez (migración 073, [doc 17](./17-campos-de-lead.md)) |
 
 Por construcción, **las respuestas más `sin_respuesta` suman `utm_leads`**: es lo
 que permite leer «hoy 40, de los cuales 15 A, 5 B, 3 C y 17 sin responder» sin
 preguntarse dónde está el resto.
+
+Un `lseg__` **no entra en esa suma**: un segmento solapa buckets a propósito (para
+eso existe), así que sumarlo dejaría el `sin_respuesta` en negativo. Se acumula en
+una pasada aparte, sobre los mismos tripletes del cubo y sin consulta extra.
 
 > `utm_leads` **no se suma con `meta_leads`**. Miden lo mismo desde fuentes
 > distintas —el contacto real del formulario frente a lo que reporta el píxel— y
@@ -246,7 +251,8 @@ aspecto de dato medido, y eso el sistema no lo hace — misma decisión que los
 filtros por país, formulario y campo de lead en el BI
 ([doc 17](./17-campos-de-lead.md), [doc 18](./18-fuentes-y-cruces.md) parte 5).
 
-**Lo que sí se puede pedir** —y es distinto— es `meta_spend / lf__<campo>__<resp>`
+**Lo que sí se puede pedir** —y es distinto— es `meta_spend / lseg__<segmento>` o
+`meta_spend / lf__<campo>__<resp>`
 en una tarjeta o una columna: el gasto total del ámbito filtrado dividido por los
 leads de ese tipo. No reparte nada; responde «cuánto me cuesta conseguir un lead
 de este tipo», que es justo lo que se optimiza. Funciona porque el numerador y el

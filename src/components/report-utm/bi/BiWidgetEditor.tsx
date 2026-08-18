@@ -4,14 +4,14 @@ import { useState, useEffect } from 'react'
 import { X, Plus, Search, AlertTriangle } from 'lucide-react'
 import type { BiWidget, WidgetType, WidgetConfig, CalculatedField, ConditionalRule, ValueFilter, ScorecardVariant } from './BiTypes'
 import type {
-    BiMetric, BiDimension, ValueOp, FieldAgg, FormFieldMeta, OfflineFieldMeta,
-    AdvancedFilter, FilterOp, SheetFieldMeta, SheetViewMeta, SheetCampoAgg, LeadFieldMeta,
+    BiMetric, BiDimension, ValueOp, FieldAgg,
+    AdvancedFilter, FilterOp, SheetCampoAgg,
 } from '@/lib/report-utm/bi-metadata'
 import {
     METRIC_META, DIMENSION_META, VALUE_OPS, FIELD_AGGS, FILTERABLE_BASE_DIMS, FILTER_OPS,
     makeFieldDim, makeFieldMetric, humanizeFieldKey, fieldDimLabel, fieldMetricLabel,
     makeOfflineFieldMetric, offlineFieldLabel,
-    makeLeadFieldDim, leadFieldLabel,
+    makeLeadFieldDim, leadFieldLabel, makeLeadSegMetric, leadSegLabel,
     makeSheetDim, makeSheetMetric, makeSheetView, sheetFieldLabel, isSheetDim, isSheetToken,
     advancedFilterHasConditions, supportsPivot, PIVOT_METRICS,
     FUNNEL_STAGE_METRICS, DEFAULT_FUNNEL_STAGES,
@@ -19,6 +19,7 @@ import {
     RECOMMENDED_METRICS, METRIC_GROUP_META, metricsOfGroup,
 } from '@/lib/report-utm/bi-metadata'
 import { normalizarClaveLead } from '@/lib/report-utm/lead-campos'
+import { useBiClientFields } from './useBiClientFields'
 import { BiFormulaInput } from './BiFormulaInput'
 import { HelpTip } from './HelpTip'
 import { BiAdvancedFilterBuilder } from './BiAdvancedFilterBuilder'
@@ -101,11 +102,13 @@ export function BiWidgetEditor({ widget, calculatedFields = [], clienteId, dateF
     const [metric, setMetric] = useState<string>(String(widget?.config?.metric ?? 'leads_count'))
     const [dim,    setDim]    = useState<string>(widget?.config?.dimension ?? 'utm_source')
     const [dim2,   setDim2]   = useState<string>(widget?.config?.dimension2 ?? 'none')
-    const [formFields, setFormFields] = useState<FormFieldMeta[]>([])
-    const [leadFields, setLeadFields] = useState<LeadFieldMeta[]>([])
-    const [offlineFields, setOfflineFields] = useState<OfflineFieldMeta[]>([])
-    const [sheetFields, setSheetFields] = useState<SheetFieldMeta[]>([])
-    const [sheetViews, setSheetViews] = useState<SheetViewMeta[]>([])
+    // Campos que dependen de la configuración de ESTE cliente: preguntas de sus
+    // formularios, campos de lead con sus segmentos, columnas de sus Sheets. El
+    // hook es compartido con el modal de campos calculados para que las dos
+    // pantallas ofrezcan exactamente la misma lista.
+    const {
+        formFields, leadFields, leadSegments, offlineFields, sheetFields, sheetViews,
+    } = useBiClientFields(clienteId, dateFrom, dateTo)
     const [grouping, setGrouping] = useState<'day' | 'week' | 'month'>(widget?.config?.date_grouping ?? 'day')
     const [colSpan, setColSpan] = useState(widget?.w ?? 2)
     const [rowSpan, setRowSpan] = useState(widget?.h ?? 1)
@@ -149,62 +152,6 @@ export function BiWidgetEditor({ widget, calculatedFields = [], clienteId, dateF
     const [campaignOp, setCampaignOp]       = useState<FilterOp>(widget?.config?.campaign_filter?.op ?? 'contains')
     const [campaignValue, setCampaignValue] = useState(widget?.config?.campaign_filter?.value ?? '')
     const [campaignOptions, setCampaignOptions] = useState<string[]>([])
-
-    // Campos de formulario del cliente (raw_fields) → dimensiones + métricas.
-    useEffect(() => {
-        if (!clienteId) { setFormFields([]); return }
-        const params = new URLSearchParams({ cliente_id: clienteId })
-        if (dateFrom) params.set('date_from', dateFrom)
-        if (dateTo)   params.set('date_to', dateTo)
-        let cancelled = false
-        fetch(`/api/report-utm/bi/form-fields?${params}`)
-            .then(r => r.json())
-            .then(json => { if (!cancelled) setFormFields(json.data ?? []) })
-            .catch(() => { if (!cancelled) setFormFields([]) })
-        return () => { cancelled = true }
-    }, [clienteId, dateFrom, dateTo])
-
-    // Campos de lead del catálogo del cliente → dimensiones y filtros del BI.
-    // Son los que unifican las claves equivalentes y las variantes de escritura,
-    // así que van por delante de las claves crudas de `form-fields`.
-    useEffect(() => {
-        if (!clienteId) { setLeadFields([]); return }
-        const params = new URLSearchParams({ cliente_id: clienteId })
-        if (dateFrom) params.set('date_from', dateFrom)
-        if (dateTo)   params.set('date_to', dateTo)
-        let cancelled = false
-        fetch(`/api/report-utm/bi/lead-fields?${params}`)
-            .then(r => r.json())
-            .then(json => { if (!cancelled) setLeadFields(json.data ?? []) })
-            .catch(() => { if (!cancelled) setLeadFields([]) })
-        return () => { cancelled = true }
-    }, [clienteId, dateFrom, dateTo])
-
-    // Columnas adicionales de los Sheets offline del cliente → métricas del BI.
-    useEffect(() => {
-        if (!clienteId) { setOfflineFields([]); return }
-        let cancelled = false
-        fetch(`/api/report-utm/bi/offline-fields?cliente_id=${encodeURIComponent(clienteId)}`)
-            .then(r => r.json())
-            .then(json => { if (!cancelled) setOfflineFields(json.data ?? []) })
-            .catch(() => { if (!cancelled) setOfflineFields([]) })
-        return () => { cancelled = true }
-    }, [clienteId])
-
-    // Campos de Sheet del cliente → métricas, dimensiones y filtros del BI.
-    useEffect(() => {
-        if (!clienteId) { setSheetFields([]); setSheetViews([]); return }
-        let cancelled = false
-        fetch(`/api/report-utm/bi/sheet-fields?cliente_id=${encodeURIComponent(clienteId)}`)
-            .then(r => r.json())
-            .then(json => {
-                if (cancelled) return
-                setSheetFields(json.data?.fields ?? [])
-                setSheetViews(json.data?.views ?? [])
-            })
-            .catch(() => { if (!cancelled) { setSheetFields([]); setSheetViews([]) } })
-        return () => { cancelled = true }
-    }, [clienteId])
 
     // Qué métricas tienen datos para este cliente y rango. Sirve para avisar antes
     // de configurar un widget que va a mostrar 0 (cliente sin ventas, sin TikTok…).
@@ -302,6 +249,24 @@ export function BiWidgetEditor({ widget, calculatedFields = [], clienteId, dateF
         label: v.nombre,
     }))
 
+    // ── Segmentos de campo de lead ────────────────────────────────────────
+    // La única MEDIDA que aporta un campo de lead: «cuántos leads dijeron ≥ 2M».
+    // Se etiquetan con su pregunta delante porque «Desde 2M», solo, no se entiende
+    // en una columna de tabla junto a Gasto y Leads.
+    const leadSegMetricOptions = leadSegments.map(s => ({
+        value: makeLeadSegMetric(s.clave),
+        label: s.campo_nombre ? `${s.campo_nombre}: ${s.nombre}` : s.nombre,
+    }))
+
+    // Etapas ofrecibles del embudo: el catálogo fijo más los segmentos de lead.
+    // Con segmentos acumulados —«Leads totales → Desde 1.3M → Desde 2M»— el embudo
+    // de calificación sale ordenado de mayor a menor por construcción, que es
+    // justo lo que un embudo necesita.
+    const funnelStageOptions: MetricOpt[] = [
+        ...FUNNEL_STAGE_METRICS.map(m => ({ value: String(m), label: METRIC_META[m].label })),
+        ...leadSegMetricOptions,
+    ]
+
     // ── Dimensiones agrupadas ─────────────────────────────────────────────
     // Un campo de lead del catálogo (`leadfield:`) unifica varias claves crudas
     // de `raw_fields`. Ofrecer también esas claves crudas (`field:`) hacía que la
@@ -353,6 +318,7 @@ export function BiWidgetEditor({ widget, calculatedFields = [], clienteId, dateF
         ?? fieldMetricLabel(k)
         ?? offlineFieldLabel(k, offlineFields)
         ?? sheetFieldLabel(k, sheetFields, sheetViews)
+        ?? leadSegLabel(k, leadSegments)
         ?? calculatedFields.find(c => c.name === k)?.name ?? k
     const resolveDimLabel = (d: string) =>
         DIMENSION_META[d as BiDimension]?.label
@@ -409,6 +375,7 @@ export function BiWidgetEditor({ widget, calculatedFields = [], clienteId, dateF
     const dynamicGroups: MetricGroupUI[] = [
         { key: 'calc',       title: 'Campos calculados del informe', items: allowCalc ? calcAsMetrics : [] },
         { key: 'formfields', title: 'Campos de formulario',          items: allowCalc ? fieldMetricOptions : [] },
+        { key: 'leadsegs',   title: 'Segmentos de lead',             items: leadSegMetricOptions },
         { key: 'sheetviews', title: 'Vistas de Sheet',               items: sheetViewOptions },
         { key: 'sheet',      title: 'Campos de Sheet',               items: sheetMetricOptions },
         { key: 'offline',    title: 'Columnas de Sheet offline',     items: offlineMetricOptions },
@@ -788,20 +755,20 @@ export function BiWidgetEditor({ widget, calculatedFields = [], clienteId, dateF
                                 <HelpTip text="Marca las etapas en el orden en que las quieres ver, de arriba (mayor volumen) a abajo. Entre cada par se calcula el % de conversión. Mínimo 2 etapas." />
                             </label>
                             <div className="max-h-44 overflow-y-auto rounded-lg border border-border bg-muted/30 divide-y divide-border">
-                                {FUNNEL_STAGE_METRICS.map(m => {
-                                    const checked = funnelStages.includes(m)
-                                    const order = funnelStages.indexOf(m)
+                                {funnelStageOptions.map(({ value: m, label }) => {
+                                    const checked = funnelStages.includes(m as BiMetric)
+                                    const order = funnelStages.indexOf(m as BiMetric)
                                     return (
                                         <label key={m} className="flex items-center gap-2 px-3 py-2 cursor-pointer hover:bg-accent transition-colors">
                                             <input
                                                 type="checkbox"
                                                 checked={checked}
                                                 onChange={() => setFunnelStages(prev =>
-                                                    prev.includes(m) ? prev.filter(s => s !== m) : [...prev, m]
+                                                    prev.includes(m as BiMetric) ? prev.filter(s => s !== m) : [...prev, m as BiMetric]
                                                 )}
                                                 className="h-3.5 w-3.5 rounded accent-emerald-500"
                                             />
-                                            <span className="text-xs text-foreground flex-1">{METRIC_META[m].label}</span>
+                                            <span className="text-xs text-foreground flex-1">{label}</span>
                                             {hasNoData(m) && (
                                                 <span className="text-[9px] text-amber-600 dark:text-amber-400">sin datos</span>
                                             )}
@@ -860,6 +827,7 @@ export function BiWidgetEditor({ widget, calculatedFields = [], clienteId, dateF
                                             offlineFields={offlineFields}
                                             sheetFields={sheetFields}
                                             sheetViews={sheetViews}
+                                            leadSegments={leadSegments}
                                         />
                                         <div className="grid grid-cols-2 gap-2">
                                             <div>
