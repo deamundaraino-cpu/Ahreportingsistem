@@ -14,7 +14,15 @@ export type ReportUtmCliente = {
 export type ReportUtmIntegration = {
     id: string
     cliente_id: string
-    tipo: 'hotmart' | 'meta' | 'google' | 'cartpanda' | 'shopify' | 's2s'
+    tipo:
+        | 'hotmart'
+        | 'meta'
+        | 'google'
+        | 'cartpanda'
+        | 'shopify'
+        | 's2s'
+        | 'meta_lead_ads'
+        | 'gohighlevel'
     webhook_secret: string | null
     s2s_token: string | null
     access_token_encrypted: string | null

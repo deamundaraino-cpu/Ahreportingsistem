@@ -25,7 +25,7 @@ Eso es todo. El resto de esta guía son las consecuencias.
 
 | Fuente | Qué mide | Grano | Cruza por |
 |---|---|---|---|
-| **Leads** | Contactos, uno por fila | fila | fecha · plataforma · campaña · conjunto · anuncio · **cualquier columna suya** · campos de formulario |
+| **Leads** | Contactos, uno por fila (formulario web, Meta Lead Ads o CRM de GoHighLevel) | fila | fecha · plataforma · campaña · conjunto · anuncio · **cualquier columna suya** · campos de formulario |
 | **Ventas** | Transacciones, una por fila | fila | fecha · plataforma · campaña · conjunto · anuncio · columnas de venta |
 | **Anuncios** | Gasto y métricas de plataforma | día × entidad | fecha · plataforma · campaña · conjunto · anuncio |
 | **Cuenta** | GA4, Hotmart, métricas manuales | día | **solo fecha** |

@@ -24,6 +24,12 @@ export type SyncJobTipo =
     | 'sheets_leads'
     | 'sheets_conversiones'
     | 'meta_leads'
+    /**
+     * Contactos de GoHighLevel → `report_utm.lead_events`. Backfill de 90 días y
+     * red de seguridad del webhook: el cursor (`dateAdded` del último visto) vive
+     * en `integrations.config.sync_cursor`, no en el job.
+     */
+    | 'ghl_leads'
     | 'utm_aggregate'
     | 'cierre_mes'
     /** Compara el gasto guardado contra el real de la cuenta y repara los días que divergen. */

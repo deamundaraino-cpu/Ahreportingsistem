@@ -82,6 +82,43 @@ Se consolidan en:
 
 ---
 
+## GoHighLevel (leads del CRM · módulo Report-UTM)
+
+**API**: LeadConnector v2 (`services.leadconnectorhq.com`), autenticada con un
+**Private Integration Token** por location.
+
+### Configuración (por cliente)
+Desde la tarjeta *GoHighLevel · CRM* de `/report-utm/clientes/[clienteId]`. Pide
+Location ID y PIT; el token se guarda cifrado en
+`report_utm.integrations.access_token_encrypted` y el Location ID en
+`config.location_id`. **Guía completa para el equipo: [doc 20](./20-integracion-gohighlevel.md).**
+
+### Datos sincronizados
+Contactos → `report_utm.lead_events` (la MISMA tabla que el formulario web y Meta
+Lead Ads; no hay tabla ni fuente de BI nueva). Dos vías que se deduplican por
+`external_id = 'ghl:<contactId>'`:
+
+- **Webhook por cliente** (`/api/report-utm/webhooks/ghl/[clienteId]`) — tiempo
+  real. El payload del Workflow es solo un aviso: se relee el contacto completo
+  con el PIT, así la atribución y los campos personalizados llegan siempre.
+  Autenticado con un token compartido en el header `X-Rutm-Ghl-Token`.
+- **Polling** (`/api/cron/sync-ghl-leads`, job `ghl_leads`) — backfill de 90 días
+  y red de seguridad.
+
+Los campos personalizados se traducen con
+`GET /locations/{id}/customFields` (cacheado en `config.custom_fields`) y entran
+en `raw_fields` con el **nombre** del campo, de modo que se unifican con los de
+Meta y los del formulario web desde `lead_campos.claves_origen`.
+
+> **GHL es fuente única por cliente**: al activarlo se pausan sus integraciones
+> `s2s` y `meta_lead_ads`. `lead_events` no deduplica por email ni teléfono, así
+> que dos vías activas contarían dos veces a la misma persona.
+
+Ver `migrations/074_report_utm_ghl_leads.sql` para el diseño y la regla del
+cruce (`utm_id` = id de campaña o de anuncio; `mediumId` nunca).
+
+---
+
 ## Google Sheets — Leads (RETIRADA, migración 059)
 
 Existía una segunda integración de Google Sheets, separada de la de conversiones

@@ -13,9 +13,9 @@ Google Sheet.
 ## El problema que resuelve
 
 Cada lead guarda TODAS las respuestas de su formulario en
-`report_utm.lead_events.raw_fields` (JSONB plano), venga de WordPress o de Meta
-Lead Ads. El BI ya podía agrupar por una clave cruda (`field:<clave>`), pero el
-dato crudo no cuadra para cruzarlo:
+`report_utm.lead_events.raw_fields` (JSONB plano), venga de WordPress, de Meta
+Lead Ads o de GoHighLevel (migración 074). El BI ya podía agrupar por una clave
+cruda (`field:<clave>`), pero el dato crudo no cuadra para cruzarlo:
 
 **La misma pregunta llega con claves distintas** según el formulario:
 
@@ -23,6 +23,7 @@ dato crudo no cuadra para cruzarlo:
 |---|---|---|
 | Meta Lead Ads | `cual_es_tu_rango_de_ingresos` | 10.404 |
 | Formulario web | `¿cuál_es_tu_rango_aproximado_de_ingresos?` | 1.725 |
+| GoHighLevel | `Rango de ingresos` (el nombre del campo personalizado) | — |
 
 Son dos dimensiones separadas: ningún informe suma los 12.129 leads.
 

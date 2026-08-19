@@ -64,7 +64,7 @@ Todo lo demás lo programa el scheduler del `sync-worker`.
 
 | Hora | Plan | Encola |
 |---|---|---|
-| 05:00 | `diario` | Métricas de ayer y hoy (todos los clientes) + Sheets (**un job por cliente**) + Meta Leads + agregación UTM |
+| 05:00 | `diario` | Métricas de ayer y hoy (todos los clientes) + Sheets (**un job por cliente**) + Meta Leads + leads de GoHighLevel + agregación UTM |
 | 14:00 | `diario` | Segunda pasada: recoge las correcciones de atribución del día |
 | día 7, 03:00 | `cierre_mes` | Re-descarga forzada del mes anterior (ventana de 35 días) y congelado |
 | domingo, 03:00 | `reconciliacion` | Audita el gasto de Meta contra el real de cada cuenta y repara los días con desglose incompleto |
@@ -103,10 +103,16 @@ el runner lo trata como fallo.
 franja: pasado su día ya no son accionables y solo entierran el problema de hoy
 bajo las lápidas de las semanas anteriores.
 
-Tipos de job: `metricas`, `sheets_conversiones`, `meta_leads`, `utm_aggregate`,
-`cierre_mes`, `reconciliar`. El tipo `sheets_leads` ya no se encola (migración
-059) pero sigue reconocido: `sync_jobs` puede tener filas históricas con él y el
-runner las enruta al worker de conversiones.
+Tipos de job: `metricas`, `sheets_conversiones`, `meta_leads`, `ghl_leads`,
+`utm_aggregate`, `cierre_mes`, `reconciliar`. El tipo `sheets_leads` ya no se
+encola (migración 059) pero sigue reconocido: `sync_jobs` puede tener filas
+históricas con él y el runner las enruta al worker de conversiones.
+
+`ghl_leads` (migración 074) trae los contactos de GoHighLevel a
+`report_utm.lead_events` vía `/api/cron/sync-ghl-leads`. No lleva rango de
+fechas: su cursor es el `dateAdded` del último contacto visto y vive en
+`integrations.config.sync_cursor`, no en el job. Es la red de seguridad del
+webhook por cliente y el backfill de 90 días.
 
 ## Workers
 

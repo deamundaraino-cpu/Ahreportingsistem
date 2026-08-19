@@ -99,6 +99,13 @@ function buildRequest(job: SyncJob, appUrl: string): { url: string; method: 'GET
             if (job.cliente_id) p.set('clienteId', job.cliente_id)
             return { url: `${base}/api/cron/sync-meta-leads?${p}`, method: 'POST' }
         }
+        case 'ghl_leads': {
+            // Sin rango de fechas: el cursor de GHL es `dateAdded` y vive en la
+            // integración, no en el job (ver `syncGhlLeadsForCliente`).
+            const p = new URLSearchParams()
+            if (job.cliente_id) p.set('clienteId', job.cliente_id)
+            return { url: `${base}/api/cron/sync-ghl-leads?${p}`, method: 'POST' }
+        }
         case 'utm_aggregate':
             return { url: `${base}/api/cron/report-utm/aggregate?${qs}`, method: 'GET' }
         case 'cierre_mes':

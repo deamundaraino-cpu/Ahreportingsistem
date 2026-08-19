@@ -9,6 +9,7 @@ import { ShopifyIntegrationCard } from '@/components/report-utm/ShopifyIntegrati
 import { GoogleAdsCard } from '@/components/report-utm/GoogleAdsCard'
 import { MetaCAPICard } from '@/components/report-utm/MetaCAPICard'
 import { MetaLeadsCard } from '@/components/report-utm/MetaLeadsCard'
+import { GhlLeadsCard } from '@/components/report-utm/GhlLeadsCard'
 import { S2SIntegrationCard } from '@/components/report-utm/S2SIntegrationCard'
 import { OutboundWebhooksCard } from '@/components/report-utm/OutboundWebhooksCard'
 import { BiClienteBrandingCard } from '@/components/report-utm/BiClienteBrandingCard'
@@ -28,7 +29,7 @@ export default async function ClienteDetailPage({
     const { clienteId } = await params
     const supabase = await reportUtmClient()
 
-    const [{ data: cliente }, { data: hotmart }, { data: cartpanda }, { data: shopify }, { data: metaIntegration }, { data: googleIntegration }, { data: s2s }, { data: metaLeads }, { data: ventas }, { count: totalCount }, { data: aggregate }, { data: outbound }] =
+    const [{ data: cliente }, { data: hotmart }, { data: cartpanda }, { data: shopify }, { data: metaIntegration }, { data: googleIntegration }, { data: s2s }, { data: metaLeads }, { data: ghl }, { data: ventas }, { count: totalCount }, { data: aggregate }, { data: outbound }] =
         await Promise.all([
             supabase.from('clientes').select('*').eq('id', clienteId).single<ReportUtmCliente>(),
             supabase
@@ -72,6 +73,12 @@ export default async function ClienteDetailPage({
                 .select('id, status, config, last_sync_at, last_error')
                 .eq('cliente_id', clienteId)
                 .eq('tipo', 'meta_lead_ads')
+                .maybeSingle<Pick<ReportUtmIntegration, 'id' | 'status' | 'config' | 'last_sync_at' | 'last_error'>>(),
+            supabase
+                .from('integrations')
+                .select('id, status, config, last_sync_at, last_error')
+                .eq('cliente_id', clienteId)
+                .eq('tipo', 'gohighlevel')
                 .maybeSingle<Pick<ReportUtmIntegration, 'id' | 'status' | 'config' | 'last_sync_at' | 'last_error'>>(),
             supabase
                 .from('sales_events')
@@ -213,6 +220,12 @@ export default async function ClienteDetailPage({
                 clienteId={cliente.id}
                 integration={metaLeads ?? null}
                 metaConnected={metaConnected}
+            />
+
+            <GhlLeadsCard
+                clienteId={cliente.id}
+                integration={ghl ?? null}
+                webhookOrigin={webhookOrigin}
             />
 
             <GoogleAdsCard

@@ -126,6 +126,9 @@ Reagrega `sales_events` → `hourly_metrics`. Params: `hours` (def. 24, máx. 72
 ### `POST /api/report-utm/webhooks/hotmart/[clienteId]`
 Recibe ventas de Hotmart. Valida firma (HMAC o hottok), parsea el payload (`hotmart-parser`), hace `upsert` en `report_utm.sales_events` (dedupe por `cliente_id+platform+platform_sale_id`), resuelve atribución multi-touch y emite webhooks salientes. Códigos: 201 ok, 404 sin integración, 403 pausada, 401 firma inválida, 422 payload inválido, 500 error BD. `GET` sirve como health-check de la URL. Detalle en [doc 12](./12-modulo-report-utm.md).
 
+### `POST /api/report-utm/webhooks/ghl/[clienteId]`
+Recibe el aviso de *Contact Created* de un Workflow de GoHighLevel. Autenticado con un token compartido por cliente en el header `X-Rutm-Ghl-Token` (también acepta HMAC-SHA256 del cuerpo en `X-Rutm-Ghl-Signature`, o el token en `?token=`). Del payload solo necesita `contact_id`: responde 200 y en `after()` relee el contacto completo con el Private Integration Token para insertarlo en `report_utm.lead_events` (dedupe por `external_id = ghl:<contactId>`). Códigos: 200 ok (también cuando ignora el evento por falta de `contact_id` o por location distinta), 404 sin integración, 403 pausada, 401 token inválido, 413 cuerpo grande, 429 rate limit. `GET` sirve de health-check. Guía de alta en [doc 20](./20-integracion-gohighlevel.md).
+
 ---
 
 ## Reportes y datos (sesión)
@@ -167,6 +170,8 @@ Resuelve el slug de tracking → destino con UTMs. Setea cookies de atribución 
 | `/api/cron/report-utm/aggregate` | GET/POST | CRON_SECRET |
 | `/api/report-utm/pixel/event` | POST/OPTIONS | público |
 | `/api/report-utm/webhooks/hotmart/[clienteId]` | GET/POST | HMAC/hottok |
+| `/api/report-utm/webhooks/ghl/[clienteId]` | GET/POST | token compartido / HMAC |
+| `/api/cron/sync-ghl-leads` | GET/POST | CRON_SECRET |
 | `/api/admin/sync-conversiones-offline` | GET/POST | sesión |
 | `/api/admin/sheet-campos` | GET/POST/DELETE | sesión |
 | `/api/admin/sheet-campos/vistas` | POST/DELETE | sesión |

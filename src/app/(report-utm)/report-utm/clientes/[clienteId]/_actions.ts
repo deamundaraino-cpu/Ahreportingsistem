@@ -9,6 +9,8 @@ import { encrypt } from '@/lib/report-utm/encryption'
 import { sendMetaLeadEvent } from '@/lib/report-utm/meta-capi'
 import { decrypt } from '@/lib/report-utm/encryption'
 import { getMetaAccountsForCliente, syncMetaLeadsForCliente, discoverAndSubscribePages } from '@/lib/report-utm/meta-leads'
+import { syncGhlLeadsForCliente, type GhlIntegrationRow } from '@/lib/report-utm/ghl-leads'
+import { testConnection as testGhlConnection } from '@/lib/report-utm/ghl-client'
 
 type ActionResult = { ok: true; secret?: string; events_received?: number } | { ok: false; error: string }
 type SimpleResult = { ok: true } | { ok: false; error: string }
@@ -577,4 +579,207 @@ export async function syncMetaLeadsNowAction(clienteId: string): Promise<SyncRes
     revalidatePath(`/report-utm/clientes/${clienteId}`)
     if (summary.error) return { ok: false, error: summary.error }
     return { ok: true, imported: summary.imported, forms: summary.forms }
+}
+
+// ── GoHighLevel (CRM) ─────────────────────────────────────────────
+//
+// Los contactos de GHL entran en la MISMA `report_utm.lead_events` que el resto
+// de fuentes, así que heredan `leads.count`, el CPL y los campos de lead sin
+// tabla ni fuente nueva.
+//
+// GHL se declara FUENTE ÚNICA del cliente: al guardarla se pausan `s2s` y
+// `meta_lead_ads`. Sin eso, el mismo humano puede entrar dos veces (por el
+// formulario web y por el CRM) y `lead_events` no deduplica por email/teléfono,
+// así que `leads.count` quedaría inflado sin que nada lo avise.
+
+/** Fuentes de lead que GHL sustituye. Se pausan al activar la integración. */
+const GHL_FUENTES_EXCLUYENTES = ['s2s', 'meta_lead_ads']
+
+type GhlSaveResult =
+    | { ok: true; secret: string; total: number; pausadas: string[] }
+    | { ok: false; error: string }
+
+type GhlSyncResult =
+    | { ok: true; imported: number; scanned: number; filtered: number; campos: number }
+    | { ok: false; error: string }
+
+export async function saveGhlIntegrationAction(
+    clienteId: string,
+    args: { locationId: string; token: string; tags?: string[]; excluirTags?: string[] },
+): Promise<GhlSaveResult> {
+    const role = await getUserRole()
+    if (!role || !S2S_ALLOWED_ROLES.has(role)) {
+        return { ok: false, error: `Sin permisos para configurar GoHighLevel (rol: ${role ?? 'ninguno'})` }
+    }
+
+    const locationId = args.locationId?.trim()
+    const token = args.token?.trim()
+    if (!locationId) return { ok: false, error: 'Falta el Location ID' }
+    if (!token) return { ok: false, error: 'Falta el Private Integration Token' }
+
+    // Probar ANTES de guardar: un PIT sin scope o de otra location se detecta
+    // aquí y no seis horas después, cuando el cron marque la tarjeta en rojo.
+    let total = 0
+    try {
+        const r = await testGhlConnection({ token, locationId })
+        total = r.total
+    } catch (e) {
+        return { ok: false, error: e instanceof Error ? e.message : String(e) }
+    }
+
+    const supabase = await reportUtmClient()
+    const secret = generateWebhookSecret()
+
+    const filtro = {
+        tags: (args.tags ?? []).map((t) => t.trim()).filter(Boolean),
+        excluir_tags: (args.excluirTags ?? []).map((t) => t.trim()).filter(Boolean),
+    }
+    const hayFiltro = filtro.tags.length > 0 || filtro.excluir_tags.length > 0
+
+    const { error } = await supabase.from('integrations').upsert(
+        {
+            cliente_id: clienteId,
+            tipo: 'gohighlevel',
+            access_token_encrypted: encrypt(token),
+            webhook_secret_enc: encrypt(secret),
+            webhook_secret: null,
+            status: 'active',
+            last_error: null,
+            config: {
+                location_id: locationId,
+                filtro: hayFiltro ? filtro : null,
+                backfill_done: false,
+                contactos_totales: total,
+            },
+        },
+        { onConflict: 'cliente_id,tipo' },
+    )
+    if (error) return { ok: false, error: error.message }
+
+    // Fuente única: pausar las demás vías de lead de este cliente.
+    const pausadas: string[] = []
+    const { data: otras } = await supabase
+        .from('integrations')
+        .select('tipo')
+        .eq('cliente_id', clienteId)
+        .in('tipo', GHL_FUENTES_EXCLUYENTES)
+        .eq('status', 'active')
+    if (otras && otras.length > 0) {
+        await supabase
+            .from('integrations')
+            .update({ status: 'inactive' })
+            .eq('cliente_id', clienteId)
+            .in('tipo', GHL_FUENTES_EXCLUYENTES)
+        pausadas.push(...otras.map((o: { tipo: string }) => o.tipo))
+    }
+
+    revalidatePath(`/report-utm/clientes/${clienteId}`)
+    return { ok: true, secret, total, pausadas }
+}
+
+export async function rotateGhlWebhookSecretAction(clienteId: string): Promise<ActionResult> {
+    const role = await getUserRole()
+    if (!role || !S2S_ALLOWED_ROLES.has(role)) {
+        return { ok: false, error: `Sin permisos para rotar el secreto (rol: ${role ?? 'ninguno'})` }
+    }
+
+    const supabase = await reportUtmClient()
+    const secret = generateWebhookSecret()
+    const { error } = await supabase
+        .from('integrations')
+        .update({ webhook_secret_enc: encrypt(secret), webhook_secret: null, last_error: null })
+        .eq('cliente_id', clienteId)
+        .eq('tipo', 'gohighlevel')
+
+    if (error) return { ok: false, error: error.message }
+
+    revalidatePath(`/report-utm/clientes/${clienteId}`)
+    return { ok: true, secret }
+}
+
+export async function setGhlStatusAction(
+    clienteId: string,
+    status: 'active' | 'inactive',
+): Promise<SimpleResult> {
+    const role = await getUserRole()
+    if (!role || !S2S_ALLOWED_ROLES.has(role)) {
+        return { ok: false, error: `Sin permisos para cambiar el estado (rol: ${role ?? 'ninguno'})` }
+    }
+
+    const supabase = await reportUtmClient()
+    const { error } = await supabase
+        .from('integrations')
+        .update({ status })
+        .eq('cliente_id', clienteId)
+        .eq('tipo', 'gohighlevel')
+
+    if (error) return { ok: false, error: error.message }
+
+    revalidatePath(`/report-utm/clientes/${clienteId}`)
+    return { ok: true }
+}
+
+/** Cambia el filtro de etiquetas sin obligar a volver a pegar el PIT. */
+export async function saveGhlFiltroAction(
+    clienteId: string,
+    args: { tags?: string[]; excluirTags?: string[] },
+): Promise<SimpleResult> {
+    const role = await getUserRole()
+    if (!role || !S2S_ALLOWED_ROLES.has(role)) {
+        return { ok: false, error: `Sin permisos para cambiar el filtro (rol: ${role ?? 'ninguno'})` }
+    }
+
+    const supabase = await reportUtmClient()
+    const { data: integration } = await supabase
+        .from('integrations')
+        .select('id, config')
+        .eq('cliente_id', clienteId)
+        .eq('tipo', 'gohighlevel')
+        .maybeSingle()
+
+    if (!integration) return { ok: false, error: 'Configurá GoHighLevel primero' }
+
+    const tags = (args.tags ?? []).map((t) => t.trim()).filter(Boolean)
+    const excluir_tags = (args.excluirTags ?? []).map((t) => t.trim()).filter(Boolean)
+    const hayFiltro = tags.length > 0 || excluir_tags.length > 0
+
+    const { error } = await supabase
+        .from('integrations')
+        .update({
+            config: {
+                ...((integration.config ?? {}) as Record<string, unknown>),
+                filtro: hayFiltro ? { tags, excluir_tags } : null,
+            },
+        })
+        .eq('id', integration.id)
+
+    if (error) return { ok: false, error: error.message }
+
+    revalidatePath(`/report-utm/clientes/${clienteId}`)
+    return { ok: true }
+}
+
+export async function syncGhlLeadsNowAction(clienteId: string): Promise<GhlSyncResult> {
+    const base = await createClient()
+    const supabase = base.schema('report_utm')
+
+    const { data: integration } = await supabase
+        .from('integrations')
+        .select('id, cliente_id, access_token_encrypted, config, status')
+        .eq('cliente_id', clienteId)
+        .eq('tipo', 'gohighlevel')
+        .maybeSingle()
+
+    if (!integration) return { ok: false, error: 'Configurá GoHighLevel primero' }
+
+    const summary = await syncGhlLeadsForCliente(base, integration as GhlIntegrationRow)
+    revalidatePath(`/report-utm/clientes/${clienteId}`)
+    if (summary.error) return { ok: false, error: summary.error }
+    return {
+        ok: true,
+        imported: summary.imported,
+        scanned: summary.scanned,
+        filtered: summary.filtered,
+        campos: summary.campos,
+    }
 }

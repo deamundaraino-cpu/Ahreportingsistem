@@ -6,6 +6,7 @@ export const PLUGIN_LABELS: Record<string, string> = {
     wpforms: 'WPForms',
     s2s: 'S2S / Manual',
     meta_lead_ads: 'Meta Lead Ads',
+    gohighlevel: 'GoHighLevel (CRM)',
 }
 
 /** Decodifica percent-encoding solo si el valor todavía viene codificado. */

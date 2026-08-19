@@ -29,6 +29,7 @@ Plataforma multi-cliente para agencias de publicidad que **consolida métricas d
 | 17 | [Campos de lead](./17-campos-de-lead.md) | Convertir las respuestas de los formularios en dimensiones y filtros de los informes |
 | 18 | [Fuentes de datos y cruces](./18-fuentes-y-cruces.md) | Qué cruza con qué y por qué, recetario de widgets y diagnóstico de informes vacíos |
 | 19 | [Guía: segmentos de lead](./19-guia-segmentos-de-lead.md) | Medir con las respuestas de los formularios: crear segmentos, usarlos en widgets y fórmulas, y el catálogo actual por cliente |
+| 20 | [Integración GoHighLevel](./20-integracion-gohighlevel.md) | Guía paso a paso: conectar una location de GHL para que sus contactos entren como leads del UTM report |
 
 ---
 
