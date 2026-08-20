@@ -1,5 +1,5 @@
 {
-  "generado": "2026-08-18T21:10:25.272Z",
+  "generado": "2026-08-20T17:19:17.018Z",
   "rango": {
     "desde": "2026-07-01",
     "hasta": "2026-07-31"
@@ -375,7 +375,7 @@
         "filas": [
           {
             "__dim": null,
-            "leads_count": 618
+            "leads_count": 628
           }
         ]
       },
@@ -396,8 +396,8 @@
           {
             "__dim": null,
             "spend": 938371,
-            "leads_count": 618,
-            "cpl": 1518.4
+            "leads_count": 628,
+            "cpl": 1494.22
           }
         ]
       },
@@ -603,12 +603,12 @@
           },
           {
             "__dim": "2026-07-26",
-            "leads_count": 1,
+            "leads_count": 2,
             "spend": 34028
           },
           {
             "__dim": "2026-07-27",
-            "leads_count": 3,
+            "leads_count": 4,
             "spend": 38465
           },
           {
@@ -618,12 +618,12 @@
           },
           {
             "__dim": "2026-07-29",
-            "leads_count": 7,
+            "leads_count": 11,
             "spend": 31851
           },
           {
             "__dim": "2026-07-30",
-            "leads_count": 5,
+            "leads_count": 9,
             "spend": 37803
           },
           {
@@ -650,11 +650,11 @@
           },
           {
             "__dim": "2026-07-20",
-            "leads_count": 39
+            "leads_count": 40
           },
           {
             "__dim": "2026-07-27",
-            "leads_count": 22
+            "leads_count": 31
           }
         ]
       },
@@ -715,7 +715,7 @@
           {
             "__dim": "(sin campaña)",
             "spend": 0,
-            "leads_count": 22,
+            "leads_count": 32,
             "cpl": null,
             "sales_count": 0
           },
@@ -745,7 +745,7 @@
           },
           {
             "__dim": "(sin valor)",
-            "leads_count": 22
+            "leads_count": 32
           },
           {
             "__dim": "120249457869770774",
@@ -875,6 +875,12 @@
             "cpl": null
           },
           {
+            "__dim": "CL",
+            "leads_count": 10,
+            "spend": 0,
+            "cpl": null
+          },
+          {
             "__dim": null,
             "leads_count": 0,
             "spend": 938371,
@@ -917,7 +923,7 @@
           },
           {
             "__dim": "(sin valor)",
-            "leads_count": 22,
+            "leads_count": 23,
             "sales_count": 0,
             "conversion_rate": 0
           },
@@ -930,6 +936,12 @@
           {
             "__dim": "{{placement}}",
             "leads_count": 7,
+            "sales_count": 0,
+            "conversion_rate": 0
+          },
+          {
+            "__dim": "facebook",
+            "leads_count": 6,
             "sales_count": 0,
             "conversion_rate": 0
           },
@@ -962,6 +974,12 @@
             "leads_count": 2,
             "sales_count": 0,
             "conversion_rate": 0
+          },
+          {
+            "__dim": "whatsapp_coex",
+            "leads_count": 2,
+            "sales_count": 0,
+            "conversion_rate": 0
           }
         ]
       },
@@ -979,6 +997,18 @@
           {
             "__dim": "Postulación Curso Reorganización Patrimonial",
             "leads_count": 14
+          },
+          {
+            "__dim": "(sin valor)",
+            "leads_count": 8
+          },
+          {
+            "__dim": "payment_link",
+            "leads_count": 1
+          },
+          {
+            "__dim": "Formulario Web - sin atribucion",
+            "leads_count": 1
           }
         ]
       },
@@ -1211,7 +1241,7 @@
         },
         {
           "stage": "leads_count",
-          "value": 618,
+          "value": 628,
           "label": "Leads (contactos)"
         },
         {
@@ -1224,9 +1254,9 @@
         "current": [
           {
             "dimension_value": null,
-            "leads_count": 618,
+            "leads_count": 628,
             "spend": 938371,
-            "cpl": 1518.4
+            "cpl": 1494.22
           }
         ],
         "previous": [

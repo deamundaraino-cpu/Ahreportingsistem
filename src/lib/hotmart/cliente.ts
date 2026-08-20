@@ -207,26 +207,109 @@ export async function obtenerToken(config: ConfigHotmart): Promise<ResultadoToke
     return { token: String(data.access_token), parche: null }
 }
 
+/**
+ * Familia del fallo, derivada del status HTTP.
+ *
+ * Cada una pide una acción distinta y el mensaje genérico "posible desconexión"
+ * las confundía todas: un 400 es un bug nuestro (o un cambio de la API de
+ * Hotmart) y un 401 es una credencial que hay que reconectar. Sin esta
+ * distinción, el aviso de la campanita no dice qué hacer.
+ */
+export type FamiliaErrorHotmart =
+    | 'parametros'
+    | 'credenciales'
+    | 'limite'
+    | 'indisponible'
+    | 'respuesta_invalida'
+    | 'desconocido'
+
+export type ErrorHotmartClasificado = {
+    familia: FamiliaErrorHotmart
+    /** Texto corto y accionable, apto para la notificación in-app. */
+    etiqueta: string
+}
+
+/** Traduce un status HTTP de Hotmart a familia + texto accionable. */
+export function clasificarErrorHotmart(status: number): ErrorHotmartClasificado {
+    if (status === 400 || status === 422) {
+        return { familia: 'parametros', etiqueta: 'Hotmart rechazó los parámetros de la petición' }
+    }
+    if (status === 401) {
+        return { familia: 'credenciales', etiqueta: 'Credenciales de Hotmart inválidas o caducadas' }
+    }
+    if (status === 403) {
+        return { familia: 'credenciales', etiqueta: 'La app de Hotmart no tiene permiso sobre este recurso' }
+    }
+    if (status === 404) {
+        return { familia: 'parametros', etiqueta: 'Endpoint de Hotmart inexistente' }
+    }
+    if (status === 429) {
+        return { familia: 'limite', etiqueta: 'Límite de peticiones de Hotmart alcanzado' }
+    }
+    if (status >= 500) {
+        return { familia: 'indisponible', etiqueta: 'Hotmart no disponible' }
+    }
+    return { familia: 'desconocido', etiqueta: `Respuesta inesperada de Hotmart (HTTP ${status})` }
+}
+
+/**
+ * Cabeceras que ayudan a distinguir un rechazo de la API de uno de su WAF/CDN.
+ *
+ * Cuando el fallo solo ocurre desde una IP concreta (p. ej. la de Vercel) y no
+ * desde otra, el cuerpo del error es idéntico y lo único que los separa está
+ * aquí. Sin esto no hay forma de diagnosticarlo sin acceso al entorno.
+ */
+const CABECERAS_DIAGNOSTICO = [
+    'retry-after',
+    'x-ratelimit-remaining',
+    'x-ratelimit-reset',
+    'x-request-id',
+    'cf-ray',
+    'server',
+]
+
+function huellaRespuesta(headers: Headers): string {
+    const partes: string[] = []
+    for (const h of CABECERAS_DIAGNOSTICO) {
+        const v = headers.get(h)
+        if (v) partes.push(`${h}=${v}`)
+    }
+    return partes.length > 0 ? ` [${partes.join(' ')}]` : ''
+}
+
 export type ResultadoPaginado<T> = {
     items: T[]
     /** `false` si quedó alguna página sin leer, por el motivo que sea. */
     completo: boolean
     motivo?: string
+    /** Familia del fallo cuando `completo` es `false` por un error de la API. */
+    familia?: FamiliaErrorHotmart
     paginas: number
 }
 
 /**
  * Recorre un endpoint paginado de Hotmart hasta agotarlo.
  *
- * Las tres guardas son las del worker, ahora en un solo sitio:
+ * Las guardas son las del worker, ahora en un solo sitio:
  *
- *  1. Error en la respuesta (`error` o `message` en el cuerpo) → se corta.
- *  2. Tope de páginas → un `next_page_token` que Hotmart devolviera siempre
+ *  1. Status HTTP distinto de 200 → se corta, clasificando la familia del error.
+ *  2. Cuerpo que no es el JSON esperado → se corta (ver abajo).
+ *  3. Error en la respuesta (`error` o `message` en el cuerpo) → se corta.
+ *  4. Tope de páginas → un `next_page_token` que Hotmart devolviera siempre
  *     dejaría el bucle girando hasta matar la función.
- *  3. `next_page_token` REPETIDO → el mismo bucle infinito, disfrazado.
+ *  5. `next_page_token` REPETIDO → el mismo bucle infinito, disfrazado.
  *
- * En los tres casos `completo` es `false`, y ese es el dato que impide que un
+ * En todos los casos `completo` es `false`, y ese es el dato que impide que un
  * día a medias pise las ventas ya guardadas.
+ *
+ * ── POR QUÉ SE MIRA EL STATUS Y NO SOLO EL CUERPO ───────────────
+ * `bufferedFetch` deja `parsed: null` cuando el cuerpo no es JSON. Mirando solo
+ * el cuerpo, una página HTML de error de un WAF/CDN (o un 502 del proxy) pasaba
+ * las tres guardas antiguas: `data?.error` es `undefined`, `data?.items` no es
+ * un array y `next_page_token` tampoco existe, así que la función devolvía
+ * `completo: true` con CERO items. El worker lo tomaba por un día sin ventas y
+ * lo escribía sobre las ventas reales. Es el fallo silencioso más caro posible
+ * y el motivo de que el status HTTP sea ahora la PRIMERA comprobación.
  */
 export async function paginarHotmart<T>(opts: {
     ruta: string
@@ -257,14 +340,37 @@ export async function paginarHotmart<T>(opts: {
             headers: { Authorization: `Bearer ${opts.token}` },
         })
         const data = (await res.json()) as PaginaHotmart<T>
+        // La query, sin el token: es lo que hay que reproducir para diagnosticar.
+        const query = url.search || '(sin parámetros)'
 
-        if (data?.error || data?.message) {
-            const motivo = `Error de API en ${opts.ruta}: ${JSON.stringify(data)}`
+        if (res.status !== 200) {
+            const { familia, etiqueta } = clasificarErrorHotmart(res.status)
+            const cuerpo = data ? JSON.stringify(data) : (await res.text()).slice(0, 300)
+            const motivo =
+                `${etiqueta} — HTTP ${res.status} en ${opts.ruta}${query}` +
+                `${huellaRespuesta(res.headers)}: ${cuerpo}`
             opts.log?.(`[Hotmart] ${motivo}`)
-            return { items, completo: false, motivo, paginas }
+            return { items, completo: false, motivo, familia, paginas }
         }
 
-        if (Array.isArray(data?.items)) items.push(...data.items)
+        if (data?.error || data?.message) {
+            // 200 con error en el cuerpo: Hotmart lo hace en algunos endpoints.
+            const motivo = `Error de API en ${opts.ruta}${query}: ${JSON.stringify(data)}`
+            opts.log?.(`[Hotmart] ${motivo}`)
+            return { items, completo: false, motivo, familia: 'desconocido', paginas }
+        }
+
+        if (!data || !Array.isArray(data.items)) {
+            // 200 sin `items`: cuerpo no-JSON o con otra forma. Antes esto se leía
+            // como "día sin ventas" y pisaba los datos buenos con ceros.
+            const motivo =
+                `Respuesta sin campo 'items' en ${opts.ruta}${query}` +
+                `${huellaRespuesta(res.headers)}: ${(await res.text()).slice(0, 300)}`
+            opts.log?.(`[Hotmart] ${motivo}`)
+            return { items, completo: false, motivo, familia: 'respuesta_invalida', paginas }
+        }
+
+        items.push(...data.items)
 
         const siguiente = data?.page_info?.next_page_token
         if (!siguiente) return { items, completo: true, paginas }

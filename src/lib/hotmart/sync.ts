@@ -35,6 +35,7 @@
 
 import { colombiaToday } from '../colombia-date'
 import { paginarHotmart, ventanaDiaColombia } from './cliente'
+import type { FamiliaErrorHotmart } from './cliente'
 import { parsearApi } from './parser'
 import { convertirLote } from './moneda'
 import { clasificarLote, guardarLote } from './persistencia'
@@ -84,6 +85,13 @@ export type RegistroHotmart = {
     extras: Array<{ product_name: string; count: number; gross: number; net: number }>
     /** false = la API falló o se agotó el tope de páginas → NO pisar la BD con ceros. */
     apiSuccess: boolean
+    /**
+     * Familia del fallo cuando `apiSuccess` es `false`. Llega hasta el `reason`
+     * de la alerta y el título de la notificación: sin ella, un 400 por
+     * parámetros y un 401 por credencial caducada se avisaban con el mismo
+     * texto ("posible desconexión"), que no dice qué hay que arreglar.
+     */
+    familia?: FamiliaErrorHotmart
     unconverted_count: number
     monedas: string[]
     /** % de ventas del día clasificadas sin recurrir al nombre del producto. */
@@ -126,6 +134,8 @@ export type ResultadoSync = {
     /** `true` solo si se consumieron TODAS las páginas de AMBOS endpoints. */
     completo: boolean
     motivo?: string
+    /** Familia del fallo (`parametros`, `credenciales`, …) cuando `completo` es `false`. */
+    familia?: FamiliaErrorHotmart
     ventas: number
     escritas: number
     descartadas: number
@@ -182,6 +192,7 @@ export async function sincronizarDiaHotmart(
 
     const completo = historial.completo && comisiones.completo
     const motivo = historial.motivo ?? comisiones.motivo
+    const familia = historial.familia ?? comisiones.familia
 
     const porTx = new Map<string, ItemComisiones>()
     for (const c of comisiones.items) {
@@ -198,14 +209,14 @@ export async function sincronizarDiaHotmart(
 
     if (ventas.length === 0) {
         return {
-            completo, motivo, ventas: 0, escritas: 0, descartadas: 0,
+            completo, motivo, familia, ventas: 0, escritas: 0, descartadas: 0,
             sin_tasa: 0, monedas: [],
         }
     }
 
     if (!persistir) {
         return {
-            completo, motivo, ventas: ventas.length, escritas: 0, descartadas: 0,
+            completo, motivo, familia, ventas: ventas.length, escritas: 0, descartadas: 0,
             sin_tasa: 0, monedas: [],
         }
     }
@@ -221,6 +232,7 @@ export async function sincronizarDiaHotmart(
     return {
         completo,
         motivo,
+        familia,
         ventas: ventas.length,
         escritas: guardado.escritas,
         descartadas: guardado.descartadas,

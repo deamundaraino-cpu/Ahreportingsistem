@@ -3,7 +3,7 @@
 import React, { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
-import { Loader2, RotateCcw, XCircle, Unlock, PlayCircle } from 'lucide-react'
+import { Loader2, RotateCcw, XCircle, Unlock, PlayCircle, ChevronDown, ChevronRight } from 'lucide-react'
 import {
     retrySyncJob,
     cancelSyncJob,
@@ -33,6 +33,24 @@ function fmtFecha(iso: string | null): string {
     return new Date(iso).toLocaleString('es-CO', { dateStyle: 'short', timeStyle: 'short' })
 }
 
+/**
+ * Las líneas que explican POR QUÉ una corrida no trajo datos.
+ *
+ * Una corrida larga deja ~100 líneas y casi todas son ruido ("N tx traídas").
+ * Al abrir el detalle interesan primero los fallos, así que se muestran arriba
+ * y el resto queda debajo.
+ */
+const PATRON_PROBLEMA = /error|fall|incomplet|omit|sin token|sin credencial|preservan|rechaz|inválid|no disponible|límite/i
+
+function partirLogs(logs: unknown): { problemas: string[]; resto: string[] } {
+    if (!Array.isArray(logs)) return { problemas: [], resto: [] }
+    const lineas = logs.map(String)
+    return {
+        problemas: lineas.filter((l) => PATRON_PROBLEMA.test(l)),
+        resto: lineas.filter((l) => !PATRON_PROBLEMA.test(l)),
+    }
+}
+
 export function SyncPanelClient({ data, isAdmin }: { data: SyncPanelData; isAdmin: boolean }) {
     const router = useRouter()
     const [pending, startTransition] = useTransition()
@@ -41,6 +59,8 @@ export function SyncPanelClient({ data, isAdmin }: { data: SyncPanelData; isAdmi
     const [clienteId, setClienteId] = useState<string>('')
     const [start, setStart] = useState<string>('')
     const [end, setEnd] = useState<string>('')
+    /** Id de la ejecución cuyo detalle de logs está abierto. */
+    const [runAbierta, setRunAbierta] = useState<string | null>(null)
 
     const nombreCliente = (id: string | null) =>
         id ? (data.clientes.find(c => c.id === id)?.nombre ?? id.slice(0, 8)) : 'Todos'
@@ -189,6 +209,7 @@ export function SyncPanelClient({ data, isAdmin }: { data: SyncPanelData; isAdmi
                         <table className="w-full text-sm">
                             <thead className="text-xs text-muted-foreground">
                                 <tr className="border-b border-border">
+                                    <th className="text-left px-4 py-2 w-8"></th>
                                     <th className="text-left px-4 py-2">Cuándo</th>
                                     <th className="text-left px-4 py-2">Tipo</th>
                                     <th className="text-left px-4 py-2">Cliente</th>
@@ -199,24 +220,76 @@ export function SyncPanelClient({ data, isAdmin }: { data: SyncPanelData; isAdmi
                                 </tr>
                             </thead>
                             <tbody>
-                                {data.runs.map(r => (
-                                    <tr key={r.id} className="border-b border-border/50 last:border-0">
-                                        <td className="px-4 py-2 text-xs text-muted-foreground">{fmtFecha(r.started_at)}</td>
-                                        <td className="px-4 py-2 font-mono text-xs">{r.tipo}</td>
-                                        <td className="px-4 py-2">{nombreCliente(r.cliente_id)}</td>
-                                        <td className={`px-4 py-2 font-medium ${ESTADO_COLOR[r.estado]}`} title={r.error ?? ''}>
-                                            {r.estado}
-                                        </td>
-                                        <td className="px-4 py-2 text-right text-xs">{fmtDuracion(r.duracion_ms)}</td>
-                                        <td className="px-4 py-2 text-right text-xs">
-                                            {r.filas_escritas}
-                                            {r.filas_saltadas > 0 && (
-                                                <span className="text-muted-foreground"> (+{r.filas_saltadas} sin cambios)</span>
+                                {data.runs.map(r => {
+                                    const { problemas, resto } = partirLogs(r.logs)
+                                    const hayDetalle = problemas.length + resto.length > 0 || Boolean(r.error)
+                                    const abierta = runAbierta === r.id
+                                    return (
+                                        <React.Fragment key={r.id}>
+                                            <tr
+                                                className={`border-b border-border/50 ${hayDetalle ? 'cursor-pointer hover:bg-muted/40' : ''}`}
+                                                onClick={() => hayDetalle && setRunAbierta(abierta ? null : r.id)}
+                                            >
+                                                <td className="px-4 py-2 text-muted-foreground">
+                                                    {hayDetalle && (abierta
+                                                        ? <ChevronDown className="h-3.5 w-3.5" />
+                                                        : <ChevronRight className="h-3.5 w-3.5" />)}
+                                                </td>
+                                                <td className="px-4 py-2 text-xs text-muted-foreground">{fmtFecha(r.started_at)}</td>
+                                                <td className="px-4 py-2 font-mono text-xs">{r.tipo}</td>
+                                                <td className="px-4 py-2">{nombreCliente(r.cliente_id)}</td>
+                                                <td className={`px-4 py-2 font-medium ${ESTADO_COLOR[r.estado]}`}>
+                                                    {r.estado}
+                                                    {problemas.length > 0 && (
+                                                        <span className="ml-2 text-xs font-normal text-amber-600 dark:text-amber-400">
+                                                            {problemas.length} aviso{problemas.length > 1 ? 's' : ''}
+                                                        </span>
+                                                    )}
+                                                </td>
+                                                <td className="px-4 py-2 text-right text-xs">{fmtDuracion(r.duracion_ms)}</td>
+                                                <td className="px-4 py-2 text-right text-xs">
+                                                    {r.filas_escritas}
+                                                    {r.filas_saltadas > 0 && (
+                                                        <span className="text-muted-foreground"> (+{r.filas_saltadas} sin cambios)</span>
+                                                    )}
+                                                </td>
+                                                <td className="px-4 py-2 text-xs text-muted-foreground">{r.ejecutor}</td>
+                                            </tr>
+                                            {abierta && (
+                                                <tr className="border-b border-border/50 bg-muted/30">
+                                                    <td colSpan={8} className="px-4 py-3">
+                                                        {r.error && (
+                                                            <p className="mb-2 font-mono text-xs text-red-600 dark:text-red-400 break-all">
+                                                                {r.error}
+                                                            </p>
+                                                        )}
+                                                        {problemas.length > 0 && (
+                                                            <div className="mb-3">
+                                                                <p className="mb-1 text-xs font-semibold text-muted-foreground">Avisos y errores</p>
+                                                                <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-all rounded bg-background p-2 font-mono text-[11px] text-amber-700 dark:text-amber-400">
+                                                                    {problemas.join('\n')}
+                                                                </pre>
+                                                            </div>
+                                                        )}
+                                                        {resto.length > 0 && (
+                                                            <details>
+                                                                <summary className="cursor-pointer text-xs text-muted-foreground">
+                                                                    Traza completa ({resto.length} línea{resto.length > 1 ? 's' : ''})
+                                                                </summary>
+                                                                <pre className="mt-1 max-h-64 overflow-auto whitespace-pre-wrap break-all rounded bg-background p-2 font-mono text-[11px] text-muted-foreground">
+                                                                    {resto.join('\n')}
+                                                                </pre>
+                                                            </details>
+                                                        )}
+                                                        {problemas.length === 0 && resto.length === 0 && !r.error && (
+                                                            <p className="text-xs text-muted-foreground">Sin logs registrados.</p>
+                                                        )}
+                                                    </td>
+                                                </tr>
                                             )}
-                                        </td>
-                                        <td className="px-4 py-2 text-xs text-muted-foreground">{r.ejecutor}</td>
-                                    </tr>
-                                ))}
+                                        </React.Fragment>
+                                    )
+                                })}
                             </tbody>
                         </table>
                     </div>

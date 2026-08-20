@@ -31,7 +31,12 @@ export async function getSyncPanelData(): Promise<SyncPanelData> {
       .limit(100),
     supabase
       .from('sync_runs')
-      .select('id, tipo, cliente_id, fecha_inicio, fecha_fin, started_at, duracion_ms, estado, filas_escritas, filas_saltadas, error, ejecutor')
+      // `logs` y `stats` los escribe el runner desde `debugLogs` (hasta 200
+      // líneas) y son el ÚNICO sitio donde queda el error crudo de una API: el
+      // status HTTP, la query enviada y el cuerpo de la respuesta. Hasta ahora
+      // no se seleccionaban, así que diagnosticar una caída obligaba a consultar
+      // Supabase a mano.
+      .select('id, tipo, cliente_id, fecha_inicio, fecha_fin, started_at, duracion_ms, estado, filas_escritas, filas_saltadas, error, ejecutor, logs, stats')
       .order('started_at', { ascending: false })
       .limit(60),
     supabase.from('clientes').select('id, nombre').order('nombre'),

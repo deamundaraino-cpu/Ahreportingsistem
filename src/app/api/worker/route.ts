@@ -31,6 +31,36 @@ export const maxDuration = 60
 const WORKER_BUDGET_MS = 45_000
 
 /**
+ * Ventana de dedupe del aviso de "sincronización incompleta".
+ *
+ * El worker corre varias veces al día y el fallback de GitHub Actions drena la
+ * cola cada 30 min: un fallo persistente de una API generaba un aviso por
+ * pasada. Durante la caída de Hotmart del 18-ago fueron 95 avisos idénticos en
+ * 3 días. 6 h deja ver el problema cada día sin enterrar la campanita.
+ */
+const ALERTA_API_DEDUPE_MS = 6 * 60 * 60 * 1000
+
+/**
+ * `reason` de la alerta → texto que lee un humano en la notificación.
+ *
+ * Las claves `api_*` las produce la clasificación por status HTTP de
+ * `clasificarErrorHotmart`; el resto son las guardas anti-cero del worker.
+ */
+const ETIQUETA_RAZON: Record<string, string> = {
+    api_disconnected: 'API caída',
+    api_parametros: 'parámetros rechazados',
+    api_credenciales: 'credenciales inválidas',
+    api_limite: 'límite de peticiones',
+    api_indisponible: 'API no disponible',
+    api_respuesta_invalida: 'respuesta ilegible de la API',
+    api_desconocido: 'error no clasificado',
+    zero_vs_previous: 'cero que contradice datos previos',
+    caida_relativa: 'caída brusca de ventas',
+    sin_tasa_cambio: 'importes sin tasa de cambio',
+    spend_mismatch: 'gasto inconsistente',
+}
+
+/**
  * Memoiza por clave con valor Promise; si la promesa falla, limpia la entrada
  * para no cachear un fallo transitorio (permite reintento en una fecha posterior).
  * Se usa para cargar catálogos/nombres (que NO cambian por día) UNA sola vez por
@@ -1518,6 +1548,7 @@ export async function GET(request: Request) {
                     const r = registroVacio()
                     for (const f of hotmartFunnels) r.by_tab[f.tab_id] = desgloseVacio()
                     r.apiSuccess = false
+                    r.familia = sync.familia
                     return r
                 }
 
@@ -1930,7 +1961,9 @@ export async function GET(request: Request) {
                 if ((hotmartApiFailed || hotmartInconsistent) && hasHotmartData(prevRow)) {
                     inconsistencyAlerts.push({
                         cliente: cliente.nombre, platform: 'Hotmart', fecha: targetDate,
-                        reason: hotmartApiFailed ? 'api_disconnected'
+                        // `familia` distingue un 400 por parámetros de un 401 por
+                        // credencial: sin ella todo se avisaba como "desconexión".
+                        reason: hotmartApiFailed ? `api_${hotmartRecord.familia ?? 'disconnected'}`
                             : caidaRelativa ? `caida_relativa:${ventasAhora}/${ventasPrevias}`
                             : 'zero_vs_previous',
                     })
@@ -2250,21 +2283,51 @@ export async function GET(request: Request) {
     // Estos casos NO sobrescribieron la BD (se preservaron los datos previos), pero requieren
     // revisión humana: una API caída o un cero que contradice datos ya descargados.
     if (inconsistencyAlerts.length > 0 && process.env.SUPABASE_SERVICE_ROLE_KEY) {
-        const disconnected = inconsistencyAlerts.filter((a) => a.reason === 'api_disconnected').length
-        const summary = inconsistencyAlerts
-            .slice(0, 12)
-            .map((a) => `${a.cliente}: ${a.platform} ${a.fecha}`)
-            .join(', ')
-        await notifyUsers({
-            db: adminSupabase,
-            type: 'sync_failed',
-            severity: 'warning',
-            audience: 'admins',
-            title: `Posible desconexión/inconsistencia de API (${inconsistencyAlerts.length} caso${inconsistencyAlerts.length > 1 ? 's' : ''})`,
-            message: `Se preservaron los datos existentes${disconnected > 0 ? ` (${disconnected} por API caída)` : ''}: ${summary}`.slice(0, 300),
-            link: '/dashboard',
-            metadata: { reason: 'api_disconnected_or_inconsistent', alerts: inconsistencyAlerts.slice(0, 100), range: { start: startDateStr, end: endDateStr } },
-        })
+        // ── DEDUPE ────────────────────────────────────────────────────────
+        // Sin esto, cada pasada del worker (cron diario + reintentos + el
+        // fallback de GitHub Actions cada 30 min) emitía un aviso NUEVO del
+        // MISMO fallo: 95 notificaciones en 3 días durante la caída de Hotmart
+        // del 18-ago, que es como no tener ninguna. Mismo patrón que ya usa
+        // `/api/worker/health`.
+        const { data: avisoReciente } = await adminSupabase
+            .from('notifications')
+            .select('id')
+            .eq('type', 'sync_failed')
+            .eq('metadata->>reason', 'api_disconnected_or_inconsistent')
+            .gte('created_at', new Date(Date.now() - ALERTA_API_DEDUPE_MS).toISOString())
+            .limit(1)
+
+        if (!avisoReciente || avisoReciente.length === 0) {
+            // Agrupar por familia: "3 por credenciales" y "3 por parámetros"
+            // llevan a acciones distintas, y el texto anterior ("por API caída")
+            // los describía igual a los dos.
+            const porFamilia = new Map<string, number>()
+            for (const a of inconsistencyAlerts) {
+                const etiqueta = ETIQUETA_RAZON[a.reason] ?? ETIQUETA_RAZON[a.reason.split(':')[0]] ?? 'inconsistencia'
+                porFamilia.set(etiqueta, (porFamilia.get(etiqueta) ?? 0) + 1)
+            }
+            const desglose = Array.from(porFamilia.entries())
+                .sort((a, b) => b[1] - a[1])
+                .map(([etiqueta, n]) => `${n} por ${etiqueta}`)
+                .join(', ')
+            const summary = inconsistencyAlerts
+                .slice(0, 12)
+                .map((a) => `${a.cliente}: ${a.platform} ${a.fecha}`)
+                .join(', ')
+
+            await notifyUsers({
+                db: adminSupabase,
+                type: 'sync_failed',
+                severity: 'warning',
+                audience: 'admins',
+                title: `Sincronización incompleta: ${desglose} (${inconsistencyAlerts.length} caso${inconsistencyAlerts.length > 1 ? 's' : ''})`,
+                message: `Se preservaron los datos existentes. ${summary}`.slice(0, 300),
+                link: '/admin/sync',
+                metadata: { reason: 'api_disconnected_or_inconsistent', alerts: inconsistencyAlerts.slice(0, 100), range: { start: startDateStr, end: endDateStr } },
+            })
+        } else {
+            log(`[worker] ${inconsistencyAlerts.length} alerta(s) de API omitidas: ya hay un aviso de las últimas ${ALERTA_API_DEDUPE_MS / 3_600_000} h.`)
+        }
     }
 
     // Diagnóstico: action_types que Meta envió y no mapeamos a ninguna métrica.
