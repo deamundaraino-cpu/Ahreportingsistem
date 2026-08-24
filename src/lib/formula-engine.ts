@@ -440,24 +440,78 @@ function safeEvalArithmetic(input: string): number {
  * Evaluates a formula string against a metric row object.
  * Returns the numeric result or null if calculation isn't possible.
  */
+// ── Caché de expansión de fórmulas ──────────────────────────────────────────
+//
+// La primera mitad de `evaluateFormula` —resolver alias y expandir macros de
+// forma recursiva— NO depende de la fila: solo de la fórmula y de los mapas de
+// configuración. Sin embargo se ejecutaba una vez por fila y por columna, y
+// además reconstruía `{ ...MACRO_MAP, ...customMetrics }` con spread en cada
+// llamada. En una tabla de ~2.000 filas × 7 columnas eso son 14.000 expansiones
+// recursivas idénticas por render.
+//
+// La clave no puede ser `JSON.stringify` de los mapas (volveríamos a pagar por
+// fila), así que se identifica cada objeto de configuración por identidad, con
+// un id perezoso en un WeakMap. Los llamadores pasan las mismas referencias
+// durante un render, que es justo el caso que interesa acelerar.
+
+/** Defaults estables: si fuesen `{}` inline, cada llamada crearía un objeto
+ *  nuevo, con id nuevo, y el caché no acertaría nunca. */
+const MAPA_VACIO: Record<string, string> = Object.freeze({}) as Record<string, string>
+const CONTEXTO_VACIO: Record<string, number> = Object.freeze({}) as Record<string, number>
+
+let _idSeq = 0
+const _objIds = new WeakMap<object, number>()
+function idDeObjeto(o: object | undefined | null): number {
+    if (!o) return 0
+    let id = _objIds.get(o)
+    if (id === undefined) {
+        id = ++_idSeq
+        _objIds.set(o, id)
+    }
+    return id
+}
+
+const EXPR_CACHE_MAX = 5_000
+const _exprCache = new Map<string, string>()
+
+function expandirExpresion(
+    formula: string,
+    sourceMapping: Record<string, string>,
+    availablePlatforms: Set<string> | undefined,
+    customMetrics: Record<string, string>
+): string {
+    const clave = `${formula}|${idDeObjeto(sourceMapping)}|${idDeObjeto(availablePlatforms)}|${idDeObjeto(customMetrics)}`
+    const cacheado = _exprCache.get(clave)
+    if (cacheado !== undefined) return cacheado
+
+    let expr = availablePlatforms
+        ? resolveAliasesWithFallback(formula, sourceMapping, availablePlatforms)
+        : resolveAliases(formula, sourceMapping)
+    expr = expandFormulaRecursive(expr, { ...MACRO_MAP, ...customMetrics })
+
+    // Techo simple para que un proceso de larga vida (el worker) no acumule.
+    if (_exprCache.size >= EXPR_CACHE_MAX) _exprCache.clear()
+    _exprCache.set(clave, expr)
+    return expr
+}
+
+/** Vacía el caché de expansión. Solo lo necesitan los tests. */
+export function limpiarCacheDeFormulas(): void {
+    _exprCache.clear()
+}
+
 export function evaluateFormula(
     formula: string,
     row: Record<string, any>,
-    context: Record<string, number> = {},
-    sourceMapping: Record<string, string> = {},
+    context: Record<string, number> = CONTEXTO_VACIO,
+    sourceMapping: Record<string, string> = MAPA_VACIO,
     availablePlatforms?: Set<string>,
-    customMetrics: Record<string, string> = {}
+    customMetrics: Record<string, string> = MAPA_VACIO
 ): number | null {
     if (formula === 'fecha') return null // fecha is handled separately
 
     try {
-        let expr = availablePlatforms
-            ? resolveAliasesWithFallback(formula, sourceMapping, availablePlatforms)
-            : resolveAliases(formula, sourceMapping)
-        
-        // Merge standard macros with user-defined custom metrics for recursive expansion
-        const fullMacroMap = { ...MACRO_MAP, ...customMetrics }
-        expr = expandFormulaRecursive(expr, fullMacroMap)
+        let expr = expandirExpresion(formula, sourceMapping, availablePlatforms, customMetrics)
 
         // Replace all known field names with numeric values from the row
         const allFields = { ...FIELD_MAP }
@@ -517,10 +571,10 @@ export function evaluateFormula(
 export function aggregateFormula(
     formula: string,
     rows: Record<string, any>[],
-    context: Record<string, number> = {},
-    sourceMapping: Record<string, string> = {},
+    context: Record<string, number> = CONTEXTO_VACIO,
+    sourceMapping: Record<string, string> = MAPA_VACIO,
     availablePlatforms?: Set<string>,
-    customMetrics: Record<string, string> = {}
+    customMetrics: Record<string, string> = MAPA_VACIO
 ): number | null {
     if (rows.length === 0 && Object.keys(context).length === 0) return null
 

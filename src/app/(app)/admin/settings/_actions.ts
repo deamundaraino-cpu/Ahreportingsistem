@@ -2,7 +2,6 @@
 
 import { createClient, createAdminClient } from '@/utils/supabase/server'
 import { revalidatePath } from 'next/cache'
-import { headers } from 'next/headers'
 import { BetaAnalyticsDataClient } from '@google-analytics/data'
 import type {
     ConversionesConfig, DriveSheet, SheetTabConfig, SheetTabInfo,
@@ -13,6 +12,7 @@ import type { SheetCampoDef, SheetCampoVistaDef, CampoValorCrudo } from '@/lib/s
 import type { FuenteColumnas } from '@/lib/sheets/campos-db'
 import { loadCamposCliente as loadCamposClienteServer } from '@/lib/sheets/campos-db'
 import { leerJsonRespuesta, esTimeoutDeFetch } from '@/lib/fetch-json'
+import { internalFetch } from '@/lib/internal-fetch'
 
 export async function getClientes() {
     const supabase = await createClient()
@@ -561,15 +561,11 @@ export async function savePublicLayout(clienteId: string, payload: {
 
 export async function syncClienteMetrics(clienteId: string, startDate: string, endDate: string) {
     try {
-        const headersList = await headers()
-        const host = headersList.get('host') || 'localhost:3001'
-        const protocol = host.includes('localhost') ? 'http' : 'https'
-        const baseUrl = `${protocol}://${host}`
 
-        const url = `${baseUrl}/api/worker?client_id=${clienteId}&start=${startDate}&end=${endDate}`
+        const url = `/api/worker?client_id=${clienteId}&start=${startDate}&end=${endDate}`
         const cronSecret = process.env.CRON_SECRET
 
-        const res = await fetch(url, {
+        const res = await internalFetch(url, {
             headers: cronSecret ? { Authorization: `Bearer ${cronSecret}` } : {},
             cache: 'no-store',
         })
@@ -602,7 +598,7 @@ export async function syncClienteMetrics(clienteId: string, startDate: string, e
             : !!sheets?.sheet_url
         if (haySheets) {
             try {
-                await fetch(`${baseUrl}/api/admin/sync-conversiones-offline`, {
+                await internalFetch(`/api/admin/sync-conversiones-offline`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ clientId: clienteId }),
@@ -731,12 +727,8 @@ export async function disconnectGoogle(): Promise<{ success: boolean; error?: st
 
 export async function detectConversionesColumns(sheetConfig: ConversionesConfig, tab?: SheetTabConfig) {
     try {
-        const headersList = await headers()
-        const host = headersList.get('host') || 'localhost:3001'
-        const protocol = host.includes('localhost') ? 'http' : 'https'
-        const baseUrl = `${protocol}://${host}`
 
-        const res = await fetch(`${baseUrl}/api/admin/detect-sheet-columns`, {
+        const res = await internalFetch(`/api/admin/detect-sheet-columns`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ sheetConfig, tab }),
@@ -762,8 +754,8 @@ export async function previewEliminarSheet(
     sheetId: string
 ): Promise<SheetEliminarPreview | { error: string }> {
     try {
-        const res = await fetch(
-            `${await baseUrl()}/api/admin/sheets-conversiones/eliminar` +
+        const res = await internalFetch(
+            `/api/admin/sheets-conversiones/eliminar` +
             `?clientId=${encodeURIComponent(clienteId)}&sheetId=${encodeURIComponent(sheetId)}`,
             { cache: 'no-store' }
         )
@@ -788,7 +780,7 @@ export async function eliminarSheetConversiones(
     sheetId: string
 ): Promise<{ done?: boolean; borradas?: number; restantes?: number; warning?: string; error?: string }> {
     try {
-        const res = await fetch(`${await baseUrl()}/api/admin/sheets-conversiones/eliminar`, {
+        const res = await internalFetch(`/api/admin/sheets-conversiones/eliminar`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ clientId: clienteId, sheetId }),
@@ -815,12 +807,8 @@ export async function eliminarSheetConversiones(
 // Pestañas reales del documento, para elegirlas en vez de teclear el nombre.
 export async function listConversionesTabs(sheetConfig: ConversionesConfig) {
     try {
-        const headersList = await headers()
-        const host = headersList.get('host') || 'localhost:3001'
-        const protocol = host.includes('localhost') ? 'http' : 'https'
-        const baseUrl = `${protocol}://${host}`
 
-        const res = await fetch(`${baseUrl}/api/admin/list-sheet-tabs`, {
+        const res = await internalFetch(`/api/admin/list-sheet-tabs`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ sheetConfig }),
@@ -838,13 +826,9 @@ export async function listConversionesTabs(sheetConfig: ConversionesConfig) {
 // Estado del último sync por sheet (filas ok/descartadas y avisos por pestaña).
 export async function getConversionesSyncStatus(clienteId: string) {
     try {
-        const headersList = await headers()
-        const host = headersList.get('host') || 'localhost:3001'
-        const protocol = host.includes('localhost') ? 'http' : 'https'
-        const baseUrl = `${protocol}://${host}`
 
-        const res = await fetch(
-            `${baseUrl}/api/admin/sync-conversiones-offline?clientId=${encodeURIComponent(clienteId)}`,
+        const res = await internalFetch(
+            `/api/admin/sync-conversiones-offline?clientId=${encodeURIComponent(clienteId)}`,
             { cache: 'no-store' }
         )
 
@@ -858,12 +842,8 @@ export async function getConversionesSyncStatus(clienteId: string) {
 
 export async function listDriveSheets() {
     try {
-        const headersList = await headers()
-        const host = headersList.get('host') || 'localhost:3001'
-        const protocol = host.includes('localhost') ? 'http' : 'https'
-        const baseUrl = `${protocol}://${host}`
 
-        const res = await fetch(`${baseUrl}/api/admin/list-google-sheets`, {
+        const res = await internalFetch(`/api/admin/list-google-sheets`, {
             cache: 'no-store',
         })
 
@@ -879,12 +859,8 @@ export async function listDriveSheets() {
 // por cliente (evita teclear el ID numérico a mano).
 export async function listGa4Properties() {
     try {
-        const headersList = await headers()
-        const host = headersList.get('host') || 'localhost:3001'
-        const protocol = host.includes('localhost') ? 'http' : 'https'
-        const baseUrl = `${protocol}://${host}`
 
-        const res = await fetch(`${baseUrl}/api/admin/list-ga4-properties`, {
+        const res = await internalFetch(`/api/admin/list-ga4-properties`, {
             cache: 'no-store',
         })
 
@@ -900,13 +876,6 @@ export async function listGa4Properties() {
 // Definiciones por cliente que unifican columnas equivalentes de varias
 // pestañas. Todo pasa por /api/admin/sheet-campos*, que usa el service role.
 
-async function baseUrl() {
-    const headersList = await headers()
-    const host = headersList.get('host') || 'localhost:3001'
-    const protocol = host.includes('localhost') ? 'http' : 'https'
-    return `${protocol}://${host}`
-}
-
 export interface SheetCamposPayload {
     campos: SheetCampoDef[]
     vistas: SheetCampoVistaDef[]
@@ -914,8 +883,8 @@ export interface SheetCamposPayload {
 
 export async function listSheetCampos(clienteId: string) {
     try {
-        const res = await fetch(
-            `${await baseUrl()}/api/admin/sheet-campos?cliente_id=${encodeURIComponent(clienteId)}`,
+        const res = await internalFetch(
+            `/api/admin/sheet-campos?cliente_id=${encodeURIComponent(clienteId)}`,
             { cache: 'no-store' }
         )
         const data = await res.json()
@@ -929,7 +898,7 @@ export async function listSheetCampos(clienteId: string) {
 /** Guarda el campo y devuelve el catálogo ya recalculado (el POST recalcula). */
 export async function saveSheetCampo(clienteId: string, campo: Partial<SheetCampoDef>) {
     try {
-        const res = await fetch(`${await baseUrl()}/api/admin/sheet-campos`, {
+        const res = await internalFetch(`/api/admin/sheet-campos`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ ...campo, cliente_id: clienteId }),
@@ -951,9 +920,9 @@ export async function saveSheetCampo(clienteId: string, campo: Partial<SheetCamp
 
 export async function deleteSheetCampo(clienteId: string, campoId: string) {
     try {
-        const url = `${await baseUrl()}/api/admin/sheet-campos` +
+        const url = `/api/admin/sheet-campos` +
             `?id=${encodeURIComponent(campoId)}&cliente_id=${encodeURIComponent(clienteId)}`
-        const res = await fetch(url, { method: 'DELETE', cache: 'no-store' })
+        const res = await internalFetch(url, { method: 'DELETE', cache: 'no-store' })
         const data = await res.json()
         if (!res.ok) return { error: data.error || 'Error al borrar el campo' }
         revalidatePath(`/admin/settings/${clienteId}`)
@@ -965,7 +934,7 @@ export async function deleteSheetCampo(clienteId: string, campoId: string) {
 
 export async function saveSheetVista(clienteId: string, vista: Partial<SheetCampoVistaDef>) {
     try {
-        const res = await fetch(`${await baseUrl()}/api/admin/sheet-campos/vistas`, {
+        const res = await internalFetch(`/api/admin/sheet-campos/vistas`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ ...vista, cliente_id: clienteId }),
@@ -982,9 +951,9 @@ export async function saveSheetVista(clienteId: string, vista: Partial<SheetCamp
 
 export async function deleteSheetVista(clienteId: string, vistaId: string) {
     try {
-        const url = `${await baseUrl()}/api/admin/sheet-campos/vistas` +
+        const url = `/api/admin/sheet-campos/vistas` +
             `?id=${encodeURIComponent(vistaId)}&cliente_id=${encodeURIComponent(clienteId)}`
-        const res = await fetch(url, { method: 'DELETE', cache: 'no-store' })
+        const res = await internalFetch(url, { method: 'DELETE', cache: 'no-store' })
         const data = await res.json()
         if (!res.ok) return { error: data.error || 'Error al borrar la vista' }
         revalidatePath(`/admin/settings/${clienteId}`)
@@ -997,9 +966,9 @@ export async function deleteSheetVista(clienteId: string, vistaId: string) {
 /** Valores crudos detectados de un campo, para el agrupador. */
 export async function listCampoValores(clienteId: string, campoId: string, limite = 500) {
     try {
-        const url = `${await baseUrl()}/api/admin/sheet-campos/valores` +
+        const url = `/api/admin/sheet-campos/valores` +
             `?cliente_id=${encodeURIComponent(clienteId)}&campo_id=${encodeURIComponent(campoId)}&limite=${limite}`
-        const res = await fetch(url, { cache: 'no-store' })
+        const res = await internalFetch(url, { cache: 'no-store' })
         const data = await res.json()
         if (!res.ok) return { error: data.error || 'Error al leer los valores' }
         return {
@@ -1014,7 +983,7 @@ export async function listCampoValores(clienteId: string, campoId: string, limit
 /** Recalcula desde `sheet_filas`. Nunca llama a Google. */
 export async function recalcularSheetCampos(clienteId: string, campoId?: string) {
     try {
-        const res = await fetch(`${await baseUrl()}/api/admin/sheet-campos/recalcular`, {
+        const res = await internalFetch(`/api/admin/sheet-campos/recalcular`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ cliente_id: clienteId, campo_id: campoId }),
@@ -1056,8 +1025,8 @@ export async function getSheetCamposCatalogo(clienteId: string) {
 /** Columnas por pestaña ya sincronizada, con muestras. No llama a Google. */
 export async function listSheetColumnas(clienteId: string) {
     try {
-        const res = await fetch(
-            `${await baseUrl()}/api/admin/sheet-columnas?cliente_id=${encodeURIComponent(clienteId)}`,
+        const res = await internalFetch(
+            `/api/admin/sheet-columnas?cliente_id=${encodeURIComponent(clienteId)}`,
             { cache: 'no-store' }
         )
         const data = await res.json()
@@ -1096,7 +1065,7 @@ export async function syncTandaConversiones(
     tanda: SyncTanda
 ): Promise<Partial<SyncConversionesResponse> & { aggregates?: unknown[]; quality?: unknown[]; batchId?: string }> {
     try {
-        const res = await fetch(`${await baseUrl()}/api/admin/sync-conversiones-offline`, {
+        const res = await internalFetch(`/api/admin/sync-conversiones-offline`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ clientId: clienteId, ...tanda }),
@@ -1129,12 +1098,8 @@ export async function syncConversionesOffline(
     sheetId?: string
 ): Promise<Partial<SyncConversionesResponse>> {
     try {
-        const headersList = await headers()
-        const host = headersList.get('host') || 'localhost:3001'
-        const protocol = host.includes('localhost') ? 'http' : 'https'
-        const baseUrl = `${protocol}://${host}`
 
-        const res = await fetch(`${baseUrl}/api/admin/sync-conversiones-offline`, {
+        const res = await internalFetch(`/api/admin/sync-conversiones-offline`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ clientId: clienteId, ...(sheetId ? { sheetId } : {}) }),

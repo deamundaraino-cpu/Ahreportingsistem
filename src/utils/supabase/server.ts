@@ -1,3 +1,9 @@
+import 'server-only'
+
+// Este módulo exporta `createAdminClient()`, que usa la service role key y se
+// salta las RLS. `server-only` hace que importar cualquier cosa de aquí desde
+// un componente cliente rompa el build en vez de filtrar la clave al bundle.
+
 import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
 

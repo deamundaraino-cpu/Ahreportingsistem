@@ -13,7 +13,15 @@ import dynamic from 'next/dynamic'
 import { Skeleton } from '@/components/ui/skeleton'
 import { evaluateFormula, aggregateFormula, formatValue, filterRowByTikTokAccount } from '@/lib/formula-engine'
 import type { QuickEditTarget } from './QuickEditModal'
-import { MetricCharts } from './MetricCharts'
+// Recharts pesa ~490 KB y entraba en el bundle inicial del dashboard aunque
+// la pestaña activa no pintase ni un gráfico. Se carga bajo demanda, igual
+// que los modales de aquí abajo.
+const MetricCharts = dynamic(
+    () => import('./MetricCharts').then(m => ({ default: m.MetricCharts })),
+    // ssr:false porque recharts mide el contenedor para dibujar: en servidor
+    // renderiza vacío igualmente, y así su chunk no entra en la entrada.
+    { ssr: false, loading: () => <Skeleton className="h-64 rounded-xl" /> }
+)
 
 const LayoutConfigModal = dynamic(
     () => import('./LayoutConfigModal').then(m => ({ default: m.LayoutConfigModal })),

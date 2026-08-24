@@ -147,7 +147,7 @@ async function main() {
         const { execSync } = await import('node:child_process')
         const correr = (forzarJsonb: boolean): Record<string, number> => {
             const out = execSync(
-                `npx tsx scripts/_bi-gasto-por-campana.ts ${DESDE} ${HASTA}`,
+                `npx tsx --conditions=react-server scripts/_bi-gasto-por-campana.ts ${DESDE} ${HASTA}`,
                 {
                     encoding: 'utf8',
                     maxBuffer: 32 * 1024 * 1024,

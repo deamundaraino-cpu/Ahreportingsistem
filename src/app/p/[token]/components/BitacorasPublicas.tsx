@@ -1,5 +1,6 @@
 import { BookOpen } from 'lucide-react'
 import type { Bitacora } from '@/app/(app)/admin/settings/[id]/_actions'
+import { sanitizarHtmlBitacora } from '@/lib/sanitize-html'
 
 export function BitacorasPublicas({ entries }: { entries: Bitacora[] }) {
     return (
@@ -14,7 +15,9 @@ export function BitacorasPublicas({ entries }: { entries: Bitacora[] }) {
                         <p className="font-medium text-sm">{entry.titulo}</p>
                         <div
                             className="bitacora-content text-sm text-muted-foreground mt-1"
-                            dangerouslySetInnerHTML={{ __html: entry.contenido }}
+                            // Saneado también aquí, no solo al guardar: cubre las
+                            // entradas que ya estaban en la base de datos.
+                            dangerouslySetInnerHTML={{ __html: sanitizarHtmlBitacora(entry.contenido) }}
                         />
                         <div className="flex items-center gap-2 mt-3 text-xs text-muted-foreground/60">
                             {entry.author_name && <span>{entry.author_name}</span>}

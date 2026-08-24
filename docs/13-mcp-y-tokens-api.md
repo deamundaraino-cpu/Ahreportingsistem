@@ -20,7 +20,7 @@ Código: `src/lib/api-token-auth.ts`. Tabla: `api_tokens`. UI: `/admin/api-token
 | `write:sync` | Disparar sincronizaciones |
 
 ### Autenticación
-`authenticateApiToken(request)` acepta el token vía `Authorization: Bearer ads_…` **o** `?token=ads_…`. Verifica que esté activo y no expirado, y actualiza `last_used_at` de forma asíncrona. `requirePermission(context, permission)` lanza 403 si falta el scope.
+`authenticateApiToken(request)` acepta el token **solo** vía `Authorization: Bearer ads_…`. El fallback por query string se retiró: dejaba la credencial en logs de acceso y en la cabecera `Referer`. Verifica que esté activo y no expirado, y actualiza `last_used_at` de forma asíncrona. `requirePermission(context, permission)` lanza 403 si falta el scope.
 
 ### Ciclo de vida (endpoints)
 - `GET /api/tokens` — listar (sin valor plano).
@@ -45,7 +45,7 @@ Endpoint: `GET|POST /api/mcp` (`src/app/api/mcp/route.ts`). Permite que asistent
     "capabilities": { "tools": {} }
   }
   ```
-- `POST /api/mcp` — requiere token (Bearer o `?token=`). Métodos JSON-RPC: `initialize`, `ping`, `tools/list`, `tools/call`.
+- `POST /api/mcp` — requiere token (solo `Authorization: Bearer`). Métodos JSON-RPC: `initialize`, `ping`, `tools/list`, `tools/call`.
 
 ### Herramientas disponibles
 

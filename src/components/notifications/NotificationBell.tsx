@@ -2,10 +2,9 @@
 
 // Campanita de notificaciones: contador de no leídas en vivo (Supabase
 // Realtime sobre public.notifications) + popover con las últimas 10.
-// Se monta tanto en la topbar desktop como en el header mobile del
-// layout autenticado.
+// Se monta una sola vez, en el topbar responsive del layout autenticado.
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { formatDistanceToNow } from 'date-fns'
 import { es } from 'date-fns/locale'
@@ -34,9 +33,6 @@ export function NotificationBell({ userId }: { userId: string }) {
     const [items, setItems] = useState<InAppNotification[]>([])
     const [unread, setUnread] = useState(0)
     const [open, setOpen] = useState(false)
-    // Evita duplicar toasts cuando el componente está montado dos veces
-    // (header mobile + topbar desktop): solo la primera instancia los emite.
-    const toastOwner = useRef(false)
 
     const refresh = useCallback(async () => {
         const [{ items: latest }, count] = await Promise.all([
@@ -49,11 +45,6 @@ export function NotificationBell({ userId }: { userId: string }) {
 
     useEffect(() => {
         refresh()
-
-        if (!(window as any).__notifToastOwner) {
-            ;(window as any).__notifToastOwner = true
-            toastOwner.current = true
-        }
 
         const supabase = createClient()
         const channel = supabase
@@ -70,29 +61,24 @@ export function NotificationBell({ userId }: { userId: string }) {
                     const notif = payload.new as InAppNotification
                     setItems((prev) => [notif, ...prev].slice(0, 10))
                     setUnread((n) => n + 1)
-                    if (toastOwner.current) {
-                        const show =
-                            notif.severity === 'error' ? toast.error
-                            : notif.severity === 'warning' ? toast.warning
-                            : notif.severity === 'success' ? toast.success
-                            : toast.info
-                        show(notif.title, {
-                            description: notif.message ?? undefined,
-                            action: notif.link
-                                ? { label: 'Ver', onClick: () => router.push(notif.link!) }
-                                : undefined,
-                        })
-                    }
+
+                    const show =
+                        notif.severity === 'error' ? toast.error
+                        : notif.severity === 'warning' ? toast.warning
+                        : notif.severity === 'success' ? toast.success
+                        : toast.info
+                    show(notif.title, {
+                        description: notif.message ?? undefined,
+                        action: notif.link
+                            ? { label: 'Ver', onClick: () => router.push(notif.link!) }
+                            : undefined,
+                    })
                 }
             )
             .subscribe()
 
         return () => {
             supabase.removeChannel(channel)
-            if (toastOwner.current) {
-                ;(window as any).__notifToastOwner = false
-                toastOwner.current = false
-            }
         }
     }, [userId, refresh, router])
 
@@ -115,7 +101,7 @@ export function NotificationBell({ userId }: { userId: string }) {
     }
 
     // Al abrir, re-sincroniza lista y contador: cubre lecturas hechas desde
-    // /notificaciones, la instancia gemela (mobile/desktop) y deriva del realtime.
+    // /notificaciones y cualquier deriva del realtime.
     const handleOpenChange = (next: boolean) => {
         setOpen(next)
         if (next) refresh()

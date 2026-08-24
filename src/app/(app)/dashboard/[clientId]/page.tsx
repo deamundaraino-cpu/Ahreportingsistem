@@ -1,7 +1,8 @@
 import { getDashboardData } from "../_actions"
 import { DateRangeSelector } from "../components/DateRangeSelector"
 import { DashboardClient } from "../components/DashboardClient"
-import { ConversionesOfflineCard } from "../components/ConversionesOfflineCard"
+// Trae recharts; el envoltorio cliente lo carga bajo demanda (ver el archivo).
+import { ConversionesOfflineCardLazy as ConversionesOfflineCard } from "../components/ConversionesOfflineCardLazy"
 import { PublicLinkButton } from "../components/PublicLinkButton"
 import { BitacorasSidebar } from "../components/BitacorasSidebar"
 import { getBitacoras } from "../../admin/settings/[id]/_actions"

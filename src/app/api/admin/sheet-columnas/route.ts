@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { listarColumnasDisponibles } from '@/lib/sheets/campos-db'
 import { normalizeSheetConfigs } from '@/lib/integrations/google-sheets-conversiones'
+import { requireAdminRole } from '@/lib/report-utm/auth'
+import { esUuid } from '@/lib/validation'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -17,8 +19,12 @@ import { normalizeSheetConfigs } from '@/lib/integrations/google-sheets-conversi
  * cliente) para no mostrar UUIDs en el desplegable.
  */
 export async function GET(request: NextRequest) {
+  // Guard de rol: el proxy ya exige sesión en /api/admin, esto añade el rol.
+  const denied = await requireAdminRole()
+  if (denied) return denied
+
   const clienteId = request.nextUrl.searchParams.get('cliente_id')
-  if (!clienteId) return NextResponse.json({ error: 'cliente_id es obligatorio' }, { status: 400 })
+  if (!esUuid(clienteId)) return NextResponse.json({ error: 'cliente_id debe ser un UUID válido' }, { status: 400 })
 
   try {
     const db = createClient(

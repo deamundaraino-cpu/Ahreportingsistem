@@ -1,0 +1,20 @@
+version: 2
+updates:
+  # `next` y `react` están fijados a versión exacta a propósito (build
+  # reproducible), así que no reciben parches de seguridad solos. Dependabot
+  # abre el PR y deja la decisión de mergear en manos de una persona.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      seguridad:
+        applies-to: security-updates
+        patterns:
+          - "*"
+      menores:
+        applies-to: version-updates
+        update-types:
+          - minor
+          - patch

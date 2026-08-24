@@ -11,6 +11,8 @@ import {
   logSyncResult,
 } from '@/lib/integrations/google-sheets-conversiones'
 import type { ConversionDiariaParcial, TabSyncQuality } from '@/lib/integrations/google-sheets-conversiones'
+import { requireAdminRole } from '@/lib/report-utm/auth'
+import { esUuid } from '@/lib/validation'
 
 // Releer un documento entero y recalcular los campos no cabe en el timeout por
 // defecto: sin esto la petición moría a mitad y el cliente no se enteraba.
@@ -36,6 +38,10 @@ export const maxDuration = 60
  * El modo entero se conserva para el worker diario y los clientes pequeños.
  */
 export async function POST(request: NextRequest) {
+  // Guard de rol: el proxy ya exige sesión en /api/admin, esto añade el rol.
+  const denied = await requireAdminRole()
+  if (denied) return denied
+
   try {
     const {
       clientId, sheetId, tabId, batchId, consolidar, aggregates, quality, recalcularCampos,
@@ -205,10 +211,14 @@ export async function POST(request: NextRequest) {
  * estado del último sync de cada uno (filas ok/descartadas, avisos por pestaña).
  */
 export async function GET(request: NextRequest) {
+  // Guard de rol: el proxy ya exige sesión en /api/admin, esto añade el rol.
+  const denied = await requireAdminRole()
+  if (denied) return denied
+
   try {
     const clientId = request.nextUrl.searchParams.get('clientId')
-    if (!clientId) {
-      return NextResponse.json({ error: 'clientId is required' }, { status: 400 })
+    if (!esUuid(clientId)) {
+      return NextResponse.json({ error: 'clientId debe ser un UUID válido' }, { status: 400 })
     }
 
     const supabase = createClient(

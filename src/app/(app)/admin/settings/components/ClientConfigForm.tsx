@@ -1045,7 +1045,7 @@ const [testStatus, setTestStatus] = useState<{ [key: string]: { loading: boolean
                             ? 'Selecciona la propiedad de GA4 que corresponde a este cliente. Se usan los permisos de la cuenta de Google de la agencia.'
                             : 'Conecta una cuenta de servicio de Google Cloud para extraer métricas de GA4 (Sesiones, Rebote).'}
                     </CardDescription>
-                    {testStatus.ga4?.success && <p className="text-green-600 dark:text-green-500 text-xs flex items-start mt-2"><CheckCircle2 className="w-4 h-4 mr-1 shrink-0" /> <span dangerouslySetInnerHTML={{ __html: testStatus.ga4.message || 'Conexión Exitosa' }} /></p>}
+                    {testStatus.ga4?.success && <p className="text-green-600 dark:text-green-500 text-xs flex items-start mt-2"><CheckCircle2 className="w-4 h-4 mr-1 shrink-0" /> <span>{testStatus.ga4.message || 'Conexión Exitosa'}</span></p>}
                     {testStatus.ga4?.error && <p className="text-red-500 text-xs flex items-start mt-2"><AlertCircle className="w-4 h-4 mr-1 shrink-0" /> <span>{testStatus.ga4.error}</span></p>}
                 </CardHeader>
                 <CardContent className="space-y-4">

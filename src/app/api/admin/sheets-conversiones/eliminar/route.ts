@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { normalizeSheetConfigs } from '@/lib/integrations/google-sheets-conversiones'
 import { loadCamposCliente } from '@/lib/sheets/campos-db'
+import { requireAdminRole } from '@/lib/report-utm/auth'
+import { esUuid } from '@/lib/validation'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -47,10 +49,14 @@ async function contar(db: any, tabla: string, clienteId: string, sheetId: string
 }
 
 export async function GET(request: NextRequest) {
+  // Guard de rol: el proxy ya exige sesión en /api/admin, esto añade el rol.
+  const denied = await requireAdminRole()
+  if (denied) return denied
+
   const clientId = request.nextUrl.searchParams.get('clientId')
   const sheetId = request.nextUrl.searchParams.get('sheetId')
-  if (!clientId || !sheetId) {
-    return NextResponse.json({ error: 'clientId y sheetId son obligatorios' }, { status: 400 })
+  if (!esUuid(clientId) || !sheetId) {
+    return NextResponse.json({ error: 'clientId debe ser un UUID válido y sheetId es obligatorio' }, { status: 400 })
   }
 
   try {
@@ -86,6 +92,10 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
+  // Guard de rol: el proxy ya exige sesión en /api/admin, esto añade el rol.
+  const denied = await requireAdminRole()
+  if (denied) return denied
+
   try {
     const { clientId, sheetId } = await request.json()
     if (!clientId || !sheetId) {

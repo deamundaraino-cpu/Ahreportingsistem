@@ -1,6 +1,8 @@
 'use client'
 
 import { useState } from 'react'
+import dynamic from 'next/dynamic'
+import { Skeleton } from '@/components/ui/skeleton'
 import { Pencil, Trash2, GripVertical, Copy, Filter } from 'lucide-react'
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
@@ -8,7 +10,12 @@ import type { BiWidget, BiFilters, CalculatedField } from './BiTypes'
 import type { AdvancedFilter } from '@/lib/report-utm/bi-metadata'
 import { advancedFilterHasConditions, FILTERABLE_BASE_DIMS, FILTER_OPS, fieldDimLabel, leadFieldLabel } from '@/lib/report-utm/bi-metadata'
 import { ScorecardWidget } from './widgets/ScorecardWidget'
-import { ChartWidget }     from './widgets/ChartWidget'
+// ChartWidget arrastra recharts (~490 KB). Un informe puede no tener ningún
+// widget de gráfico, así que se carga solo cuando se pinta uno.
+const ChartWidget = dynamic(
+    () => import('./widgets/ChartWidget').then(m => ({ default: m.ChartWidget })),
+    { ssr: false, loading: () => <Skeleton className="h-48 rounded-lg" /> }
+)
 import { TableWidget }     from './widgets/TableWidget'
 import { FunnelWidget }    from './widgets/FunnelWidget'
 import { SlicerWidget }    from './widgets/SlicerWidget'

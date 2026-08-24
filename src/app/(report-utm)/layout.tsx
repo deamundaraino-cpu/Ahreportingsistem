@@ -1,7 +1,8 @@
 import { ReactNode } from 'react'
 import { redirect } from 'next/navigation'
-import { createClient, createAdminClient } from '@/utils/supabase/server'
+import { createClient } from '@/utils/supabase/server'
 import { ReportUtmSidebar } from '@/components/report-utm/ReportUtmSidebar'
+import { getBranding } from '@/lib/branding'
 
 export default async function ReportUtmLayout({ children }: { children: ReactNode }) {
     // Gate por env flag — el módulo solo se monta si está habilitado.
@@ -22,18 +23,9 @@ export default async function ReportUtmLayout({ children }: { children: ReactNod
 
     const role = profile?.role ?? 'viewer'
 
-    let branding: { app_name?: string; app_tag?: string; utm_name?: string; utm_tag?: string; logo_url?: string; colors?: { primary?: string; secondary?: string } } | null = null
-    const url = process.env.NEXT_PUBLIC_SUPABASE_URL
-    const key = process.env.SUPABASE_SERVICE_ROLE_KEY
-    if (url && key) {
-        try {
-            const supabaseAdmin = await createAdminClient()
-            const { data } = await supabaseAdmin.from('system_settings').select('value').eq('key', 'branding').single()
-            branding = data?.value
-        } catch (e) {
-            console.error('Failed to load branding in ReportUtmLayout:', e)
-        }
-    }
+    // Una sola lectura cacheada en vez de repetir la consulta al service role
+    // en cada layout (`lib/branding.ts`).
+    const branding = await getBranding()
 
     const utmName = branding?.utm_name || 'Report-UTM'
     const utmTag = branding?.utm_tag || 'Tracking & Atribución'

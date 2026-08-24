@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { recalcularCamposCliente } from '@/lib/sheets/campos-db'
+import { requireAdminRole } from '@/lib/report-utm/auth'
+import { esUuid } from '@/lib/validation'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -15,10 +17,14 @@ import { recalcularCamposCliente } from '@/lib/sheets/campos-db'
  * Sin `campo_id` recalcula todos los campos activos del cliente.
  */
 export async function POST(request: NextRequest) {
+  // Guard de rol: el proxy ya exige sesión en /api/admin, esto añade el rol.
+  const denied = await requireAdminRole()
+  if (denied) return denied
+
   try {
     const { cliente_id, campo_id, desde, hasta } = await request.json()
-    if (!cliente_id) {
-      return NextResponse.json({ error: 'cliente_id es obligatorio' }, { status: 400 })
+    if (!esUuid(cliente_id)) {
+      return NextResponse.json({ error: 'cliente_id debe ser un UUID válido' }, { status: 400 })
     }
 
     const db = createClient(

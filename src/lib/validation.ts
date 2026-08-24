@@ -74,3 +74,23 @@ export function validateSupabaseClient(client: unknown): asserts client is { fro
     );
   }
 }
+
+/**
+ * UUID obligatorio venido de query string o body. Las rutas de administración
+ * comprobaban solo "¿viene el parámetro?", lo que deja pasar cualquier cadena
+ * hasta la consulta. Devuelve el valor validado o lanza `ApiError` (400).
+ */
+export const uuidSchema = z.string().uuid('Identificador inválido');
+
+/** `true` si el valor es un UUID válido. Pensado para los guards de las rutas. */
+export function esUuid(value: unknown): value is string {
+  return uuidSchema.safeParse(value).success;
+}
+
+export function requireUuid(value: unknown, field: string): string {
+  const parsed = uuidSchema.safeParse(value);
+  if (!parsed.success) {
+    throw new ApiError('VALIDATION_ERROR', `${field} debe ser un UUID válido`, 400, { field });
+  }
+  return parsed.data;
+}

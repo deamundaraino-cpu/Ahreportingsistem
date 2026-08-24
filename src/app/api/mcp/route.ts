@@ -7,7 +7,7 @@
  * to read AdsHouse reporting data.
  *
  * Authentication: Bearer <ads_token> in Authorization header
- * OR ?token=<ads_token> query parameter.
+ * Solo cabecera: el fallback ?token= se retiró (quedaba en logs y en Referer).
  *
  * Endpoints:
  * GET /api/mcp — server info (no auth required)

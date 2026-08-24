@@ -3,6 +3,10 @@ import { reportUtmClient } from '@/lib/report-utm/client'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
+// Paginar hasta MAX_ROWS en una sola invocación puede tardar bastante y por
+// defecto Vercel corta a los 10 s: sin este tope explícito el export grande
+// se cae a medias en vez de terminar.
+export const maxDuration = 60
 
 /**
  * Exporta los leads (filtrados) a CSV.

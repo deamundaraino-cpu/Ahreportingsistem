@@ -13,8 +13,18 @@ const cspBase = [
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: blob: https:",
     "font-src 'self' data:",
-    // Supabase REST + realtime, plus the external APIs the dashboard talks to.
-    "connect-src 'self' https://*.supabase.co wss://*.supabase.co https:",
+    // Supabase REST + realtime y las APIs externas que el navegador llama de
+    // verdad. Antes esto terminaba en un `https:` suelto, que permitía mandar
+    // datos a cualquier host y dejaba la CSP sin valor como control de
+    // exfiltración. Las integraciones server-side (Google, Hotmart, TikTok…) no
+    // van aquí: las hace el servidor, no el navegador.
+    [
+        "connect-src 'self'",
+        "https://*.supabase.co",
+        "wss://*.supabase.co",
+        "https://graph.facebook.com",
+        "https://open.er-api.com",
+    ].join(' '),
     "object-src 'none'",
     "base-uri 'self'",
     "form-action 'self'",
@@ -36,6 +46,20 @@ const nextConfig: NextConfig = {
         'google-auth-library',
         'google-spreadsheet',
     ],
+    experimental: {
+        // Estos paquetes se importan como barril en decenas de archivos
+        // (`lucide-react` llega a 26 iconos en una sola línea). Hoy el
+        // tree-shaking funciona por defecto del bundler; declararlo lo vuelve
+        // explícito en vez de accidental.
+        optimizePackageImports: [
+            'lucide-react',
+            'date-fns',
+            'recharts',
+            'radix-ui',
+            '@dnd-kit/core',
+            '@dnd-kit/sortable',
+        ],
+    },
     async headers() {
         return [
             // Public, shareable/embeddable report routes: no frame restrictions so

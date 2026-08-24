@@ -5,6 +5,8 @@ import {
 } from '@/lib/sheets/campos-db'
 import { slugCampo, normalizarValorCrudo } from '@/lib/sheets/campos'
 import type { SheetCampoDef } from '@/lib/sheets/campos'
+import { requireAdminRole } from '@/lib/report-utm/auth'
+import { esUuid } from '@/lib/validation'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -28,8 +30,12 @@ function admin() {
 }
 
 export async function GET(request: NextRequest) {
+  // Guard de rol: el proxy ya exige sesión en /api/admin, esto añade el rol.
+  const denied = await requireAdminRole()
+  if (denied) return denied
+
   const clienteId = request.nextUrl.searchParams.get('cliente_id')
-  if (!clienteId) return NextResponse.json({ error: 'cliente_id es obligatorio' }, { status: 400 })
+  if (!esUuid(clienteId)) return NextResponse.json({ error: 'cliente_id debe ser un UUID válido' }, { status: 400 })
 
   try {
     const catalogo = await loadCamposCliente(admin(), clienteId)
@@ -53,6 +59,10 @@ function normalizarMapa(raw: unknown): Record<string, string> {
 }
 
 export async function POST(request: NextRequest) {
+  // Guard de rol: el proxy ya exige sesión en /api/admin, esto añade el rol.
+  const denied = await requireAdminRole()
+  if (denied) return denied
+
   try {
     const body = await request.json() as Partial<SheetCampoDef> & { cliente_id?: string }
     const clienteId = body.cliente_id
@@ -128,10 +138,14 @@ export async function POST(request: NextRequest) {
 }
 
 export async function DELETE(request: NextRequest) {
+  // Guard de rol: el proxy ya exige sesión en /api/admin, esto añade el rol.
+  const denied = await requireAdminRole()
+  if (denied) return denied
+
   const id = request.nextUrl.searchParams.get('id')
   const clienteId = request.nextUrl.searchParams.get('cliente_id')
-  if (!id || !clienteId) {
-    return NextResponse.json({ error: 'id y cliente_id son obligatorios' }, { status: 400 })
+  if (!esUuid(id) || !esUuid(clienteId)) {
+    return NextResponse.json({ error: 'id y cliente_id deben ser UUID válidos' }, { status: 400 })
   }
 
   try {

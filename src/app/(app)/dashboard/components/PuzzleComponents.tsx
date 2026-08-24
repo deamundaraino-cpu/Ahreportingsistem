@@ -6,9 +6,20 @@ import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { GripVertical, Trash2, AlignLeft, AlignCenter, AlignRight, ChevronUp, ChevronRight, Pencil, Copy, TrendingUp, TrendingDown, Minus } from 'lucide-react'
 import type { CardDef, ChartDef, TextBlockDef, CardThreshold } from '@/lib/layout-types'
-import { MetricCharts } from './MetricCharts'
+import dynamic from 'next/dynamic'
+import { Skeleton } from '@/components/ui/skeleton'
+
+// Mismo motivo que en DashboardClient: recharts fuera del bundle inicial.
+const MetricCharts = dynamic(
+    () => import('./MetricCharts').then(m => ({ default: m.MetricCharts })),
+    { ssr: false, loading: () => <Skeleton className="h-64 rounded-xl" /> }
+)
 import { formatValue } from '@/lib/formula-engine'
-import { LineChart, Line, ResponsiveContainer } from 'recharts'
+// El sparkline vive aparte para que recharts no entre en el bundle inicial.
+const Sparkline = dynamic(
+    () => import('./Sparkline').then(m => ({ default: m.Sparkline })),
+    { ssr: false }
+)
 
 const COLOR_MAP: Record<string, string> = {
     emerald: 'text-emerald-600 dark:text-emerald-400',
@@ -125,12 +136,7 @@ export const SortableCard = React.memo(function SortableCard({ id, card, isPuzzl
                 {/* Sparkline */}
                 {card.variant === 'sparkline' && card.dailyValues && card.dailyValues.length > 1 && (
                     <div className="mt-2 h-10">
-                        <ResponsiveContainer width="100%" height="100%">
-                            <LineChart data={card.dailyValues}>
-                                <Line type="monotone" dataKey="v" dot={false} strokeWidth={1.5}
-                                    stroke={thresholdColor ? 'currentColor' : 'hsl(var(--primary))'} />
-                            </LineChart>
-                        </ResponsiveContainer>
+                        <Sparkline data={card.dailyValues} stroke={thresholdColor ? 'currentColor' : 'hsl(var(--primary))'} />
                     </div>
                 )}
 

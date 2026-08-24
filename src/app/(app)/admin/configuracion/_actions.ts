@@ -1,28 +1,21 @@
 'use server';
 
 import { createClient, createAdminClient } from '@/utils/supabase/server';
-import { revalidatePath } from 'next/cache';
+import { revalidatePath, updateTag } from 'next/cache';
 import { evaluateAlertRules, type RuleRow } from '@/lib/notifications/rules-engine';
 import { colombiaToday, colombiaYesterday } from '@/lib/date-utils';
 import { format, subDays, startOfMonth, endOfMonth, parseISO } from 'date-fns';
 import { enrichMetaRow, enrichTikTokRow, parseTabFilter, type AnyCampaignFilter } from '@/lib/campaign-filter';
+import { BRANDING_CACHE_TAG } from '@/lib/branding'
+import { getSesionActual } from '@/lib/auth-session';
 
-type Role = 'superadmin' | 'admin' | 'trafficker' | 'viewer';
 
 async function requireAdmin(): Promise<{ ok: true } | { ok: false; error: string }> {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return { ok: false, error: 'No autorizado' };
-
-  const { data: profile } = await supabase
-    .from('user_profiles')
-    .select('role')
-    .eq('id', user.id)
-    .single();
-
-  const role = (profile?.role ?? 'viewer') as Role;
+  // Sesión y rol memoizados por petición (`lib/auth-session.ts`). Antes cada
+  // llamada a este guard hacía su propio getUser() + lectura de user_profiles,
+  // así que una página que invoca 7 acciones pagaba 7 veces las dos consultas.
+  const { userId, role } = await getSesionActual();
+  if (!userId) return { ok: false, error: 'No autorizado' };
   if (!['superadmin', 'admin'].includes(role)) {
     return { ok: false, error: 'Sin permisos para configurar alertas' };
   }
@@ -325,20 +318,12 @@ export async function testRule(ruleId: string) {
 }
 
 async function requireSuperAdmin(): Promise<{ ok: true } | { ok: false; error: string }> {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return { ok: false, error: 'No autorizado' };
-
-  const { data: profile } = await supabase
-    .from('user_profiles')
-    .select('role')
-    .eq('id', user.id)
-    .single();
-
-  const role = profile?.role ?? 'viewer';
-  if (role !== 'superadmin') {
+  // Sesión y rol memoizados por petición (`lib/auth-session.ts`). Antes cada
+  // llamada a este guard hacía su propio getUser() + lectura de user_profiles,
+  // así que una página que invoca 7 acciones pagaba 7 veces las dos consultas.
+  const { userId, role } = await getSesionActual();
+  if (!userId) return { ok: false, error: 'No autorizado' };
+  if (!['superadmin'].includes(role)) {
     return { ok: false, error: 'Sin permisos de súper administrador' };
   }
   return { ok: true };
@@ -385,6 +370,11 @@ export async function updateBrandingSettings(brandingValue: {
     return { error: error.message };
   }
 
+  // El branding va cacheado (`lib/branding.ts`): sin invalidar la etiqueta, el
+  // cambio no se vería hasta que expirase el revalidate de 5 min. `updateTag`
+  // y no `revalidateTag` porque esto es una server action y el admin tiene que
+  // ver su propio cambio en la siguiente petición, sin stale-while-revalidate.
+  updateTag(BRANDING_CACHE_TAG);
   revalidatePath('/', 'layout');
   return { success: true };
 }

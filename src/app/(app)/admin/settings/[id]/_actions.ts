@@ -2,6 +2,7 @@
 
 import { createClient, createAdminClient } from '@/utils/supabase/server'
 import { revalidatePath } from 'next/cache'
+import { sanitizarHtmlBitacora } from '@/lib/sanitize-html'
 
 export type BitacoraVisibilidad = 'privado' | 'trafficker' | 'publico'
 
@@ -53,7 +54,7 @@ export async function createBitacora(
         author_id: user.id,
         author_name: profile?.full_name ?? null,
         titulo,
-        contenido,
+        contenido: sanitizarHtmlBitacora(contenido),
         visibilidad,
     })
 
@@ -72,7 +73,7 @@ export async function updateBitacora(
     const supabase = await createClient()
     const { error } = await supabase
         .from('bitacoras')
-        .update({ titulo, contenido, visibilidad, updated_at: new Date().toISOString() })
+        .update({ titulo, contenido: sanitizarHtmlBitacora(contenido), visibilidad, updated_at: new Date().toISOString() })
         .eq('id', id)
 
     if (error) return { error: error.message }

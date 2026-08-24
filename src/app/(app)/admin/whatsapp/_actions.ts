@@ -1,27 +1,19 @@
 'use server';
 
-import { createClient, createAdminClient } from '@/utils/supabase/server';
+import { createAdminClient } from '@/utils/supabase/server';
 import { revalidatePath } from 'next/cache';
 import * as gateway from '@/lib/whatsapp/gateway';
 import { sendWhatsAppNotification } from '@/lib/whatsapp/notify';
 import { NOTIFICATION_TYPES, type NotificationType } from '@/lib/whatsapp/types';
+import { getSesionActual } from '@/lib/auth-session';
 
-type Role = 'superadmin' | 'admin' | 'trafficker' | 'viewer';
 
 async function requireAdmin(): Promise<{ ok: true } | { ok: false; error: string }> {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return { ok: false, error: 'No autorizado' };
-
-  const { data: profile } = await supabase
-    .from('user_profiles')
-    .select('role')
-    .eq('id', user.id)
-    .single();
-
-  const role = (profile?.role ?? 'viewer') as Role;
+  // Sesión y rol memoizados por petición (`lib/auth-session.ts`). Antes cada
+  // llamada a este guard hacía su propio getUser() + lectura de user_profiles,
+  // así que una página que invoca 7 acciones pagaba 7 veces las dos consultas.
+  const { userId, role } = await getSesionActual();
+  if (!userId) return { ok: false, error: 'No autorizado' };
   if (!['superadmin', 'admin'].includes(role)) {
     return { ok: false, error: 'Sin permisos para gestionar WhatsApp' };
   }

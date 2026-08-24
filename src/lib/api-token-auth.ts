@@ -44,13 +44,14 @@ export function generateApiToken(): { token: string; hash: string; prefix: strin
 
 /** Validate a Bearer token from the request and return its context. */
 export async function authenticateApiToken(request: NextRequest): Promise<TokenContext> {
+  // Solo cabecera. El fallback `?token=` que había aquí dejaba la credencial en
+  // los logs de acceso, en los del proxy y en la cabecera `Referer` de
+  // cualquier enlace saliente.
   const authHeader = request.headers.get('authorization');
-  const token = authHeader?.replace('Bearer ', '')
-    || (request.url && new URL(request.url, 'https://base').searchParams.get('token'))
-    || '';
+  const token = authHeader?.replace('Bearer ', '') || '';
 
   if (!token.startsWith('ads_')) {
-    throw new ApiError('UNAUTHORIZED', 'Missing or invalid token. Use Authorization: Bearer <token> header or ?token=<token> query param', 401);
+    throw new ApiError('UNAUTHORIZED', 'Missing or invalid token. Use the Authorization: Bearer <token> header.', 401);
   }
 
   const tokenHash = createHash('sha256').update(token).digest('hex');

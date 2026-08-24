@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
+// 50 llamadas a Meta Graph en paralelo pueden pasar del corte por defecto.
+export const maxDuration = 30
 
 export interface AdThumbnailInfo {
     thumbnail: string | null

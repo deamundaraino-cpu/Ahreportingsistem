@@ -6,7 +6,7 @@ Todos los endpoints HTTP viven en `src/app/api/**/route.ts`. Cada uno aplica su 
 
 | Tipo | Mecanismo |
 |------|-----------|
-| API pública v1, MCP | `Authorization: Bearer ads_…` o `?token=` (token de API con permisos) |
+| API pública v1, MCP | `Authorization: Bearer ads_…` (token de API con permisos; solo cabecera) |
 | Cron / workers | `Authorization: Bearer $CRON_SECRET` |
 | Webhook Hotmart | Firma HMAC (`x-hotmart-signature`) o token legacy (`x-hotmart-hottok`) |
 | Pixel, health | Público (sin auth) |

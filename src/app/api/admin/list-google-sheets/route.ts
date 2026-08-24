@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { hasAgencyGoogleConnection } from '@/lib/integrations/google-auth'
 import { listGoogleSheets } from '@/lib/integrations/google-sheets-conversiones'
+import { requireAdminRole } from '@/lib/report-utm/auth'
 
 /**
  * GET /api/admin/list-google-sheets
@@ -8,6 +9,10 @@ import { listGoogleSheets } from '@/lib/integrations/google-sheets-conversiones'
  * Usa el scope drive.readonly ya incluido en el OAuth de agencia.
  */
 export async function GET() {
+  // Guard de rol: el proxy ya exige sesión en /api/admin, esto añade el rol.
+  const denied = await requireAdminRole()
+  if (denied) return denied
+
   try {
     const hasConnection = await hasAgencyGoogleConnection()
     if (!hasConnection) {
