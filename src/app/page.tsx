@@ -1,17 +1,17 @@
-import type { Metadata } from 'next'
+import Link from 'next/link';
+import type { Metadata } from 'next';
 
 export const metadata: Metadata = {
   title: 'AdsHouse Reporting — Métricas que impulsan decisiones',
   description:
     'La plataforma de reportes para agencias que conecta Meta Ads, Google Analytics y Hotmart en un solo lugar.',
-}
+};
 
 export default function LandingPage() {
   return (
     <>
       <style>{css}</style>
       <div className="lr">
-
         {/* Ambient blobs */}
         <div className="blobs" aria-hidden="true">
           <div className="blob blob-1" />
@@ -22,26 +22,36 @@ export default function LandingPage() {
         {/* ── NAV ── */}
         <nav>
           <div className="nav-inner">
-            <a href="/" className="nav-logo">
+            <Link href="/" className="nav-logo">
               <div className="nav-logo-mark">
                 <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"
+                  />
                 </svg>
               </div>
               <span className="nav-logo-name">AdsHouse</span>
               <span className="nav-logo-tag">Reporting</span>
-            </a>
+            </Link>
             <ul className="nav-links">
-              <li><a href="#features">Funcionalidades</a></li>
-              <li><a href="#how">Cómo funciona</a></li>
-              <li><a href="#who">Para quién</a></li>
+              <li>
+                <a href="#features">Funcionalidades</a>
+              </li>
+              <li>
+                <a href="#how">Cómo funciona</a>
+              </li>
+              <li>
+                <a href="#who">Para quién</a>
+              </li>
             </ul>
-            <a href="/dashboard" className="nav-cta">
+            <Link href="/dashboard" className="nav-cta">
               Acceder al sistema
               <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
               </svg>
-            </a>
+            </Link>
           </div>
         </nav>
 
@@ -53,24 +63,37 @@ export default function LandingPage() {
               Plataforma de Reportes para Agencias
             </div>
             <h1>
-              Todas tus métricas.<br />
+              Todas tus métricas.
+              <br />
               Un solo <span className="accent">dashboard</span>.
             </h1>
             <p>
-              Conecta Meta Ads, Google Analytics y Hotmart en tiempo real.
-              Reportes claros para tus clientes, decisiones más inteligentes para tu agencia.
+              Conecta Meta Ads, Google Analytics y Hotmart en tiempo real. Reportes claros para tus
+              clientes, decisiones más inteligentes para tu agencia.
             </p>
             <div className="hero-actions">
-              <a href="/dashboard" className="btn-primary">
+              <Link href="/dashboard" className="btn-primary">
                 <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M13 10V3L4 14h7v7l9-11h-7z"
+                  />
                 </svg>
                 Comenzar ahora
-              </a>
+              </Link>
               <a href="#how" className="btn-ghost">
                 <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"
+                  />
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                  />
                 </svg>
                 Ver cómo funciona
               </a>
@@ -103,23 +126,38 @@ export default function LandingPage() {
                     <div className="fake-stats-row">
                       <div className="fake-stat">
                         <div className="fake-stat-label" />
-                        <div className="fake-stat-val" style={{ background: 'rgba(30,106,181,0.4)' }} />
+                        <div
+                          className="fake-stat-val"
+                          style={{ background: 'rgba(30,106,181,0.4)' }}
+                        />
                       </div>
                       <div className="fake-stat">
                         <div className="fake-stat-label" />
-                        <div className="fake-stat-val" style={{ background: 'rgba(52,211,153,0.3)' }} />
+                        <div
+                          className="fake-stat-val"
+                          style={{ background: 'rgba(52,211,153,0.3)' }}
+                        />
                       </div>
                       <div className="fake-stat">
                         <div className="fake-stat-label" />
-                        <div className="fake-stat-val" style={{ background: 'rgba(245,158,11,0.3)' }} />
+                        <div
+                          className="fake-stat-val"
+                          style={{ background: 'rgba(245,158,11,0.3)' }}
+                        />
                       </div>
                     </div>
                     <div className="fake-chart">
                       <div className="fake-chart-title" />
                       <div className="fake-bars">
                         {[45, 65, 40, 80, 55, 70, 90, 60, 75, 50, 85, 95].map((h, i) => (
-                          <div key={i} className="fake-bar"
-                            style={{ height: `${h}%`, background: `rgba(30,106,181,${0.5 + h / 300})` }} />
+                          <div
+                            key={i}
+                            className="fake-bar"
+                            style={{
+                              height: `${h}%`,
+                              background: `rgba(30,106,181,${0.5 + h / 300})`,
+                            }}
+                          />
                         ))}
                       </div>
                     </div>
@@ -157,7 +195,9 @@ export default function LandingPage() {
             <div className="features-header">
               <div className="sec-eyebrow">Funcionalidades</div>
               <h2 className="sec-h2">Todo lo que tu agencia necesita</h2>
-              <p className="sec-p center">Desde la captura del dato hasta el reporte compartible, en una sola plataforma.</p>
+              <p className="sec-p center">
+                Desde la captura del dato hasta el reporte compartible, en una sola plataforma.
+              </p>
             </div>
             <div className="features-grid">
               {FEATURES.map((f) => (
@@ -184,7 +224,9 @@ export default function LandingPage() {
               <div>
                 <div className="sec-eyebrow">Cómo funciona</div>
                 <h2 className="sec-h2">De los datos al insight en minutos</h2>
-                <p className="sec-p" style={{ marginBottom: 44 }}>Sin configuraciones complicadas. Conectas, sincronizas y reportas.</p>
+                <p className="sec-p" style={{ marginBottom: 44 }}>
+                  Sin configuraciones complicadas. Conectas, sincronizas y reportas.
+                </p>
                 <div className="steps">
                   {STEPS.map((s, i) => (
                     <div key={i} className={`step${i === STEPS.length - 1 ? ' step-last' : ''}`}>
@@ -210,9 +252,16 @@ export default function LandingPage() {
                       </div>
                     </div>
                     <div style={{ textAlign: 'right' }}>
-                      <div className="metric-val" style={m.highlight ? { color: 'var(--blue-lt)' } : {}}>{m.value}</div>
+                      <div
+                        className="metric-val"
+                        style={m.highlight ? { color: 'var(--blue-lt)' } : {}}
+                      >
+                        {m.value}
+                      </div>
                       <div style={{ marginTop: 4 }}>
-                        <span className={`metric-badge ${m.up ? 'mb-up' : 'mb-down'}`}>{m.change}</span>
+                        <span className={`metric-badge ${m.up ? 'mb-up' : 'mb-down'}`}>
+                          {m.change}
+                        </span>
                       </div>
                     </div>
                   </div>
@@ -242,7 +291,9 @@ export default function LandingPage() {
             <div style={{ textAlign: 'center' }}>
               <div className="sec-eyebrow">Para quién es</div>
               <h2 className="sec-h2">Hecho para agencias que escalan</h2>
-              <p className="sec-p center">Tanto si gestionas 2 clientes como si gestionas 50, el sistema crece contigo.</p>
+              <p className="sec-p center">
+                Tanto si gestionas 2 clientes como si gestionas 50, el sistema crece contigo.
+              </p>
             </div>
             <div className="who-grid">
               {WHO.map((w) => (
@@ -255,7 +306,11 @@ export default function LandingPage() {
                   <div className="who-title">{w.title}</div>
                   <div className="who-desc">{w.desc}</div>
                   <div className="who-tags">
-                    {w.tags.map((t) => <span key={t} className="who-tag">{t}</span>)}
+                    {w.tags.map((t) => (
+                      <span key={t} className="who-tag">
+                        {t}
+                      </span>
+                    ))}
                   </div>
                 </div>
               ))}
@@ -269,18 +324,41 @@ export default function LandingPage() {
             <div className="cta-card">
               <div className="cta-glow-1" />
               <div className="cta-glow-2" />
-              <h2>Empieza a reportar<br />de forma profesional</h2>
-              <p>Conecta tus primeras integraciones y ten tu primer reporte listo en menos de 10 minutos.</p>
+              <h2>
+                Empieza a reportar
+                <br />
+                de forma profesional
+              </h2>
+              <p>
+                Conecta tus primeras integraciones y ten tu primer reporte listo en menos de 10
+                minutos.
+              </p>
               <div className="cta-actions">
-                <a href="/dashboard" className="btn-primary" style={{ fontSize: 16, padding: '16px 32px' }}>
+                <Link
+                  href="/dashboard"
+                  className="btn-primary"
+                  style={{ fontSize: 16, padding: '16px 32px' }}
+                >
                   <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h7a3 3 0 013 3v1" />
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      d="M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h7a3 3 0 013 3v1"
+                    />
                   </svg>
                   Acceder al sistema
-                </a>
-                <a href="mailto:hola@adshouseagencia.com" className="btn-ghost" style={{ fontSize: 15 }}>
+                </Link>
+                <a
+                  href="mailto:hola@adshouseagencia.com"
+                  className="btn-ghost"
+                  style={{ fontSize: 15 }}
+                >
                   <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"
+                    />
                   </svg>
                   Contactar al equipo
                 </a>
@@ -297,7 +375,11 @@ export default function LandingPage() {
               <div className="footer-logo">
                 <div className="footer-logo-mark">
                   <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"
+                    />
                   </svg>
                 </div>
                 <span className="footer-logo-name">AdsHouse Reporting</span>
@@ -305,17 +387,18 @@ export default function LandingPage() {
               <div className="footer-links">
                 <a href="#features">Funcionalidades</a>
                 <a href="#how">Cómo funciona</a>
-                <a href="/dashboard">Acceder</a>
+                <Link href="/dashboard">Acceder</Link>
                 <a href="mailto:hola@adshouseagencia.com">Contacto</a>
               </div>
-              <div className="footer-copy">© 2026 AdsHouse Agencia. Todos los derechos reservados.</div>
+              <div className="footer-copy">
+                © 2026 AdsHouse Agencia. Todos los derechos reservados.
+              </div>
             </div>
           </div>
         </footer>
-
       </div>
     </>
-  )
+  );
 }
 
 /* ── Static data ─────────────────────────────────────────────────────────── */
@@ -357,7 +440,7 @@ const FEATURES = [
     color: 'fi-cyan',
     icon: 'M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4',
   },
-]
+];
 
 const STEPS = [
   {
@@ -376,45 +459,80 @@ const STEPS = [
     title: 'Toma decisiones basadas en datos',
     desc: 'Con atribución UTM y agrupación de campañas, sabes exactamente qué está generando retorno.',
   },
-]
+];
 
 const METRICS = [
-  { label: 'Inversión Meta Ads', source: 'Meta Ads · hoy', color: '#1877F2', value: '$4,280', change: '-3.2%', up: false, highlight: false },
-  { label: 'Ventas Hotmart',     source: 'Hotmart · hoy',  color: '#ff0000', value: '127',    change: '+18.4%', up: true,  highlight: false },
-  { label: 'Sesiones GA4',       source: 'Google Analytics · hoy', color: '#F9AB00', value: '8,941', change: '+9.1%', up: true, highlight: false },
-  { label: 'ROAS Consolidado',   source: 'Calculado · todas las fuentes', color: '#5a9fd4', value: '3.8x', change: '+0.4x', up: true, highlight: true },
-]
+  {
+    label: 'Inversión Meta Ads',
+    source: 'Meta Ads · hoy',
+    color: '#1877F2',
+    value: '$4,280',
+    change: '-3.2%',
+    up: false,
+    highlight: false,
+  },
+  {
+    label: 'Ventas Hotmart',
+    source: 'Hotmart · hoy',
+    color: '#ff0000',
+    value: '127',
+    change: '+18.4%',
+    up: true,
+    highlight: false,
+  },
+  {
+    label: 'Sesiones GA4',
+    source: 'Google Analytics · hoy',
+    color: '#F9AB00',
+    value: '8,941',
+    change: '+9.1%',
+    up: true,
+    highlight: false,
+  },
+  {
+    label: 'ROAS Consolidado',
+    source: 'Calculado · todas las fuentes',
+    color: '#5a9fd4',
+    value: '3.8x',
+    change: '+0.4x',
+    up: true,
+    highlight: true,
+  },
+];
 
 const STRIPS = [
-  { num: '<span>3</span>',     label: 'Plataformas integradas' },
-  { num: '100<span>%</span>',  label: 'Datos en tiempo real' },
-  { num: '<span>∞</span>',     label: 'Clientes por agencia' },
-  { num: '1<span> clic</span>',label: 'Para compartir reporte' },
-]
+  { num: '<span>3</span>', label: 'Plataformas integradas' },
+  { num: '100<span>%</span>', label: 'Datos en tiempo real' },
+  { num: '<span>∞</span>', label: 'Clientes por agencia' },
+  { num: '1<span> clic</span>', label: 'Para compartir reporte' },
+];
 
 const WHO = [
   {
     title: 'Agencias de Performance',
     desc: 'Gestiona múltiples cuentas publicitarias con una vista unificada. Deja de exportar Excel manualmente.',
-    bg: 'rgba(30,106,181,0.12)', stroke: '#5a9fd4',
+    bg: 'rgba(30,106,181,0.12)',
+    stroke: '#5a9fd4',
     icon: 'M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4',
     tags: ['Multi-cuenta', 'Reportes automáticos', 'Embudos'],
   },
   {
     title: 'Traffickers Independientes',
     desc: 'Ofrece reportes profesionales a tus clientes sin construir tu propio sistema. Ahorra semanas de desarrollo.',
-    bg: 'rgba(167,139,250,0.12)', stroke: '#a78bfa',
+    bg: 'rgba(167,139,250,0.12)',
+    stroke: '#a78bfa',
     icon: 'M13 10V3L4 14h7v7l9-11h-7z',
     tags: ['Link compartible', 'Branding agency', 'Sin código'],
   },
   {
     title: 'Infoproductores con equipo',
     desc: 'Conecta Hotmart con tus campañas y entiende de verdad cuál es tu ROAS real por producto y embudo.',
-    bg: 'rgba(52,211,153,0.10)', stroke: '#34d399',
+    bg: 'rgba(52,211,153,0.10)',
+    stroke: '#34d399',
     icon: 'M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z',
     tags: ['ROAS real', 'Hotmart nativo', 'Atribución UTM'],
   },
-]
+];
 
 /* ── CSS ─────────────────────────────────────────────────────────────────── */
 
@@ -617,4 +735,4 @@ const css = `
     .cta-card{padding:48px 24px}
     .footer-inner{flex-direction:column;align-items:flex-start;gap:12px}
   }
-`
+`;

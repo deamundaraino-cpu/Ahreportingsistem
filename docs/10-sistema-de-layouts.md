@@ -22,18 +22,18 @@ cliente
 
 Un layout agrupa bloques de distintos tipos, más metadatos:
 
-| Campo | Tipo | Descripción |
-|-------|------|-------------|
-| `columnas` | `ColDef[]` | Columnas de la tabla de métricas |
-| `tarjetas` | `CardDef[]` | Tarjetas KPI |
-| `graficos` | `ChartDef[]` | Gráficos |
-| `text_blocks` | `TextBlockDef[]` | Bloques de texto enriquecido |
-| `ranking_tables` | `RankingTableDef[]` | Tablas de ranking |
-| `lead_answer_blocks` | `LeadAnswerBlockDef[]` | Desglose de leads por respuesta de formulario |
-| `custom_metrics` | `MetricDef[]` | Métricas personalizadas (macros del usuario) |
-| `blocks_order` | `string[]` | Orden de los bloques en pantalla |
-| `source_mapping` | `Record<string,string>` | Mapeo de alias semánticos → campos |
-| `attribution_strategy` | `'hybrid' \| 'full_meta' \| 'full_hotmart' \| 'custom'` | Estrategia de atribución de ventas |
+| Campo                  | Tipo                                                    | Descripción                                   |
+| ---------------------- | ------------------------------------------------------- | --------------------------------------------- |
+| `columnas`             | `ColDef[]`                                              | Columnas de la tabla de métricas              |
+| `tarjetas`             | `CardDef[]`                                             | Tarjetas KPI                                  |
+| `graficos`             | `ChartDef[]`                                            | Gráficos                                      |
+| `text_blocks`          | `TextBlockDef[]`                                        | Bloques de texto enriquecido                  |
+| `ranking_tables`       | `RankingTableDef[]`                                     | Tablas de ranking                             |
+| `lead_answer_blocks`   | `LeadAnswerBlockDef[]`                                  | Desglose de leads por respuesta de formulario |
+| `custom_metrics`       | `MetricDef[]`                                           | Métricas personalizadas (macros del usuario)  |
+| `blocks_order`         | `string[]`                                              | Orden de los bloques en pantalla              |
+| `source_mapping`       | `Record<string,string>`                                 | Mapeo de alias semánticos → campos            |
+| `attribution_strategy` | `'hybrid' \| 'full_meta' \| 'full_hotmart' \| 'custom'` | Estrategia de atribución de ventas            |
 
 ### Columnas y tarjetas (`ColDef` / `CardDef`)
 
@@ -68,16 +68,20 @@ Un layout agrupa bloques de distintos tipos, más metadatos:
   units?: ('number'|'currency'|'percent')[]
 }
 ```
+
 Renderizados con **Recharts** en `MetricCharts.tsx`.
 
 ### Tablas de ranking (`RankingTableDef`)
+
 Muestran top N de campañas/anuncios/conjuntos. La agregación la hace `ranking-aggregation.ts` (`aggregateRankingRows`), sobre dimensiones:
+
 - Meta: `campaigns`, `ads`, `adsets`.
 - TikTok: `tiktok_campaigns`, `tiktok_ads`, `tiktok_adgroups`.
 
 Componente: `RankingTableBlock.tsx`.
 
 ### Bloques de texto (`TextBlockDef`)
+
 Texto enriquecido (h1–h3, párrafos, colores, tipografías, bordes) para separadores y anotaciones.
 
 ## Filtros de campaña (`CampaignFilterSpec`)
@@ -121,13 +125,13 @@ Operadores: `equals`, `not_equals`, `includes`, `excludes`, `any_of`, `none_of`,
 
 Dónde aplica:
 
-| Bloque | Filtro de Sheet |
-| --- | --- |
-| Columnas de tabla | Sí |
-| Tarjetas (valor actual y comparativo) | Sí |
-| Gráficos temporales (sin `dimension`) | Sí |
-| Gráficos con `dimension` | **No** — el selector no se ofrece |
-| Tablas de ranking | **No** — sin campo en el tipo |
+| Bloque                                | Filtro de Sheet                   |
+| ------------------------------------- | --------------------------------- |
+| Columnas de tabla                     | Sí                                |
+| Tarjetas (valor actual y comparativo) | Sí                                |
+| Gráficos temporales (sin `dimension`) | Sí                                |
+| Gráficos con `dimension`              | **No** — el selector no se ofrece |
+| Tablas de ranking                     | **No** — sin campo en el tipo     |
 
 Los dos últimos agregan por campaña/anuncio con `aggregateRankingRows`, que construye sus filas desde `meta_campaigns` / `meta_ads` / `meta_adsets`. El dato offline es por día y no tiene desglose por campaña, así que ahí el filtro no tendría a qué aplicarse.
 
@@ -136,6 +140,7 @@ El comparativo de las tarjetas necesita las filas offline del periodo anterior. 
 ## Embudo Hotmart por tab
 
 Cada tab define en `hotmart_funnel` los patrones de nombre que clasifican las ventas:
+
 - `principal_names`, `bump_names`, `upsell_names` (soportan `%`/`_`).
 - `payment_page_url`, `upsell_page_url`.
 
@@ -144,7 +149,7 @@ El worker usa esos patrones para llenar `hotmart_funnel_data.by_tab[tabId]`, que
 ## Desglose por respuesta de formulario (`LeadAnswerBlockDef`)
 
 Responde **«cuántos leads contestaron A, cuántos B y cuántos C»** en una pregunta
-del formulario — no «cuántos respondieron». Es la forma de saber *qué tipo* de
+del formulario — no «cuántos respondieron». Es la forma de saber _qué tipo_ de
 lead trae cada campaña sin salir del dashboard.
 
 Se agrega como cualquier otro bloque (**Agregar → Respuestas de formulario**),
@@ -153,10 +158,10 @@ se arrastra, se duplica y viaja al enlace público. Respeta el filtro de campañ
 
 ### De dónde sale la pregunta
 
-| `origen` | Qué usa | Cuándo |
-|---|---|---|
-| `catalogo` | `report_utm.lead_campos` vía `clave` | El analista ya la configuró: nombre propio, respuestas equivalentes agrupadas y ordenadas |
-| `auto` | `clavesOrigen` inline, valores crudos | Estreno sin configurar nada |
+| `origen`   | Qué usa                               | Cuándo                                                                                    |
+| ---------- | ------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `catalogo` | `report_utm.lead_campos` vía `clave`  | El analista ya la configuró: nombre propio, respuestas equivalentes agrupadas y ordenadas |
+| `auto`     | `clavesOrigen` inline, valores crudos | Estreno sin configurar nada                                                               |
 
 Los dos producen un `LeadCampoDef` y a partir de ahí el camino es **uno solo**.
 El picker ofrece **«Guardar en el catálogo»** (`promoverCampoLead`), que es la vía
@@ -184,12 +189,12 @@ El dato viaja como campo **hermano** de `metrics`, no dentro de sus filas:
 Además del bloque, Report-UTM aporta métricas que el trafficker puede usar en
 **tarjetas, gráficas, columnas de tabla y tablas de ranking**:
 
-| Métrica | Qué es |
-|---|---|
-| `utm_leads` | Contactos del día según `lead_events` (web + Meta Lead Ads unificados) |
-| `lf__<campo>__<respuesta>` | Leads del día que contestaron esa respuesta |
-| `lf__<campo>__sin_respuesta` | Leads del día que no contestaron esa pregunta |
-| `lseg__<segmento>` | Leads del día que caen en un **segmento** del campo — «Desde 2M» = varios buckets a la vez (migración 073, [doc 17](./17-campos-de-lead.md)) |
+| Métrica                      | Qué es                                                                                                                                       |
+| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `utm_leads`                  | Contactos del día según `lead_events` (web + Meta Lead Ads unificados)                                                                       |
+| `lf__<campo>__<respuesta>`   | Leads del día que contestaron esa respuesta                                                                                                  |
+| `lf__<campo>__sin_respuesta` | Leads del día que no contestaron esa pregunta                                                                                                |
+| `lseg__<segmento>`           | Leads del día que caen en un **segmento** del campo — «Desde 2M» = varios buckets a la vez (migración 073, [doc 17](./17-campos-de-lead.md)) |
 
 Por construcción, **las respuestas más `sin_respuesta` suman `utm_leads`**: es lo
 que permite leer «hoy 40, de los cuales 15 A, 5 B, 3 C y 17 sin responder» sin
@@ -205,14 +210,14 @@ una pasada aparte, sobre los mismos tripletes del cubo y sin consulta extra.
 
 ### Dónde funcionan, exactamente
 
-| Sitio | Estado |
-|---|---|
-| Tarjetas superiores (valor, delta, sparkline, progreso) | ✅ |
-| Columnas de tabla (resumen, celda diaria, fila semanal) | ✅ |
-| Gráficas por fecha, con o sin filtro propio | ✅ |
-| Tablas de ranking y gráficas **por dimensión Campaña** | ✅ |
+| Sitio                                                   | Estado          |
+| ------------------------------------------------------- | --------------- |
+| Tarjetas superiores (valor, delta, sparkline, progreso) | ✅              |
+| Columnas de tabla (resumen, celda diaria, fila semanal) | ✅              |
+| Gráficas por fecha, con o sin filtro propio             | ✅              |
+| Tablas de ranking y gráficas **por dimensión Campaña**  | ✅              |
 | Tablas de ranking y gráficas por **Anuncio / Conjunto** | `n/a` con aviso |
-| Archivo de pestañas | `—` |
+| Archivo de pestañas                                     | `—`             |
 
 **Anuncio y conjunto no aplican, y no es un hueco:** el cubo resuelve cada lead
 hasta su **campaña** porque un formulario no sabe qué anuncio trajo al visitante.
@@ -261,6 +266,7 @@ denominador quedan recortados por la misma campaña.
 ### Qué declara cuando no puede medir
 
 Nunca un cero mudo:
+
 - Cliente sin enlazar a report_utm → lo dice, con la ruta para arreglarlo.
 - Cliente cuyos formularios solo piden nombre y correo → lo dice, con cuántos
   leads se revisaron (es el caso de Eduversio, el cliente con más leads).
@@ -280,6 +286,7 @@ Comprobaciones: `verify-lead-answers.ts` (puro) y `verify-lead-answers-db.ts`
 ## Reordenamiento (drag & drop)
 
 El orden de tabs/bloques se gestiona con `@dnd-kit` mediante el hook `src/lib/hooks/useLayoutReorder.ts`:
+
 - Actualiza la UI de forma **optimista** y revierte si falla.
 - Persiste vía `POST /api/layouts/reorder` con `{ clienteId, tabOrder: [{ id, position }] }`.
 
@@ -290,6 +297,7 @@ El orden de tabs/bloques se gestiona con `@dnd-kit` mediante el hook `src/lib/ho
 ## Configuración desde el dashboard
 
 Dentro del dashboard del cliente existen modales para editar sin salir:
+
 - `LayoutConfigModal` — configurar el layout del tab.
 - `TabConfigModal` — configurar el tab (nombre, filtro, embudo, rankings).
 - `QuickEditModal` — edición rápida de bloques.

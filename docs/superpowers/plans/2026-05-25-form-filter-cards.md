@@ -13,6 +13,7 @@
 ### Task 1: DB Migration — add `meta_forms` column
 
 **Files:**
+
 - Create: `migrations/020_meta_forms.sql`
 
 - [ ] **Step 1: Create the migration file**
@@ -44,6 +45,7 @@ git commit -m "feat(db): add meta_forms JSONB column to metricas_diarias"
 ### Task 2: Types — FormFilterSpec + extend existing defs
 
 **Files:**
+
 - Modify: `src/lib/layout-types.ts:1-21` (after `CampaignFilterSpec`)
 
 - [ ] **Step 1: Add `FormFilterField` and `FormFilterSpec` types**
@@ -51,12 +53,12 @@ git commit -m "feat(db): add meta_forms JSONB column to metricas_diarias"
 Open `src/lib/layout-types.ts`. After the closing `}` of `CampaignFilterSpec` (currently line 20), insert:
 
 ```typescript
-export type FormFilterField = 'form_id' | 'form_name'
+export type FormFilterField = 'form_id' | 'form_name';
 
 export interface FormFilterSpec {
-    field: FormFilterField
-    operator?: CampaignFilterOperator
-    value: string | string[]
+  field: FormFilterField;
+  operator?: CampaignFilterOperator;
+  value: string | string[];
 }
 ```
 
@@ -113,62 +115,69 @@ git commit -m "feat(types): add FormFilterSpec and formFilter to layout defs"
 ### Task 3: Form filter library
 
 **Files:**
+
 - Create: `src/lib/form-filter.ts`
 
 - [ ] **Step 1: Create the file**
 
 ```typescript
 // src/lib/form-filter.ts
-import type { FormFilterSpec, CampaignFilterOperator } from './layout-types'
+import type { FormFilterSpec, CampaignFilterOperator } from './layout-types';
 
 function formValueMatchesOperator(
-    value: string,
-    operator: CampaignFilterOperator,
-    filterValue: string | string[]
+  value: string,
+  operator: CampaignFilterOperator,
+  filterValue: string | string[]
 ): boolean {
-    const v = value.toLowerCase()
-    switch (operator) {
-        case 'includes':    return typeof filterValue === 'string' && v.includes(filterValue.toLowerCase())
-        case 'excludes':    return typeof filterValue === 'string' && !v.includes(filterValue.toLowerCase())
-        case 'exact':       return typeof filterValue === 'string' && v === filterValue.toLowerCase()
-        case 'not_exact':   return typeof filterValue === 'string' && v !== filterValue.toLowerCase()
-        case 'starts_with': return typeof filterValue === 'string' && v.startsWith(filterValue.toLowerCase())
-        case 'ends_with':   return typeof filterValue === 'string' && v.endsWith(filterValue.toLowerCase())
-        case 'any_of':      return Array.isArray(filterValue) && filterValue.some(fv => fv.toLowerCase() === v)
-        case 'none_of':     return Array.isArray(filterValue) && !filterValue.some(fv => fv.toLowerCase() === v)
-        default:            return true
-    }
+  const v = value.toLowerCase();
+  switch (operator) {
+    case 'includes':
+      return typeof filterValue === 'string' && v.includes(filterValue.toLowerCase());
+    case 'excludes':
+      return typeof filterValue === 'string' && !v.includes(filterValue.toLowerCase());
+    case 'exact':
+      return typeof filterValue === 'string' && v === filterValue.toLowerCase();
+    case 'not_exact':
+      return typeof filterValue === 'string' && v !== filterValue.toLowerCase();
+    case 'starts_with':
+      return typeof filterValue === 'string' && v.startsWith(filterValue.toLowerCase());
+    case 'ends_with':
+      return typeof filterValue === 'string' && v.endsWith(filterValue.toLowerCase());
+    case 'any_of':
+      return Array.isArray(filterValue) && filterValue.some((fv) => fv.toLowerCase() === v);
+    case 'none_of':
+      return Array.isArray(filterValue) && !filterValue.some((fv) => fv.toLowerCase() === v);
+    default:
+      return true;
+  }
 }
 
-export function enrichFormRow(
-    row: any,
-    filter: FormFilterSpec | undefined
-): any {
-    if (!filter) return row
-    const isEmpty = Array.isArray(filter.value) ? filter.value.length === 0 : filter.value === ''
-    if (isEmpty) return row
+export function enrichFormRow(row: any, filter: FormFilterSpec | undefined): any {
+  if (!filter) return row;
+  const isEmpty = Array.isArray(filter.value) ? filter.value.length === 0 : filter.value === '';
+  if (isEmpty) return row;
 
-    const forms: any[] = Array.isArray(row.meta_forms) ? row.meta_forms : []
-    const op: CampaignFilterOperator = filter.operator ?? 'includes'
+  const forms: any[] = Array.isArray(row.meta_forms) ? row.meta_forms : [];
+  const op: CampaignFilterOperator = filter.operator ?? 'includes';
 
-    const matching = forms.filter(f => {
-        const fieldValue: string = filter.field === 'form_id'
-            ? (f.form_id || '')
-            : (f.form_name || '')
-        return formValueMatchesOperator(fieldValue, op, filter.value)
-    })
+  const matching = forms.filter((f) => {
+    const fieldValue: string = filter.field === 'form_id' ? f.form_id || '' : f.form_name || '';
+    return formValueMatchesOperator(fieldValue, op, filter.value);
+  });
 
-    const ri = (field: string) => matching.reduce((s: number, f: any) => s + (parseInt(f[field] || '0') || 0), 0)
-    const rf = (field: string) => matching.reduce((s: number, f: any) => s + (parseFloat(f[field] || '0') || 0), 0)
+  const ri = (field: string) =>
+    matching.reduce((s: number, f: any) => s + (parseInt(f[field] || '0') || 0), 0);
+  const rf = (field: string) =>
+    matching.reduce((s: number, f: any) => s + (parseFloat(f[field] || '0') || 0), 0);
 
-    return {
-        ...row,
-        meta_leads_form: ri('leads'),
-        meta_leads:      ri('leads'),
-        meta_spend:      rf('spend'),
-        meta_impressions: ri('impressions'),
-        meta_clicks:     ri('clicks'),
-    }
+  return {
+    ...row,
+    meta_leads_form: ri('leads'),
+    meta_leads: ri('leads'),
+    meta_spend: rf('spend'),
+    meta_impressions: ri('impressions'),
+    meta_clicks: ri('clicks'),
+  };
 }
 ```
 
@@ -193,18 +202,38 @@ git commit -m "feat(lib): add form-filter.ts with enrichFormRow"
 ### Task 4: Worker — fetch Meta form data and store in `meta_forms`
 
 **Files:**
+
 - Modify: `src/app/api/worker/route.ts`
 
 - [ ] **Step 1: Extend the `record` object in `fetchMetaSingleAccount`**
 
 Find the line (~226) where `record` is initialized:
+
 ```typescript
-const record = { spend: 0, impressions: 0, clicks: 0, account_reach: 0, campaigns: [] as any[], meta_ads: [] as any[], meta_adsets: [] as any[] }
+const record = {
+  spend: 0,
+  impressions: 0,
+  clicks: 0,
+  account_reach: 0,
+  campaigns: [] as any[],
+  meta_ads: [] as any[],
+  meta_adsets: [] as any[],
+};
 ```
 
 Add `forms` to the object:
+
 ```typescript
-const record = { spend: 0, impressions: 0, clicks: 0, account_reach: 0, campaigns: [] as any[], meta_ads: [] as any[], meta_adsets: [] as any[], forms: [] as any[] }
+const record = {
+  spend: 0,
+  impressions: 0,
+  clicks: 0,
+  account_reach: 0,
+  campaigns: [] as any[],
+  meta_ads: [] as any[],
+  meta_adsets: [] as any[],
+  forms: [] as any[],
+};
 ```
 
 - [ ] **Step 2: Add the form breakdown query inside `fetchMetaSingleAccount`**
@@ -214,61 +243,65 @@ Find the closing `} catch (err: any) {` of the main campaign try-block (around l
 Actually `fetchMetaSingleAccount` returns the entire `record`. Add the form query right before the final `return record` of the function. Find the line `return record` at the end of `fetchMetaSingleAccount` (search for `return record` inside that function) and insert before it:
 
 ```typescript
-            // ─── Lead form breakdown (Meta Lead Ads) ──────────────────────────
-            try {
-                const formUrl = new URL(`https://graph.facebook.com/v19.0/${actId}/insights`)
-                formUrl.searchParams.append('access_token', token)
-                formUrl.searchParams.append('time_range', JSON.stringify({ since: targetDate, until: targetDate }))
-                formUrl.searchParams.append('fields', 'leadgen_form_id,spend,impressions,clicks,actions')
-                formUrl.searchParams.append('breakdowns', 'leadgen_form_id')
-                formUrl.searchParams.append('level', 'account')
-                formUrl.searchParams.append('limit', '200')
+// ─── Lead form breakdown (Meta Lead Ads) ──────────────────────────
+try {
+  const formUrl = new URL(`https://graph.facebook.com/v19.0/${actId}/insights`);
+  formUrl.searchParams.append('access_token', token);
+  formUrl.searchParams.append(
+    'time_range',
+    JSON.stringify({ since: targetDate, until: targetDate })
+  );
+  formUrl.searchParams.append('fields', 'leadgen_form_id,spend,impressions,clicks,actions');
+  formUrl.searchParams.append('breakdowns', 'leadgen_form_id');
+  formUrl.searchParams.append('level', 'account');
+  formUrl.searchParams.append('limit', '200');
 
-                const formRes = await fetch(formUrl.toString())
-                const formData = await formRes.json()
+  const formRes = await fetch(formUrl.toString());
+  const formData = await formRes.json();
 
-                if (formData.data && Array.isArray(formData.data)) {
-                    const formsMap = new Map<string, any>()
+  if (formData.data && Array.isArray(formData.data)) {
+    const formsMap = new Map<string, any>();
 
-                    for (const item of formData.data) {
-                        const formId: string = item.leadgen_form_id || ''
-                        if (!formId) continue
+    for (const item of formData.data) {
+      const formId: string = item.leadgen_form_id || '';
+      if (!formId) continue;
 
-                        const existing = formsMap.get(formId) || {
-                            form_id:     formId,
-                            form_name:   formId,  // fallback until name is resolved
-                            leads:       0,
-                            spend:       0,
-                            impressions: 0,
-                            clicks:      0,
-                        }
+      const existing = formsMap.get(formId) || {
+        form_id: formId,
+        form_name: formId, // fallback until name is resolved
+        leads: 0,
+        spend: 0,
+        impressions: 0,
+        clicks: 0,
+      };
 
-                        existing.spend       += parseFloat(item.spend || '0')
-                        existing.impressions += parseInt(item.impressions || '0')
-                        existing.clicks      += parseInt(item.clicks || '0')
+      existing.spend += parseFloat(item.spend || '0');
+      existing.impressions += parseInt(item.impressions || '0');
+      existing.clicks += parseInt(item.clicks || '0');
 
-                        if (item.actions) {
-                            for (const a of item.actions) {
-                                if (a.action_type === 'lead') {
-                                    existing.leads += parseInt(a.value || '0')
-                                }
-                            }
-                        }
+      if (item.actions) {
+        for (const a of item.actions) {
+          if (a.action_type === 'lead') {
+            existing.leads += parseInt(a.value || '0');
+          }
+        }
+      }
 
-                        formsMap.set(formId, existing)
-                    }
+      formsMap.set(formId, existing);
+    }
 
-                    record.forms = Array.from(formsMap.values())
-                }
-            } catch (err: any) {
-                log(`[Meta] Form breakdown fetch failed (non-critical): ${err?.message}`)
-                // record.forms stays as [] — safe default
-            }
+    record.forms = Array.from(formsMap.values());
+  }
+} catch (err: any) {
+  log(`[Meta] Form breakdown fetch failed (non-critical): ${err?.message}`);
+  // record.forms stays as [] — safe default
+}
 ```
 
 - [ ] **Step 3: Add `meta_forms` to the upsert payload**
 
 Find the upsert payload block (around line 1295). It currently has:
+
 ```typescript
 meta_campaigns: metaRecord.campaigns,
 meta_ads:      metaRecord.meta_ads,
@@ -276,6 +309,7 @@ meta_adsets:   metaRecord.meta_adsets,
 ```
 
 Add after `meta_adsets`:
+
 ```typescript
 meta_forms:    metaRecord.forms,
 ```
@@ -301,18 +335,45 @@ git commit -m "feat(worker): fetch Meta leadgen form breakdown and store in meta
 ### Task 5: UI — `FormFilterPicker` component + wiring
 
 **Files:**
+
 - Modify: `src/app/(app)/dashboard/components/LayoutConfigModal.tsx`
 
 - [ ] **Step 1: Update the import at line 13**
 
 The current import is:
+
 ```typescript
-import type { ColDef, CardDef, ChartDef, ChartType, ReportLayout, CardColor, CampaignFilterSpec, CampaignFilterOperator, RankingTableDef, RankingColumnDef } from '@/lib/layout-types'
+import type {
+  ColDef,
+  CardDef,
+  ChartDef,
+  ChartType,
+  ReportLayout,
+  CardColor,
+  CampaignFilterSpec,
+  CampaignFilterOperator,
+  RankingTableDef,
+  RankingColumnDef,
+} from '@/lib/layout-types';
 ```
 
 Replace with:
+
 ```typescript
-import type { ColDef, CardDef, ChartDef, ChartType, ReportLayout, CardColor, CampaignFilterSpec, CampaignFilterOperator, RankingTableDef, RankingColumnDef, FormFilterSpec, FormFilterField } from '@/lib/layout-types'
+import type {
+  ColDef,
+  CardDef,
+  ChartDef,
+  ChartType,
+  ReportLayout,
+  CardColor,
+  CampaignFilterSpec,
+  CampaignFilterOperator,
+  RankingTableDef,
+  RankingColumnDef,
+  FormFilterSpec,
+  FormFilterField,
+} from '@/lib/layout-types';
 ```
 
 - [ ] **Step 2: Add `FormFilterPicker` component**
@@ -520,31 +581,42 @@ Find `DraggableColRow` (around line 312). Its destructuring currently ends with 
 
 ```typescript
 function DraggableColRow({
-    col, index, onDragStart, onDragOver, onDrop, onUpdate, onRemove, availableMetrics, campaignGroups = [], campaignNames = [], formNames = [], formIds = []
+  col,
+  index,
+  onDragStart,
+  onDragOver,
+  onDrop,
+  onUpdate,
+  onRemove,
+  availableMetrics,
+  campaignGroups = [],
+  campaignNames = [],
+  formNames = [],
+  formIds = [],
 }: {
-    col: ColDef
-    index: number
-    onDragStart: (i: number) => void
-    onDragOver: (e: React.DragEvent, i: number) => void
-    onDrop: (i: number) => void
-    onUpdate: (col: ColDef) => void
-    onRemove: () => void
-    availableMetrics?: { id: string; label: string }[]
-    campaignGroups?: { id: string; nombre: string }[]
-    campaignNames?: string[]
-    formNames?: string[]
-    formIds?: string[]
-})
+  col: ColDef;
+  index: number;
+  onDragStart: (i: number) => void;
+  onDragOver: (e: React.DragEvent, i: number) => void;
+  onDrop: (i: number) => void;
+  onUpdate: (col: ColDef) => void;
+  onRemove: () => void;
+  availableMetrics?: { id: string; label: string }[];
+  campaignGroups?: { id: string; nombre: string }[];
+  campaignNames?: string[];
+  formNames?: string[];
+  formIds?: string[];
+});
 ```
 
 Then, immediately after the `<CampaignFilterPicker ... />` usage in the column row (around line 380), add:
 
 ```tsx
 <FormFilterPicker
-    value={col.formFilter}
-    onChange={v => onUpdate({ ...col, formFilter: v })}
-    formNames={formNames}
-    formIds={formIds}
+  value={col.formFilter}
+  onChange={(v) => onUpdate({ ...col, formFilter: v })}
+  formNames={formNames}
+  formIds={formIds}
 />
 ```
 
@@ -556,10 +628,10 @@ Then after the `<CampaignFilterPicker ... />` on the card row (around line 478),
 
 ```tsx
 <FormFilterPicker
-    value={card.formFilter}
-    onChange={v => onUpdate({ ...card, formFilter: v })}
-    formNames={formNames}
-    formIds={formIds}
+  value={card.formFilter}
+  onChange={(v) => onUpdate({ ...card, formFilter: v })}
+  formNames={formNames}
+  formIds={formIds}
 />
 ```
 
@@ -569,10 +641,10 @@ Find the chart row component (around line 520). Add `formNames = []` and `formId
 
 ```tsx
 <FormFilterPicker
-    value={chart.formFilter}
-    onChange={v => onUpdate({ ...chart, formFilter: v })}
-    formNames={formNames}
-    formIds={formIds}
+  value={chart.formFilter}
+  onChange={(v) => onUpdate({ ...chart, formFilter: v })}
+  formNames={formNames}
+  formIds={formIds}
 />
 ```
 
@@ -581,28 +653,30 @@ Find the chart row component (around line 520). Add `formNames = []` and `formId
 Find the ranking table `CampaignFilterPicker` usage (around line 1837). The block currently is:
 
 ```tsx
-{!table.dimension.startsWith('tiktok_') && (
+{
+  !table.dimension.startsWith('tiktok_') && (
     <div className="pl-1">
-        <CampaignFilterPicker
-            value={table.campaignFilter}
-            onChange={v => updateRankingTable(ti, { ...table, campaignFilter: v })}
-            campaignGroups={campaignGroups}
-            campaignNames={campaignNames}
-        />
+      <CampaignFilterPicker
+        value={table.campaignFilter}
+        onChange={(v) => updateRankingTable(ti, { ...table, campaignFilter: v })}
+        campaignGroups={campaignGroups}
+        campaignNames={campaignNames}
+      />
     </div>
-)}
+  );
+}
 ```
 
 Add `FormFilterPicker` directly after the closing `)}` of that block:
 
 ```tsx
 <div className="pl-1">
-    <FormFilterPicker
-        value={table.formFilter}
-        onChange={v => updateRankingTable(ti, { ...table, formFilter: v })}
-        formNames={formNames}
-        formIds={formIds}
-    />
+  <FormFilterPicker
+    value={table.formFilter}
+    onChange={(v) => updateRankingTable(ti, { ...table, formFilter: v })}
+    formNames={formNames}
+    formIds={formIds}
+  />
 </div>
 ```
 
@@ -614,32 +688,32 @@ Find the `LayoutConfigModal` function signature (around line 1062). Add `formNam
 
 ```typescript
 export function LayoutConfigModal({
-    clienteId,
-    currentLayout,
-    allLayouts,
-    isCustomized,
-    onClose,
-    onLayoutApplied,
-    tabId,
-    conversionesCatalogo = [],
-    campaignGroups = [],
-    campaignNames = [],
-    formNames = [],
-    formIds = [],
+  clienteId,
+  currentLayout,
+  allLayouts,
+  isCustomized,
+  onClose,
+  onLayoutApplied,
+  tabId,
+  conversionesCatalogo = [],
+  campaignGroups = [],
+  campaignNames = [],
+  formNames = [],
+  formIds = [],
 }: {
-    clienteId: string
-    currentLayout: ReportLayout | null
-    allLayouts: any[]
-    isCustomized: boolean
-    onClose: () => void
-    onLayoutApplied: (layout: ReportLayout) => void
-    tabId?: string
-    conversionesCatalogo?: { conversion_key: string; label: string; field_id: string }[]
-    campaignGroups?: { id: string; nombre: string }[]
-    campaignNames?: string[]
-    formNames?: string[]
-    formIds?: string[]
-})
+  clienteId: string;
+  currentLayout: ReportLayout | null;
+  allLayouts: any[];
+  isCustomized: boolean;
+  onClose: () => void;
+  onLayoutApplied: (layout: ReportLayout) => void;
+  tabId?: string;
+  conversionesCatalogo?: { conversion_key: string; label: string; field_id: string }[];
+  campaignGroups?: { id: string; nombre: string }[];
+  campaignNames?: string[];
+  formNames?: string[];
+  formIds?: string[];
+});
 ```
 
 - [ ] **Step 8: Pass `formNames`/`formIds` to every row call in LayoutConfigModal**
@@ -647,8 +721,8 @@ export function LayoutConfigModal({
 Search inside `LayoutConfigModal`'s JSX for every place that renders a `DraggableColRow`, `DraggableCardRow`, or the chart/ranking row component. For each, add:
 
 ```tsx
-formNames={formNames}
-formIds={formIds}
+formNames = { formNames };
+formIds = { formIds };
 ```
 
 (There are typically ~3-4 call sites: columns list, cards list, charts list, ranking tables list.)
@@ -674,18 +748,21 @@ git commit -m "feat(ui): add FormFilterPicker to card/col/chart/ranking config i
 ### Task 6: Dashboard integration — extract form data + apply filter
 
 **Files:**
+
 - Modify: `src/app/(app)/dashboard/components/DashboardClient.tsx`
 
 - [ ] **Step 1: Import `enrichFormRow`**
 
 Find the existing import at line 27:
+
 ```typescript
-import { enrichMetaRow } from '@/lib/campaign-filter'
+import { enrichMetaRow } from '@/lib/campaign-filter';
 ```
 
 Add after it:
+
 ```typescript
-import { enrichFormRow } from '@/lib/form-filter'
+import { enrichFormRow } from '@/lib/form-filter';
 ```
 
 - [ ] **Step 2: Import `FormFilterSpec` type**
@@ -695,123 +772,169 @@ Find the import of layout types (around line 13-15). Add `FormFilterSpec` to the
 - [ ] **Step 3: Compute `allFormNames` and `allFormIds` memos**
 
 Find the `allCampaignNames` memo (around line 567):
+
 ```typescript
 const allCampaignNames = useMemo(() => {
-    const names = new Set<string>()
-    for (const row of baseRows) {
-        if (Array.isArray((row as any).meta_campaigns)) {
-            for (const c of (row as any).meta_campaigns) {
-                if (c.name) names.add(c.name)
-            }
-        }
+  const names = new Set<string>();
+  for (const row of baseRows) {
+    if (Array.isArray((row as any).meta_campaigns)) {
+      for (const c of (row as any).meta_campaigns) {
+        if (c.name) names.add(c.name);
+      }
     }
-    return Array.from(names).sort()
-}, [baseRows])
+  }
+  return Array.from(names).sort();
+}, [baseRows]);
 ```
 
 Add immediately after it:
+
 ```typescript
 const allFormNames = useMemo(() => {
-    const names = new Set<string>()
-    for (const row of baseRows) {
-        if (Array.isArray((row as any).meta_forms)) {
-            for (const f of (row as any).meta_forms) {
-                if (f.form_name && f.form_name !== f.form_id) names.add(f.form_name)
-            }
-        }
+  const names = new Set<string>();
+  for (const row of baseRows) {
+    if (Array.isArray((row as any).meta_forms)) {
+      for (const f of (row as any).meta_forms) {
+        if (f.form_name && f.form_name !== f.form_id) names.add(f.form_name);
+      }
     }
-    return Array.from(names).sort()
-}, [baseRows])
+  }
+  return Array.from(names).sort();
+}, [baseRows]);
 
 const allFormIds = useMemo(() => {
-    const ids = new Set<string>()
-    for (const row of baseRows) {
-        if (Array.isArray((row as any).meta_forms)) {
-            for (const f of (row as any).meta_forms) {
-                if (f.form_id) ids.add(f.form_id)
-            }
-        }
+  const ids = new Set<string>();
+  for (const row of baseRows) {
+    if (Array.isArray((row as any).meta_forms)) {
+      for (const f of (row as any).meta_forms) {
+        if (f.form_id) ids.add(f.form_id);
+      }
     }
-    return Array.from(ids).sort()
-}, [baseRows])
+  }
+  return Array.from(ids).sort();
+}, [baseRows]);
 ```
 
 - [ ] **Step 4: Apply `enrichFormRow` in `tarjetaValues`**
 
 Find the `tarjetaValues` memo (around line 660):
+
 ```typescript
 const tarjetaValues = useMemo(() => {
-    return activeLayout.tarjetas.map((t: CardDef) => {
-        const filter = resolveFilter(t.campaignFilter, effectiveKeyword)
-        const rows = filter === effectiveKeyword
-            ? filteredMetrics
-            : baseRows.map((m: any) => enrichMetaRow(m, filter, data.campaignGroups))
-        return {
-            ...t,
-            value: aggregateFormula(t.formula, rows, varContext, sourceMapping, platformSet, layoutCustomMetrics),
-        }
-    })
-}, [activeLayout.tarjetas, filteredMetrics, baseRows, effectiveKeyword, varContext, sourceMapping, platformSet, layoutCustomMetrics, data.campaignGroups])
+  return activeLayout.tarjetas.map((t: CardDef) => {
+    const filter = resolveFilter(t.campaignFilter, effectiveKeyword);
+    const rows =
+      filter === effectiveKeyword
+        ? filteredMetrics
+        : baseRows.map((m: any) => enrichMetaRow(m, filter, data.campaignGroups));
+    return {
+      ...t,
+      value: aggregateFormula(
+        t.formula,
+        rows,
+        varContext,
+        sourceMapping,
+        platformSet,
+        layoutCustomMetrics
+      ),
+    };
+  });
+}, [
+  activeLayout.tarjetas,
+  filteredMetrics,
+  baseRows,
+  effectiveKeyword,
+  varContext,
+  sourceMapping,
+  platformSet,
+  layoutCustomMetrics,
+  data.campaignGroups,
+]);
 ```
 
 Replace with:
+
 ```typescript
 const tarjetaValues = useMemo(() => {
-    return activeLayout.tarjetas.map((t: CardDef) => {
-        const filter = resolveFilter(t.campaignFilter, effectiveKeyword)
-        let rows = filter === effectiveKeyword
-            ? filteredMetrics
-            : baseRows.map((m: any) => enrichMetaRow(m, filter, data.campaignGroups))
-        if (t.formFilter) {
-            rows = rows.map((m: any) => enrichFormRow(m, t.formFilter))
-        }
-        return {
-            ...t,
-            value: aggregateFormula(t.formula, rows, varContext, sourceMapping, platformSet, layoutCustomMetrics),
-        }
-    })
-}, [activeLayout.tarjetas, filteredMetrics, baseRows, effectiveKeyword, varContext, sourceMapping, platformSet, layoutCustomMetrics, data.campaignGroups])
+  return activeLayout.tarjetas.map((t: CardDef) => {
+    const filter = resolveFilter(t.campaignFilter, effectiveKeyword);
+    let rows =
+      filter === effectiveKeyword
+        ? filteredMetrics
+        : baseRows.map((m: any) => enrichMetaRow(m, filter, data.campaignGroups));
+    if (t.formFilter) {
+      rows = rows.map((m: any) => enrichFormRow(m, t.formFilter));
+    }
+    return {
+      ...t,
+      value: aggregateFormula(
+        t.formula,
+        rows,
+        varContext,
+        sourceMapping,
+        platformSet,
+        layoutCustomMetrics
+      ),
+    };
+  });
+}, [
+  activeLayout.tarjetas,
+  filteredMetrics,
+  baseRows,
+  effectiveKeyword,
+  varContext,
+  sourceMapping,
+  platformSet,
+  layoutCustomMetrics,
+  data.campaignGroups,
+]);
 ```
 
 - [ ] **Step 5: Apply `enrichFormRow` in column cell rendering**
 
 Find the column cell rendering block (around line 1190):
+
 ```typescript
-const filter = resolveFilter(col.campaignFilter, effectiveKeyword)
-const rowForCol = filter === effectiveKeyword
+const filter = resolveFilter(col.campaignFilter, effectiveKeyword);
+const rowForCol =
+  filter === effectiveKeyword
     ? raw
     : (() => {
-        const base = baseRows.find((m: any) => m.fecha === dayStr)
-        return base ? enrichMetaRow(base, filter, data.campaignGroups) : raw
-    })()
+        const base = baseRows.find((m: any) => m.fecha === dayStr);
+        return base ? enrichMetaRow(base, filter, data.campaignGroups) : raw;
+      })();
 ```
 
 Replace with:
+
 ```typescript
-const filter = resolveFilter(col.campaignFilter, effectiveKeyword)
-let rowForCol = filter === effectiveKeyword
+const filter = resolveFilter(col.campaignFilter, effectiveKeyword);
+let rowForCol =
+  filter === effectiveKeyword
     ? raw
     : (() => {
-        const base = baseRows.find((m: any) => m.fecha === dayStr)
-        return base ? enrichMetaRow(base, filter, data.campaignGroups) : raw
-    })()
+        const base = baseRows.find((m: any) => m.fecha === dayStr);
+        return base ? enrichMetaRow(base, filter, data.campaignGroups) : raw;
+      })();
 if (col.formFilter) {
-    rowForCol = enrichFormRow(rowForCol, col.formFilter)
+  rowForCol = enrichFormRow(rowForCol, col.formFilter);
 }
 ```
 
 - [ ] **Step 6: Pass `formNames` and `formIds` to `LayoutConfigModal`**
 
 Find the `LayoutConfigModal` render (around line 1320):
+
 ```tsx
 campaignGroups={data.campaignGroups || []}
 campaignNames={allCampaignNames}
 ```
 
 Add after `campaignNames`:
+
 ```tsx
-formNames={allFormNames}
-formIds={allFormIds}
+formNames = { allFormNames };
+formIds = { allFormIds };
 ```
 
 - [ ] **Step 7: Type-check**
@@ -859,12 +982,14 @@ npm run dev
 - [ ] **Step 4: Verify filter works when `meta_forms` has data**
 
 After the next worker sync runs (or trigger it manually via the dashboard sync button), `meta_forms` should be populated for accounts that run Lead Ads. Verify:
+
 - A card with `formFilter` active shows a different (lower) value than the same card without the filter.
 - A card with no `formFilter` is unchanged from before.
 
 - [ ] **Step 5: Verify graceful no-data state**
 
 For a client that has no Lead Ads, `meta_forms` will be `[]`. Confirm:
+
 - Cards with `formFilter` set show `0` or `null` (not an error).
 - Cards with no `formFilter` are completely unaffected.
 

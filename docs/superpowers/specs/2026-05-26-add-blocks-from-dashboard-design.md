@@ -21,12 +21,12 @@ A `+` button appears in the existing dashboard toolbar, alongside "Modo Rompecab
 
 Clicking `+` opens a Radix Popover (same pattern as FormulaInput) with four options:
 
-| Option | Block type | Defaults |
-|---|---|---|
-| Tarjeta | `card:` | label: "Nueva tarjeta", formula: "meta_spend", color: "default", prefix: "$", decimals: 2 |
-| Gráfico | `chart:` | title: "Nuevo gráfico", type: "line", valueFormulas: ["meta_spend"], colors: ["blue"] |
-| Tabla ranking | `ranking:` | title: "Nueva tabla", dimension: "campaigns", topN: 10, sortOrder: "desc", sortColumnIndex: 0, columns: [{ label: "Gasto", formula: "meta_spend", prefix: "$", decimals: 2 }] |
-| Texto / Sección | `text:` | content: "Nueva sección", style: "h2", align: "left", color: "white" |
+| Option          | Block type | Defaults                                                                                                                                                                      |
+| --------------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Tarjeta         | `card:`    | label: "Nueva tarjeta", formula: "meta_spend", color: "default", prefix: "$", decimals: 2                                                                                     |
+| Gráfico         | `chart:`   | title: "Nuevo gráfico", type: "line", valueFormulas: ["meta_spend"], colors: ["blue"]                                                                                         |
+| Tabla ranking   | `ranking:` | title: "Nueva tabla", dimension: "campaigns", topN: 10, sortOrder: "desc", sortColumnIndex: 0, columns: [{ label: "Gasto", formula: "meta_spend", prefix: "$", decimals: 2 }] |
+| Texto / Sección | `text:`    | content: "Nueva sección", style: "h2", align: "left", color: "white"                                                                                                          |
 
 ### Creation Flow
 

@@ -67,8 +67,9 @@ async function resolveRecipients(
 
     // Solo traffickers (mismo criterio que el trigger SQL): los viewers
     // asignados a un cliente no deben recibir datos internos (ventas, tickets).
-    const assignedIds = [...new Set(((assignments ?? []) as { user_id: string }[]).map((r) => r.user_id))]
-      .filter((id) => !ids.has(id));
+    const assignedIds = [
+      ...new Set(((assignments ?? []) as { user_id: string }[]).map((r) => r.user_id)),
+    ].filter((id) => !ids.has(id));
     if (assignedIds.length > 0) {
       const { data: traffickers, error: traffickersError } = await db
         .from('user_profiles')
@@ -88,7 +89,11 @@ async function resolveRecipients(
 }
 
 // Filtra los usuarios que desactivaron este tipo (opt-out: sin fila = habilitado).
-async function applyPreferences(db: Db, userIds: string[], type: InAppNotificationType): Promise<string[]> {
+async function applyPreferences(
+  db: Db,
+  userIds: string[],
+  type: InAppNotificationType
+): Promise<string[]> {
   if (userIds.length === 0) return [];
 
   const { data: optedOut, error: prefsError } = await db

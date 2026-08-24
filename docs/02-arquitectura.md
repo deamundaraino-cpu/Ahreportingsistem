@@ -2,20 +2,20 @@
 
 ## Stack tecnológico
 
-| Capa | Tecnología |
-|------|------------|
-| Framework | **Next.js 16** (App Router, React Server Components) |
-| UI | **React 19**, **Tailwind CSS 4**, **Radix UI** / shadcn, **lucide-react**, **@heroicons/react** |
-| Gráficos | **Recharts** |
-| Formularios | **react-hook-form** + **Zod** |
-| Drag & drop | **@dnd-kit** (core, sortable, utilities) |
-| Fechas | **date-fns**, **react-day-picker** |
-| Base de datos / Auth | **Supabase** (Postgres + Auth + RLS) vía `@supabase/ssr` |
-| Integraciones | `@google-analytics/data`, `google-auth-library`, `google-spreadsheet` |
-| PDF / export | `jspdf`, `html2canvas` |
-| Validación | **Zod** |
-| Lenguaje | **TypeScript 5.9** |
-| Deploy | **Vercel** (con Vercel Cron) + GitHub Actions |
+| Capa                 | Tecnología                                                                                      |
+| -------------------- | ----------------------------------------------------------------------------------------------- |
+| Framework            | **Next.js 16** (App Router, React Server Components)                                            |
+| UI                   | **React 19**, **Tailwind CSS 4**, **Radix UI** / shadcn, **lucide-react**, **@heroicons/react** |
+| Gráficos             | **Recharts**                                                                                    |
+| Formularios          | **react-hook-form** + **Zod**                                                                   |
+| Drag & drop          | **@dnd-kit** (core, sortable, utilities)                                                        |
+| Fechas               | **date-fns**, **react-day-picker**                                                              |
+| Base de datos / Auth | **Supabase** (Postgres + Auth + RLS) vía `@supabase/ssr`                                        |
+| Integraciones        | `@google-analytics/data`, `google-auth-library`, `google-spreadsheet`                           |
+| PDF / export         | `jspdf`, `html2canvas`                                                                          |
+| Validación           | **Zod**                                                                                         |
+| Lenguaje             | **TypeScript 5.9**                                                                              |
+| Deploy               | **Vercel** (con Vercel Cron) + GitHub Actions                                                   |
 
 El servidor de desarrollo corre en el **puerto 3001** (`next dev -p 3001`).
 
@@ -75,11 +75,11 @@ La aplicación es **híbrida**:
 
 Next.js agrupa rutas con paréntesis (no afectan la URL, solo el layout):
 
-| Route group | URL | Layout / propósito |
-|-------------|-----|--------------------|
-| `(app)` | `/dashboard`, `/admin/*`, `/soporte` | Autenticado. Renderiza `AppSidebar`. RBAC por rol. |
-| `(report-utm)` | `/report-utm/*` | Autenticado + feature flag. Sidebar propio. Solo admin. |
-| (raíz) | `/report/*`, `/p/*`, `/t/*`, `/login`, `/signup`, `/privacy`, `/terms` | Públicas o de auth. |
+| Route group    | URL                                                                    | Layout / propósito                                      |
+| -------------- | ---------------------------------------------------------------------- | ------------------------------------------------------- |
+| `(app)`        | `/dashboard`, `/admin/*`, `/soporte`                                   | Autenticado. Renderiza `AppSidebar`. RBAC por rol.      |
+| `(report-utm)` | `/report-utm/*`                                                        | Autenticado + feature flag. Sidebar propio. Solo admin. |
+| (raíz)         | `/report/*`, `/p/*`, `/t/*`, `/login`, `/signup`, `/privacy`, `/terms` | Públicas o de auth.                                     |
 
 Ver el mapa completo en [doc 06 · Rutas y páginas](./06-rutas-y-paginas.md).
 
@@ -139,7 +139,7 @@ Detalle completo en [doc 12 · Módulo Report-UTM](./12-modulo-report-utm.md).
 
 ## Seguridad transversal
 
-- **RLS (Row Level Security)** en Postgres: cada cliente solo ve sus filas; los workers usan la *service role key* que omite RLS. Ver [doc 04](./04-modelo-de-datos.md).
+- **RLS (Row Level Security)** en Postgres: cada cliente solo ve sus filas; los workers usan la _service role key_ que omite RLS. Ver [doc 04](./04-modelo-de-datos.md).
 - **Middleware** (`src/proxy.ts` → `utils/supabase/middleware.ts`): protege rutas, gestiona sesión y aplica RBAC. Ver [doc 05](./05-autenticacion-y-roles.md).
 - **Headers de seguridad** (`next.config.ts`): HSTS, X-Content-Type-Options, CSP, X-Frame-Options (con excepción para rutas públicas embebibles). Ver [doc 15](./15-despliegue.md).
 - **Autenticación por capas**: sesión Supabase (UI), tokens de API (`/api/v1`, MCP), secreto de cron (`CRON_SECRET`), firma HMAC (webhooks).

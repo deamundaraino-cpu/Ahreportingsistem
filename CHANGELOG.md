@@ -9,6 +9,7 @@ y el proyecto adhiere a [Versionado Semántico](https://semver.org/lang/es/):
 ## [No publicado]
 
 ### Añadido
+
 - **Los campos de lead ya son una métrica, no solo una dimensión.** Un
   **segmento** —«Desde 2M» = estos tres buckets— se define bajo el campo en la
   ficha del cliente y aparece como métrica en **todos los tipos de widget** de los
@@ -61,6 +62,7 @@ y el proyecto adhiere a [Versionado Semántico](https://semver.org/lang/es/):
     distintas y se solapan.
 
 ### Cambiado
+
 - **Los campos-contador de lead se han consolidado.** Goodprop tenía cuatro campos
   sobre la misma pregunta (`leads_totales`, `leads_desde_1_3m`, `leads_desde1_6m`,
   `leads_desde_2m`) y el campo legítimo con el mapa de valores vacío; Cris
@@ -96,6 +98,7 @@ y el proyecto adhiere a [Versionado Semántico](https://semver.org/lang/es/):
   columna de tipo con valor `venta`.
 
 ### Corregido
+
 - **Los alias de campo dinámico no aparecían en el editor de campos calculados del
   BI.** `BiCalcFieldsModal` solo pasaba `formFields` a `BiFormulaInput`, así que
   `sf__`, `sv__` y `off__` solo se podían usar si te los sabías de memoria — el
@@ -126,8 +129,7 @@ y el proyecto adhiere a [Versionado Semántico](https://semver.org/lang/es/):
 - **El espejo público perdía las tablas de ranking.** `getMirrorDashboardData`
   construía el layout de la pestaña sin `ranking_tables`, así que una tabla
   configurada en una pestaña se veía en el dashboard interno y desaparecía sin
-  ningún error en el enlace compartido al cliente. Presente desde la migración
-  018.
+  ningún error en el enlace compartido al cliente. Presente desde la migración 018.
 
 - **Las métricas de respuestas no aparecían en el selector.** El filtro del
   desplegable descartaba toda métrica cuyo id contuviera `__`, una guarda pensada
@@ -158,6 +160,7 @@ y el proyecto adhiere a [Versionado Semántico](https://semver.org/lang/es/):
   trunca. Detectado midiendo Eduversio: 14.090 contactos de 22.224 reales.
 
 ### Interno
+
 - Índice de cobertura `idx_rutm_lead_events_utm_cover`. Sin él, el total diario
   del cliente mayor tardaba **8.105 ms en frío** y agotaba el `statement_timeout`
   de 8 s (460 ms en caliente). Con él es un Index Only Scan sin lecturas de heap:
@@ -176,6 +179,7 @@ y el proyecto adhiere a [Versionado Semántico](https://semver.org/lang/es/):
 Primer release estable en producción (https://reportes.adshouse.cloud/).
 
 ### Plataformas y sincronización
+
 - Integración con **Meta Ads** (OAuth, refresco automático de tokens, Meta Forms, leads).
 - Integración con **TikTok Ads** con soporte multi-cuenta y filtrado por `account_id`.
 - Integración con **Hotmart** (OAuth, funnels, suscripciones) y **Google Analytics 4**.
@@ -183,6 +187,7 @@ Primer release estable en producción (https://reportes.adshouse.cloud/).
 - Worker de sincronización con procesamiento de clientes en paralelo y fetch por rango.
 
 ### Dashboards e informes
+
 - Dashboard por cliente con **pestañas personalizables** (drag & drop, archivado).
 - **Plantillas de pestañas** globales reutilizables: guarda la visualización de una
   pestaña y aplícala al crear nuevas pestañas en cualquier cliente. Gestión
@@ -195,6 +200,7 @@ Primer release estable en producción (https://reportes.adshouse.cloud/).
 - Enlaces públicos (mirror) por cliente y por pestaña.
 
 ### Operación y equipo
+
 - Roles y permisos: superadmin, admin, trafficker, viewer.
 - Módulo de **Roadmap / Soporte** con gestión de tickets.
 - **Notificaciones** in-app (campanita) y por **WhatsApp** (Evolution API).

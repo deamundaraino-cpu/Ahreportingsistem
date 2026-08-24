@@ -19,18 +19,18 @@
 // permite que siga funcionando si lo que había era texto plano, que es
 // exactamente el estado del que venimos.
 
-import { encrypt, decrypt } from './report-utm/encryption'
+import { encrypt, decrypt } from './report-utm/encryption';
 
-export { encrypt, decrypt }
+export { encrypt, decrypt };
 
 /** Un valor cifrado tiene la forma `iv:authTag:ciphertext`, los tres en base64. */
-const FORMATO_CIFRADO = /^[A-Za-z0-9+/=]+:[A-Za-z0-9+/=]+:[A-Za-z0-9+/=]+$/
+const FORMATO_CIFRADO = /^[A-Za-z0-9+/=]+:[A-Za-z0-9+/=]+:[A-Za-z0-9+/=]+$/;
 
 export type SecretoLeido = {
-    valor: string | null
-    /** `true` si el valor venía en claro y conviene reescribirlo cifrado. */
-    necesitaMigracion: boolean
-}
+  valor: string | null;
+  /** `true` si el valor venía en claro y conviene reescribirlo cifrado. */
+  necesitaMigracion: boolean;
+};
 
 /**
  * Lee un secreto que puede estar cifrado o en claro.
@@ -39,31 +39,31 @@ export type SecretoLeido = {
  * @param plano    valor heredado en claro (puede faltar)
  */
 export function leerSecreto(
-    cifrado: string | null | undefined,
-    plano: string | null | undefined,
+  cifrado: string | null | undefined,
+  plano: string | null | undefined
 ): SecretoLeido {
-    if (cifrado) {
-        try {
-            return { valor: decrypt(cifrado), necesitaMigracion: false }
-        } catch {
-            // Valor ilegible con la clave actual. Se cae al claro si lo hay: es
-            // preferible a dejar la integración muerta sin aviso.
-        }
+  if (cifrado) {
+    try {
+      return { valor: decrypt(cifrado), necesitaMigracion: false };
+    } catch {
+      // Valor ilegible con la clave actual. Se cae al claro si lo hay: es
+      // preferible a dejar la integración muerta sin aviso.
     }
-    if (plano) {
-        // Un valor guardado en la clave "en claro" puede estar ya cifrado si
-        // alguien lo migró a medias. Se intenta descifrar antes de darlo por
-        // texto plano.
-        if (FORMATO_CIFRADO.test(plano)) {
-            try {
-                return { valor: decrypt(plano), necesitaMigracion: false }
-            } catch {
-                // No lo era: sigue siendo texto plano.
-            }
-        }
-        return { valor: plano, necesitaMigracion: true }
+  }
+  if (plano) {
+    // Un valor guardado en la clave "en claro" puede estar ya cifrado si
+    // alguien lo migró a medias. Se intenta descifrar antes de darlo por
+    // texto plano.
+    if (FORMATO_CIFRADO.test(plano)) {
+      try {
+        return { valor: decrypt(plano), necesitaMigracion: false };
+      } catch {
+        // No lo era: sigue siendo texto plano.
+      }
     }
-    return { valor: null, necesitaMigracion: false }
+    return { valor: plano, necesitaMigracion: true };
+  }
+  return { valor: null, necesitaMigracion: false };
 }
 
 /**
@@ -73,12 +73,12 @@ export function leerSecreto(
  * claro pensando que se guardó cifrado es peor que fallar de forma visible.
  */
 export function cifrarSecreto(valor: string | null | undefined): string | null {
-    if (!valor) return null
-    return encrypt(valor)
+  if (!valor) return null;
+  return encrypt(valor);
 }
 
 /** ¿Está disponible la clave de cifrado en este proceso? */
 export function hayClaveDeCifrado(): boolean {
-    const hex = process.env.RUTM_ENCRYPTION_KEY
-    return Boolean(hex && hex.length === 64)
+  const hex = process.env.RUTM_ENCRYPTION_KEY;
+  return Boolean(hex && hex.length === 64);
 }

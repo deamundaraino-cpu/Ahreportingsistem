@@ -1,73 +1,79 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { createAdminClient } from '@/utils/supabase/server'
+import { NextRequest, NextResponse } from 'next/server';
+import { createAdminClient } from '@/utils/supabase/server';
 
-const GRAPH = 'https://graph.facebook.com/v19.0'
+const GRAPH = 'https://graph.facebook.com/v19.0';
 
 // Callback OAuth de Meta (Facebook) Ads.
 // Meta redirige aquí con ?code={CODE}&state={CLIENT_ID}
 export async function GET(request: NextRequest) {
-  const { searchParams } = new URL(request.url)
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL!
+  const { searchParams } = new URL(request.url);
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL!;
 
-  const code = searchParams.get('code')
-  const clientId = searchParams.get('state')
-  const error = searchParams.get('error_description') || searchParams.get('error')
+  const code = searchParams.get('code');
+  const clientId = searchParams.get('state');
+  const error = searchParams.get('error_description') || searchParams.get('error');
 
   if (error || !code || !clientId) {
-    const msg = error ?? 'code o state faltante'
-    return NextResponse.redirect(`${appUrl}/admin/settings?meta_error=${encodeURIComponent(msg)}`)
+    const msg = error ?? 'code o state faltante';
+    return NextResponse.redirect(`${appUrl}/admin/settings?meta_error=${encodeURIComponent(msg)}`);
   }
 
-  const appId = process.env.META_APP_ID!
-  const appSecret = process.env.META_APP_SECRET!
-  const redirectUri = `${appUrl}/api/auth/meta/callback`
-  const settingsUrl = `${appUrl}/admin/settings/${clientId}`
+  const appId = process.env.META_APP_ID!;
+  const appSecret = process.env.META_APP_SECRET!;
+  const redirectUri = `${appUrl}/api/auth/meta/callback`;
+  const settingsUrl = `${appUrl}/admin/settings/${clientId}`;
 
   try {
     // 1. Intercambiar code → token short-lived
-    const shortUrl = new URL(`${GRAPH}/oauth/access_token`)
-    shortUrl.searchParams.set('client_id', appId)
-    shortUrl.searchParams.set('client_secret', appSecret)
-    shortUrl.searchParams.set('redirect_uri', redirectUri)
-    shortUrl.searchParams.set('code', code)
-    const shortRes = await fetch(shortUrl.toString())
-    const shortData = await shortRes.json()
+    const shortUrl = new URL(`${GRAPH}/oauth/access_token`);
+    shortUrl.searchParams.set('client_id', appId);
+    shortUrl.searchParams.set('client_secret', appSecret);
+    shortUrl.searchParams.set('redirect_uri', redirectUri);
+    shortUrl.searchParams.set('code', code);
+    const shortRes = await fetch(shortUrl.toString());
+    const shortData = await shortRes.json();
     if (shortData.error) {
-      return NextResponse.redirect(`${settingsUrl}?meta_error=${encodeURIComponent(shortData.error.message)}`)
+      return NextResponse.redirect(
+        `${settingsUrl}?meta_error=${encodeURIComponent(shortData.error.message)}`
+      );
     }
-    const shortToken: string = shortData.access_token
+    const shortToken: string = shortData.access_token;
 
     // 2. Intercambiar short-lived → long-lived (~60 días)
-    const longUrl = new URL(`${GRAPH}/oauth/access_token`)
-    longUrl.searchParams.set('grant_type', 'fb_exchange_token')
-    longUrl.searchParams.set('client_id', appId)
-    longUrl.searchParams.set('client_secret', appSecret)
-    longUrl.searchParams.set('fb_exchange_token', shortToken)
-    const longRes = await fetch(longUrl.toString())
-    const longData = await longRes.json()
+    const longUrl = new URL(`${GRAPH}/oauth/access_token`);
+    longUrl.searchParams.set('grant_type', 'fb_exchange_token');
+    longUrl.searchParams.set('client_id', appId);
+    longUrl.searchParams.set('client_secret', appSecret);
+    longUrl.searchParams.set('fb_exchange_token', shortToken);
+    const longRes = await fetch(longUrl.toString());
+    const longData = await longRes.json();
     if (longData.error) {
-      return NextResponse.redirect(`${settingsUrl}?meta_error=${encodeURIComponent(longData.error.message)}`)
+      return NextResponse.redirect(
+        `${settingsUrl}?meta_error=${encodeURIComponent(longData.error.message)}`
+      );
     }
-    const longToken: string = longData.access_token
-    const expiresIn: number = longData.expires_in ?? 60 * 24 * 60 * 60 // fallback 60 días
-    const expiresAt = new Date(Date.now() + expiresIn * 1000).toISOString()
+    const longToken: string = longData.access_token;
+    const expiresIn: number = longData.expires_in ?? 60 * 24 * 60 * 60; // fallback 60 días
+    const expiresAt = new Date(Date.now() + expiresIn * 1000).toISOString();
 
     // 3. Guardar SOLO el token en config_api del cliente.
     // Las cuentas publicitarias NO se auto-importan: el admin elige cuáles sincronizar
     // desde la UI (botón "Elegir cuentas"), porque el token concede acceso a todas
     // las cuentas del usuario de Facebook.
-    const supabase = await createAdminClient()
+    const supabase = await createAdminClient();
     const { data: cliente, error: fetchError } = await supabase
       .from('clientes')
       .select('config_api')
       .eq('id', clientId)
-      .single()
+      .single();
 
     if (fetchError || !cliente) {
-      return NextResponse.redirect(`${appUrl}/admin/settings?meta_error=Cliente+no+encontrado`)
+      return NextResponse.redirect(`${appUrl}/admin/settings?meta_error=Cliente+no+encontrado`);
     }
 
-    const existingAccounts: any[] = Array.isArray(cliente.config_api?.meta_accounts) ? cliente.config_api.meta_accounts : []
+    const existingAccounts: any[] = Array.isArray(cliente.config_api?.meta_accounts)
+      ? cliente.config_api.meta_accounts
+      : [];
 
     const newConfig = {
       ...cliente.config_api,
@@ -75,19 +81,21 @@ export async function GET(request: NextRequest) {
       meta_token_expires_at: expiresAt,
       meta_connection_status: 'connected',
       meta_accounts: existingAccounts,
-    }
+    };
 
     const { error: updateError } = await supabase
       .from('clientes')
       .update({ config_api: newConfig })
-      .eq('id', clientId)
+      .eq('id', clientId);
 
     if (updateError) {
-      return NextResponse.redirect(`${settingsUrl}?meta_error=${encodeURIComponent(updateError.message)}`)
+      return NextResponse.redirect(
+        `${settingsUrl}?meta_error=${encodeURIComponent(updateError.message)}`
+      );
     }
 
-    return NextResponse.redirect(`${settingsUrl}?meta_connected=1`)
+    return NextResponse.redirect(`${settingsUrl}?meta_connected=1`);
   } catch {
-    return NextResponse.redirect(`${settingsUrl}?meta_error=Error+de+red+con+Meta`)
+    return NextResponse.redirect(`${settingsUrl}?meta_error=Error+de+red+con+Meta`);
   }
 }

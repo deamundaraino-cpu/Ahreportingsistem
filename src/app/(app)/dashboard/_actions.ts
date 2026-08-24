@@ -25,32 +25,36 @@ import type { LeadAnswerCampoResumen } from '@/lib/dashboard/metric-catalog';
 import { loadLeadCampos, loadLeadSegmentos, saveLeadCampo } from '@/lib/report-utm/lead-campos-db';
 import { slugCampo } from '@/lib/report-utm/lead-campos';
 import { getUserRole } from '@/lib/report-utm/auth';
-import { cargarRespuestasLead, campoSintetico, datasetVacio } from '@/lib/report-utm/lead-answers-db';
+import {
+  cargarRespuestasLead,
+  campoSintetico,
+  datasetVacio,
+} from '@/lib/report-utm/lead-answers-db';
 import type { LeadAnswerDataset } from '@/lib/report-utm/lead-answers-db';
 import type { LeadCampoDef, LeadSegmentoLite } from '@/lib/report-utm/lead-campos';
 import type { LeadAnswerBlockDef } from '@/lib/layout-types';
 
 /** Un campo de Sheet tal como lo necesita la UI del dashboard. */
 export interface SheetCampoResumen {
-  clave: string
-  nombre: string
-  agregacion: CampoAgg
-  formato: CampoFormato
+  clave: string;
+  nombre: string;
+  agregacion: CampoAgg;
+  formato: CampoFormato;
 }
 /** Una vista guardada, con su formato propio. */
 export interface SheetVistaResumen {
-  clave: string
-  nombre: string
-  agregacion: CampoAgg
-  formato: 'number' | 'currency' | 'percent'
+  clave: string;
+  nombre: string;
+  agregacion: CampoAgg;
+  formato: 'number' | 'currency' | 'percent';
 }
 
 interface SheetCamposDelDia {
-  porFecha: Map<string, Record<string, number>>
+  porFecha: Map<string, Record<string, number>>;
   /** Las 4 métricas legacy de leads, derivadas del campo de calidad migrado. */
-  leadsLegacy: Map<string, Record<string, number>>
-  campos: SheetCampoResumen[]
-  vistas: SheetVistaResumen[]
+  leadsLegacy: Map<string, Record<string, number>>;
+  campos: SheetCampoResumen[];
+  vistas: SheetVistaResumen[];
 }
 
 /** Días por debajo de los cuales el sync se ejecuta al momento en vez de encolarse. */
@@ -76,14 +80,14 @@ export type SyncResult = {
 
 /** Resultado del sync de Google Sheets, que va aparte del de métricas. */
 export type SheetsSyncResult = {
-  ok: boolean
+  ok: boolean;
   /** El cliente no tiene Sheets configurados: no es un error, no hay nada que hacer. */
-  configured: boolean
-  filas?: number
-  camposRecalculados?: number
-  warnings?: string[]
-  error?: string
-}
+  configured: boolean;
+  filas?: number;
+  camposRecalculados?: number;
+  warnings?: string[];
+  error?: string;
+};
 
 /**
  * Sincroniza los Google Sheets del cliente y recalcula sus campos.
@@ -95,20 +99,24 @@ export type SheetsSyncResult = {
  * `recalcularCamposCliente`, que es lo único que repuebla el desglose diario.
  */
 export async function triggerSheetsSync(clientId: string): Promise<SheetsSyncResult> {
-  if (!clientId) return { ok: false, configured: false, error: 'Cliente inválido' }
+  if (!clientId) return { ok: false, configured: false, error: 'Cliente inválido' };
 
   try {
-    const supabase = await createAdminClient()
+    const supabase = await createAdminClient();
     const { data: cliente } = await supabase
-      .from('clientes').select('config_api').eq('id', clientId).maybeSingle()
+      .from('clientes')
+      .select('config_api')
+      .eq('id', clientId)
+      .maybeSingle();
 
-    const sheets = normalizeSheetConfigs((cliente as any)?.config_api?.google_sheets_conversiones)
-      .filter(s => s.enabled && s.sheet_url)
-    if (sheets.length === 0) return { ok: true, configured: false }
+    const sheets = normalizeSheetConfigs(
+      (cliente as any)?.config_api?.google_sheets_conversiones
+    ).filter((s) => s.enabled && s.sheet_url);
+    if (sheets.length === 0) return { ok: true, configured: false };
 
-    const headersList = await headers()
-    const host = headersList.get('host') || 'localhost:3001'
-    const protocol = host.includes('localhost') ? 'http' : 'https'
+    const headersList = await headers();
+    const host = headersList.get('host') || 'localhost:3001';
+    const protocol = host.includes('localhost') ? 'http' : 'https';
 
     const res = await fetch(`${protocol}://${host}/api/admin/sync-conversiones-offline`, {
       method: 'POST',
@@ -118,14 +126,18 @@ export async function triggerSheetsSync(clientId: string): Promise<SheetsSyncRes
       // Un punto por debajo del maxDuration de la ruta, para devolver un error
       // legible en vez de que la petición muera sin más.
       signal: AbortSignal.timeout(58_000),
-    })
+    });
 
-    const leido = await leerJsonRespuesta<SyncConversionesResponse>(res, 'Error al sincronizar el Sheet', TIMEOUT_SHEETS)
-    if (!leido.ok) return { ok: false, configured: true, error: leido.error }
-    const data = leido.data
+    const leido = await leerJsonRespuesta<SyncConversionesResponse>(
+      res,
+      'Error al sincronizar el Sheet',
+      TIMEOUT_SHEETS
+    );
+    if (!leido.ok) return { ok: false, configured: true, error: leido.error };
+    const data = leido.data;
 
     if (!res.ok) {
-      return { ok: false, configured: true, error: data.error || 'Error al sincronizar el Sheet' }
+      return { ok: false, configured: true, error: data.error || 'Error al sincronizar el Sheet' };
     }
 
     return {
@@ -134,15 +146,13 @@ export async function triggerSheetsSync(clientId: string): Promise<SheetsSyncRes
       filas: data.totalFilas ?? 0,
       camposRecalculados: data.camposRecalculados ?? 0,
       warnings: data.warnings ?? [],
-    }
+    };
   } catch (e: any) {
     return {
       ok: false,
       configured: true,
-      error: esTimeoutDeFetch(e)
-        ? TIMEOUT_SHEETS
-        : (e?.message || 'Error al sincronizar el Sheet'),
-    }
+      error: esTimeoutDeFetch(e) ? TIMEOUT_SHEETS : e?.message || 'Error al sincronizar el Sheet',
+    };
   }
 }
 
@@ -156,7 +166,11 @@ export async function triggerSheetsSync(clientId: string): Promise<SheetsSyncRes
  *
  * Solo trae `metricas_diarias`. Los Google Sheets van por `triggerSheetsSync`.
  */
-export async function triggerWorkerSync(clientId: string, from: string, to: string): Promise<SyncResult> {
+export async function triggerWorkerSync(
+  clientId: string,
+  from: string,
+  to: string
+): Promise<SyncResult> {
   if (!clientId || !from || !to) {
     return { ok: false, error: 'Parámetros inválidos', platform_status: null };
   }
@@ -192,9 +206,11 @@ export async function triggerWorkerSync(clientId: string, from: string, to: stri
   const desde = rango.start;
   const hasta = rango.end;
 
-  const dias = Math.floor(
-    (new Date(`${hasta}T00:00:00Z`).getTime() - new Date(`${desde}T00:00:00Z`).getTime()) / 86_400_000
-  ) + 1;
+  const dias =
+    Math.floor(
+      (new Date(`${hasta}T00:00:00Z`).getTime() - new Date(`${desde}T00:00:00Z`).getTime()) /
+        86_400_000
+    ) + 1;
 
   // ─── Rango largo: a la cola ───
   if (!Number.isFinite(dias) || dias > SYNC_DIRECTO_MAX_DIAS) {
@@ -239,9 +255,12 @@ export async function triggerWorkerSync(clientId: string, from: string, to: stri
         message: `${data?.encolados ?? 0} tarea(s) en cola — sincronizando en segundo plano…`,
       };
     } catch (err) {
-      const msg = err instanceof Error && err.name === 'TimeoutError'
-        ? 'La cola no respondió a tiempo (timeout).'
-        : (err instanceof Error ? err.message : 'Error de red');
+      const msg =
+        err instanceof Error && err.name === 'TimeoutError'
+          ? 'La cola no respondió a tiempo (timeout).'
+          : err instanceof Error
+            ? err.message
+            : 'Error de red';
       return { ok: false, error: msg, platform_status: null };
     }
   }
@@ -295,12 +314,17 @@ export async function triggerWorkerSync(clientId: string, from: string, to: stri
       queued: false,
       partial: !!data?.partial,
       platform_status: firstResult?.platform_status ?? null,
-      message: data?.partial ? 'Sincronización parcial: el resto continúa en segundo plano.' : undefined,
+      message: data?.partial
+        ? 'Sincronización parcial: el resto continúa en segundo plano.'
+        : undefined,
     };
   } catch (err) {
-    const msg = err instanceof Error && err.name === 'TimeoutError'
-      ? 'La sincronización tardó demasiado (timeout). Prueba con un rango más corto.'
-      : (err instanceof Error ? err.message : 'Error de red');
+    const msg =
+      err instanceof Error && err.name === 'TimeoutError'
+        ? 'La sincronización tardó demasiado (timeout). Prueba con un rango más corto.'
+        : err instanceof Error
+          ? err.message
+          : 'Error de red';
     return { ok: false, error: msg, platform_status: null };
   }
 }
@@ -448,11 +472,17 @@ async function getSheetCamposDelDia(
     if (campos.length === 0) return vacio;
 
     const resumen = () => ({
-      campos: campos.map(c => ({
-        clave: c.clave, nombre: c.nombre, agregacion: c.agregacion, formato: c.formato,
+      campos: campos.map((c) => ({
+        clave: c.clave,
+        nombre: c.nombre,
+        agregacion: c.agregacion,
+        formato: c.formato,
       })),
-      vistas: vistas.map(v => ({
-        clave: v.clave, nombre: v.nombre, agregacion: v.agregacion, formato: v.formato,
+      vistas: vistas.map((v) => ({
+        clave: v.clave,
+        nombre: v.nombre,
+        agregacion: v.agregacion,
+        formato: v.formato,
       })),
     });
 
@@ -475,8 +505,12 @@ async function getSheetCamposDelDia(
       const fecha = String(r.fecha ?? '').slice(0, 10);
       const key = `${fecha} ${r.campo_id}`;
       const fila: CampoValorDiario = {
-        campo_id: String(r.campo_id), fecha, valor: String(r.valor ?? ''),
-        filas: Number(r.filas ?? 0), suma: Number(r.suma ?? 0), n_num: Number(r.n_num ?? 0),
+        campo_id: String(r.campo_id),
+        fecha,
+        valor: String(r.valor ?? ''),
+        filas: Number(r.filas ?? 0),
+        suma: Number(r.suma ?? 0),
+        n_num: Number(r.n_num ?? 0),
         minimo: r.minimo === null ? null : Number(r.minimo),
         maximo: r.maximo === null ? null : Number(r.maximo),
       };
@@ -489,12 +523,12 @@ async function getSheetCamposDelDia(
     const leadsLegacy = new Map<string, Record<string, number>>();
 
     // Campo y vista que dejó la migración del legacy de leads, si existen.
-    const campoCalidad = campos.find(c => c.clave === CAMPO_CALIDAD_LEAD);
-    const vistaCalificados = vistas.find(v => v.clave === VISTA_LEADS_CALIFICADOS);
+    const campoCalidad = campos.find((c) => c.clave === CAMPO_CALIDAD_LEAD);
+    const vistaCalificados = vistas.find((v) => v.clave === VISTA_LEADS_CALIFICADOS);
 
     for (const [key, filas] of porFechaCampo) {
       const [fecha, campoId] = key.split(' ');
-      const campo = campos.find(c => c.id === campoId);
+      const campo = campos.find((c) => c.id === campoId);
       if (!campo) continue;
 
       // Incluye los sumandos (`__num`/`__den`/`__min`/`__max`) cuando la
@@ -511,7 +545,10 @@ async function getSheetCamposDelDia(
       if (campoCalidad && campo.id === campoCalidad.id) {
         const totales = agregarDiarios(filas, 'count');
         const calificados = vistaCalificados
-          ? agregarDiarios(filas.filter(f => vistaIncluyeValor(vistaCalificados, f.valor)), 'count')
+          ? agregarDiarios(
+              filas.filter((f) => vistaIncluyeValor(vistaCalificados, f.valor)),
+              'count'
+            )
           : 0;
         leadsLegacy.set(fecha, {
           leads_totales: totales,
@@ -541,16 +578,17 @@ async function getSheetCamposDelDia(
  */
 function recolectarBloquesRespuesta(
   layout: { lead_answer_blocks?: LeadAnswerBlockDef[] } | null | undefined,
-  tabs: { lead_answer_blocks?: LeadAnswerBlockDef[] | null }[] | null | undefined,
+  tabs: { lead_answer_blocks?: LeadAnswerBlockDef[] | null }[] | null | undefined
 ): LeadAnswerBlockDef[] {
   const vistos = new Set<string>();
   const out: LeadAnswerBlockDef[] = [];
   const añadir = (bloques: LeadAnswerBlockDef[] | null | undefined) => {
     for (const b of bloques ?? []) {
-      const firma = b.origen === 'catalogo'
-        ? `c:${b.clave ?? ''}`
-        : `a:${[...(b.clavesOrigen ?? [])].sort().join('~')}`;
-      if (firma === 'c:' || firma === 'a:') continue;   // bloque recién creado, sin pregunta
+      const firma =
+        b.origen === 'catalogo'
+          ? `c:${b.clave ?? ''}`
+          : `a:${[...(b.clavesOrigen ?? [])].sort().join('~')}`;
+      if (firma === 'c:' || firma === 'a:') continue; // bloque recién creado, sin pregunta
       if (vistos.has(firma)) continue;
       vistos.add(firma);
       out.push(b);
@@ -594,7 +632,7 @@ function layoutUsaRespuestasLead(
    * (`lseg__desde_2m`), así que sin esto una tarjeta que solo use un segmento
    * pediría un dataset sin el campo que lo bucketiza y mostraría 0.
    */
-  segmentos: { clave: string; campoClave: string }[] = [],
+  segmentos: { clave: string; campoClave: string }[] = []
 ): { usaTotales: boolean; claves: string[] } {
   let usaTotales = false;
   const claves = new Set<string>();
@@ -608,7 +646,10 @@ function layoutUsaRespuestasLead(
   const revisar = (fuente: FuenteDeFormulas | null | undefined) => {
     if (!fuente) return;
     for (const c of fuente.columnas ?? []) usa(c?.formula);
-    for (const c of fuente.tarjetas ?? []) { usa(c?.formula); usa(c?.targetFormula); }
+    for (const c of fuente.tarjetas ?? []) {
+      usa(c?.formula);
+      usa(c?.targetFormula);
+    }
     for (const g of fuente.graficos ?? []) for (const f of g?.valueFormulas ?? []) usa(f);
     for (const r of fuente.ranking_tables ?? []) for (const c of r?.columns ?? []) usa(c?.formula);
     for (const m of fuente.custom_metrics ?? []) usa(m?.formula);
@@ -617,7 +658,7 @@ function layoutUsaRespuestasLead(
   revisar(layout);
   for (const t of tabs ?? []) revisar(t);
 
-  const plantillasUsadas = new Set((tabs ?? []).map(t => t?.plantilla_id).filter(Boolean));
+  const plantillasUsadas = new Set((tabs ?? []).map((t) => t?.plantilla_id).filter(Boolean));
   for (const p of plantillas ?? []) if (plantillasUsadas.has(p?.id)) revisar(p);
 
   return { usaTotales, claves: [...claves] };
@@ -651,15 +692,18 @@ async function getCatalogoRespuestas(clienteId: string): Promise<LeadAnswerCampo
     for (const s of await loadLeadSegmentos(rtm, rtmClienteId, campos, { soloActivos: true })) {
       (porCampo[s.campo_clave] ??= []).push({ clave: s.clave, nombre: s.nombre });
     }
-    return campos.map(c => {
+    return campos.map((c) => {
       const buckets = [...new Set(Object.values(c.valores_map ?? {}))].filter(Boolean) as string[];
       if (c.sin_mapear === 'otros') buckets.push(BUCKET_OTROS);
       return {
-        clave: c.clave, nombre: c.nombre, buckets, sinBuckets: buckets.length === 0,
+        clave: c.clave,
+        nombre: c.nombre,
+        buckets,
+        sinBuckets: buckets.length === 0,
         // Un segmento SÍ es ofrecible aunque el campo salga `sinBuckets`: lleva su
         // propia lista de buckets, que es justo la información que al catálogo le
         // falta cuando `valores_map` está vacío.
-        segmentos: (porCampo[c.clave] ?? []).map(s => ({ clave: s.clave, nombre: s.nombre })),
+        segmentos: (porCampo[c.clave] ?? []).map((s) => ({ clave: s.clave, nombre: s.nombre })),
       };
     });
   } catch (err) {
@@ -690,17 +734,18 @@ type FuenteDeBloques = {
 function layoutUsaSheetFilter(
   layout: FuenteDeBloques | null | undefined,
   tabs: (FuenteDeBloques & { plantilla_id?: string | null })[] | null | undefined,
-  plantillas: (FuenteDeBloques & { id?: string })[] | null | undefined,
+  plantillas: (FuenteDeBloques & { id?: string })[] | null | undefined
 ): boolean {
   const conFiltro = (bloques: BloqueFiltrable[] | null | undefined) =>
-    Array.isArray(bloques) && bloques.some(b => !!b?.sheetFilter?.field);
+    Array.isArray(bloques) && bloques.some((b) => !!b?.sheetFilter?.field);
   const revisar = (fuente: FuenteDeBloques | null | undefined) =>
-    !!fuente && (conFiltro(fuente.columnas) || conFiltro(fuente.tarjetas) || conFiltro(fuente.graficos));
+    !!fuente &&
+    (conFiltro(fuente.columnas) || conFiltro(fuente.tarjetas) || conFiltro(fuente.graficos));
 
   if (revisar(layout)) return true;
   for (const t of tabs ?? []) if (revisar(t)) return true;
 
-  const plantillasUsadas = new Set((tabs ?? []).map(t => t?.plantilla_id).filter(Boolean));
+  const plantillasUsadas = new Set((tabs ?? []).map((t) => t?.plantilla_id).filter(Boolean));
   for (const p of plantillas ?? []) if (plantillasUsadas.has(p?.id) && revisar(p)) return true;
 
   return false;
@@ -726,7 +771,7 @@ async function getRespuestasLeadDelDia(
   /** ¿Hay algún bloque o alguna fórmula que use estas métricas? */
   conTotales: boolean,
   /** Claves del catálogo que mencionan las fórmulas, además de los bloques. */
-  clavesDeFormulas: string[] = [],
+  clavesDeFormulas: string[] = []
 ): Promise<LeadAnswerDataset> {
   // Si no hay ni bloques ni fórmulas que lo usen, no se toca la red: el total
   // diario es la consulta cara y no tiene sentido cobrársela a un cliente que no
@@ -745,7 +790,8 @@ async function getRespuestasLeadDelDia(
     // El catálogo se lee si lo usa un bloque o si alguna fórmula nombra una de
     // sus claves: una tarjeta puede apuntar a una pregunta sin que exista ningún
     // bloque de respuestas en la pestaña.
-    const necesitaCatalogo = bloques.some(b => b.origen === 'catalogo') || clavesDeFormulas.length > 0;
+    const necesitaCatalogo =
+      bloques.some((b) => b.origen === 'catalogo') || clavesDeFormulas.length > 0;
     const catalogo: LeadCampoDef[] = necesitaCatalogo
       ? await loadLeadCampos(rtm, rtmClienteId, { soloActivos: true })
       : [];
@@ -755,7 +801,10 @@ async function getRespuestasLeadDelDia(
     if (catalogo.length > 0) {
       for (const s of await loadLeadSegmentos(rtm, rtmClienteId, catalogo, { soloActivos: true })) {
         (segmentosPorCampo[s.campo_clave] ??= []).push({
-          clave: s.clave, nombre: s.nombre, operador: s.operador, valores: s.valores,
+          clave: s.clave,
+          nombre: s.nombre,
+          operador: s.operador,
+          valores: s.valores,
         });
       }
     }
@@ -764,7 +813,7 @@ async function getRespuestasLeadDelDia(
     const origenes: Record<string, 'catalogo' | 'auto'> = {};
     for (const b of bloques) {
       if (b.origen === 'catalogo') {
-        const campo = catalogo.find(c => c.clave === b.clave);
+        const campo = catalogo.find((c) => c.clave === b.clave);
         // Un campo borrado del catálogo NO cae a 'auto' automáticamente: eso
         // cambiaría las cifras del bloque sin avisar. Se omite y el componente
         // muestra que la pregunta ya no existe.
@@ -785,7 +834,7 @@ async function getRespuestasLeadDelDia(
     // que está pintado en la pestaña.
     for (const clave of clavesDeFormulas) {
       if (origenes[clave]) continue;
-      const campo = catalogo.find(c => c.clave === clave);
+      const campo = catalogo.find((c) => c.clave === clave);
       if (!campo) continue;
       campos.push(campo);
       origenes[clave] = 'catalogo';
@@ -803,7 +852,15 @@ async function getRespuestasLeadDelDia(
     const necesitaTotales = conTotales || bloques.length > 0;
 
     return await cargarRespuestasLead(
-      rtm, rtmClienteId, desde, endStr, campos, origenes, necesitaTotales, segmentosPorCampo);
+      rtm,
+      rtmClienteId,
+      desde,
+      endStr,
+      campos,
+      origenes,
+      necesitaTotales,
+      segmentosPorCampo
+    );
   } catch (err) {
     console.error('[dashboard] respuestas de formulario no disponibles:', err);
     return datasetVacio();
@@ -825,38 +882,50 @@ async function cargarMetricasEnriquecidas(
   startStr: string,
   endStr: string,
   opts?: {
-    incluirFilasOffline?: boolean
-    leadAnswerBlocks?: LeadAnswerBlockDef[]
-    leadAnswerFormulas?: boolean
+    incluirFilasOffline?: boolean;
+    leadAnswerBlocks?: LeadAnswerBlockDef[];
+    leadAnswerFormulas?: boolean;
     /** Claves del catálogo que mencionan las fórmulas del layout. */
-    leadAnswerClaves?: string[]
+    leadAnswerClaves?: string[];
   }
 ): Promise<{
-  metrics: any[]
-  leadsRaw: any[]
-  conversionesOfflineRaw: any[]
-  sheetCampos: SheetCampoResumen[]
-  sheetVistas: SheetVistaResumen[]
-  leadAnswers: LeadAnswerDataset
+  metrics: any[];
+  leadsRaw: any[];
+  conversionesOfflineRaw: any[];
+  sheetCampos: SheetCampoResumen[];
+  sheetVistas: SheetVistaResumen[];
+  leadAnswers: LeadAnswerDataset;
 }> {
   // Todas paginadas por keyset: sin esto PostgREST corta en ~1000 filas. Para
   // `metricas_diarias` es 1 fila/día (solo se nota en el archivo, que abarca
   // años), pero `conversiones_offline` puede traer miles por día y se estaba
   // truncando en silencio, dejando los totales offline por debajo de lo real.
   const enRango = (q: any, col: string) =>
-    startStr === 'all' ? q.lte(col, endStr) : q.gte(col, startStr).lte(col, endStr)
+    startStr === 'all' ? q.lte(col, endStr) : q.gte(col, startStr).lte(col, endStr);
 
   const [metricas, leads, offline, sheetData, leadAnswers] = await Promise.all([
-    fetchAllRows(() => enRango(
-      supabase.from('metricas_diarias').select('*').eq('cliente_id', clienteId), 'fecha')),
-    fetchAllRows(() => enRango(
-      supabase.from('leads_diarios').select('*').eq('client_id', clienteId), 'date')),
-    fetchAllRows(() => enRango(
-      supabase.from('conversiones_offline').select('*').eq('cliente_id', clienteId), 'fecha')),
+    fetchAllRows(() =>
+      enRango(supabase.from('metricas_diarias').select('*').eq('cliente_id', clienteId), 'fecha')
+    ),
+    fetchAllRows(() =>
+      enRango(supabase.from('leads_diarios').select('*').eq('client_id', clienteId), 'date')
+    ),
+    fetchAllRows(() =>
+      enRango(
+        supabase.from('conversiones_offline').select('*').eq('cliente_id', clienteId),
+        'fecha'
+      )
+    ),
     getSheetCamposDelDia(supabase, clienteId, startStr, endStr),
-    getRespuestasLeadDelDia(clienteId, startStr, endStr, opts?.leadAnswerBlocks ?? [],
-      opts?.leadAnswerFormulas ?? false, opts?.leadAnswerClaves ?? []),
-  ])
+    getRespuestasLeadDelDia(
+      clienteId,
+      startStr,
+      endStr,
+      opts?.leadAnswerBlocks ?? [],
+      opts?.leadAnswerFormulas ?? false,
+      opts?.leadAnswerClaves ?? []
+    ),
+  ]);
 
   const metrics = mergeMetricasDelRango({
     metricas,
@@ -865,7 +934,7 @@ async function cargarMetricasEnriquecidas(
     sheetPorFecha: sheetData.porFecha,
     leadsLegacyPorFecha: sheetData.leadsLegacy,
     incluirFilasOffline: opts?.incluirFilasOffline,
-  })
+  });
 
   // `leadAnswers` viaja como campo HERMANO de `metrics`, no dentro de sus filas,
   // y por eso `mergeMetricasDelRango` no se toca. Ese merge es "la única
@@ -881,35 +950,42 @@ async function cargarMetricasEnriquecidas(
     sheetCampos: sheetData.campos,
     sheetVistas: sheetData.vistas,
     leadAnswers,
-  }
+  };
 }
 
 export async function getDashboardData(clientId: string, startStr: string, endStr: string) {
   const supabase = await createAdminClient();
 
   // Fetch client + global assigned layout + client tabs + conversions catalog + campaign groups + all layout templates
-  const [clienteRes, clienteLayoutRes, tabsRes, conversionesRes, campaignGroupsRes, allLayoutsRes, tabTemplatesRes] =
-    await Promise.all([
-      supabase
-        .from('clientes')
-        .select('*, global_layout:layouts_reporte(*)')
-        .eq('id', clientId)
-        .limit(1),
-      supabase.from('clientes_layouts').select('*').eq('cliente_id', clientId).maybeSingle(),
-      supabase
-        .from('cliente_tabs')
-        .select('*')
-        .eq('cliente_id', clientId)
-        .order('orden', { ascending: true }),
-      supabase
-        .from('meta_conversiones_catalogo')
-        .select('conversion_key, label, field_id')
-        .eq('cliente_id', clientId)
-        .order('label', { ascending: true }),
-      supabase
-        .from('campaign_groups')
-        .select(
-          `
+  const [
+    clienteRes,
+    clienteLayoutRes,
+    tabsRes,
+    conversionesRes,
+    campaignGroupsRes,
+    allLayoutsRes,
+    tabTemplatesRes,
+  ] = await Promise.all([
+    supabase
+      .from('clientes')
+      .select('*, global_layout:layouts_reporte(*)')
+      .eq('id', clientId)
+      .limit(1),
+    supabase.from('clientes_layouts').select('*').eq('cliente_id', clientId).maybeSingle(),
+    supabase
+      .from('cliente_tabs')
+      .select('*')
+      .eq('cliente_id', clientId)
+      .order('orden', { ascending: true }),
+    supabase
+      .from('meta_conversiones_catalogo')
+      .select('conversion_key, label, field_id')
+      .eq('cliente_id', clientId)
+      .order('label', { ascending: true }),
+    supabase
+      .from('campaign_groups')
+      .select(
+        `
                 *,
                 campaign_group_mappings (
                     id,
@@ -917,12 +993,12 @@ export async function getDashboardData(clientId: string, startStr: string, endSt
                     campaign_name_pattern
                 )
             `
-        )
-        .eq('cliente_id', clientId)
-        .order('nombre', { ascending: true }),
-      supabase.from('layouts_reporte').select('*').order('nombre'),
-      supabase.from('tab_templates').select('*').order('nombre'),
-    ]);
+      )
+      .eq('cliente_id', clientId)
+      .order('nombre', { ascending: true }),
+    supabase.from('layouts_reporte').select('*').order('nombre'),
+    supabase.from('tab_templates').select('*').order('nombre'),
+  ]);
 
   const cliente = clienteRes.data?.[0];
   if (!cliente) return null;
@@ -937,25 +1013,26 @@ export async function getDashboardData(clientId: string, startStr: string, endSt
   // `hotmart_basic || hotmart_token`, que deja fuera a los clientes conectados por
   // HotConnect: esos perdían la resolución de los alias $facturacion_* del motor
   // de fórmulas y sus ventas salían en 0 sin ningún aviso.
-  if (hotmartConectado(cfg)) availablePlatforms.add("hotmart");
+  if (hotmartConectado(cfg)) availablePlatforms.add('hotmart');
   if (cfg.tiktok_advertiser_id && cfg.tiktok_access_token) availablePlatforms.add('tiktok');
 
   // Priority: client-specific layout → global assigned layout → null (classic)
   const layout = clienteLayoutRes.data || cliente.global_layout || null;
 
   // Periodo anterior para los deltas: misma duración, terminando un día antes.
-  const rangoPrevio = startStr !== 'all'
-    ? (() => {
-        const startMs = new Date(startStr + 'T00:00:00').getTime()
-        const endMs   = new Date(endStr   + 'T00:00:00').getTime()
-        const prevEndMs   = startMs - 86400000
-        const prevStartMs = prevEndMs - (endMs - startMs)
-        return {
-          desde: new Date(prevStartMs).toISOString().split('T')[0],
-          hasta: new Date(prevEndMs).toISOString().split('T')[0],
-        }
-      })()
-    : null
+  const rangoPrevio =
+    startStr !== 'all'
+      ? (() => {
+          const startMs = new Date(startStr + 'T00:00:00').getTime();
+          const endMs = new Date(endStr + 'T00:00:00').getTime();
+          const prevEndMs = startMs - 86400000;
+          const prevStartMs = prevEndMs - (endMs - startMs);
+          return {
+            desde: new Date(prevStartMs).toISOString().split('T')[0],
+            hasta: new Date(prevEndMs).toISOString().split('T')[0],
+          };
+        })()
+      : null;
 
   // Los bloques de respuestas se recolectan del layout MÁS todas las pestañas:
   // la carga es única y el usuario cambia de pestaña sin volver al servidor.
@@ -965,24 +1042,37 @@ export async function getDashboardData(clientId: string, startStr: string, endSt
   const leadAnswerCatalogo = await getCatalogoRespuestas(clientId);
   // El total diario solo se pide si alguna fórmula lo menciona (ver helper).
   const leadAnswerUso = layoutUsaRespuestasLead(
-    layout, tabsRes.data, allLayoutsRes.data, leadAnswerCatalogo.map(c => c.clave),
-    leadAnswerCatalogo.flatMap(c => (c.segmentos ?? []).map(s => ({ clave: s.clave, campoClave: c.clave }))));
+    layout,
+    tabsRes.data,
+    allLayoutsRes.data,
+    leadAnswerCatalogo.map((c) => c.clave),
+    leadAnswerCatalogo.flatMap((c) =>
+      (c.segmentos ?? []).map((s) => ({ clave: s.clave, campoClave: c.clave }))
+    )
+  );
 
   // El periodo anterior pasa por el MISMO enriquecimiento: si no, las tarjetas
   // con campos de Sheet, offline o leads se quedaban sin comparativo en silencio.
   // Sus `offline_rows` solo se traen si algo filtra por Sheet (ver helper).
   const previoNecesitaFilasOffline = layoutUsaSheetFilter(layout, tabsRes.data, allLayoutsRes.data);
   const [actual, previo] = await Promise.all([
-    cargarMetricasEnriquecidas(supabase, cliente.id, startStr, endStr,
-      { leadAnswerBlocks, leadAnswerFormulas: leadAnswerUso.usaTotales, leadAnswerClaves: leadAnswerUso.claves }),
+    cargarMetricasEnriquecidas(supabase, cliente.id, startStr, endStr, {
+      leadAnswerBlocks,
+      leadAnswerFormulas: leadAnswerUso.usaTotales,
+      leadAnswerClaves: leadAnswerUso.claves,
+    }),
     rangoPrevio
-      ? cargarMetricasEnriquecidas(supabase, cliente.id, rangoPrevio.desde, rangoPrevio.hasta,
-          { incluirFilasOffline: previoNecesitaFilasOffline, leadAnswerBlocks,
-            leadAnswerFormulas: leadAnswerUso.usaTotales, leadAnswerClaves: leadAnswerUso.claves })
+      ? cargarMetricasEnriquecidas(supabase, cliente.id, rangoPrevio.desde, rangoPrevio.hasta, {
+          incluirFilasOffline: previoNecesitaFilasOffline,
+          leadAnswerBlocks,
+          leadAnswerFormulas: leadAnswerUso.usaTotales,
+          leadAnswerClaves: leadAnswerUso.claves,
+        })
       : Promise.resolve(null),
   ]);
 
-  const { metrics, leadsRaw, conversionesOfflineRaw, sheetCampos, sheetVistas, leadAnswers } = actual;
+  const { metrics, leadsRaw, conversionesOfflineRaw, sheetCampos, sheetVistas, leadAnswers } =
+    actual;
 
   const effectiveStart = startStr === 'all' ? '2020-01-01' : startStr;
   const weeks = getWeeksInRange(effectiveStart, endStr);
@@ -1098,7 +1188,8 @@ export async function saveClienteLayout(
   if (error) return { error: error.message };
   // Sin fila devuelta no hubo escritura: mejor un error visible que un toast verde
   // sobre un guardado fantasma.
-  if (!data) return { error: 'No se pudo guardar el layout: la escritura no devolvió ninguna fila.' };
+  if (!data)
+    return { error: 'No se pudo guardar el layout: la escritura no devolvió ninguna fila.' };
 
   revalidatePath(`/dashboard/${clienteId}`);
   revalidatePath('/dashboard');
@@ -1261,7 +1352,10 @@ export async function getOfertasHotmart(clienteId: string, dias = 90) {
     const cur = mapa.get(clave) ?? {
       oferta_codigo: f.oferta_codigo,
       producto_nombre: f.producto_nombre,
-      ventas: 0, bruto_usd: 0, ultima: f.fecha_venta, tipo: f.tipo,
+      ventas: 0,
+      bruto_usd: 0,
+      ultima: f.fecha_venta,
+      tipo: f.tipo,
     };
     cur.ventas++;
     cur.bruto_usd += Number(f.bruto_usd ?? 0);
@@ -1570,7 +1664,9 @@ export async function updateLayoutPuzzleState(
         ...(payload.tarjetas !== undefined && { tarjetas: payload.tarjetas }),
         ...(payload.graficos !== undefined && { graficos: payload.graficos }),
         ...(payload.ranking_tables !== undefined && { ranking_tables: payload.ranking_tables }),
-        ...(payload.lead_answer_blocks !== undefined && { lead_answer_blocks: payload.lead_answer_blocks }),
+        ...(payload.lead_answer_blocks !== undefined && {
+          lead_answer_blocks: payload.lead_answer_blocks,
+        }),
         updated_at: new Date().toISOString(),
       })
       .eq('id', tabId)
@@ -1596,7 +1692,9 @@ export async function updateLayoutPuzzleState(
           ...(payload.tarjetas !== undefined && { tarjetas: payload.tarjetas }),
           ...(payload.graficos !== undefined && { graficos: payload.graficos }),
           ...(payload.ranking_tables !== undefined && { ranking_tables: payload.ranking_tables }),
-          ...(payload.lead_answer_blocks !== undefined && { lead_answer_blocks: payload.lead_answer_blocks }),
+          ...(payload.lead_answer_blocks !== undefined && {
+            lead_answer_blocks: payload.lead_answer_blocks,
+          }),
           updated_at: new Date().toISOString(),
         })
         .eq('cliente_id', clienteId);
@@ -1703,8 +1801,10 @@ export async function getTabTotalSpend(
   /** Gasto de una plataforma en una fila, filtrado por el filtro de pestaña si lo hay. */
   const spendDe = (columna: any, campanas: any) => {
     if (!hasFilter || !Array.isArray(campanas)) return parseFloat(columna || '0') || 0;
-    return filterCampaignList(campanas, filter)
-      .reduce((s: number, c: any) => s + (parseFloat(c.spend || '0') || 0), 0);
+    return filterCampaignList(campanas, filter).reduce(
+      (s: number, c: any) => s + (parseFloat(c.spend || '0') || 0),
+      0
+    );
   };
 
   let totalSpent = 0;
@@ -1979,7 +2079,8 @@ export async function getMirrorDashboardData(token: string, from?: string, to?: 
           // layout de la pestaña y las pestañas visibles. Es suficiente: lo que se
           // comparte con el cliente es lo que hay en ese layout.
           leadAnswerFormulas: layoutUsaRespuestasLead(layout, r.data, null).usaTotales,
-        })),
+        })
+      ),
       supabase
         .from('meta_conversiones_catalogo')
         .select('conversion_key, label, field_id')
@@ -2006,7 +2107,7 @@ export async function getMirrorDashboardData(token: string, from?: string, to?: 
   const availablePlatforms = new Set<string>(['meta']);
   const cfg = (cliente.config_api as any) || {};
   if (cfg.ga_property_id) availablePlatforms.add('ga4');
-  if (hotmartConectado(cfg)) availablePlatforms.add("hotmart");
+  if (hotmartConectado(cfg)) availablePlatforms.add('hotmart');
   if (cfg.tiktok_access_token) availablePlatforms.add('tiktok');
 
   // Filter tabs by public_tab_ids if configured on client token
@@ -2143,14 +2244,15 @@ export async function getOrCreatePublicToken(id: string, type: 'client' | 'tab')
  */
 export async function promoverCampoLead(
   publicClienteId: string,
-  input: { nombre: string; clavesOrigen: string[] },
+  input: { nombre: string; clavesOrigen: string[] }
 ): Promise<{ error?: string; clave?: string }> {
   const role = await getUserRole();
   if (!role || !['superadmin', 'admin'].includes(role)) {
     return { error: 'Solo un administrador puede crear campos de lead.' };
   }
   if (!input.nombre?.trim()) return { error: 'El campo necesita un nombre.' };
-  if ((input.clavesOrigen ?? []).length === 0) return { error: 'Selecciona al menos una pregunta.' };
+  if ((input.clavesOrigen ?? []).length === 0)
+    return { error: 'Selecciona al menos una pregunta.' };
 
   const rtmClienteId = await resolveRtmClienteId(publicClienteId);
   if (!rtmClienteId) return { error: 'Este cliente no está enlazado al módulo de informes.' };
@@ -2191,15 +2293,15 @@ export async function promoverCampoLead(
  */
 export async function getArchiveMetrics(
   clientId: string,
-  conFilasOffline = false,
+  conFilasOffline = false
 ): Promise<{ metrics: any[] } | null> {
   const supabase = await createAdminClient();
   try {
     const hoy = new Date().toISOString().split('T')[0];
-    const { metrics } = await cargarMetricasEnriquecidas(
-      supabase, clientId, '2020-01-01', hoy,
-      { incluirFilasOffline: conFilasOffline, leadAnswerBlocks: [] }
-    );
+    const { metrics } = await cargarMetricasEnriquecidas(supabase, clientId, '2020-01-01', hoy, {
+      incluirFilasOffline: conFilasOffline,
+      leadAnswerBlocks: [],
+    });
     return { metrics };
   } catch (err) {
     console.error('[dashboard] no se pudo cargar el archivo:', err);

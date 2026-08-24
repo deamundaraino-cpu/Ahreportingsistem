@@ -1,13 +1,11 @@
-'use client'
+'use client';
 
-import { useMemo, useState } from 'react'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Wand2, Undo2, AlertTriangle, Layers } from 'lucide-react'
-import {
-    normalizarValorCrudo, bucketDeValor, sugerirAgrupacion,
-} from '@/lib/sheets/campos'
-import type { SheetCampoDef, CampoValoresMap, CampoValorCrudo } from '@/lib/sheets/campos'
+import { useMemo, useState } from 'react';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Wand2, Undo2, AlertTriangle, Layers } from 'lucide-react';
+import { normalizarValorCrudo, bucketDeValor, sugerirAgrupacion } from '@/lib/sheets/campos';
+import type { SheetCampoDef, CampoValoresMap, CampoValorCrudo } from '@/lib/sheets/campos';
 
 /**
  * Agrupador de valores: la parte que resuelve que una fuente diga "20 a 100" y
@@ -26,220 +24,246 @@ import type { SheetCampoDef, CampoValoresMap, CampoValorCrudo } from '@/lib/shee
  * cosas entran por props.
  */
 export function ValoresAgrupador({
-    campo, valores, totalDistintos, onChange,
-    origenLabel = 'Valores en los Sheets',
-    sugerir = sugerirAgrupacion,
+  campo,
+  valores,
+  totalDistintos,
+  onChange,
+  origenLabel = 'Valores en los Sheets',
+  sugerir = sugerirAgrupacion,
 }: {
-    campo: Pick<SheetCampoDef, 'valores_map' | 'sin_mapear' | 'max_valores'>
-    valores: CampoValorCrudo[]
-    totalDistintos: number
-    onChange: (valoresMap: CampoValoresMap) => void
-    /** Encabezado de la columna izquierda ("Valores en los Sheets", "Respuestas…"). */
-    origenLabel?: string
-    /** Heurística del botón "Auto-agrupar" (los rangos de formulario usan la suya). */
-    sugerir?: (valores: CampoValorCrudo[]) => CampoValoresMap
+  campo: Pick<SheetCampoDef, 'valores_map' | 'sin_mapear' | 'max_valores'>;
+  valores: CampoValorCrudo[];
+  totalDistintos: number;
+  onChange: (valoresMap: CampoValoresMap) => void;
+  /** Encabezado de la columna izquierda ("Valores en los Sheets", "Respuestas…"). */
+  origenLabel?: string;
+  /** Heurística del botón "Auto-agrupar" (los rangos de formulario usan la suya). */
+  sugerir?: (valores: CampoValorCrudo[]) => CampoValoresMap;
 }) {
-    const [seleccion, setSeleccion] = useState<Set<string>>(new Set())
-    const [nombreGrupo, setNombreGrupo] = useState('')
-    const [filtro, setFiltro] = useState('')
+  const [seleccion, setSeleccion] = useState<Set<string>>(new Set());
+  const [nombreGrupo, setNombreGrupo] = useState('');
+  const [filtro, setFiltro] = useState('');
 
-    const mapa = campo.valores_map ?? {}
+  const mapa = campo.valores_map ?? {};
 
-    const visibles = useMemo(() => {
-        const f = filtro.trim().toLowerCase()
-        return f ? valores.filter(v => v.valor_crudo.toLowerCase().includes(f)) : valores
-    }, [valores, filtro])
+  const visibles = useMemo(() => {
+    const f = filtro.trim().toLowerCase();
+    return f ? valores.filter((v) => v.valor_crudo.toLowerCase().includes(f)) : valores;
+  }, [valores, filtro]);
 
-    // Buckets tal como quedarían ahora mismo, calculados con el motor real.
-    const buckets = useMemo(() => {
-        const acc = new Map<string, { filas: number; crudos: string[] }>()
-        for (const v of valores) {
-            const b = bucketDeValor(campo, v.valor_crudo)
-            if (b === null) continue
-            const e = acc.get(b) ?? { filas: 0, crudos: [] }
-            e.filas += v.filas
-            e.crudos.push(v.valor_crudo)
-            acc.set(b, e)
-        }
-        return Array.from(acc.entries())
-            .map(([bucket, d]) => ({ bucket, ...d }))
-            .sort((a, b) => b.filas - a.filas)
-    }, [campo, valores])
-
-    const toggle = (valorCrudo: string) => {
-        setSeleccion(prev => {
-            const next = new Set(prev)
-            if (next.has(valorCrudo)) next.delete(valorCrudo)
-            else next.add(valorCrudo)
-            return next
-        })
+  // Buckets tal como quedarían ahora mismo, calculados con el motor real.
+  const buckets = useMemo(() => {
+    const acc = new Map<string, { filas: number; crudos: string[] }>();
+    for (const v of valores) {
+      const b = bucketDeValor(campo, v.valor_crudo);
+      if (b === null) continue;
+      const e = acc.get(b) ?? { filas: 0, crudos: [] };
+      e.filas += v.filas;
+      e.crudos.push(v.valor_crudo);
+      acc.set(b, e);
     }
+    return Array.from(acc.entries())
+      .map(([bucket, d]) => ({ bucket, ...d }))
+      .sort((a, b) => b.filas - a.filas);
+  }, [campo, valores]);
 
-    const agrupar = () => {
-        const nombre = nombreGrupo.trim()
-        if (!nombre || seleccion.size === 0) return
-        const next = { ...mapa }
-        for (const crudo of seleccion) next[normalizarValorCrudo(crudo)] = nombre
-        onChange(next)
-        setSeleccion(new Set())
-        setNombreGrupo('')
-    }
+  const toggle = (valorCrudo: string) => {
+    setSeleccion((prev) => {
+      const next = new Set(prev);
+      if (next.has(valorCrudo)) next.delete(valorCrudo);
+      else next.add(valorCrudo);
+      return next;
+    });
+  };
 
-    const desagrupar = (bucket: string) => {
-        const next = { ...mapa }
-        for (const [k, v] of Object.entries(next)) if (v === bucket) delete next[k]
-        onChange(next)
-    }
+  const agrupar = () => {
+    const nombre = nombreGrupo.trim();
+    if (!nombre || seleccion.size === 0) return;
+    const next = { ...mapa };
+    for (const crudo of seleccion) next[normalizarValorCrudo(crudo)] = nombre;
+    onChange(next);
+    setSeleccion(new Set());
+    setNombreGrupo('');
+  };
 
-    const autoAgrupar = () => {
-        const sugerido = sugerir(valores)
-        if (Object.keys(sugerido).length === 0) return
-        // Lo ya decidido a mano manda sobre la sugerencia.
-        onChange({ ...sugerido, ...mapa })
-    }
+  const desagrupar = (bucket: string) => {
+    const next = { ...mapa };
+    for (const [k, v] of Object.entries(next)) if (v === bucket) delete next[k];
+    onChange(next);
+  };
 
-    if (valores.length === 0) {
-        return (
-            <div className="rounded-lg border border-dashed border-border p-4 text-center">
-                <p className="text-xs text-muted-foreground">
-                    Aún no hay valores detectados para este campo.
-                </p>
-            </div>
-        )
-    }
+  const autoAgrupar = () => {
+    const sugerido = sugerir(valores);
+    if (Object.keys(sugerido).length === 0) return;
+    // Lo ya decidido a mano manda sobre la sugerencia.
+    onChange({ ...sugerido, ...mapa });
+  };
 
-    const excedeTope = totalDistintos > campo.max_valores
-
+  if (valores.length === 0) {
     return (
-        <div className="space-y-3">
-            {excedeTope && (
-                <div className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 p-2.5">
-                    <AlertTriangle className="w-3.5 h-3.5 text-amber-500 mt-0.5 shrink-0" />
-                    <p className="text-xs text-amber-700 dark:text-amber-300">
-                        Este campo tiene <strong>{totalDistintos}</strong> valores distintos (tope{' '}
-                        {campo.max_valores}). Se conservarán los más frecuentes y el resto se agrupará
-                        en <span className="font-mono">(otros)</span>. Deja de ofrecerse como dimensión:
-                        si apunta a un correo o un identificador, mejor usa otro campo.
-                    </p>
-                </div>
-            )}
+      <div className="rounded-lg border border-dashed border-border p-4 text-center">
+        <p className="text-xs text-muted-foreground">
+          Aún no hay valores detectados para este campo.
+        </p>
+      </div>
+    );
+  }
 
-            <div className="flex items-center gap-2">
-                <Input
-                    value={filtro}
-                    onChange={(e) => setFiltro(e.target.value)}
-                    placeholder="Buscar un valor..."
-                    className="h-7 text-xs bg-background border-input"
-                />
-                <Button
-                    type="button" variant="outline" size="sm"
-                    onClick={autoAgrupar}
-                    className="h-7 text-xs gap-1 shrink-0"
-                    title='Junta las variantes evidentes: "20 a 100", "20-100" y "20A100" al mismo grupo'
-                >
-                    <Wand2 className="w-3 h-3" /> Auto-agrupar
-                </Button>
-            </div>
+  const excedeTope = totalDistintos > campo.max_valores;
 
-            <div className="grid grid-cols-2 gap-3">
-                {/* ── Valores crudos ─────────────────────────────────────────── */}
-                <div className="space-y-1.5">
-                    <p className="text-xs text-muted-foreground/60 px-1">
-                        {origenLabel} ({visibles.length})
-                    </p>
-                    <div className="rounded-md border border-input bg-background max-h-80 overflow-y-auto p-1.5 space-y-0.5">
-                        {visibles.map(v => {
-                            const bucket = bucketDeValor(campo, v.valor_crudo)
-                            const agrupado = mapa[normalizarValorCrudo(v.valor_crudo)]
-                            return (
-                                <label
-                                    key={v.valor_crudo}
-                                    className="flex items-start gap-2 px-1 py-1 rounded hover:bg-muted/60 cursor-pointer"
-                                >
-                                    <input
-                                        type="checkbox"
-                                        checked={seleccion.has(v.valor_crudo)}
-                                        onChange={() => toggle(v.valor_crudo)}
-                                        className="mt-0.5 rounded border-input bg-background text-indigo-500 focus:ring-indigo-500"
-                                    />
-                                    <span className="min-w-0 flex-1">
-                                        <span className="flex items-start gap-1.5">
-                                            {/* Sin truncar: los valores largos ("entre_$1.300.000_a_$1.600.000")
-                                                solo se distinguen por el final. */}
-                                            <span className="text-xs text-foreground break-words leading-snug">{v.valor_crudo}</span>
-                                            <span className="text-[10px] text-muted-foreground/60 shrink-0 ml-auto">{v.filas}</span>
-                                        </span>
-                                        <span className="block text-[10px] text-muted-foreground/60 break-words">
-                                            {v.origenes.join(', ')}
-                                            {agrupado && <span className="text-indigo-400"> → {agrupado}</span>}
-                                            {!agrupado && bucket === null && <span className="text-amber-500"> · se ignora</span>}
-                                        </span>
-                                    </span>
-                                </label>
-                            )
-                        })}
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                        <Input
-                            value={nombreGrupo}
-                            onChange={(e) => setNombreGrupo(e.target.value)}
-                            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); agrupar() } }}
-                            placeholder={seleccion.size > 0 ? 'Nombre del grupo...' : 'Marca valores primero'}
-                            disabled={seleccion.size === 0}
-                            className="h-7 text-xs bg-background border-input"
-                        />
-                        <Button
-                            type="button" size="sm"
-                            onClick={agrupar}
-                            disabled={seleccion.size === 0 || !nombreGrupo.trim()}
-                            className="h-7 text-xs gap-1 shrink-0"
-                        >
-                            <Layers className="w-3 h-3" /> Agrupar {seleccion.size > 0 && `(${seleccion.size})`}
-                        </Button>
-                    </div>
-                </div>
-
-                {/* ── Buckets resultantes ────────────────────────────────────── */}
-                <div className="space-y-1.5">
-                    <p className="text-xs text-muted-foreground/60 px-1">
-                        Así queda el campo ({buckets.length} valores)
-                    </p>
-                    <div className="rounded-md border border-input bg-background max-h-80 overflow-y-auto p-1.5 space-y-0.5">
-                        {buckets.map(b => {
-                            const esGrupo = b.crudos.length > 1
-                            return (
-                                <div key={b.bucket} className="flex items-start gap-2 px-1 py-1 rounded hover:bg-muted/40">
-                                    <span className="min-w-0 flex-1">
-                                        <span className="flex items-start gap-1.5">
-                                            <span className="text-xs text-foreground break-words leading-snug">{b.bucket}</span>
-                                            <span className="text-[10px] text-muted-foreground/60 shrink-0 ml-auto">{b.filas}</span>
-                                        </span>
-                                        {esGrupo && (
-                                            <span className="block text-[10px] text-muted-foreground/60 break-words">
-                                                une: {b.crudos.join(' · ')}
-                                            </span>
-                                        )}
-                                    </span>
-                                    {esGrupo && (
-                                        <Button
-                                            type="button" variant="ghost" size="sm"
-                                            onClick={() => desagrupar(b.bucket)}
-                                            className="h-5 w-5 p-0 text-muted-foreground hover:text-foreground shrink-0"
-                                            title="Deshacer esta agrupación"
-                                        >
-                                            <Undo2 className="w-3 h-3" />
-                                        </Button>
-                                    )}
-                                </div>
-                            )
-                        })}
-                    </div>
-                    <p className="text-[10px] text-muted-foreground/60 px-1">
-                        Estos son los valores por los que podrás filtrar y agrupar en los informes.
-                    </p>
-                </div>
-            </div>
+  return (
+    <div className="space-y-3">
+      {excedeTope && (
+        <div className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 p-2.5">
+          <AlertTriangle className="w-3.5 h-3.5 text-amber-500 mt-0.5 shrink-0" />
+          <p className="text-xs text-amber-700 dark:text-amber-300">
+            Este campo tiene <strong>{totalDistintos}</strong> valores distintos (tope{' '}
+            {campo.max_valores}). Se conservarán los más frecuentes y el resto se agrupará en{' '}
+            <span className="font-mono">(otros)</span>. Deja de ofrecerse como dimensión: si apunta
+            a un correo o un identificador, mejor usa otro campo.
+          </p>
         </div>
-    )
+      )}
+
+      <div className="flex items-center gap-2">
+        <Input
+          value={filtro}
+          onChange={(e) => setFiltro(e.target.value)}
+          placeholder="Buscar un valor..."
+          className="h-7 text-xs bg-background border-input"
+        />
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={autoAgrupar}
+          className="h-7 text-xs gap-1 shrink-0"
+          title='Junta las variantes evidentes: "20 a 100", "20-100" y "20A100" al mismo grupo'
+        >
+          <Wand2 className="w-3 h-3" /> Auto-agrupar
+        </Button>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        {/* ── Valores crudos ─────────────────────────────────────────── */}
+        <div className="space-y-1.5">
+          <p className="text-xs text-muted-foreground/60 px-1">
+            {origenLabel} ({visibles.length})
+          </p>
+          <div className="rounded-md border border-input bg-background max-h-80 overflow-y-auto p-1.5 space-y-0.5">
+            {visibles.map((v) => {
+              const bucket = bucketDeValor(campo, v.valor_crudo);
+              const agrupado = mapa[normalizarValorCrudo(v.valor_crudo)];
+              return (
+                <label
+                  key={v.valor_crudo}
+                  className="flex items-start gap-2 px-1 py-1 rounded hover:bg-muted/60 cursor-pointer"
+                >
+                  <input
+                    type="checkbox"
+                    checked={seleccion.has(v.valor_crudo)}
+                    onChange={() => toggle(v.valor_crudo)}
+                    className="mt-0.5 rounded border-input bg-background text-indigo-500 focus:ring-indigo-500"
+                  />
+                  <span className="min-w-0 flex-1">
+                    <span className="flex items-start gap-1.5">
+                      {/* Sin truncar: los valores largos ("entre_$1.300.000_a_$1.600.000")
+                                                solo se distinguen por el final. */}
+                      <span className="text-xs text-foreground break-words leading-snug">
+                        {v.valor_crudo}
+                      </span>
+                      <span className="text-[10px] text-muted-foreground/60 shrink-0 ml-auto">
+                        {v.filas}
+                      </span>
+                    </span>
+                    <span className="block text-[10px] text-muted-foreground/60 break-words">
+                      {v.origenes.join(', ')}
+                      {agrupado && <span className="text-indigo-400"> → {agrupado}</span>}
+                      {!agrupado && bucket === null && (
+                        <span className="text-amber-500"> · se ignora</span>
+                      )}
+                    </span>
+                  </span>
+                </label>
+              );
+            })}
+          </div>
+
+          <div className="flex items-center gap-2">
+            <Input
+              value={nombreGrupo}
+              onChange={(e) => setNombreGrupo(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  agrupar();
+                }
+              }}
+              placeholder={seleccion.size > 0 ? 'Nombre del grupo...' : 'Marca valores primero'}
+              disabled={seleccion.size === 0}
+              className="h-7 text-xs bg-background border-input"
+            />
+            <Button
+              type="button"
+              size="sm"
+              onClick={agrupar}
+              disabled={seleccion.size === 0 || !nombreGrupo.trim()}
+              className="h-7 text-xs gap-1 shrink-0"
+            >
+              <Layers className="w-3 h-3" /> Agrupar {seleccion.size > 0 && `(${seleccion.size})`}
+            </Button>
+          </div>
+        </div>
+
+        {/* ── Buckets resultantes ────────────────────────────────────── */}
+        <div className="space-y-1.5">
+          <p className="text-xs text-muted-foreground/60 px-1">
+            Así queda el campo ({buckets.length} valores)
+          </p>
+          <div className="rounded-md border border-input bg-background max-h-80 overflow-y-auto p-1.5 space-y-0.5">
+            {buckets.map((b) => {
+              const esGrupo = b.crudos.length > 1;
+              return (
+                <div
+                  key={b.bucket}
+                  className="flex items-start gap-2 px-1 py-1 rounded hover:bg-muted/40"
+                >
+                  <span className="min-w-0 flex-1">
+                    <span className="flex items-start gap-1.5">
+                      <span className="text-xs text-foreground break-words leading-snug">
+                        {b.bucket}
+                      </span>
+                      <span className="text-[10px] text-muted-foreground/60 shrink-0 ml-auto">
+                        {b.filas}
+                      </span>
+                    </span>
+                    {esGrupo && (
+                      <span className="block text-[10px] text-muted-foreground/60 break-words">
+                        une: {b.crudos.join(' · ')}
+                      </span>
+                    )}
+                  </span>
+                  {esGrupo && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => desagrupar(b.bucket)}
+                      className="h-5 w-5 p-0 text-muted-foreground hover:text-foreground shrink-0"
+                      title="Deshacer esta agrupación"
+                    >
+                      <Undo2 className="w-3 h-3" />
+                    </Button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          <p className="text-[10px] text-muted-foreground/60 px-1">
+            Estos son los valores por los que podrás filtrar y agrupar en los informes.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
 }

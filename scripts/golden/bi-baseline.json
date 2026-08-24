@@ -1222,10 +1222,7 @@
           }
         ]
       },
-      "distinct_campanas": [
-        "a7rvi",
-        "Nueva campaña de Interacción"
-      ]
+      "distinct_campanas": ["a7rvi", "Nueva campaña de Interacción"]
     },
     "337d5c5a-684c-4b50-88e2-70a73d7ebc4b": {
       "funnel": [

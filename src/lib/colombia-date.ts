@@ -17,12 +17,12 @@ const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 /** Fecha de "hoy" en hora Colombia (yyyy-MM-dd). */
 export function colombiaToday(now: Date = new Date()): string {
-    return new Date(now.getTime() - COLOMBIA_UTC_OFFSET_MS).toISOString().slice(0, 10);
+  return new Date(now.getTime() - COLOMBIA_UTC_OFFSET_MS).toISOString().slice(0, 10);
 }
 
 /** Fecha de "ayer" en hora Colombia (yyyy-MM-dd). */
 export function colombiaYesterday(now: Date = new Date()): string {
-    return new Date(now.getTime() - COLOMBIA_UTC_OFFSET_MS - DAY_MS).toISOString().slice(0, 10);
+  return new Date(now.getTime() - COLOMBIA_UTC_OFFSET_MS - DAY_MS).toISOString().slice(0, 10);
 }
 
 /**
@@ -38,14 +38,14 @@ export function colombiaYesterday(now: Date = new Date()): string {
  * quien lo consume.
  */
 export function clampRangeToToday(
-    start: string,
-    end: string,
-    today: string = colombiaToday(),
+  start: string,
+  end: string,
+  today: string = colombiaToday()
 ): { start: string; end: string; clamped: boolean } | null {
-    if (!ISO_DATE.test(start) || !ISO_DATE.test(end)) return { start, end, clamped: false };
-    if (start > today) return null;
-    if (end <= today) return { start, end, clamped: false };
-    return { start, end: today, clamped: true };
+  if (!ISO_DATE.test(start) || !ISO_DATE.test(end)) return { start, end, clamped: false };
+  if (start > today) return null;
+  if (end <= today) return { start, end, clamped: false };
+  return { start, end: today, clamped: true };
 }
 
 // ════════════════════════════════════════════════════════════════════════
@@ -87,15 +87,15 @@ export const COLOMBIA_UTC_OFFSET = '-05:00';
  * tiene hora que convertir, y convertirla la retrasaría un día.
  */
 export function colombiaDateOf(instant: string | Date | null | undefined): string {
-    if (!instant) return '';
-    if (typeof instant === 'string') {
-        // Ya es una fecha de calendario: no lleva hora, no hay nada que mover.
-        if (ISO_DATE.test(instant)) return instant;
-        const t = Date.parse(instant);
-        if (Number.isNaN(t)) return instant.slice(0, 10);
-        return new Date(t - COLOMBIA_UTC_OFFSET_MS).toISOString().slice(0, 10);
-    }
-    return new Date(instant.getTime() - COLOMBIA_UTC_OFFSET_MS).toISOString().slice(0, 10);
+  if (!instant) return '';
+  if (typeof instant === 'string') {
+    // Ya es una fecha de calendario: no lleva hora, no hay nada que mover.
+    if (ISO_DATE.test(instant)) return instant;
+    const t = Date.parse(instant);
+    if (Number.isNaN(t)) return instant.slice(0, 10);
+    return new Date(t - COLOMBIA_UTC_OFFSET_MS).toISOString().slice(0, 10);
+  }
+  return new Date(instant.getTime() - COLOMBIA_UTC_OFFSET_MS).toISOString().slice(0, 10);
 }
 
 /**
@@ -112,21 +112,16 @@ export function colombiaDateOf(instant: string | Date | null | undefined): strin
  *   colombiaRangeBounds('2026-07-01', '2026-07-31')
  *   → { gte: '2026-07-01T00:00:00-05:00', lt: '2026-08-01T00:00:00-05:00' }
  */
-export function colombiaRangeBounds(
-    dateFrom: string,
-    dateTo: string,
-): { gte: string; lt: string } {
-    const siguiente = addDaysISO(dateTo, 1);
-    return {
-        gte: `${dateFrom}T00:00:00${COLOMBIA_UTC_OFFSET}`,
-        lt: `${siguiente}T00:00:00${COLOMBIA_UTC_OFFSET}`,
-    };
+export function colombiaRangeBounds(dateFrom: string, dateTo: string): { gte: string; lt: string } {
+  const siguiente = addDaysISO(dateTo, 1);
+  return {
+    gte: `${dateFrom}T00:00:00${COLOMBIA_UTC_OFFSET}`,
+    lt: `${siguiente}T00:00:00${COLOMBIA_UTC_OFFSET}`,
+  };
 }
 
 /** Suma días a un `yyyy-MM-dd`. Aritmética pura, sin zonas de por medio. */
 export function addDaysISO(date: string, days: number): string {
-    if (!ISO_DATE.test(date)) return date;
-    return new Date(Date.parse(`${date}T00:00:00Z`) + days * DAY_MS)
-        .toISOString()
-        .slice(0, 10);
+  if (!ISO_DATE.test(date)) return date;
+  return new Date(Date.parse(`${date}T00:00:00Z`) + days * DAY_MS).toISOString().slice(0, 10);
 }

@@ -1,4 +1,4 @@
-import { verifyWebhookSignature } from './webhook-auth'
+import { verifyWebhookSignature } from './webhook-auth';
 
 /**
  * Verifica la firma HMAC-SHA256 de una petición S2S entrante.
@@ -10,17 +10,17 @@ import { verifyWebhookSignature } from './webhook-auth'
  *   X-Rutm-S2S-Signature: <hex>
  */
 export function verifyS2SSignature(
-    rawBody: string,
-    secret: string,
-    signatureHeader: string | null,
+  rawBody: string,
+  secret: string,
+  signatureHeader: string | null
 ): boolean {
-    const { valid } = verifyWebhookSignature({
-        rawBody,
-        secret,
-        signatureHeader,
-        hottokHeader: null,
-        hottokQuery: null,
-        payload: null,
-    })
-    return valid
+  const { valid } = verifyWebhookSignature({
+    rawBody,
+    secret,
+    signatureHeader,
+    hottokHeader: null,
+    hottokQuery: null,
+    payload: null,
+  });
+  return valid;
 }

@@ -42,12 +42,12 @@ Shape of each entry in the array:
 
 ```typescript
 interface MetaFormEntry {
-  form_id:     string
-  form_name:   string
-  leads:       number   // native lead ad form submissions (action_type = 'lead')
-  spend:       number
-  impressions: number
-  clicks:      number
+  form_id: string;
+  form_name: string;
+  leads: number; // native lead ad form submissions (action_type = 'lead')
+  spend: number;
+  impressions: number;
+  clicks: number;
 }
 ```
 
@@ -60,18 +60,19 @@ The upsert payload in the worker adds `meta_forms: metaRecord.forms` alongside `
 ### New type
 
 ```typescript
-export type FormFilterField = 'form_id' | 'form_name'
+export type FormFilterField = 'form_id' | 'form_name';
 
 export interface FormFilterSpec {
-    field: FormFilterField
-    operator?: CampaignFilterOperator   // reuses the same 8 operators
-    value: string | string[]
+  field: FormFilterField;
+  operator?: CampaignFilterOperator; // reuses the same 8 operators
+  value: string | string[];
 }
 ```
 
 ### Extended definitions
 
 Add `formFilter?: FormFilterSpec` to:
+
 - `ColDef`
 - `CardDef`
 - `ChartDef`
@@ -86,10 +87,7 @@ New file, parallel to `src/lib/campaign-filter.ts`.
 ### `enrichFormRow(row, formFilter)`
 
 ```typescript
-export function enrichFormRow(
-    row: any,
-    filter: FormFilterSpec | undefined
-): any
+export function enrichFormRow(row: any, filter: FormFilterSpec | undefined): any;
 ```
 
 - If `filter` is undefined or has empty value → return row unchanged.
@@ -109,6 +107,7 @@ The operator matching function is identical to `campaignMatchesOperator` — ext
 New function component, mirrors `CampaignFilterPicker` in structure.
 
 Props:
+
 ```typescript
 {
   value?: FormFilterSpec
@@ -147,6 +146,7 @@ Add `formFilter` / `onUpdate` wiring identical to `campaignFilter`.
 ### Placement in `DraggableColRow` and chart/ranking rows
 
 Apply the same pattern wherever `CampaignFilterPicker` already appears:
+
 - `DraggableColRow` (column config)
 - Chart row (wherever `CampaignFilterPicker` is rendered for charts)
 - Ranking table row
@@ -154,6 +154,7 @@ Apply the same pattern wherever `CampaignFilterPicker` already appears:
 ### Props threading
 
 `DraggableCardRow`, `DraggableColRow`, and the chart/ranking row components receive two new optional props:
+
 ```typescript
 formNames?: string[]
 formIds?: string[]
@@ -170,9 +171,9 @@ These flow from the parent modal down to `FormFilterPicker`.
 After merging metrics and leads, extract unique form names and IDs from the `meta_forms` arrays across all rows:
 
 ```typescript
-const allFormEntries = (metrics || []).flatMap((m: any) => m.meta_forms || [])
-const formNames = [...new Set(allFormEntries.map((f: any) => f.form_name).filter(Boolean))]
-const formIds   = [...new Set(allFormEntries.map((f: any) => f.form_id).filter(Boolean))]
+const allFormEntries = (metrics || []).flatMap((m: any) => m.meta_forms || []);
+const formNames = [...new Set(allFormEntries.map((f: any) => f.form_name).filter(Boolean))];
+const formIds = [...new Set(allFormEntries.map((f: any) => f.form_id).filter(Boolean))];
 ```
 
 Add `formNames` and `formIds` to the return value.

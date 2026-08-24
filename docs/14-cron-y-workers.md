@@ -43,33 +43,33 @@ que un usuario fuera de UTC−5 pedía días que en Colombia aún no existían.
 
 ## Componentes
 
-| Componente | Dónde corre | Qué hace |
-|---|---|---|
-| `sync-worker/` | VPS | Scheduler + drena la cola continuamente. **Ejecutor principal.** |
-| `POST /api/worker/enqueue` | Vercel | Crea los jobs (planner). No ejecuta nada. |
-| `POST /api/worker/run-jobs` | Vercel | Drena la cola en tandas de ~40s. **Ejecutor de respaldo.** |
-| `GET /api/worker` | Vercel | Sincroniza métricas de un rango. Lo invoca el runner. |
-| Webhooks `report_utm` | Vercel | Ingesta en tiempo real de ventas (Hotmart, Shopify, Cartpanda). |
+| Componente                  | Dónde corre | Qué hace                                                         |
+| --------------------------- | ----------- | ---------------------------------------------------------------- |
+| `sync-worker/`              | VPS         | Scheduler + drena la cola continuamente. **Ejecutor principal.** |
+| `POST /api/worker/enqueue`  | Vercel      | Crea los jobs (planner). No ejecuta nada.                        |
+| `POST /api/worker/run-jobs` | Vercel      | Drena la cola en tandas de ~40s. **Ejecutor de respaldo.**       |
+| `GET /api/worker`           | Vercel      | Sincroniza métricas de un rango. Lo invoca el runner.            |
+| Webhooks `report_utm`       | Vercel      | Ingesta en tiempo real de ventas (Hotmart, Shopify, Cartpanda).  |
 
 ## Crons de Vercel (los 2 permitidos)
 
-| Path | Schedule (UTC) | Hora 🇨🇴 | Para qué |
-|---|---|---|---|
-| `/api/cron/refresh-meta-tokens` | `0 7 * * *` | 02:00 | Renovar tokens antes de que caduquen |
-| `/api/worker/run-jobs` | `0 10 * * *` | 05:00 | Red de seguridad: drena la cola si el VPS no responde |
+| Path                            | Schedule (UTC) | Hora 🇨🇴 | Para qué                                              |
+| ------------------------------- | -------------- | ------- | ----------------------------------------------------- |
+| `/api/cron/refresh-meta-tokens` | `0 7 * * *`    | 02:00   | Renovar tokens antes de que caduquen                  |
+| `/api/worker/run-jobs`          | `0 10 * * *`   | 05:00   | Red de seguridad: drena la cola si el VPS no responde |
 
 Todo lo demás lo programa el scheduler del `sync-worker`.
 
 ## Horarios del sync-worker (hora Colombia)
 
-| Hora | Plan | Encola |
-|---|---|---|
-| 05:00 | `diario` | Métricas de ayer y hoy (todos los clientes) + Sheets (**un job por cliente**) + Meta Leads + leads de GoHighLevel + agregación UTM |
-| 14:00 | `diario` | Segunda pasada: recoge las correcciones de atribución del día |
-| día 7, 03:00 | `cierre_mes` | Re-descarga forzada del mes anterior (ventana de 35 días) y congelado |
-| domingo, 03:00 | `reconciliacion` | Audita el gasto de Meta contra el real de cada cuenta y repara los días con desglose incompleto |
+| Hora           | Plan             | Encola                                                                                                                             |
+| -------------- | ---------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| 05:00          | `diario`         | Métricas de ayer y hoy (todos los clientes) + Sheets (**un job por cliente**) + Meta Leads + leads de GoHighLevel + agregación UTM |
+| 14:00          | `diario`         | Segunda pasada: recoge las correcciones de atribución del día                                                                      |
+| día 7, 03:00   | `cierre_mes`     | Re-descarga forzada del mes anterior (ventana de 35 días) y congelado                                                              |
+| domingo, 03:00 | `reconciliacion` | Audita el gasto de Meta contra el real de cada cuenta y repara los días con desglose incompleto                                    |
 
-Además hace *poll* de la cola cada 15s, que es lo que hace que el botón
+Además hace _poll_ de la cola cada 15s, que es lo que hace que el botón
 "Sincronizar" del dashboard responda en segundos.
 
 ## Cómo funciona la cola
@@ -117,7 +117,9 @@ webhook por cliente y el backfill de 90 días.
 ## Workers
 
 ### `/api/worker` — sincronizador de métricas
+
 Para cada cliente y cada día del rango:
+
 1. **Meta Ads**: insights a nivel campaña/anuncio/conjunto, formularios de leads,
    demografía. Ventana de atribución fija en `7d_click` + `1d_view` para que el
    número signifique lo mismo en todas las cuentas.
@@ -137,6 +139,7 @@ ceros. Aplica a las cuatro fuentes (antes solo a Meta y TikTok, así que un fall
 de Hotmart o GA4 borraba ventas y sesiones reales).
 
 ### `/api/worker/google-sheets-conversiones` — conversiones offline
+
 Sincroniza conversiones offline hacia `conversiones_offline` y
 `conversiones_offline_diarias`.
 
@@ -181,15 +184,18 @@ descartadas por fecha inválida o cantidad ≤ 0, y avisos por pestaña), que la
 de `/admin/settings` muestra bajo cada sheet.
 
 ### `/api/cron/refresh-meta-tokens` / `refresh-hotmart-tokens`
+
 Renuevan tokens antes de que caduquen (Meta < 10 días, Hotmart < 30 min).
 
 ### `/api/cron/report-utm/aggregate`
+
 Reagrega `report_utm.sales_events` en `hourly_metrics`. Recalcula el rango
 horario completo afectado: antes seleccionaba por `received_at` pero borraba por
 hora de venta, así que las ventas antiguas desaparecían y los conteos podían
 **bajar** en cada corrida.
 
 ### `/api/cron/cierre-mes`
+
 Congela un mes: copia las filas a `metricas_snapshots` y pone el candado en
 `periodos_cerrados`.
 

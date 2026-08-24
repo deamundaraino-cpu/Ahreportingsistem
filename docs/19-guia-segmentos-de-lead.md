@@ -1,7 +1,7 @@
 # 19 · Guía práctica: medir con las respuestas de los formularios
 
 Cómo usar los **segmentos de campo de lead** (migración `073`) para responder
-preguntas del tipo *«¿cuánto me cuesta un lead que gana más de 2 millones?»*
+preguntas del tipo _«¿cuánto me cuesta un lead que gana más de 2 millones?»_
 sin salir del editor de widgets.
 
 Para configurar un campo desde cero, [doc 17 · Campos de lead](./17-campos-de-lead.md).
@@ -23,23 +23,23 @@ ese tipo de lead, con el gasto real. Antes eso no se podía pedir.
 
 ## Parte 1 · Los tres tipos de dato, y cuándo usar cada uno
 
-| Lo que quieres | Qué usas | Cómo se llama | Dónde va |
-|---|---|---|---|
-| «Repárteme las filas por lo que contestaron» | **Campo** | `Rango de ingresos` | Dimensión |
-| «Solo los que contestaron X» | **Campo + valor** | filtro `Rango de ingresos = Más de $4.000.000` | Filtro |
-| «¿Cuántos contestaron exactamente X?» | **Respuesta** | `lf__rango_de_ingresos__mas_de_4_000_000` | Métrica |
-| «¿Cuántos ganan de 2M para arriba?» | **Segmento** | `lseg__ingresos_desde_2m` | Métrica |
+| Lo que quieres                               | Qué usas          | Cómo se llama                                  | Dónde va  |
+| -------------------------------------------- | ----------------- | ---------------------------------------------- | --------- |
+| «Repárteme las filas por lo que contestaron» | **Campo**         | `Rango de ingresos`                            | Dimensión |
+| «Solo los que contestaron X»                 | **Campo + valor** | filtro `Rango de ingresos = Más de $4.000.000` | Filtro    |
+| «¿Cuántos contestaron exactamente X?»        | **Respuesta**     | `lf__rango_de_ingresos__mas_de_4_000_000`      | Métrica   |
+| «¿Cuántos ganan de 2M para arriba?»          | **Segmento**      | `lseg__ingresos_desde_2m`                      | Métrica   |
 
 Las dos primeras filas ya existían. Las dos últimas son lo nuevo.
 
-**Respuesta vs segmento.** Una *respuesta* es un bucket suelto y se genera sola a
-partir del campo: no hay que crear nada. Un *segmento* junta varios buckets bajo
+**Respuesta vs segmento.** Una _respuesta_ es un bucket suelto y se genera sola a
+partir del campo: no hay que crear nada. Un _segmento_ junta varios buckets bajo
 un nombre —y por eso hay que definirlo— y es lo único que resuelve un acumulado
 («≥ 2M» son cuatro respuestas, no una).
 
 > **Un segmento no es una dimensión ni un filtro, y es a propósito.** No aparece
-> en esas listas. Si lo que quieres es *recortar* el informe, usa el campo con su
-> valor; si lo que quieres es *contar* un subconjunto, usa el segmento. La
+> en esas listas. Si lo que quieres es _recortar_ el informe, usa el campo con su
+> valor; si lo que quieres es _contar_ un subconjunto, usa el segmento. La
 > diferencia decide si el gasto se anula o no — Parte 5.
 
 ---
@@ -61,7 +61,7 @@ nada que elegir. Antes de empezar, comprueba en el editor del campo que:
    crear un acumulado: el sistema no sabe qué es «hacia arriba» y el atajo no
    aparece.
 
-### Camino A — «Acumulado desde…»  *(el más útil)*
+### Camino A — «Acumulado desde…» _(el más útil)_
 
 Un desplegable con los buckets del campo. Eliges uno y crea **«Desde X»** con ese
 bucket y todos los posteriores.
@@ -85,7 +85,7 @@ ubicación, canal de origen, perfil profesional.
 ### Camino C — «Añadir segmento» (a mano)
 
 Nombre + los buckets que marques. El desplegable `Excepto` invierte la selección:
-«todos menos los que dijeron *Solo explorando*».
+«todos menos los que dijeron _Solo explorando_».
 
 > **Un lead que no respondió la pregunta no entra en ningún segmento**, tampoco en
 > uno de tipo `Excepto`. «No contestó» no es «no es de este grupo».
@@ -103,7 +103,7 @@ dashboard.
 ### Como métrica
 
 Editor del widget → **Métrica** → grupo **«Segmentos de lead»**. Salen etiquetados
-con su pregunta delante: *«Rango de ingresos: Desde 2M»*.
+con su pregunta delante: _«Rango de ingresos: Desde 2M»_.
 
 Funciona en **todos** los tipos: `scorecard`, `table`, `line`, `area`, `bar`,
 `combo`, `pie`, `scatter`, `funnel` y como dimensión secundaria.
@@ -157,10 +157,10 @@ afirmaría que no hubo leads, que es falso.
 
 Es la única sutileza real de todo esto, y decide si un número significa algo.
 
-| | Gasto | Por qué |
-|---|---|---|
-| **Filtrar** por `Rango de ingresos = Más de $4M` | **0** | El gasto vive en `metricas_diarias`, agregado por día y campaña. Una fila de gasto no sabe qué contestó cada lead. Repartirlo daría un CPL inventado con aspecto de dato medido |
-| **Medir** con `lseg__ingresos_desde_2m` | **real** | Una métrica no recorta la consulta: el gasto se trae entero y el segmento cuenta dentro del mismo ámbito |
+|                                                  | Gasto    | Por qué                                                                                                                                                                         |
+| ------------------------------------------------ | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Filtrar** por `Rango de ingresos = Más de $4M` | **0**    | El gasto vive en `metricas_diarias`, agregado por día y campaña. Una fila de gasto no sabe qué contestó cada lead. Repartirlo daría un CPL inventado con aspecto de dato medido |
+| **Medir** con `lseg__ingresos_desde_2m`          | **real** | Una métrica no recorta la consulta: el gasto se trae entero y el segmento cuenta dentro del mismo ámbito                                                                        |
 
 Lado a lado, el mismo widget:
 
@@ -174,9 +174,9 @@ Lado a lado, el mismo widget:
     →  spend real ÷ leads de ese tipo = el CPL del segmento.
 ```
 
-Lo que **no** se puede seguir pidiendo es *repartir* el gasto entre respuestas
+Lo que **no** se puede seguir pidiendo es _repartir_ el gasto entre respuestas
 (cuánto gasté “en” los de 2M+). Eso no existe en el dato. Lo que sí se puede es
-*dividir* el gasto del ámbito por los leads de un tipo, que es la pregunta que de
+_dividir_ el gasto del ámbito por los leads de un tipo, que es la pregunta que de
 verdad se optimiza.
 
 ---
@@ -285,12 +285,12 @@ Estado a **2026-08-18**. Los alias son los que se escriben en las fórmulas.
 `Entre $1.300.000 y $1.600.000` · `Entre $1.600.000 y $2.000.000` ·
 `Entre $2.000.000 y $4.000.000` · `Más de $4.000.000`
 
-| Segmento | Alias | Qué incluye |
-|---|---|---|
-| Respondieron el rango | `lseg__respondieron_rango` | los 6 buckets |
-| Desde 1.3M | `lseg__ingresos_desde_1_3m` | de $1.3M para arriba |
-| Desde 1.6M | `lseg__ingresos_desde_1_6m` | de $1.6M para arriba |
-| Desde 2M | `lseg__ingresos_desde_2m` | de $2M para arriba |
+| Segmento              | Alias                       | Qué incluye          |
+| --------------------- | --------------------------- | -------------------- |
+| Respondieron el rango | `lseg__respondieron_rango`  | los 6 buckets        |
+| Desde 1.3M            | `lseg__ingresos_desde_1_3m` | de $1.3M para arriba |
+| Desde 1.6M            | `lseg__ingresos_desde_1_6m` | de $1.6M para arriba |
+| Desde 2M              | `lseg__ingresos_desde_2m`   | de $2M para arriba   |
 
 Respuestas sueltas: `lf__rango_de_ingresos__mas_de_4_000_000`,
 `lf__rango_de_ingresos__entre_2_000_000_y_4_000_000`,
@@ -298,8 +298,8 @@ Respuestas sueltas: `lf__rango_de_ingresos__mas_de_4_000_000`,
 
 **Plazo de compra** — `Cuanto antes` · `1 a 3 meses` · `3 a 6 meses` · `Solo explorando`
 
-| Segmento | Alias |
-|---|---|
+| Segmento      | Alias                       |
+| ------------- | --------------------------- |
 | Hasta 3 meses | `lseg__plazo_hasta_3_meses` |
 | Hasta 6 meses | `lseg__plazo_hasta_6_meses` |
 
@@ -307,8 +307,8 @@ Respuestas sueltas: `lf__rango_de_ingresos__mas_de_4_000_000`,
 
 **Monto a invertir** — `Menos de $15M` · `Entre $15M y $30M` · `Entre $30M y $50M` · `Más de $50M`
 
-| Segmento | Alias |
-|---|---|
+| Segmento   | Alias                      |
+| ---------- | -------------------------- |
 | Desde $15M | `lseg__invertir_desde_15m` |
 | Desde $30M | `lseg__invertir_desde_30m` |
 | Desde $50M | `lseg__invertir_desde_50m` |
@@ -327,9 +327,9 @@ Van **dos campos separados** porque los dos formularios usan escalas que no
 encajan. Fundirlos inventaría una equivalencia entre «2 a 3» y «Tengo 3-4» que no
 existe.
 
-| Campo | Buckets | Segmentos |
-|---|---|---|
-| Número de propiedades (web) | 0 a 1 · 2 a 3 · Más de 4 | `lseg__propiedades_web_desde_2` · `lseg__propiedades_web_desde_4` |
+| Campo                        | Buckets                  | Segmentos                                                           |
+| ---------------------------- | ------------------------ | ------------------------------------------------------------------- |
+| Número de propiedades (web)  | 0 a 1 · 2 a 3 · Más de 4 | `lseg__propiedades_web_desde_2` · `lseg__propiedades_web_desde_4`   |
 | Número de propiedades (Meta) | 3 a 4 · 5 a 8 · Más de 8 | `lseg__propiedades_meta_desde_5` · `lseg__propiedades_meta_desde_9` |
 
 **No los sumes entre sí.** Son dos poblaciones distintas medidas con dos reglas
@@ -381,18 +381,18 @@ Renombrar es libre; la clave es inmutable desde el alta.
 
 ## Apéndice · Para quien mantiene el código
 
-| Pieza | Dónde |
-|---|---|
-| Tabla | `report_utm.lead_campo_segmentos` (migración `073`) |
-| Token del BI | `leadseg:<clave>` · alias de fórmula `lseg__<clave>` |
-| Clave del dashboard | `lseg__<clave>` — **la misma cadena**, a diferencia de los campos de Sheet |
-| Lógica pura | [`lead-campos.ts`](../src/lib/report-utm/lead-campos.ts): `segmentoIncluyeBucket`, `cuentaEnSegmento`, `bucketsAcumulados` |
-| Motor del BI | [`bi-query.ts`](../src/lib/report-utm/bi-query.ts): `collectLeadSegClaves`, `aggregateLeads`, `mergeResults` |
-| Cubo del dashboard | [`lead-answer-aggregation.ts`](../src/lib/dashboard/lead-answer-aggregation.ts): `claveSegmento`, `clavesDelDia` |
-| UI | [`LeadSegmentosEditor`](../src/components/report-utm/LeadSegmentosEditor.tsx) |
-| API | `/api/report-utm/lead-campos/segmentos` · `/api/report-utm/bi/lead-fields` |
-| Comprobaciones | `verify-lead-segmentos.ts` (puro) · `verify-lead-segmentos-db.ts` (datos reales) |
-| Migración de datos | `npx tsx scripts/migrar-segmentos-lead.ts` — informe · `--aplicar` · `--revertir <copia>` |
+| Pieza               | Dónde                                                                                                                      |
+| ------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| Tabla               | `report_utm.lead_campo_segmentos` (migración `073`)                                                                        |
+| Token del BI        | `leadseg:<clave>` · alias de fórmula `lseg__<clave>`                                                                       |
+| Clave del dashboard | `lseg__<clave>` — **la misma cadena**, a diferencia de los campos de Sheet                                                 |
+| Lógica pura         | [`lead-campos.ts`](../src/lib/report-utm/lead-campos.ts): `segmentoIncluyeBucket`, `cuentaEnSegmento`, `bucketsAcumulados` |
+| Motor del BI        | [`bi-query.ts`](../src/lib/report-utm/bi-query.ts): `collectLeadSegClaves`, `aggregateLeads`, `mergeResults`               |
+| Cubo del dashboard  | [`lead-answer-aggregation.ts`](../src/lib/dashboard/lead-answer-aggregation.ts): `claveSegmento`, `clavesDelDia`           |
+| UI                  | [`LeadSegmentosEditor`](../src/components/report-utm/LeadSegmentosEditor.tsx)                                              |
+| API                 | `/api/report-utm/lead-campos/segmentos` · `/api/report-utm/bi/lead-fields`                                                 |
+| Comprobaciones      | `verify-lead-segmentos.ts` (puro) · `verify-lead-segmentos-db.ts` (datos reales)                                           |
+| Migración de datos  | `npx tsx scripts/migrar-segmentos-lead.ts` — informe · `--aplicar` · `--revertir <copia>`                                  |
 
 Tres invariantes que los tests vigilan y que no se pueden romper:
 

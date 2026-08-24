@@ -1,4 +1,4 @@
-import { createClient, createAdminClient } from '@/utils/supabase/server'
+import { createClient, createAdminClient } from '@/utils/supabase/server';
 
 /**
  * Helpers que apuntan al schema `report_utm` (módulo aislado).
@@ -10,11 +10,11 @@ import { createClient, createAdminClient } from '@/utils/supabase/server'
  */
 
 export async function reportUtmClient() {
-    const supabase = await createClient()
-    return supabase.schema('report_utm')
+  const supabase = await createClient();
+  return supabase.schema('report_utm');
 }
 
 export async function reportUtmAdminClient() {
-    const supabase = await createAdminClient()
-    return supabase.schema('report_utm')
+  const supabase = await createAdminClient();
+  return supabase.schema('report_utm');
 }

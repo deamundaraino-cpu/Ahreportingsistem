@@ -1,5 +1,5 @@
-import { createServerClient } from "@supabase/ssr"
-import { NextRequest, NextResponse } from "next/server"
+import { createServerClient } from '@supabase/ssr';
+import { NextRequest, NextResponse } from 'next/server';
 
 // Routes only accessible by superadmin or admin
 const ADMIN_ONLY_ROUTES = [
@@ -8,13 +8,10 @@ const ADMIN_ONLY_ROUTES = [
   '/admin/configuracion',
   '/admin/reports',
   '/admin/whatsapp',
-]
+];
 
 // Routes accessible by superadmin, admin, and trafficker
-const AUTHENTICATED_ADMIN_ROUTES = [
-  '/admin/settings',
-  '/admin/layouts',
-]
+const AUTHENTICATED_ADMIN_ROUTES = ['/admin/settings', '/admin/layouts'];
 
 /**
  * Rutas `/api` que traen su propia credencial y por tanto NO deben exigir
@@ -39,26 +36,26 @@ const API_SELF_AUTH_PREFIXES = [
   '/api/report-utm/webhooks/',
   '/api/report-utm/pixel/',
   '/api/report-utm/bi/public/',
-]
+];
 
 /**
  * `GET /api/report-utm/clientes/<id>/goals` es público a propósito: devuelve
  * solo los objetivos numéricos saneados para pintarlos en informes embebidos.
  * El `PATCH` del mismo handler sí exige rol y lo comprueba por su cuenta.
  */
-const PUBLIC_GOALS_RE = /^\/api\/report-utm\/clientes\/[^/]+\/goals\/?$/
+const PUBLIC_GOALS_RE = /^\/api\/report-utm\/clientes\/[^/]+\/goals\/?$/;
 
 function isSelfAuthenticatedApi(pathname: string, method: string): boolean {
-  if (API_SELF_AUTH_PREFIXES.some(p => pathname.startsWith(p))) return true
-  if (method === 'GET' && PUBLIC_GOALS_RE.test(pathname)) return true
-  return false
+  if (API_SELF_AUTH_PREFIXES.some((p) => pathname.startsWith(p))) return true;
+  if (method === 'GET' && PUBLIC_GOALS_RE.test(pathname)) return true;
+  return false;
 }
 
 // El proxy corre en TODAS las peticiones, así que una llamada lenta a Supabase
 // Auth aquí tumba el dominio entero con MIDDLEWARE_INVOCATION_TIMEOUT (504).
 // Cortamos la petición mucho antes del límite de la invocación para que un
 // Supabase degradado se traduzca en "sesión no verificada" y no en un 504.
-const AUTH_TIMEOUT_MS = 3_000
+const AUTH_TIMEOUT_MS = 3_000;
 
 /**
  * Rutas públicas que nunca consultan `user`: para ellas no vale la pena pagar
@@ -67,13 +64,13 @@ const AUTH_TIMEOUT_MS = 3_000
  */
 function isPublicPath(pathname: string): boolean {
   return (
-    pathname.startsWith('/report/') ||   // reportes públicos de cliente
-    pathname.startsWith('/p/') ||        // mirrors
-    pathname.startsWith('/t/') ||        // report-utm: links de tracking
+    pathname.startsWith('/report/') || // reportes públicos de cliente
+    pathname.startsWith('/p/') || // mirrors
+    pathname.startsWith('/t/') || // report-utm: links de tracking
     pathname === '/report-utm-pixel.js' ||
     pathname === '/privacy' ||
     pathname === '/terms'
-  )
+  );
 }
 
 /**
@@ -82,43 +79,43 @@ function isPublicPath(pathname: string): boolean {
  * bots, crawlers y en los endpoints de cron (que autentican con Bearer).
  */
 function hasAuthCookie(request: NextRequest): boolean {
-  return request.cookies.getAll().some(
-    c => c.name.startsWith('sb-') && c.name.includes('auth-token')
-  )
+  return request.cookies
+    .getAll()
+    .some((c) => c.name.startsWith('sb-') && c.name.includes('auth-token'));
 }
 
 /** 401 en JSON: a una llamada de API se le responde, no se le redirige al login. */
 function unauthorized() {
-  return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 }
 
 export async function updateSession(request: NextRequest) {
-  const pathname = request.nextUrl.pathname
+  const pathname = request.nextUrl.pathname;
 
   if (isPublicPath(pathname)) {
-    return NextResponse.next({ request })
+    return NextResponse.next({ request });
   }
 
-  const isLoginPage = pathname.startsWith('/login')
-  const isApiPage = pathname.startsWith('/api/')
+  const isLoginPage = pathname.startsWith('/login');
+  const isApiPage = pathname.startsWith('/api/');
   // Solo las rutas de API con credencial propia se saltan el gate de sesión.
-  const isOpenApiPage = isApiPage && isSelfAuthenticatedApi(pathname, request.method)
+  const isOpenApiPage = isApiPage && isSelfAuthenticatedApi(pathname, request.method);
 
   let supabaseResponse = NextResponse.next({
     request,
-  })
+  });
 
   // Sin cookie de sesión no hay nada que refrescar ni que verificar.
   if (!hasAuthCookie(request)) {
     if (isApiPage) {
-      return isOpenApiPage ? supabaseResponse : unauthorized()
+      return isOpenApiPage ? supabaseResponse : unauthorized();
     }
     if (!isLoginPage) {
-      const url = request.nextUrl.clone()
-      url.pathname = '/login'
-      return NextResponse.redirect(url)
+      const url = request.nextUrl.clone();
+      url.pathname = '/login';
+      return NextResponse.redirect(url);
     }
-    return supabaseResponse
+    return supabaseResponse;
   }
 
   const supabase = createServerClient(
@@ -132,20 +129,20 @@ export async function updateSession(request: NextRequest) {
       },
       cookies: {
         getAll() {
-          return request.cookies.getAll()
+          return request.cookies.getAll();
         },
         setAll(cookiesToSet) {
-          cookiesToSet.forEach(({ name, value, options }) => request.cookies.set(name, value))
+          cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value));
           supabaseResponse = NextResponse.next({
             request,
-          })
+          });
           cookiesToSet.forEach(({ name, value, options }) =>
             supabaseResponse.cookies.set(name, value, options)
-          )
+          );
         },
       },
     }
-  )
+  );
 
   // `authUnavailable` distingue "Supabase dice que no hay sesión" (denegar) de
   // "no pudimos preguntarle a Supabase" (no denegar). Tratar el segundo caso
@@ -158,19 +155,19 @@ export async function updateSession(request: NextRequest) {
   // dentro del proxy, es decir en el camino crítico de todas las páginas.
   // `getUser()` sigue siendo lo correcto donde haga falta el registro canónico
   // del usuario; aquí solo se decide si hay sesión y con qué id.
-  let user: { id: string } | null = null
-  let authUnavailable = false
+  let user: { id: string } | null = null;
+  let authUnavailable = false;
   try {
-    const { data, error } = await supabase.auth.getClaims()
-    const sub = data?.claims?.sub
-    user = sub ? { id: sub } : null
+    const { data, error } = await supabase.auth.getClaims();
+    const sub = data?.claims?.sub;
+    user = sub ? { id: sub } : null;
     // Errores de red/timeout (no un 401 legítimo por sesión inválida).
     if (error && (error.status === undefined || error.status >= 500)) {
-      authUnavailable = true
+      authUnavailable = true;
     }
   } catch (e) {
-    console.error('[proxy] auth.getClaims falló:', e)
-    authUnavailable = true
+    console.error('[proxy] auth.getClaims falló:', e);
+    authUnavailable = true;
   }
 
   // Con Auth caído dejamos pasar la petición: la página y las server actions
@@ -178,7 +175,7 @@ export async function updateSession(request: NextRequest) {
   // los datos, así que el proxy no es la única barrera. Preferimos degradar la
   // navegación antes que cerrar la sesión de todo el mundo.
   if (authUnavailable) {
-    return supabaseResponse
+    return supabaseResponse;
   }
 
   // Las rutas públicas (/report, /p, /t, pixel, legales) ya salieron arriba en
@@ -187,63 +184,65 @@ export async function updateSession(request: NextRequest) {
   // 1. Sin usuario: la API responde 401 y el resto se va al login.
   if (!user) {
     if (isApiPage) {
-      return isOpenApiPage ? supabaseResponse : unauthorized()
+      return isOpenApiPage ? supabaseResponse : unauthorized();
     }
     if (!isLoginPage) {
-      const url = request.nextUrl.clone()
-      url.pathname = '/login'
-      return NextResponse.redirect(url)
+      const url = request.nextUrl.clone();
+      url.pathname = '/login';
+      return NextResponse.redirect(url);
     }
   }
 
   // 2. Redirect authenticated users away from login
   if (user && isLoginPage) {
-    const url = request.nextUrl.clone()
-    url.pathname = '/'
-    return NextResponse.redirect(url)
+    const url = request.nextUrl.clone();
+    url.pathname = '/';
+    return NextResponse.redirect(url);
   }
 
   // 3. Role-based route protection for authenticated users
   if (user && pathname.startsWith('/admin')) {
-    const isAdminOnlyRoute = ADMIN_ONLY_ROUTES.some(r => pathname.startsWith(r))
-    const isAuthenticatedAdminRoute = AUTHENTICATED_ADMIN_ROUTES.some(r => pathname.startsWith(r))
+    const isAdminOnlyRoute = ADMIN_ONLY_ROUTES.some((r) => pathname.startsWith(r));
+    const isAuthenticatedAdminRoute = AUTHENTICATED_ADMIN_ROUTES.some((r) =>
+      pathname.startsWith(r)
+    );
 
     // Any /admin route requires at least a privileged role. Stricter routes
     // (ADMIN_ONLY_ROUTES) require superadmin/admin; the rest also allow trafficker.
     if (isAdminOnlyRoute || isAuthenticatedAdminRoute) {
-      let profile = null
-      let profileUnavailable = false
+      let profile = null;
+      let profileUnavailable = false;
       try {
         const { data, error } = await supabase
           .from('user_profiles')
           .select('role')
           .eq('id', user.id)
-          .single()
-        profile = data
+          .single();
+        profile = data;
         // PGRST116 = "no rows": el perfil realmente no existe, sí degradamos.
-        if (error && error.code !== 'PGRST116') profileUnavailable = true
+        if (error && error.code !== 'PGRST116') profileUnavailable = true;
       } catch (e) {
-        console.error('[proxy] consulta de rol falló:', e)
-        profileUnavailable = true
+        console.error('[proxy] consulta de rol falló:', e);
+        profileUnavailable = true;
       }
 
       // Mismo criterio que arriba: si no pudimos leer el rol, no lo degradamos
       // a `viewer` — eso echaba del panel a admins legítimos ante cualquier
       // fallo transitorio de la base de datos.
       if (!profileUnavailable) {
-        const role = profile?.role ?? 'viewer'
+        const role = profile?.role ?? 'viewer';
         const allowedRoles = isAdminOnlyRoute
           ? ['superadmin', 'admin']
-          : ['superadmin', 'admin', 'trafficker']
+          : ['superadmin', 'admin', 'trafficker'];
 
         if (!allowedRoles.includes(role)) {
-          const url = request.nextUrl.clone()
-          url.pathname = '/dashboard'
-          return NextResponse.redirect(url)
+          const url = request.nextUrl.clone();
+          url.pathname = '/dashboard';
+          return NextResponse.redirect(url);
         }
       }
     }
   }
 
-  return supabaseResponse
+  return supabaseResponse;
 }

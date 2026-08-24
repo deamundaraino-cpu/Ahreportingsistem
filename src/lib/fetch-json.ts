@@ -14,10 +14,10 @@
 
 /** Mensaje por defecto cuando la plataforma cortó la petición por tiempo. */
 export const MENSAJE_TIMEOUT =
-  'La petición superó el tiempo máximo del servidor. Vuelve a intentarlo con menos datos de una vez.'
+  'La petición superó el tiempo máximo del servidor. Vuelve a intentarlo con menos datos de una vez.';
 
 /** Discriminada por `ok` para que el llamador estreche `data` con un solo if. */
-export type RespuestaJson<T> = { ok: true; data: T } | { ok: false; error: string }
+export type RespuestaJson<T> = { ok: true; data: T } | { ok: false; error: string };
 
 /**
  * @param fallback       qué decir si el cuerpo no es JSON por otro motivo.
@@ -28,22 +28,24 @@ export async function leerJsonRespuesta<T = any>(
   fallback: string,
   mensajeTimeout: string = MENSAJE_TIMEOUT
 ): Promise<RespuestaJson<T>> {
-  const cuerpo = await res.text()
+  const cuerpo = await res.text();
   try {
-    return { ok: true, data: JSON.parse(cuerpo) as T }
+    return { ok: true, data: JSON.parse(cuerpo) as T };
   } catch {
     // 504 es el timeout de la función; el código va también en el cuerpo, y
     // algunos cortes (p. ej. el del proxy) llegan con otro status.
-    const porTiempo = res.status === 504 || /TIMEOUT/i.test(cuerpo)
+    const porTiempo = res.status === 504 || /TIMEOUT/i.test(cuerpo);
     return {
       ok: false,
-      error: porTiempo ? mensajeTimeout : `${fallback} (el servidor respondió ${res.status} sin JSON)`,
-    }
+      error: porTiempo
+        ? mensajeTimeout
+        : `${fallback} (el servidor respondió ${res.status} sin JSON)`,
+    };
   }
 }
 
 /** `true` si el fetch murió por el `AbortSignal.timeout` del propio llamador. */
 export function esTimeoutDeFetch(e: unknown): boolean {
-  const nombre = (e as { name?: string } | null)?.name
-  return nombre === 'TimeoutError' || nombre === 'AbortError'
+  const nombre = (e as { name?: string } | null)?.name;
+  return nombre === 'TimeoutError' || nombre === 'AbortError';
 }

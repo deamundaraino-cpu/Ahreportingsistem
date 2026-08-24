@@ -6,10 +6,11 @@ La base de datos vive en **Supabase (PostgreSQL)** y se organiza en dos schemas:
 - **`report_utm`** — Módulo aislado de tracking y atribución.
 
 Todas las tablas usan **Row Level Security (RLS)**. La regla general:
+
 - Un usuario solo ve filas de los clientes que le pertenecen (`auth.uid()` vía `user_id`).
 - El email administrador (`robinson@adshouse.com` en `schema.sql`) tiene acceso total.
 - Las tablas de `report_utm` están restringidas a administradores mediante la función `report_utm.is_admin()`.
-- Los **workers** usan la *service role key*, que **omite RLS**.
+- Los **workers** usan la _service role key_, que **omite RLS**.
 
 > Algunas tablas (`user_profiles`, `user_client_assignments`, `layouts_reporte`, `clientes_layouts`, `cliente_tabs`) son referenciadas por el código y existen en la base de datos productiva, pero su `CREATE TABLE` no está en los archivos de migración del repo. Sus columnas aquí se documentan **inferidas del código**; verifícalas contra tu instancia real.
 
@@ -18,6 +19,7 @@ Todas las tablas usan **Row Level Security (RLS)**. La regla general:
 ## Schema `public`
 
 ### `clientes`
+
 Registro maestro de clientes del reporting principal.
 
 ```sql
@@ -51,8 +53,8 @@ CREATE TABLE public.clientes (
   "tiktok_accounts": [{ "advertiser_id": "123", "name": "..." }],
 
   // Hotmart
-  "hotmart_basic": "...",        // basic auth o
-  "hotmart_api_key": "...",      // API key / client credentials
+  "hotmart_basic": "...", // basic auth o
+  "hotmart_api_key": "...", // API key / client credentials
 
   // Google Analytics 4
   "ga_property_id": "properties/123456",
@@ -65,16 +67,17 @@ CREATE TABLE public.clientes (
     "quality_field": "rango_de_ingresos",
     "qualified_values": ["$5,000 - $20,000 USD", "$20,000+ USD"],
     "enabled": true,
-    "client_email": "...",       // opcional: credenciales por cliente
+    "client_email": "...", // opcional: credenciales por cliente
     "private_key": "...",
-    "sheet_names": ["Hoja1"]
-  }
+    "sheet_names": ["Hoja1"],
+  },
 }
 ```
 
 ---
 
 ### `metricas_diarias`
+
 **Tabla central del reporting.** Una fila por cliente por día con métricas consolidadas y desgloses JSONB.
 
 ```sql
@@ -123,16 +126,16 @@ CREATE TABLE public.metricas_diarias (
 
 #### Columnas JSONB de desglose
 
-| Columna | Migración | Contenido |
-|---------|-----------|-----------|
-| `meta_campaigns` | base/código | Array de campañas Meta con métricas y `custom_conversions` |
-| `meta_ads` | 017 | Array de anuncios Meta |
-| `meta_adsets` | 017 | Array de conjuntos de anuncios Meta |
-| `meta_forms` | 020 | Array de formularios de leads Meta |
-| `tiktok_campaigns` | 016 | Array de campañas TikTok |
-| `tiktok_ads` | 019 | Array de anuncios TikTok |
-| `tiktok_adgroups` | 019 | Array de grupos de anuncios TikTok |
-| `hotmart_funnel_data` | 008 | Desglose de embudo por tab (ver abajo) |
+| Columna               | Migración   | Contenido                                                  |
+| --------------------- | ----------- | ---------------------------------------------------------- |
+| `meta_campaigns`      | base/código | Array de campañas Meta con métricas y `custom_conversions` |
+| `meta_ads`            | 017         | Array de anuncios Meta                                     |
+| `meta_adsets`         | 017         | Array de conjuntos de anuncios Meta                        |
+| `meta_forms`          | 020         | Array de formularios de leads Meta                         |
+| `tiktok_campaigns`    | 016         | Array de campañas TikTok                                   |
+| `tiktok_ads`          | 019         | Array de anuncios TikTok                                   |
+| `tiktok_adgroups`     | 019         | Array de grupos de anuncios TikTok                         |
+| `hotmart_funnel_data` | 008         | Desglose de embudo por tab (ver abajo)                     |
 
 Estructura de `hotmart_funnel_data`:
 
@@ -141,14 +144,12 @@ Estructura de `hotmart_funnel_data`:
   "by_tab": {
     "<tab_id>": {
       "principal": { "count": 19, "gross": 361, "net": 275.5 },
-      "bump":      { "count": 3, "net": 16.2 },
-      "upsell":    { "count": 1, "net": 18.99, "page_visits": 24 },
-      "pagos_iniciados": 30
-    }
+      "bump": { "count": 3, "net": 16.2 },
+      "upsell": { "count": 1, "net": 18.99, "page_visits": 24 },
+      "pagos_iniciados": 30,
+    },
   },
-  "extras": [
-    { "product_name": "Otro Producto", "count": 2, "gross": 38.0, "net": 35.4 }
-  ]
+  "extras": [{ "product_name": "Otro Producto", "count": 2, "gross": 38.0, "net": 35.4 }],
 }
 ```
 
@@ -158,6 +159,7 @@ Estructura de `hotmart_funnel_data`:
 ---
 
 ### `campaign_groups` y `campaign_group_mappings`
+
 Agrupan campañas relacionadas para reportes.
 
 ```sql
@@ -186,6 +188,7 @@ Un mapeo puede coincidir por **ID exacto** o por **patrón de nombre** (`%` → 
 ---
 
 ### `leads` y `leads_diarios` (migración 001)
+
 Importación y agregación de leads desde Google Sheets.
 
 ```sql
@@ -219,6 +222,7 @@ CREATE TABLE public.leads_diarios (
 ---
 
 ### `report_templates` y `monthly_reports` (migración 004)
+
 Motor de reportes mensuales. Ver [doc 11](./11-reportes-mensuales.md).
 
 ```sql
@@ -259,6 +263,7 @@ La migración 004 inserta 3 plantillas: **Captación de Leads**, **Infoproducto 
 ---
 
 ### `soporte_tickets` (migración 005)
+
 Tickets de soporte por cliente.
 
 ```sql
@@ -286,6 +291,7 @@ Trigger `trg_set_ticket_display_id` genera el display id a partir del serial + 1
 ---
 
 ### `api_tokens` (migración 007)
+
 Tokens de API para acceso programático (API v1, MCP). Ver [doc 13](./13-mcp-y-tokens-api.md).
 
 ```sql
@@ -372,7 +378,7 @@ Estructura de `cliente_tabs.hotmart_funnel`:
   "bump_names": ["Bump Producto"],
   "upsell_names": ["Upsell Producto"],
   "payment_page_url": "/checkout/producto",
-  "upsell_page_url": "/upsell/producto"
+  "upsell_page_url": "/upsell/producto",
 }
 ```
 
@@ -393,6 +399,7 @@ Ver [doc 05 · Autenticación y roles](./05-autenticacion-y-roles.md).
 Módulo de tracking y atribución. Todas las tablas exigen rol admin (`report_utm.is_admin()`).
 
 ### `report_utm.clientes` (migración 012)
+
 ```sql
 CREATE TABLE report_utm.clientes (
   id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -407,10 +414,13 @@ CREATE TABLE report_utm.clientes (
   updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 ```
+
 `public_cliente_id` permite (opcionalmente) cruzar un cliente de tracking con uno del reporting principal.
 
 ### `report_utm.integrations` (migración 012)
+
 Secretos de webhook y credenciales por integración.
+
 ```sql
 CREATE TABLE report_utm.integrations (
   id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -430,7 +440,9 @@ CREATE TABLE report_utm.integrations (
 ```
 
 ### `report_utm.sales_events` (migraciones 012 + 014)
+
 Tabla núcleo: cada evento de venta con UTMs y atribución.
+
 ```sql
 CREATE TABLE report_utm.sales_events (
   id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -466,10 +478,13 @@ CREATE TABLE report_utm.sales_events (
   UNIQUE(cliente_id, platform, platform_sale_id)
 );
 ```
+
 Índices por tiempo, UTM, plataforma, status, `click_id`, `visitor_id` y `attribution_method`.
 
 ### `report_utm.tracking_links` (migración 012)
+
 Enlaces cortos `/t/:slug` con UTMs predefinidos.
+
 ```sql
 CREATE TABLE report_utm.tracking_links (
   id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -488,7 +503,9 @@ CREATE TABLE report_utm.tracking_links (
 ```
 
 ### `report_utm.pixel_events` (migración 013)
+
 Eventos del pixel JS (pageview, click, custom).
+
 ```sql
 CREATE TABLE report_utm.pixel_events (
   id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -507,7 +524,9 @@ CREATE TABLE report_utm.pixel_events (
 ```
 
 ### `report_utm.hourly_metrics` (migración 012)
+
 Agregado horario de ventas por fuente/campaña.
+
 ```sql
 CREATE TABLE report_utm.hourly_metrics (
   cliente_id  UUID NOT NULL REFERENCES report_utm.clientes(id) ON DELETE CASCADE,
@@ -524,7 +543,9 @@ CREATE TABLE report_utm.hourly_metrics (
 ```
 
 ### `report_utm.outbound_webhooks` y `outbound_deliveries` (migración 014)
+
 Reenvío en tiempo real de eventos de venta a sistemas externos, con bitácora de entregas.
+
 ```sql
 CREATE TABLE report_utm.outbound_webhooks (
   id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -556,39 +577,39 @@ CREATE TABLE report_utm.outbound_deliveries (
 
 ## Historial de migraciones
 
-| Migración | Cambios |
-|-----------|---------|
-| **001** | `position` en `cliente_tabs`; crea `leads` y `leads_diarios` |
-| **002** | `sync_hash` en `metricas_diarias` (idempotencia) |
-| **003** | `attribution_strategy` en layouts |
-| **004** | `report_templates` y `monthly_reports` + 3 plantillas seed |
-| **005** | `soporte_tickets` (con serial y trigger de display id) |
-| **006** | `public_token` en `clientes` y `cliente_tabs` (enlaces públicos) |
-| **007** | `api_tokens` |
-| **008** | `hotmart_funnel` en `cliente_tabs`; `hotmart_funnel_data` + conteos en `metricas_diarias` |
-| **009** | Seed de 2 plantillas de layout |
-| **010** | `ventas_bump_bruto`, `ventas_upsell_bruto` (ventas brutas) |
-| **011** | `ventas_cerradas` (ventas manuales) |
-| **012** | Schema `report_utm`: clientes, integrations, sales_events, tracking_links, hourly_metrics |
-| **013** | `report_utm.pixel_events` |
-| **014** | Atribución en `sales_events`; `outbound_webhooks`, `outbound_deliveries` |
-| **015** | `archived` en `cliente_tabs` |
-| **016** | Métricas TikTok + `tiktok_campaigns` (JSONB) |
-| **017** | `meta_ads`, `meta_adsets` (JSONB) |
-| **018** | `ranking_tables` (JSONB) en layouts y tabs |
-| **019** | `tiktok_ads`, `tiktok_adgroups` (JSONB) |
-| **020** | `meta_forms` (JSONB) |
+| Migración | Cambios                                                                                   |
+| --------- | ----------------------------------------------------------------------------------------- |
+| **001**   | `position` en `cliente_tabs`; crea `leads` y `leads_diarios`                              |
+| **002**   | `sync_hash` en `metricas_diarias` (idempotencia)                                          |
+| **003**   | `attribution_strategy` en layouts                                                         |
+| **004**   | `report_templates` y `monthly_reports` + 3 plantillas seed                                |
+| **005**   | `soporte_tickets` (con serial y trigger de display id)                                    |
+| **006**   | `public_token` en `clientes` y `cliente_tabs` (enlaces públicos)                          |
+| **007**   | `api_tokens`                                                                              |
+| **008**   | `hotmart_funnel` en `cliente_tabs`; `hotmart_funnel_data` + conteos en `metricas_diarias` |
+| **009**   | Seed de 2 plantillas de layout                                                            |
+| **010**   | `ventas_bump_bruto`, `ventas_upsell_bruto` (ventas brutas)                                |
+| **011**   | `ventas_cerradas` (ventas manuales)                                                       |
+| **012**   | Schema `report_utm`: clientes, integrations, sales_events, tracking_links, hourly_metrics |
+| **013**   | `report_utm.pixel_events`                                                                 |
+| **014**   | Atribución en `sales_events`; `outbound_webhooks`, `outbound_deliveries`                  |
+| **015**   | `archived` en `cliente_tabs`                                                              |
+| **016**   | Métricas TikTok + `tiktok_campaigns` (JSONB)                                              |
+| **017**   | `meta_ads`, `meta_adsets` (JSONB)                                                         |
+| **018**   | `ranking_tables` (JSONB) en layouts y tabs                                                |
+| **019**   | `tiktok_ads`, `tiktok_adgroups` (JSONB)                                                   |
+| **020**   | `meta_forms` (JSONB)                                                                      |
 
 ---
 
 ## Resumen de políticas RLS
 
-| Tabla | Condición de acceso |
-|-------|---------------------|
-| `clientes` | `auth.uid() = user_id` · admin total |
-| `metricas_diarias` | cliente vía `cliente_id → user_id` · admin total |
+| Tabla                           | Condición de acceso                              |
+| ------------------------------- | ------------------------------------------------ |
+| `clientes`                      | `auth.uid() = user_id` · admin total             |
+| `metricas_diarias`              | cliente vía `cliente_id → user_id` · admin total |
 | `campaign_groups` / `_mappings` | propiedad por jerarquía de cliente · admin total |
-| `leads` / `leads_diarios` | cliente vía `client_id → user_id` · admin total |
-| `soporte_tickets` | cliente (SELECT/INSERT) · admin total |
-| `api_tokens` | `auth.uid() = user_id` · admin total |
-| `report_utm.*` | solo admin (`report_utm.is_admin()`) |
+| `leads` / `leads_diarios`       | cliente vía `client_id → user_id` · admin total  |
+| `soporte_tickets`               | cliente (SELECT/INSERT) · admin total            |
+| `api_tokens`                    | `auth.uid() = user_id` · admin total             |
+| `report_utm.*`                  | solo admin (`report_utm.is_admin()`)             |

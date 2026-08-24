@@ -16,12 +16,15 @@ This document shows how to refactor API routes for better stability and maintain
 ### Step 1: Validate Inputs
 
 **Before:**
+
 ```typescript
-const singleDate = searchParams.get('date')
-const startDateStr = singleDate || searchParams.get('start') || format(subDays(new Date(), 1), 'yyyy-MM-dd')
+const singleDate = searchParams.get('date');
+const startDateStr =
+  singleDate || searchParams.get('start') || format(subDays(new Date(), 1), 'yyyy-MM-dd');
 ```
 
 **After:**
+
 ```typescript
 import { validateQueryParams, workerQuerySchema } from '@/lib/validation';
 import { logger, ApiError } from '@/lib/error-handler';
@@ -30,6 +33,7 @@ const params = validateQueryParams(new URL(request.url).searchParams, workerQuer
 ```
 
 This provides:
+
 - ✅ Type safety: `params` is now typed as `WorkerQueryParams`
 - ✅ Clear error messages if dates are invalid
 - ✅ Reusable validation logic
@@ -37,15 +41,17 @@ This provides:
 ### Step 2: Improve Fetch Calls
 
 **Before:**
+
 ```typescript
-const res = await fetch(url.toString())
-const data = await res.json()
+const res = await fetch(url.toString());
+const data = await res.json();
 if (data.error) {
-  log(`Error: ${JSON.stringify(data.error)}`)
+  log(`Error: ${JSON.stringify(data.error)}`);
 }
 ```
 
 **After:**
+
 ```typescript
 import { fetchWithTimeout, safeJsonParse } from '@/lib/error-handler';
 
@@ -60,6 +66,7 @@ try {
 ```
 
 This provides:
+
 - ✅ Automatic timeouts (30s default)
 - ✅ Consistent error handling
 - ✅ Better error context
@@ -97,12 +104,10 @@ export async function fetchMetaCampaigns(
       accountId: config.account_id,
       targetDate,
     });
-    throw new ApiError(
-      'EXTERNAL_API_ERROR',
-      'Failed to fetch Meta Ads data',
-      502,
-      { provider: 'meta', targetDate }
-    );
+    throw new ApiError('EXTERNAL_API_ERROR', 'Failed to fetch Meta Ads data', 502, {
+      provider: 'meta',
+      targetDate,
+    });
   }
 }
 
@@ -122,6 +127,7 @@ function parseMetaCampaigns(data: unknown[]): MetaCampaignData {
 ```
 
 **Benefits:**
+
 - ✅ Single responsibility: Only handles Meta API
 - ✅ Easy to test: Just mock `fetchWithTimeout`
 - ✅ Reusable: Import in other routes or workers
@@ -144,10 +150,7 @@ export async function GET(request: NextRequest) {
     authenticateCron(request);
 
     // 2. Validate input
-    const params = validateQueryParams(
-      new URL(request.url).searchParams,
-      workerQuerySchema
-    );
+    const params = validateQueryParams(new URL(request.url).searchParams, workerQuerySchema);
 
     // 3. Do the work
     const result = await syncClientData(params);
@@ -175,12 +178,14 @@ export async function GET(request: NextRequest) {
 ### Step 5: Type Safety for Supabase
 
 **Before:**
+
 ```typescript
 let adminSupabase: any;
 const config = cliente.config_api as any;
 ```
 
 **After:**
+
 ```typescript
 import { SupabaseClient } from '@supabase/supabase-js';
 import { Database } from '@/types/database';
@@ -201,6 +206,7 @@ if (!config.meta_token) {
 ```
 
 **Benefits:**
+
 - ✅ TypeScript autocomplete for Supabase methods
 - ✅ Compile-time type checking
 - ✅ Clear contract of what config can contain
@@ -210,12 +216,14 @@ if (!config.meta_token) {
 ## Implementation Roadmap
 
 ### Phase 1: Foundation (This Week)
+
 - [ ] Add `error-handler.ts` utility ✅ Done
 - [ ] Add `validation.ts` utility ✅ Done
 - [ ] Create `cron-auth.ts` for auth logic
 - [ ] Test utilities with simple route
 
 ### Phase 2: Refactor Worker (Next Week)
+
 - [ ] Extract Meta fetcher to `integrations/meta-fetcher.ts`
 - [ ] Extract GA4 fetcher to `integrations/ga4-fetcher.ts`
 - [ ] Extract Hotmart fetcher to `integrations/hotmart-fetcher.ts`
@@ -223,11 +231,13 @@ if (!config.meta_token) {
 - [ ] Simplify `/api/worker/route.ts`
 
 ### Phase 3: Fix Type Safety (Week 3)
+
 - [ ] Generate Database types from Supabase schema
 - [ ] Remove all `any` types from route handlers
 - [ ] Add strict TypeScript checks
 
 ### Phase 4: Tests (Week 4)
+
 - [ ] Unit tests for each fetcher
 - [ ] Integration test for sync workflow
 - [ ] Mock external APIs
@@ -301,9 +311,9 @@ test('should handle API timeout', async () => {
 ## Monitoring Impact
 
 With these changes, you'll be able to:
+
 - ✅ See clear error messages in logs
 - ✅ Distinguish API errors from code errors
 - ✅ Monitor specific failure types
 - ✅ Debug faster with context
 - ✅ Add Sentry/monitoring later without re-coding
-

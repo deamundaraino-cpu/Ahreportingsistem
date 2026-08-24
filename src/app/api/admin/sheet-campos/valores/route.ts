@@ -1,8 +1,8 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@supabase/supabase-js'
-import { listarValoresCrudos } from '@/lib/sheets/campos-db'
-import { requireAdminRole } from '@/lib/report-utm/auth'
-import { esUuid } from '@/lib/validation'
+import { NextRequest, NextResponse } from 'next/server';
+import { createClient } from '@supabase/supabase-js';
+import { listarValoresCrudos } from '@/lib/sheets/campos-db';
+import { requireAdminRole } from '@/lib/report-utm/auth';
+import { esUuid } from '@/lib/validation';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -19,26 +19,32 @@ import { esUuid } from '@/lib/validation'
  */
 export async function GET(request: NextRequest) {
   // Guard de rol: el proxy ya exige sesión en /api/admin, esto añade el rol.
-  const denied = await requireAdminRole()
-  if (denied) return denied
+  const denied = await requireAdminRole();
+  if (denied) return denied;
 
-  const clienteId = request.nextUrl.searchParams.get('cliente_id')
-  const campoId = request.nextUrl.searchParams.get('campo_id')
-  const limite = Number(request.nextUrl.searchParams.get('limite')) || 500
+  const clienteId = request.nextUrl.searchParams.get('cliente_id');
+  const campoId = request.nextUrl.searchParams.get('campo_id');
+  const limite = Number(request.nextUrl.searchParams.get('limite')) || 500;
 
   if (!esUuid(clienteId) || !esUuid(campoId)) {
-    return NextResponse.json({ error: 'cliente_id y campo_id deben ser UUID válidos' }, { status: 400 })
+    return NextResponse.json(
+      { error: 'cliente_id y campo_id deben ser UUID válidos' },
+      { status: 400 }
+    );
   }
 
   try {
     const db = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.SUPABASE_SERVICE_ROLE_KEY!
-    )
-    const { valores, totalDistintos } = await listarValoresCrudos(db, clienteId, campoId, limite)
-    return NextResponse.json({ valores, total_distintos: totalDistintos })
+    );
+    const { valores, totalDistintos } = await listarValoresCrudos(db, clienteId, campoId, limite);
+    return NextResponse.json({ valores, total_distintos: totalDistintos });
   } catch (err: any) {
-    console.error('[sheet-campos/valores]', err)
-    return NextResponse.json({ error: err.message || 'Error al leer los valores' }, { status: 500 })
+    console.error('[sheet-campos/valores]', err);
+    return NextResponse.json(
+      { error: err.message || 'Error al leer los valores' },
+      { status: 500 }
+    );
   }
 }

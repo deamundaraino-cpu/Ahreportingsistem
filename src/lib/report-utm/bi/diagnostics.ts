@@ -16,52 +16,52 @@
 // tasas de cambio: «quien llama debe CONTAR el importe como no convertido y
 // alertar, NUNCA sumarlo como cero».
 
-import type { SkipReason } from './registry-types'
-import type { ResolvedRegistry } from './registry'
-import { BASE_REGISTRY } from './registry'
-import { buildPlan } from './plan'
-import type { PlanContext } from './plan'
-import { migrateMeasureId, migrateDimensionId } from './legacy-tokens'
+import type { SkipReason } from './registry-types';
+import type { ResolvedRegistry } from './registry';
+import { BASE_REGISTRY } from './registry';
+import { buildPlan } from './plan';
+import type { PlanContext } from './plan';
+import { migrateMeasureId, migrateDimensionId } from './legacy-tokens';
 
 /** Estadística de lectura por fuente. Sirve para detectar truncamientos. */
 export interface SourceStat {
-    rowsRead: number
-    /** Se leyeron tantas filas como el tope: puede faltar información. */
-    truncated: boolean
+  rowsRead: number;
+  /** Se leyeron tantas filas como el tope: puede faltar información. */
+  truncated: boolean;
 }
 
 export interface QueryDiagnostics {
-    /**
-     * Campo (en su nombre HISTÓRICO, el que el widget conoce) → por qué no se
-     * pudo medir. El widget pinta «—» con esta explicación en vez de un 0.
-     */
-    unavailable: Record<string, SkipReason>
-    /** Fuentes que quedaron fuera, con el motivo. */
-    skipped: Array<{ sourceId: string; sourceLabel: string; reason: SkipReason }>
-    /**
-     * `false` si falta `public_cliente_id`. Es la bandera que el canvas usa para
-     * mostrar un aviso con enlace a la ficha del cliente.
-     */
-    hasPublicLink: boolean
-    /** Estadísticas por fuente, cuando el lector las aporta. */
-    sources?: Record<string, SourceStat>
+  /**
+   * Campo (en su nombre HISTÓRICO, el que el widget conoce) → por qué no se
+   * pudo medir. El widget pinta «—» con esta explicación en vez de un 0.
+   */
+  unavailable: Record<string, SkipReason>;
+  /** Fuentes que quedaron fuera, con el motivo. */
+  skipped: Array<{ sourceId: string; sourceLabel: string; reason: SkipReason }>;
+  /**
+   * `false` si falta `public_cliente_id`. Es la bandera que el canvas usa para
+   * mostrar un aviso con enlace a la ficha del cliente.
+   */
+  hasPublicLink: boolean;
+  /** Estadísticas por fuente, cuando el lector las aporta. */
+  sources?: Record<string, SourceStat>;
 }
 
 /** Lo que hace falta saber del cliente para diagnosticar. Lo resuelve el motor. */
 export interface DiagnosticsInput {
-    /** Métricas pedidas, en nombres históricos (`spend`, `cpl`, `sheetagg:…`). */
-    metrics: string[]
-    /** Dimensión pedida, en nombre histórico (`utm_campaign`, `none`, …). */
-    dimension?: string | null
-    dimension2?: string | null
-    /** Campos calculados del informe y fórmulas de widget. */
-    calculated?: Array<{ name: string; expression: string }>
-    /** ¿El cliente de report_utm está enlazado al cliente público? */
-    hasPublicLink: boolean
-    /** Campos por los que se filtra y que el gasto no puede atribuir. */
-    unattributableFilters?: string[]
-    /** Fuentes sin integración configurada para este cliente. */
-    notConfigured?: ReadonlySet<string>
+  /** Métricas pedidas, en nombres históricos (`spend`, `cpl`, `sheetagg:…`). */
+  metrics: string[];
+  /** Dimensión pedida, en nombre histórico (`utm_campaign`, `none`, …). */
+  dimension?: string | null;
+  dimension2?: string | null;
+  /** Campos calculados del informe y fórmulas de widget. */
+  calculated?: Array<{ name: string; expression: string }>;
+  /** ¿El cliente de report_utm está enlazado al cliente público? */
+  hasPublicLink: boolean;
+  /** Campos por los que se filtra y que el gasto no puede atribuir. */
+  unattributableFilters?: string[];
+  /** Fuentes sin integración configurada para este cliente. */
+  notConfigured?: ReadonlySet<string>;
 }
 
 /**
@@ -72,15 +72,15 @@ export interface DiagnosticsInput {
  * riesgo que corrió la migración 045 al hacer `replace(layout::text, …)`.
  */
 function canonicalizarCalculados(
-    calculated: Array<{ name: string; expression: string }> | undefined
+  calculated: Array<{ name: string; expression: string }> | undefined
 ): Array<{ name: string; expression: string }> {
-    // No hace falta reescribir la expresión: al planificador le basta con los
-    // identificadores, y los resuelve él. Se pasan tal cual y `expandRequestedFields`
-    // ignora los que no existan en el registro.
-    return (calculated ?? []).map(c => ({
-        name: c.name,
-        expression: c.expression.replace(/[a-zA-Z_][a-zA-Z0-9_.]*/g, id => migrateMeasureId(id)),
-    }))
+  // No hace falta reescribir la expresión: al planificador le basta con los
+  // identificadores, y los resuelve él. Se pasan tal cual y `expandRequestedFields`
+  // ignora los que no existan en el registro.
+  return (calculated ?? []).map((c) => ({
+    name: c.name,
+    expression: c.expression.replace(/[a-zA-Z_][a-zA-Z0-9_.]*/g, (id) => migrateMeasureId(id)),
+  }));
 }
 
 /**
@@ -93,48 +93,52 @@ function canonicalizarCalculados(
  * porque es el que viaja en la petición y el que el widget tiene en las manos.
  */
 export function computeDiagnostics(
-    input: DiagnosticsInput,
-    reg: ResolvedRegistry = BASE_REGISTRY
+  input: DiagnosticsInput,
+  reg: ResolvedRegistry = BASE_REGISTRY
 ): QueryDiagnostics {
-    const canonicalPorLegacy = new Map<string, string>()
-    const fieldIds: string[] = []
-    for (const m of input.metrics) {
-        const id = migrateMeasureId(m)
-        canonicalPorLegacy.set(id, m)
-        fieldIds.push(id)
-    }
+  const canonicalPorLegacy = new Map<string, string>();
+  const fieldIds: string[] = [];
+  for (const m of input.metrics) {
+    const id = migrateMeasureId(m);
+    canonicalPorLegacy.set(id, m);
+    fieldIds.push(id);
+  }
 
-    const ctx: PlanContext = {
-        hasPublicLink: input.hasPublicLink,
-        notConfigured: input.notConfigured,
-        unattributableFilters: input.unattributableFilters?.length
-            ? input.unattributableFilters
-            : undefined,
-    }
+  const ctx: PlanContext = {
+    hasPublicLink: input.hasPublicLink,
+    notConfigured: input.notConfigured,
+    unattributableFilters: input.unattributableFilters?.length
+      ? input.unattributableFilters
+      : undefined,
+  };
 
-    const plan = buildPlan(reg, {
-        fieldIds,
-        dimensionId: input.dimension ? migrateDimensionId(input.dimension) : null,
-        dimension2Id: input.dimension2 ? migrateDimensionId(input.dimension2) : null,
-        calculated: canonicalizarCalculados(input.calculated),
-    }, ctx)
+  const plan = buildPlan(
+    reg,
+    {
+      fieldIds,
+      dimensionId: input.dimension ? migrateDimensionId(input.dimension) : null,
+      dimension2Id: input.dimension2 ? migrateDimensionId(input.dimension2) : null,
+      calculated: canonicalizarCalculados(input.calculated),
+    },
+    ctx
+  );
 
-    // Se devuelve con el nombre que el widget conoce; si la métrica es dinámica
-    // o calculada y no tiene nombre histórico, se usa el id canónico.
-    const unavailable: Record<string, SkipReason> = {}
-    for (const [canonical, reason] of Object.entries(plan.unavailable)) {
-        unavailable[canonicalPorLegacy.get(canonical) ?? canonical] = reason
-    }
+  // Se devuelve con el nombre que el widget conoce; si la métrica es dinámica
+  // o calculada y no tiene nombre histórico, se usa el id canónico.
+  const unavailable: Record<string, SkipReason> = {};
+  for (const [canonical, reason] of Object.entries(plan.unavailable)) {
+    unavailable[canonicalPorLegacy.get(canonical) ?? canonical] = reason;
+  }
 
-    return {
-        unavailable,
-        skipped: plan.skipped.map(s => ({
-            sourceId: s.sourceId,
-            sourceLabel: reg.source(s.sourceId)?.label ?? s.sourceId,
-            reason: s.reason,
-        })),
-        hasPublicLink: input.hasPublicLink,
-    }
+  return {
+    unavailable,
+    skipped: plan.skipped.map((s) => ({
+      sourceId: s.sourceId,
+      sourceLabel: reg.source(s.sourceId)?.label ?? s.sourceId,
+      reason: s.reason,
+    })),
+    hasPublicLink: input.hasPublicLink,
+  };
 }
 
 /**
@@ -143,30 +147,36 @@ export function computeDiagnostics(
  * el cliente final en un enlace compartido).
  */
 export function explainSkipReason(reason: SkipReason, sourceLabel?: string): string {
-    const fuente = sourceLabel ? `«${sourceLabel}»` : 'esta fuente'
-    switch (reason.kind) {
-        case 'no_public_link':
-            return `Este cliente de Report-UTM no está enlazado con su cliente de Reporting, ` +
-                `así que ${fuente} no se puede leer. Se arregla en la ficha del cliente.`
-        case 'not_configured':
-            return `El cliente no tiene ${fuente} configurada todavía.`
-        case 'unattributable_filter':
-            return `El gasto de anuncios no se puede repartir por el filtro aplicado ` +
-                `(${reason.fields.join(', ')}), porque las métricas de campaña no ` +
-                `guardan ese dato. Los leads y las ventas sí quedan filtrados.`
-        case 'grain_mismatch':
-            return `${fuente[0].toUpperCase()}${fuente.slice(1)} no se desglosa por esta ` +
-                `dimensión: su dato está agregado a un nivel que no incluye ese detalle. ` +
-                `Prueba agrupando por Fecha o por Campaña.`
-        case 'no_data_in_range':
-            return `No hay datos de ${fuente} en el rango elegido.`
-    }
+  const fuente = sourceLabel ? `«${sourceLabel}»` : 'esta fuente';
+  switch (reason.kind) {
+    case 'no_public_link':
+      return (
+        `Este cliente de Report-UTM no está enlazado con su cliente de Reporting, ` +
+        `así que ${fuente} no se puede leer. Se arregla en la ficha del cliente.`
+      );
+    case 'not_configured':
+      return `El cliente no tiene ${fuente} configurada todavía.`;
+    case 'unattributable_filter':
+      return (
+        `El gasto de anuncios no se puede repartir por el filtro aplicado ` +
+        `(${reason.fields.join(', ')}), porque las métricas de campaña no ` +
+        `guardan ese dato. Los leads y las ventas sí quedan filtrados.`
+      );
+    case 'grain_mismatch':
+      return (
+        `${fuente[0].toUpperCase()}${fuente.slice(1)} no se desglosa por esta ` +
+        `dimensión: su dato está agregado a un nivel que no incluye ese detalle. ` +
+        `Prueba agrupando por Fecha o por Campaña.`
+      );
+    case 'no_data_in_range':
+      return `No hay datos de ${fuente} en el rango elegido.`;
+  }
 }
 
 /** ¿Hay algo que explicar? Evita renderizar avisos vacíos. */
 export function hasDiagnostics(d: QueryDiagnostics | undefined): boolean {
-    if (!d) return false
-    return Object.keys(d.unavailable).length > 0 || d.skipped.length > 0
+  if (!d) return false;
+  return Object.keys(d.unavailable).length > 0 || d.skipped.length > 0;
 }
 
 /**
@@ -178,16 +188,16 @@ export function hasDiagnostics(d: QueryDiagnostics | undefined): boolean {
  * información legítima: explican por qué una celda está vacía.
  */
 export function sanitizeForClient(d: QueryDiagnostics | undefined): QueryDiagnostics | undefined {
-    if (!d) return undefined
-    const neutralizar = (r: SkipReason): SkipReason =>
-        r.kind === 'no_public_link' ? { kind: 'not_configured' } : r
+  if (!d) return undefined;
+  const neutralizar = (r: SkipReason): SkipReason =>
+    r.kind === 'no_public_link' ? { kind: 'not_configured' } : r;
 
-    return {
-        unavailable: Object.fromEntries(
-            Object.entries(d.unavailable).map(([k, v]) => [k, neutralizar(v)])
-        ),
-        skipped: d.skipped.map(s => ({ ...s, reason: neutralizar(s.reason) })),
-        // Se omite a propósito: el estado del enlace es asunto interno.
-        hasPublicLink: true,
-    }
+  return {
+    unavailable: Object.fromEntries(
+      Object.entries(d.unavailable).map(([k, v]) => [k, neutralizar(v)])
+    ),
+    skipped: d.skipped.map((s) => ({ ...s, reason: neutralizar(s.reason) })),
+    // Se omite a propósito: el estado del enlace es asunto interno.
+    hasPublicLink: true,
+  };
 }

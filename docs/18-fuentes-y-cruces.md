@@ -23,15 +23,15 @@ Eso es todo. El resto de esta guía son las consecuencias.
 
 ## Parte 1 · Las siete fuentes
 
-| Fuente | Qué mide | Grano | Cruza por |
-|---|---|---|---|
-| **Leads** | Contactos, uno por fila (formulario web, Meta Lead Ads o CRM de GoHighLevel) | fila | fecha · plataforma · campaña · conjunto · anuncio · **cualquier columna suya** · campos de formulario |
-| **Ventas** | Transacciones, una por fila | fila | fecha · plataforma · campaña · conjunto · anuncio · columnas de venta |
-| **Anuncios** | Gasto y métricas de plataforma | día × entidad | fecha · plataforma · campaña · conjunto · anuncio |
-| **Cuenta** | GA4, Hotmart, métricas manuales | día | **solo fecha** |
-| **Conversiones offline** | Totales diarios de un Sheet | día | **solo fecha** |
-| **Campos de Sheet** | Columnas de un Sheet convertidas en métricas | día / fila | fecha · valor del campo · campaña · conjunto · anuncio |
-| **Suscripciones** | Foto actual de Hotmart | foto | **ninguno** (solo el total) |
+| Fuente                   | Qué mide                                                                     | Grano         | Cruza por                                                                                             |
+| ------------------------ | ---------------------------------------------------------------------------- | ------------- | ----------------------------------------------------------------------------------------------------- |
+| **Leads**                | Contactos, uno por fila (formulario web, Meta Lead Ads o CRM de GoHighLevel) | fila          | fecha · plataforma · campaña · conjunto · anuncio · **cualquier columna suya** · campos de formulario |
+| **Ventas**               | Transacciones, una por fila                                                  | fila          | fecha · plataforma · campaña · conjunto · anuncio · columnas de venta                                 |
+| **Anuncios**             | Gasto y métricas de plataforma                                               | día × entidad | fecha · plataforma · campaña · conjunto · anuncio                                                     |
+| **Cuenta**               | GA4, Hotmart, métricas manuales                                              | día           | **solo fecha**                                                                                        |
+| **Conversiones offline** | Totales diarios de un Sheet                                                  | día           | **solo fecha**                                                                                        |
+| **Campos de Sheet**      | Columnas de un Sheet convertidas en métricas                                 | día / fila    | fecha · valor del campo · campaña · conjunto · anuncio                                                |
+| **Suscripciones**        | Foto actual de Hotmart                                                       | foto          | **ninguno** (solo el total)                                                                           |
 
 ### Por qué el grano importa
 
@@ -45,7 +45,7 @@ Eso es todo. El resto de esta guía son las consecuencias.
 ### Por qué «solo fecha» es una limitación real
 
 `Cuenta` y `Conversiones offline` están agregadas por día y cliente. Una fila
-dice «el 12 de julio hubo 340 sesiones», no *de qué campaña* venían. No es que
+dice «el 12 de julio hubo 340 sesiones», no _de qué campaña_ venían. No es que
 falte configurarlo: **el dato no existe**. Por eso al agrupar por campaña esas
 métricas caen en la fila total en vez de repartirse.
 
@@ -59,13 +59,13 @@ métricas caen en la fila total en vez de repartirse.
 Y para una métrica derivada, la regla se hereda de la más restrictiva de sus
 partes. Ejemplos que conviene tener en la cabeza:
 
-| Métrica | Se desglosa por campaña | Se desglosa por país |
-|---|---|---|
-| Leads | sí | sí (es columna suya) |
-| Gasto | sí | **no** (Anuncios no tiene país) |
-| **CPL** (gasto ÷ leads) | sí | **no** — hereda el límite del gasto |
-| Tasa de conversión (ventas ÷ leads) | sí | sí — las dos son de grano fila |
-| Sesiones GA4 | **no** | **no** — Cuenta solo cruza por fecha |
+| Métrica                             | Se desglosa por campaña | Se desglosa por país                 |
+| ----------------------------------- | ----------------------- | ------------------------------------ |
+| Leads                               | sí                      | sí (es columna suya)                 |
+| Gasto                               | sí                      | **no** (Anuncios no tiene país)      |
+| **CPL** (gasto ÷ leads)             | sí                      | **no** — hereda el límite del gasto  |
+| Tasa de conversión (ventas ÷ leads) | sí                      | sí — las dos son de grano fila       |
+| Sesiones GA4                        | **no**                  | **no** — Cuenta solo cruza por fecha |
 
 Esto es lo que explica el caso que más desconcierta: **un CPL por país sale
 vacío o absurdo**. Los leads sí se reparten por país, el gasto no, así que la
@@ -110,30 +110,30 @@ sobre **un cliente y un rango de fechas**.
 
 ### Tipos de widget
 
-| Tipo | Para qué |
-|---|---|
-| `scorecard` | Un número. Admite comparar contra el período anterior y umbrales verde/ámbar |
-| `line` · `area` | Evolución en el tiempo |
-| `bar` | Ranking por campaña, anuncio, país… |
-| `combo` | Dos escalas — gasto en barras y CPL en línea |
-| `pie` | Reparto de un total |
-| `table` | Varias métricas por fila, con formato condicional y fila de totales |
-| `funnel` | Etapas del embudo |
-| `slicer` | Control para filtrar el informe entero |
-| `section` | Agrupa widgets, colapsable |
+| Tipo            | Para qué                                                                     |
+| --------------- | ---------------------------------------------------------------------------- |
+| `scorecard`     | Un número. Admite comparar contra el período anterior y umbrales verde/ámbar |
+| `line` · `area` | Evolución en el tiempo                                                       |
+| `bar`           | Ranking por campaña, anuncio, país…                                          |
+| `combo`         | Dos escalas — gasto en barras y CPL en línea                                 |
+| `pie`           | Reparto de un total                                                          |
+| `table`         | Varias métricas por fila, con formato condicional y fila de totales          |
+| `funnel`        | Etapas del embudo                                                            |
+| `slicer`        | Control para filtrar el informe entero                                       |
+| `section`       | Agrupa widgets, colapsable                                                   |
 
 ### Dimensiones disponibles
 
-| Dimensión | Agrupa por |
-|---|---|
-| `Total` | Todo junto: un solo valor |
-| `Fecha` | Día, semana, mes o trimestre |
-| `Campaña` · `Conjunto` · `Anuncio` | Entidad real de publicidad (ya resuelta) |
-| `Campaña UTM (crudo)` | El `utm_campaign` tal cual, **sin resolver** |
-| `Plataforma` · `Source` · `Medium` | Origen del tráfico |
-| `País` · `Formulario` · `Atribución` | Columnas de los leads |
-| `Producto` · `Tipo de transacción` | Columnas de las ventas |
-| Campos de formulario, de lead y de Sheet | Los que definas por cliente |
+| Dimensión                                | Agrupa por                                   |
+| ---------------------------------------- | -------------------------------------------- |
+| `Total`                                  | Todo junto: un solo valor                    |
+| `Fecha`                                  | Día, semana, mes o trimestre                 |
+| `Campaña` · `Conjunto` · `Anuncio`       | Entidad real de publicidad (ya resuelta)     |
+| `Campaña UTM (crudo)`                    | El `utm_campaign` tal cual, **sin resolver** |
+| `Plataforma` · `Source` · `Medium`       | Origen del tráfico                           |
+| `País` · `Formulario` · `Atribución`     | Columnas de los leads                        |
+| `Producto` · `Tipo de transacción`       | Columnas de las ventas                       |
+| Campos de formulario, de lead y de Sheet | Los que definas por cliente                  |
 
 > Un **segmento** de campo de lead (`lseg__…`) no aparece aquí a propósito: es una
 > métrica, no una dimensión. Para partir las filas por la respuesta se usa el
@@ -264,16 +264,16 @@ Afecta a todos los widgets del informe.
 
 Merece la pena conocerlas para no perder tiempo:
 
-| Petición | Por qué no |
-|---|---|
-| Gasto **desglosado** por país / formulario / campo de lead | Anuncios no tiene esas columnas |
-| Sesiones GA4 por campaña | Cuenta está agregada por día, sin desglose |
-| Conversiones offline por campaña | Ídem — usa un **campo de Sheet**, que sí cruza |
-| Suscripciones en una serie temporal | Es una foto, no una serie |
-| Contar filas de una fuente diaria | Solo el grano de fila se cuenta |
-| ROAS real hoy | `sales_events` está vacío (ver Parte 7) |
+| Petición                                                   | Por qué no                                     |
+| ---------------------------------------------------------- | ---------------------------------------------- |
+| Gasto **desglosado** por país / formulario / campo de lead | Anuncios no tiene esas columnas                |
+| Sesiones GA4 por campaña                                   | Cuenta está agregada por día, sin desglose     |
+| Conversiones offline por campaña                           | Ídem — usa un **campo de Sheet**, que sí cruza |
+| Suscripciones en una serie temporal                        | Es una foto, no una serie                      |
+| Contar filas de una fuente diaria                          | Solo el grano de fila se cuenta                |
+| ROAS real hoy                                              | `sales_events` está vacío (ver Parte 7)        |
 
-> **Ojo con la primera fila.** Lo que no se puede es *repartir* el gasto entre las
+> **Ojo con la primera fila.** Lo que no se puede es _repartir_ el gasto entre las
 > respuestas. **Dividir** el gasto total del ámbito por un segmento de lead sí se
 > puede, y es la receta de abajo: `spend / lseg__ingresos_desde_2m`. La diferencia
 > es que un segmento es una MÉTRICA y no recorta la consulta, mientras que un
@@ -333,11 +333,11 @@ salir una venta.
 Un informe con una fuente muerta **no se ve roto: se ve vacío**. Por eso hay
 herramientas dedicadas:
 
-| Dónde | Qué dice |
-|---|---|
-| `/report-utm/salud` | Fuentes paradas, integraciones caídas, cruce degradado, Sheets mal conectados |
-| `/report-utm/cruce-campanas` | Qué UTMs no cruzan y sugerencias de corrección |
-| `npm run diagnostico` | Lo mismo por consola, más la ruta de ventas de cada cliente |
+| Dónde                        | Qué dice                                                                      |
+| ---------------------------- | ----------------------------------------------------------------------------- |
+| `/report-utm/salud`          | Fuentes paradas, integraciones caídas, cruce degradado, Sheets mal conectados |
+| `/report-utm/cruce-campanas` | Qué UTMs no cruzan y sugerencias de corrección                                |
+| `npm run diagnostico`        | Lo mismo por consola, más la ruta de ventas de cada cliente                   |
 
 ### Comprobaciones automáticas
 
@@ -366,16 +366,16 @@ Las que conviene conocer:
 Los campos por cliente viajan como tokens. Normalmente los escribe el editor,
 pero aparecen en las fórmulas y en los informes guardados.
 
-| Token | Qué es | Alias en fórmulas |
-|---|---|---|
-| `sheetagg:<agg>:<clave>` | Campo de Sheet como métrica | `sf__<clave>` |
-| `sheetview:<clave>` | Vista guardada de un campo | `sv__<clave>` |
-| `sheetdim:<clave>` | Campo de Sheet como dimensión | — |
-| `field:<clave>` | Campo de formulario como dimensión | — |
-| `fieldagg:<agg>:<clave>` | Campo de formulario como métrica | — |
-| `leadfield:<clave>` | Campo de lead como dimensión | — |
-| `leadseg:<clave>` | Segmento de un campo de lead, como métrica | `lseg__<clave>` |
-| `offfield:<tipo>:<clave>` | Columna de conversiones offline | `off__<clave>` |
+| Token                     | Qué es                                     | Alias en fórmulas |
+| ------------------------- | ------------------------------------------ | ----------------- |
+| `sheetagg:<agg>:<clave>`  | Campo de Sheet como métrica                | `sf__<clave>`     |
+| `sheetview:<clave>`       | Vista guardada de un campo                 | `sv__<clave>`     |
+| `sheetdim:<clave>`        | Campo de Sheet como dimensión              | —                 |
+| `field:<clave>`           | Campo de formulario como dimensión         | —                 |
+| `fieldagg:<agg>:<clave>`  | Campo de formulario como métrica           | —                 |
+| `leadfield:<clave>`       | Campo de lead como dimensión               | —                 |
+| `leadseg:<clave>`         | Segmento de un campo de lead, como métrica | `lseg__<clave>`   |
+| `offfield:<tipo>:<clave>` | Columna de conversiones offline            | `off__<clave>`    |
 
 `<agg>` es `count`, `sum`, `avg`, `min` o `max`. La agregación viaja **dentro**
 del token para que un widget guardado siga midiendo lo mismo aunque después

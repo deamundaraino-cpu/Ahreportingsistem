@@ -8,18 +8,23 @@
 // Client-safe: solo importa tipos y `bi/expr.ts`, que es puro.
 
 import type {
-    DataSource, Field, MeasureField, DimensionField, JoinAxis, GrainKind,
-} from './registry-types'
-import { parseExpr, isExprError } from './expr'
+  DataSource,
+  Field,
+  MeasureField,
+  DimensionField,
+  JoinAxis,
+  GrainKind,
+} from './registry-types';
+import { parseExpr, isExprError } from './expr';
 
-import { LEADS_SOURCE } from './sources/leads'
-import { SALES_SOURCE } from './sources/sales'
-import { HOTMART_SOURCE } from './sources/hotmart'
-import { ADS_SOURCE } from './sources/ads'
-import { CUENTA_SOURCE } from './sources/cuenta'
-import { OFFLINE_SOURCE } from './sources/offline'
-import { SHEET_SOURCE } from './sources/sheet'
-import { SUBS_SOURCE } from './sources/subs'
+import { LEADS_SOURCE } from './sources/leads';
+import { SALES_SOURCE } from './sources/sales';
+import { HOTMART_SOURCE } from './sources/hotmart';
+import { ADS_SOURCE } from './sources/ads';
+import { CUENTA_SOURCE } from './sources/cuenta';
+import { OFFLINE_SOURCE } from './sources/offline';
+import { SHEET_SOURCE } from './sources/sheet';
+import { SUBS_SOURCE } from './sources/subs';
 
 /**
  * Las fuentes fijas, en el orden en que se muestran en el editor.
@@ -30,71 +35,71 @@ import { SUBS_SOURCE } from './sources/subs'
  * esas tres tiene grano propio, y por eso no merece ser fuente.
  */
 export const STATIC_SOURCES: readonly DataSource[] = [
-    LEADS_SOURCE,
-    SALES_SOURCE,
-    // Va justo tras `sales` porque es su sucesora natural para Hotmart: misma
-    // granularidad (una fila por venta) pero con el dinero ya normalizado a
-    // dólares, la clasificación del embudo y los reembolsos.
-    HOTMART_SOURCE,
-    ADS_SOURCE,
-    CUENTA_SOURCE,
-    OFFLINE_SOURCE,
-    SHEET_SOURCE,
-    SUBS_SOURCE,
-]
+  LEADS_SOURCE,
+  SALES_SOURCE,
+  // Va justo tras `sales` porque es su sucesora natural para Hotmart: misma
+  // granularidad (una fila por venta) pero con el dinero ya normalizado a
+  // dólares, la clasificación del embudo y los reembolsos.
+  HOTMART_SOURCE,
+  ADS_SOURCE,
+  CUENTA_SOURCE,
+  OFFLINE_SOURCE,
+  SHEET_SOURCE,
+  SUBS_SOURCE,
+];
 
 /**
  * Registro resuelto: las fuentes fijas más los campos que un cliente concreto
  * aporta. Se construye por petición; `resolveRegistry` (server) lo cachea.
  */
 export interface ResolvedRegistry {
-    sources: readonly DataSource[]
-    /** Un campo por su id canónico. */
-    field(id: string): Field | undefined
-    measure(id: string): MeasureField | undefined
-    dimensionField(id: string): DimensionField | undefined
-    sourceOf(id: string): DataSource | undefined
-    source(id: string): DataSource | undefined
-    measures(): MeasureField[]
-    dimensions(): DimensionField[]
-    fields(): Field[]
+  sources: readonly DataSource[];
+  /** Un campo por su id canónico. */
+  field(id: string): Field | undefined;
+  measure(id: string): MeasureField | undefined;
+  dimensionField(id: string): DimensionField | undefined;
+  sourceOf(id: string): DataSource | undefined;
+  source(id: string): DataSource | undefined;
+  measures(): MeasureField[];
+  dimensions(): DimensionField[];
+  fields(): Field[];
 }
 
 /** Construye un registro resuelto a partir de una lista de fuentes. */
 export function makeRegistry(sources: readonly DataSource[]): ResolvedRegistry {
-    const byId = new Map<string, Field>()
-    const srcOfField = new Map<string, DataSource>()
-    const srcById = new Map<string, DataSource>()
+  const byId = new Map<string, Field>();
+  const srcOfField = new Map<string, DataSource>();
+  const srcById = new Map<string, DataSource>();
 
-    for (const s of sources) {
-        srcById.set(s.id, s)
-        for (const f of s.fields) {
-            byId.set(f.id, f)
-            srcOfField.set(f.id, s)
-        }
+  for (const s of sources) {
+    srcById.set(s.id, s);
+    for (const f of s.fields) {
+      byId.set(f.id, f);
+      srcOfField.set(f.id, s);
     }
+  }
 
-    return {
-        sources,
-        field: id => byId.get(id),
-        measure: id => {
-            const f = byId.get(id)
-            return f?.kind === 'measure' ? f : undefined
-        },
-        dimensionField: id => {
-            const f = byId.get(id)
-            return f?.kind === 'dimension' ? f : undefined
-        },
-        sourceOf: id => srcOfField.get(id),
-        source: id => srcById.get(id),
-        measures: () => [...byId.values()].filter((f): f is MeasureField => f.kind === 'measure'),
-        dimensions: () => [...byId.values()].filter((f): f is DimensionField => f.kind === 'dimension'),
-        fields: () => [...byId.values()],
-    }
+  return {
+    sources,
+    field: (id) => byId.get(id),
+    measure: (id) => {
+      const f = byId.get(id);
+      return f?.kind === 'measure' ? f : undefined;
+    },
+    dimensionField: (id) => {
+      const f = byId.get(id);
+      return f?.kind === 'dimension' ? f : undefined;
+    },
+    sourceOf: (id) => srcOfField.get(id),
+    source: (id) => srcById.get(id),
+    measures: () => [...byId.values()].filter((f): f is MeasureField => f.kind === 'measure'),
+    dimensions: () => [...byId.values()].filter((f): f is DimensionField => f.kind === 'dimension'),
+    fields: () => [...byId.values()],
+  };
 }
 
 /** El registro sin campos por cliente. Suficiente para el catálogo fijo. */
-export const BASE_REGISTRY: ResolvedRegistry = makeRegistry(STATIC_SOURCES)
+export const BASE_REGISTRY: ResolvedRegistry = makeRegistry(STATIC_SOURCES);
 
 // ════════════════════════════════════════════════════════════════════════
 // Derivación
@@ -108,10 +113,10 @@ export const BASE_REGISTRY: ResolvedRegistry = makeRegistry(STATIC_SOURCES)
  * entera para nada.
  */
 export function directDeps(reg: ResolvedRegistry, f: MeasureField): string[] {
-    if (!f.formula) return []
-    const p = parseExpr(f.formula)
-    if (isExprError(p)) return []
-    return p.refs.filter(id => reg.field(id) !== undefined)
+  if (!f.formula) return [];
+  const p = parseExpr(f.formula);
+  if (isExprError(p)) return [];
+  return p.refs.filter((id) => reg.field(id) !== undefined);
 }
 
 /**
@@ -119,15 +124,15 @@ export function directDeps(reg: ResolvedRegistry, f: MeasureField): string[] {
  * Incluye las intermedias derivadas, porque el motor las necesita calculadas.
  */
 export function allDeps(reg: ResolvedRegistry, id: string, seen = new Set<string>()): string[] {
-    const f = reg.measure(id)
-    if (!f || seen.has(id)) return []
-    seen.add(id)
-    const out: string[] = []
-    for (const dep of directDeps(reg, f)) {
-        out.push(dep)
-        out.push(...allDeps(reg, dep, seen))
-    }
-    return [...new Set(out)]
+  const f = reg.measure(id);
+  if (!f || seen.has(id)) return [];
+  seen.add(id);
+  const out: string[] = [];
+  for (const dep of directDeps(reg, f)) {
+    out.push(dep);
+    out.push(...allDeps(reg, dep, seen));
+  }
+  return [...new Set(out)];
 }
 
 /**
@@ -135,39 +140,39 @@ export function allDeps(reg: ResolvedRegistry, id: string, seen = new Set<string
  * leer físicamente. Es lo que alimenta el plan de consulta.
  */
 export function leafDeps(reg: ResolvedRegistry, id: string): string[] {
-    const f = reg.measure(id)
-    if (!f) return []
-    if (!f.formula) return [id]
-    const out: string[] = []
-    for (const dep of directDeps(reg, f)) out.push(...leafDeps(reg, dep))
-    return [...new Set(out)]
+  const f = reg.measure(id);
+  if (!f) return [];
+  if (!f.formula) return [id];
+  const out: string[] = [];
+  for (const dep of directDeps(reg, f)) out.push(...leafDeps(reg, dep));
+  return [...new Set(out)];
 }
 
 /** Las fuentes que hay que consultar para resolver estos campos. */
 export function sourcesFor(reg: ResolvedRegistry, fieldIds: string[]): DataSource[] {
-    const ids = new Set<string>()
-    for (const id of fieldIds) {
-        const f = reg.field(id)
-        if (!f) continue
-        if (f.kind === 'measure' && f.formula) {
-            for (const leaf of leafDeps(reg, id)) ids.add(leaf)
-            // Un peso (`weightBy`) también hay que traerlo.
-        } else {
-            ids.add(id)
-        }
-        if (f.kind === 'measure' && f.weightBy) ids.add(f.weightBy)
+  const ids = new Set<string>();
+  for (const id of fieldIds) {
+    const f = reg.field(id);
+    if (!f) continue;
+    if (f.kind === 'measure' && f.formula) {
+      for (const leaf of leafDeps(reg, id)) ids.add(leaf);
+      // Un peso (`weightBy`) también hay que traerlo.
+    } else {
+      ids.add(id);
     }
-    // Los pesos de las hojas también cuentan.
-    for (const id of [...ids]) {
-        const m = reg.measure(id)
-        if (m?.weightBy) ids.add(m.weightBy)
-    }
-    const out = new Map<string, DataSource>()
-    for (const id of ids) {
-        const s = reg.sourceOf(id)
-        if (s) out.set(s.id, s)
-    }
-    return [...out.values()]
+    if (f.kind === 'measure' && f.weightBy) ids.add(f.weightBy);
+  }
+  // Los pesos de las hojas también cuentan.
+  for (const id of [...ids]) {
+    const m = reg.measure(id);
+    if (m?.weightBy) ids.add(m.weightBy);
+  }
+  const out = new Map<string, DataSource>();
+  for (const id of ids) {
+    const s = reg.sourceOf(id);
+    if (s) out.set(s.id, s);
+  }
+  return [...out.values()];
 }
 
 /**
@@ -177,9 +182,9 @@ export function sourcesFor(reg: ResolvedRegistry, fieldIds: string[]): DataSourc
  * que era una codificación con pérdida de esto mismo escrita a mano 72 veces.
  */
 export function sourceCrossesAxis(src: DataSource, axis: JoinAxis | null): boolean {
-    // `null` = dimensión "Total": no hay nada que repartir, todo cruza.
-    if (axis === null) return true
-    return src.joinAxes.includes(axis)
+  // `null` = dimensión "Total": no hay nada que repartir, todo cruza.
+  if (axis === null) return true;
+  return src.joinAxes.includes(axis);
 }
 
 /**
@@ -190,24 +195,26 @@ export function sourceCrossesAxis(src: DataSource, axis: JoinAxis | null): boole
  * (cuenta ÷ gasto) herede el de `cuenta`, sin declararlo.
  */
 export function fieldCrossesDimension(
-    reg: ResolvedRegistry, fieldId: string, dimensionId: string | null
+  reg: ResolvedRegistry,
+  fieldId: string,
+  dimensionId: string | null
 ): boolean {
-    if (dimensionId === null || dimensionId === 'none') return true
-    const dim = reg.dimensionField(dimensionId)
-    // Dimensión desconocida: no se bloquea nada (los tokens dinámicos tienen sus
-    // propios avisos, más específicos).
-    if (!dim) return true
+  if (dimensionId === null || dimensionId === 'none') return true;
+  const dim = reg.dimensionField(dimensionId);
+  // Dimensión desconocida: no se bloquea nada (los tokens dinámicos tienen sus
+  // propios avisos, más específicos).
+  if (!dim) return true;
 
-    const f = reg.field(fieldId)
-    if (!f) return true
-    if (f.kind === 'dimension') return true
+  const f = reg.field(fieldId);
+  if (!f) return true;
+  if (f.kind === 'dimension') return true;
 
-    const leaves = f.formula ? leafDeps(reg, fieldId) : [fieldId]
-    if (!leaves.length) return true
-    return leaves.every(leaf => {
-        const s = reg.sourceOf(leaf)
-        return s ? sourceCrossesAxis(s, dim.axis) : true
-    })
+  const leaves = f.formula ? leafDeps(reg, fieldId) : [fieldId];
+  if (!leaves.length) return true;
+  return leaves.every((leaf) => {
+    const s = reg.sourceOf(leaf);
+    return s ? sourceCrossesAxis(s, dim.axis) : true;
+  });
 }
 
 /**
@@ -217,10 +224,10 @@ export function fieldCrossesDimension(
  * arrays y excluyendo `reach` a mano.
  */
 export function isAdditive(f: MeasureField): boolean {
-    if (f.dedup) return false                 // reach: personas únicas
-    if (f.agg === 'sum' || f.agg === 'count') return true
-    // Una derivada aditiva (suma de sumas) sí lo es; un ratio no.
-    return false
+  if (f.dedup) return false; // reach: personas únicas
+  if (f.agg === 'sum' || f.agg === 'count') return true;
+  // Una derivada aditiva (suma de sumas) sí lo es; un ratio no.
+  return false;
 }
 
 /**
@@ -232,26 +239,27 @@ export function isAdditive(f: MeasureField): boolean {
  * un conteo de filas disfrazado de gasto.
  */
 export function isPivotable(reg: ResolvedRegistry, id: string): boolean {
-    const f = reg.measure(id)
-    if (!f || f.formula) return false
-    return reg.sourceOf(id)?.grainKind === 'row'
+  const f = reg.measure(id);
+  if (!f || f.formula) return false;
+  return reg.sourceOf(id)?.grainKind === 'row';
 }
 
 /** Etapas válidas de un embudo, de arriba abajo. Antes: `FUNNEL_STAGE_METRICS`. */
 export function funnelStages(reg: ResolvedRegistry): MeasureField[] {
-    return reg.measures()
-        .filter(f => f.funnelStage !== undefined)
-        .sort((a, b) => a.funnelStage! - b.funnelStage!)
+  return reg
+    .measures()
+    .filter((f) => f.funnelStage !== undefined)
+    .sort((a, b) => a.funnelStage! - b.funnelStage!);
 }
 
 /** Las que el editor muestra antes de "Ver todas". Antes: `RECOMMENDED_METRICS`. */
 export function recommendedMeasures(reg: ResolvedRegistry): MeasureField[] {
-    return reg.measures().filter(f => f.recommended)
+  return reg.measures().filter((f) => f.recommended);
 }
 
 /** ¿Bajar es mejorar? Antes: el conjunto `LOWER_IS_BETTER`. */
 export function isLowerBetterField(reg: ResolvedRegistry, id: string): boolean {
-    return reg.measure(id)?.direction === 'down'
+  return reg.measure(id)?.direction === 'down';
 }
 
 /**
@@ -259,14 +267,14 @@ export function isLowerBetterField(reg: ResolvedRegistry, id: string): boolean {
  * así que sumarlas cuenta doble. Alimenta el aviso del editor.
  */
 export function conflictsAmong(reg: ResolvedRegistry, ids: string[]): Array<[string, string]> {
-    const set = new Set(ids)
-    const out: Array<[string, string]> = []
-    for (const id of ids) {
-        for (const other of reg.measure(id)?.conflictsWith ?? []) {
-            if (set.has(other) && id < other) out.push([id, other])
-        }
+  const set = new Set(ids);
+  const out: Array<[string, string]> = [];
+  for (const id of ids) {
+    for (const other of reg.measure(id)?.conflictsWith ?? []) {
+      if (set.has(other) && id < other) out.push([id, other]);
     }
-    return out
+  }
+  return out;
 }
 
 // ════════════════════════════════════════════════════════════════════════
@@ -274,7 +282,7 @@ export function conflictsAmong(reg: ResolvedRegistry, ids: string[]): Array<[str
 // ════════════════════════════════════════════════════════════════════════
 
 /** El enum que usaba `METRIC_META.breakdown`. Se mantiene para la fachada. */
-export type LegacyBreakdown = 'any' | 'campaign' | 'total' | 'global'
+export type LegacyBreakdown = 'any' | 'campaign' | 'total' | 'global';
 
 /**
  * Traduce los ejes de una fuente al enum histórico.
@@ -284,16 +292,19 @@ export type LegacyBreakdown = 'any' | 'campaign' | 'total' | 'global'
  * que la derivación no pierde información.
  */
 export function legacyBreakdownOfSource(src: DataSource): LegacyBreakdown {
-    if (!src.joinAxes.length) return 'global'
-    // Grano de fila: se desglosa por cualquier columna suya.
-    if (src.joinAxes.includes('lead_column') || src.joinAxes.includes('sales_column')) return 'any'
-    if (src.joinAxes.includes('campaign')) return 'campaign'
-    return 'total'
+  if (!src.joinAxes.length) return 'global';
+  // Grano de fila: se desglosa por cualquier columna suya.
+  if (src.joinAxes.includes('lead_column') || src.joinAxes.includes('sales_column')) return 'any';
+  if (src.joinAxes.includes('campaign')) return 'campaign';
+  return 'total';
 }
 
 const BREAKDOWN_RANK: Record<LegacyBreakdown, number> = {
-    any: 0, campaign: 1, total: 2, global: 3,
-}
+  any: 0,
+  campaign: 1,
+  total: 2,
+  global: 3,
+};
 
 /**
  * Desglose de un campo en el enum histórico. Para una derivada, el MÁS
@@ -301,20 +312,20 @@ const BREAKDOWN_RANK: Record<LegacyBreakdown, number> = {
  * `conversion_rate` salga 'any' (leads y ventas), tal como está escrito hoy a mano.
  */
 export function legacyBreakdownOfField(reg: ResolvedRegistry, id: string): LegacyBreakdown {
-    const f = reg.measure(id)
-    if (!f) return 'any'
-    const leaves = f.formula ? leafDeps(reg, id) : [id]
-    let worst: LegacyBreakdown = 'any'
-    for (const leaf of leaves) {
-        const s = reg.sourceOf(leaf)
-        if (!s) continue
-        const b = legacyBreakdownOfSource(s)
-        if (BREAKDOWN_RANK[b] > BREAKDOWN_RANK[worst]) worst = b
-    }
-    return worst
+  const f = reg.measure(id);
+  if (!f) return 'any';
+  const leaves = f.formula ? leafDeps(reg, id) : [id];
+  let worst: LegacyBreakdown = 'any';
+  for (const leaf of leaves) {
+    const s = reg.sourceOf(leaf);
+    if (!s) continue;
+    const b = legacyBreakdownOfSource(s);
+    if (BREAKDOWN_RANK[b] > BREAKDOWN_RANK[worst]) worst = b;
+  }
+  return worst;
 }
 
 /** Utilidades de introspección para los scripts de verificación. */
 export function grainKindOf(reg: ResolvedRegistry, id: string): GrainKind | undefined {
-    return reg.sourceOf(id)?.grainKind
+  return reg.sourceOf(id)?.grainKind;
 }

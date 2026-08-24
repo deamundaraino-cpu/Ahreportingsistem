@@ -13,6 +13,7 @@
 ### Task 1: Add imports and `handleAddNewBlock` function
 
 **Files:**
+
 - Modify: `src/app/(app)/dashboard/components/DashboardClient.tsx`
 
 - [ ] **Step 1: Add missing imports**
@@ -20,26 +21,97 @@
 In `DashboardClient.tsx`, find the existing import lines and add `Popover`, `PopoverContent`, `PopoverTrigger` from the UI lib, `RankingTableDef` to the layout types import, and `BarChart3` + `Table2` to lucide icons.
 
 Find this line (around line 17):
+
 ```typescript
-import type { ColDef, CardDef, ReportLayout, ChartDef, MetricDef, TextBlockDef } from '@/lib/layout-types'
+import type {
+  ColDef,
+  CardDef,
+  ReportLayout,
+  ChartDef,
+  MetricDef,
+  TextBlockDef,
+} from '@/lib/layout-types';
 ```
+
 Replace with:
+
 ```typescript
-import type { ColDef, CardDef, ReportLayout, ChartDef, MetricDef, TextBlockDef, RankingTableDef } from '@/lib/layout-types'
+import type {
+  ColDef,
+  CardDef,
+  ReportLayout,
+  ChartDef,
+  MetricDef,
+  TextBlockDef,
+  RankingTableDef,
+} from '@/lib/layout-types';
 ```
 
 Find this line (around line 16):
+
 ```typescript
-import { LayoutDashboard, Settings2, Plus, Edit2, CalendarDays, Timer, BadgeDollarSign, Wallet, GripVertical, Search, X, Puzzle, Type, AlignLeft, AlignCenter, AlignRight, Trash2, Save, Loader2, Minus, Archive, Copy } from 'lucide-react'
+import {
+  LayoutDashboard,
+  Settings2,
+  Plus,
+  Edit2,
+  CalendarDays,
+  Timer,
+  BadgeDollarSign,
+  Wallet,
+  GripVertical,
+  Search,
+  X,
+  Puzzle,
+  Type,
+  AlignLeft,
+  AlignCenter,
+  AlignRight,
+  Trash2,
+  Save,
+  Loader2,
+  Minus,
+  Archive,
+  Copy,
+} from 'lucide-react';
 ```
+
 Replace with:
+
 ```typescript
-import { LayoutDashboard, Settings2, Plus, Edit2, CalendarDays, Timer, BadgeDollarSign, Wallet, GripVertical, Search, X, Puzzle, Type, AlignLeft, AlignCenter, AlignRight, Trash2, Save, Loader2, Minus, Archive, Copy, BarChart3, Table2, CreditCard } from 'lucide-react'
+import {
+  LayoutDashboard,
+  Settings2,
+  Plus,
+  Edit2,
+  CalendarDays,
+  Timer,
+  BadgeDollarSign,
+  Wallet,
+  GripVertical,
+  Search,
+  X,
+  Puzzle,
+  Type,
+  AlignLeft,
+  AlignCenter,
+  AlignRight,
+  Trash2,
+  Save,
+  Loader2,
+  Minus,
+  Archive,
+  Copy,
+  BarChart3,
+  Table2,
+  CreditCard,
+} from 'lucide-react';
 ```
 
 Add this import after the existing `@/components/ui/button` import:
+
 ```typescript
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 ```
 
 - [ ] **Step 2: Add `addMenuOpen` state**
@@ -47,7 +119,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 In the `DynamicDashboard` component, find the existing state declarations (around line 331 where `quickEditTarget` was added). Add this state after `quickEditTarget`:
 
 ```typescript
-const [addMenuOpen, setAddMenuOpen] = useState(false)
+const [addMenuOpen, setAddMenuOpen] = useState(false);
 ```
 
 - [ ] **Step 3: Add `handleAddNewBlock` function**
@@ -56,33 +128,84 @@ Place this function immediately after `handleDuplicateBlock` (around line 570):
 
 ```typescript
 function handleAddNewBlock(type: 'card' | 'chart' | 'ranking' | 'text') {
-    const newId = crypto.randomUUID()
-    const base = { ...(tabLayoutOverrides[activeTabId] || activeLayout), blocks_order: orderedBlocks }
+  const newId = crypto.randomUUID();
+  const base = {
+    ...(tabLayoutOverrides[activeTabId] || activeLayout),
+    blocks_order: orderedBlocks,
+  };
 
-    let updated: typeof base
-    let target: QuickEditTarget
+  let updated: typeof base;
+  let target: QuickEditTarget;
 
-    if (type === 'card') {
-        const newCard: CardDef = { id: newId, label: 'Nueva tarjeta', formula: 'meta_spend', prefix: '$', suffix: '', decimals: 2, color: 'default' }
-        updated = { ...base, tarjetas: [...base.tarjetas, newCard], blocks_order: [...orderedBlocks, `card:${newId}`] }
-        target = { type: 'card', id: newId }
-    } else if (type === 'chart') {
-        const newChart: ChartDef = { id: newId, title: 'Nuevo gráfico', type: 'line', valueFormulas: ['meta_spend'], colors: ['blue'], height: 240 }
-        updated = { ...base, graficos: [...(base.graficos || []), newChart], blocks_order: [...orderedBlocks, `chart:${newId}`] }
-        target = { type: 'chart', id: newId }
-    } else if (type === 'ranking') {
-        const newRanking: RankingTableDef = { id: newId, title: 'Nueva tabla', dimension: 'campaigns', topN: 10, sortOrder: 'desc', sortColumnIndex: 0, showRank: true, columns: [{ formula: 'meta_spend', label: 'Gasto', prefix: '$', suffix: '', decimals: 2 }] }
-        updated = { ...base, ranking_tables: [...(base.ranking_tables || []), newRanking], blocks_order: [...orderedBlocks, `ranking:${newId}`] }
-        target = { type: 'ranking', id: newId }
-    } else {
-        const newText: TextBlockDef = { id: newId, blockType: 'text', content: 'Nueva sección', style: 'h2', align: 'left', color: 'white', colSpan: 4 }
-        updated = { ...base, text_blocks: [...(base.text_blocks || []), newText], blocks_order: [...orderedBlocks, `text:${newId}`] }
-        target = { type: 'text', id: newId }
-    }
+  if (type === 'card') {
+    const newCard: CardDef = {
+      id: newId,
+      label: 'Nueva tarjeta',
+      formula: 'meta_spend',
+      prefix: '$',
+      suffix: '',
+      decimals: 2,
+      color: 'default',
+    };
+    updated = {
+      ...base,
+      tarjetas: [...base.tarjetas, newCard],
+      blocks_order: [...orderedBlocks, `card:${newId}`],
+    };
+    target = { type: 'card', id: newId };
+  } else if (type === 'chart') {
+    const newChart: ChartDef = {
+      id: newId,
+      title: 'Nuevo gráfico',
+      type: 'line',
+      valueFormulas: ['meta_spend'],
+      colors: ['blue'],
+      height: 240,
+    };
+    updated = {
+      ...base,
+      graficos: [...(base.graficos || []), newChart],
+      blocks_order: [...orderedBlocks, `chart:${newId}`],
+    };
+    target = { type: 'chart', id: newId };
+  } else if (type === 'ranking') {
+    const newRanking: RankingTableDef = {
+      id: newId,
+      title: 'Nueva tabla',
+      dimension: 'campaigns',
+      topN: 10,
+      sortOrder: 'desc',
+      sortColumnIndex: 0,
+      showRank: true,
+      columns: [{ formula: 'meta_spend', label: 'Gasto', prefix: '$', suffix: '', decimals: 2 }],
+    };
+    updated = {
+      ...base,
+      ranking_tables: [...(base.ranking_tables || []), newRanking],
+      blocks_order: [...orderedBlocks, `ranking:${newId}`],
+    };
+    target = { type: 'ranking', id: newId };
+  } else {
+    const newText: TextBlockDef = {
+      id: newId,
+      blockType: 'text',
+      content: 'Nueva sección',
+      style: 'h2',
+      align: 'left',
+      color: 'white',
+      colSpan: 4,
+    };
+    updated = {
+      ...base,
+      text_blocks: [...(base.text_blocks || []), newText],
+      blocks_order: [...orderedBlocks, `text:${newId}`],
+    };
+    target = { type: 'text', id: newId };
+  }
 
-    setTabLayoutOverrides(prev => ({ ...prev, [activeTabId]: updated }))
-    setAddMenuOpen(false)
-    setQuickEditTarget(target)
+  setTabLayoutOverrides((prev) => ({ ...prev, [activeTabId]: updated }));
+  setAddMenuOpen(false);
+  setQuickEditTarget(target);
 }
 ```
 
@@ -107,6 +230,7 @@ git commit -m "feat(dashboard): add handleAddNewBlock and addMenuOpen state"
 ### Task 2: Add "+" button with dropdown in toolbar
 
 **Files:**
+
 - Modify: `src/app/(app)/dashboard/components/DashboardClient.tsx`
 
 - [ ] **Step 1: Locate the toolbar area**
@@ -130,45 +254,49 @@ Find the section in DashboardClient where the "Modo Rompecabezas" button and "Co
 Add the following block **immediately before** the "Modo Rompecabezas" button (so `+` appears first in the toolbar):
 
 ```tsx
-{isTeam && (
+{
+  isTeam && (
     <Popover open={addMenuOpen} onOpenChange={setAddMenuOpen}>
-        <PopoverTrigger asChild>
-            <Button
-                size="sm"
-                variant="outline"
-                className="gap-1.5 text-xs border-zinc-700 text-zinc-400 hover:text-emerald-300 hover:border-emerald-500/40 hover:bg-emerald-500/5 transition"
-            >
-                <Plus className="w-3.5 h-3.5" />
-                Agregar
-            </Button>
-        </PopoverTrigger>
-        <PopoverContent
-            className="p-1 bg-zinc-900 border-zinc-800 w-48"
-            style={{ zIndex: 9999 }}
-            align="start"
-            side="bottom"
-            collisionBoundary={[]}
-            collisionPadding={8}
-            onOpenAutoFocus={e => e.preventDefault()}
+      <PopoverTrigger asChild>
+        <Button
+          size="sm"
+          variant="outline"
+          className="gap-1.5 text-xs border-zinc-700 text-zinc-400 hover:text-emerald-300 hover:border-emerald-500/40 hover:bg-emerald-500/5 transition"
         >
-            {([
-                { type: 'card',    icon: <CreditCard className="w-3.5 h-3.5" />, label: 'Tarjeta' },
-                { type: 'chart',   icon: <BarChart3  className="w-3.5 h-3.5" />, label: 'Gráfico' },
-                { type: 'ranking', icon: <Table2     className="w-3.5 h-3.5" />, label: 'Tabla ranking' },
-                { type: 'text',    icon: <Type       className="w-3.5 h-3.5" />, label: 'Texto / Sección' },
-            ] as const).map(({ type, icon, label }) => (
-                <button
-                    key={type}
-                    onClick={() => handleAddNewBlock(type)}
-                    className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-white rounded transition"
-                >
-                    <span className="text-zinc-500">{icon}</span>
-                    {label}
-                </button>
-            ))}
-        </PopoverContent>
+          <Plus className="w-3.5 h-3.5" />
+          Agregar
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent
+        className="p-1 bg-zinc-900 border-zinc-800 w-48"
+        style={{ zIndex: 9999 }}
+        align="start"
+        side="bottom"
+        collisionBoundary={[]}
+        collisionPadding={8}
+        onOpenAutoFocus={(e) => e.preventDefault()}
+      >
+        {(
+          [
+            { type: 'card', icon: <CreditCard className="w-3.5 h-3.5" />, label: 'Tarjeta' },
+            { type: 'chart', icon: <BarChart3 className="w-3.5 h-3.5" />, label: 'Gráfico' },
+            { type: 'ranking', icon: <Table2 className="w-3.5 h-3.5" />, label: 'Tabla ranking' },
+            { type: 'text', icon: <Type className="w-3.5 h-3.5" />, label: 'Texto / Sección' },
+          ] as const
+        ).map(({ type, icon, label }) => (
+          <button
+            key={type}
+            onClick={() => handleAddNewBlock(type)}
+            className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-white rounded transition"
+          >
+            <span className="text-zinc-500">{icon}</span>
+            {label}
+          </button>
+        ))}
+      </PopoverContent>
     </Popover>
-)}
+  );
+}
 ```
 
 - [ ] **Step 3: Verify TypeScript compiles**
@@ -183,12 +311,14 @@ Expected: no errors.
 - [ ] **Step 4: Manual verification**
 
 Start dev server if not running:
+
 ```bash
 cd "/Users/macbookpro/Documents/Antigravity/Ads house/A/Ahreportingsistem-main"
 npm run dev
 ```
 
 Open a dashboard as admin/trafficker. Verify:
+
 1. "Agregar" button appears in the toolbar
 2. Clicking it opens a dropdown with 4 options
 3. Clicking "Tarjeta" closes the dropdown and opens QuickEditModal titled "Tarjeta: Nueva tarjeta"

@@ -19,14 +19,14 @@ Lead Ads. No hay un informe aparte ni una métrica nueva: el lead de GHL suma en
 
 Se mapea:
 
-| Del contacto de GHL | Al UTM report |
-|---|---|
-| Nombre, email, teléfono | Datos de contacto del lead |
-| País | Dimensión *País* |
-| Fecha de creación | El día del lead (en hora Colombia) |
-| Anuncio de origen | `utm_id` → **cruce exacto con el gasto de la campaña** |
-| Campos personalizados | Respuestas del formulario → campos de lead y segmentos |
-| Etiquetas, oportunidades, atribución cruda | Se guardan para auditoría |
+| Del contacto de GHL                        | Al UTM report                                          |
+| ------------------------------------------ | ------------------------------------------------------ |
+| Nombre, email, teléfono                    | Datos de contacto del lead                             |
+| País                                       | Dimensión _País_                                       |
+| Fecha de creación                          | El día del lead (en hora Colombia)                     |
+| Anuncio de origen                          | `utm_id` → **cruce exacto con el gasto de la campaña** |
+| Campos personalizados                      | Respuestas del formulario → campos de lead y segmentos |
+| Etiquetas, oportunidades, atribución cruda | Se guardan para auditoría                              |
 
 Hay **dos vías** funcionando a la vez, y no se pisan:
 
@@ -78,13 +78,13 @@ no borra lo ya importado.
    `sWSeAhElmT7anfpZSqXS`). También aparece en la URL cuando estás dentro de la
    location.
 3. **Settings → Private Integrations → Create new integration**.
-4. Ponele un nombre reconocible (por ejemplo *UTM Report*) y marcá estos scopes:
+4. Ponele un nombre reconocible (por ejemplo _UTM Report_) y marcá estos scopes:
 
-   | Scope | Para qué |
-   |---|---|
-   | `contacts.readonly` | Leer los contactos y su atribución |
-   | `locations/customFields.readonly` | Traducir los campos personalizados a sus nombres |
-   | `opportunities.readonly` | Guardar las oportunidades del contacto (opcional pero recomendado) |
+   | Scope                             | Para qué                                                           |
+   | --------------------------------- | ------------------------------------------------------------------ |
+   | `contacts.readonly`               | Leer los contactos y su atribución                                 |
+   | `locations/customFields.readonly` | Traducir los campos personalizados a sus nombres                   |
+   | `opportunities.readonly`          | Guardar las oportunidades del contacto (opcional pero recomendado) |
 
 5. Creá la integración y **copiá el token**. GHL lo muestra **una sola vez**: si
    lo perdés hay que generar otro.
@@ -120,8 +120,8 @@ una sola vez y lo necesitás en el paso 3.
 Esto es lo que hace que los leads lleguen en tiempo real.
 
 1. En GHL: **Automation → Workflows → Create Workflow → Start from scratch**.
-2. **Trigger:** *Contact Created*.
-3. **Acción:** *Webhook*.
+2. **Trigger:** _Contact Created_.
+3. **Acción:** _Webhook_.
    - **Method:** `POST`
    - **URL:** la que muestra la tarjeta, con forma
      `https://reportes.adshouse.cloud/api/report-utm/webhooks/ghl/{id-del-cliente}`
@@ -129,7 +129,7 @@ Esto es lo que hace que los leads lleguen en tiempo real.
    - **Headers → Add header:**
      - Key: `X-Rutm-Ghl-Token`
      - Value: el secreto del paso 2.
-4. **Publicá** el workflow (arriba a la derecha, *Publish*). Un workflow en
+4. **Publicá** el workflow (arriba a la derecha, _Publish_). Un workflow en
    borrador no dispara nada.
 
 No hace falta configurar el cuerpo del webhook: con que incluya el
@@ -146,7 +146,7 @@ En la tarjeta, **Sincronizar ahora**. Trae los últimos 90 días.
 Si la location tiene muchos contactos, una pasada no alcanza: la sincronización
 se corta sola por tiempo, guarda por dónde iba y sigue en la corrida siguiente
 (la automática es a las 05:00 y 14:00, hora Colombia). Podés apretar
-*Sincronizar ahora* varias veces para acelerarlo.
+_Sincronizar ahora_ varias veces para acelerarlo.
 
 El mensaje te dice cuántos leads nuevos entraron, cuántos contactos se revisaron
 y cuántos descartó el filtro.
@@ -157,23 +157,23 @@ y cuántos descartó el filtro.
 
 En este orden:
 
-1. **La tarjeta** — estado *Activa*, sin error, "Leads última sync" con un número
+1. **La tarjeta** — estado _Activa_, sin error, "Leads última sync" con un número
    y "Campos personalizados" mayor que cero.
 2. **Prueba de punta a punta** — creá un contacto de prueba en GHL y verificá que
    aparece en **Report-UTM → Leads** en menos de un minuto. Borralo después.
-3. **Campos de lead** — en la ficha del cliente, tarjeta *Campos de lead* →
-   *Detectar*. Los campos personalizados de GHL deben aparecer como preguntas
+3. **Campos de lead** — en la ficha del cliente, tarjeta _Campos de lead_ →
+   _Detectar_. Los campos personalizados de GHL deben aparecer como preguntas
    disponibles. Si el cliente ya tenía campos configurados desde el formulario
-   web o Meta, agregá la clave de GHL a las *claves de origen* del campo que ya
+   web o Meta, agregá la clave de GHL a las _claves de origen_ del campo que ya
    existe en vez de crear uno nuevo: así el informe sigue teniendo una sola
    pregunta.
 4. **Cruce con el gasto** — en **Report-UTM → Cruce de campañas**, los leads de
-   GHL deben aparecer asociados a sus campañas. Lo que quede en *(sin campaña)*
+   GHL deben aparecer asociados a sus campañas. Lo que quede en _(sin campaña)_
    debería ser tráfico orgánico.
 5. **Salud** — en **Report-UTM → Salud**, mirá el porcentaje de leads cruzados.
    Si cae mucho después del backfill, está entrando demasiado tráfico orgánico
    como lead: volvé al filtro por etiquetas.
-6. **El informe** — armá un widget con *Gasto*, *Leads* y *CPL* agrupado por
+6. **El informe** — armá un widget con _Gasto_, _Leads_ y _CPL_ agrupado por
    campaña y comparalo con lo que el cliente reporta a mano.
 
 ---
@@ -186,41 +186,41 @@ Merece entenderlo porque explica el 90% de las dudas.
   el id del anuncio en su atribución. Ese id se usa para encontrar la campaña, y
   el cruce es **exacto**: no depende de que los nombres coincidan.
 - Un contacto **orgánico** (llegó por el perfil de Instagram, por un mensaje
-  directo, por recomendación) no tiene anuncio, así que queda en *(sin campaña)*
+  directo, por recomendación) no tiene anuncio, así que queda en _(sin campaña)_
   con gasto 0. **Esto es correcto**, no es un fallo: ese lead no costó pauta y
   meterlo en una campaña inventada falsearía el CPL de esa campaña.
 - Un contacto que llegó por una **landing con UTMs** conserva sus UTMs tal cual.
 
-Por eso, si ves muchos leads en *(sin campaña)*, la pregunta no es "por qué no
+Por eso, si ves muchos leads en _(sin campaña)_, la pregunta no es "por qué no
 cruza" sino "¿cuánto de mi captación es orgánica?".
 
 ---
 
 ## Mantenimiento
 
-| Situación | Qué hacer |
-|---|---|
-| Perdiste el secreto del webhook | *Rotar secreto* en la tarjeta y actualizar el header en el Workflow de GHL. Hasta que lo actualices, el webhook deja de entrar (la sincronización periódica sigue cubriendo). |
-| El token de GHL fue revocado o caducó | Crear otro en GHL y usar *Actualizar credenciales*. |
-| Cambió qué cuenta como lead | Ajustar las etiquetas y *Guardar filtro*. Aplica desde la siguiente sincronización; no borra lo ya importado. |
-| Se creó un campo personalizado nuevo en GHL | No hay que hacer nada: se detecta solo. Para que sea una dimensión del informe, configuralo en *Campos de lead*. |
-| Hay que parar la ingesta | *Pausar* en la tarjeta. Los leads ya importados se quedan. |
-| Se quiere volver al formulario web | Pausar GoHighLevel y reactivar la integración S2S / Meta Lead Ads del cliente. |
+| Situación                                   | Qué hacer                                                                                                                                                                     |
+| ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Perdiste el secreto del webhook             | _Rotar secreto_ en la tarjeta y actualizar el header en el Workflow de GHL. Hasta que lo actualices, el webhook deja de entrar (la sincronización periódica sigue cubriendo). |
+| El token de GHL fue revocado o caducó       | Crear otro en GHL y usar _Actualizar credenciales_.                                                                                                                           |
+| Cambió qué cuenta como lead                 | Ajustar las etiquetas y _Guardar filtro_. Aplica desde la siguiente sincronización; no borra lo ya importado.                                                                 |
+| Se creó un campo personalizado nuevo en GHL | No hay que hacer nada: se detecta solo. Para que sea una dimensión del informe, configuralo en _Campos de lead_.                                                              |
+| Hay que parar la ingesta                    | _Pausar_ en la tarjeta. Los leads ya importados se quedan.                                                                                                                    |
+| Se quiere volver al formulario web          | Pausar GoHighLevel y reactivar la integración S2S / Meta Lead Ads del cliente.                                                                                                |
 
 ---
 
 ## Errores frecuentes
 
-| Mensaje o síntoma | Causa y solución |
-|---|---|
-| `GHL POST /contacts/search: ...401...` al guardar | El token está mal copiado o fue revocado. Generá una Private Integration nueva. |
-| `GHL ...: The token does not have access to this location` | El token es de otra location. Verificá que lo creaste dentro de la sub-cuenta del cliente. |
-| La conexión funciona pero **Campos personalizados: 0** | Al token le falta el scope `locations/customFields.readonly`. Recreá la integración con ese scope marcado. |
-| El webhook no trae nada | Tres causas, en este orden: el Workflow está en borrador (falta *Publish*); el header `X-Rutm-Ghl-Token` está mal escrito o con el secreto viejo; la URL no es la de este cliente. Mientras tanto la sincronización periódica sigue trayendo los leads con retraso. |
-| Entran muchísimos más leads de los esperados | Están entrando contactos que no son captación (chatbot, importaciones, contactos manuales). Usá *Excluir etiquetas*. |
-| Un lead aparece dos veces | Comprobá que la integración S2S o Meta Lead Ads del cliente quedó efectivamente en pausa. El mismo contacto de GHL nunca se duplica: está protegido por su id. |
-| Todos los leads caen en *(sin campaña)* | Si el cliente hace Click-to-WhatsApp, revisá en GHL que los contactos traigan atribución (*Contact → Attribution*). Si no la traen, el problema está en cómo se configuró la campaña en Meta, no aquí. |
-| La tarjeta dice "Sincronización parcial por límite de tiempo" | Es normal en el backfill de una location grande. Continúa sola en la siguiente corrida. |
+| Mensaje o síntoma                                             | Causa y solución                                                                                                                                                                                                                                                    |
+| ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GHL POST /contacts/search: ...401...` al guardar             | El token está mal copiado o fue revocado. Generá una Private Integration nueva.                                                                                                                                                                                     |
+| `GHL ...: The token does not have access to this location`    | El token es de otra location. Verificá que lo creaste dentro de la sub-cuenta del cliente.                                                                                                                                                                          |
+| La conexión funciona pero **Campos personalizados: 0**        | Al token le falta el scope `locations/customFields.readonly`. Recreá la integración con ese scope marcado.                                                                                                                                                          |
+| El webhook no trae nada                                       | Tres causas, en este orden: el Workflow está en borrador (falta _Publish_); el header `X-Rutm-Ghl-Token` está mal escrito o con el secreto viejo; la URL no es la de este cliente. Mientras tanto la sincronización periódica sigue trayendo los leads con retraso. |
+| Entran muchísimos más leads de los esperados                  | Están entrando contactos que no son captación (chatbot, importaciones, contactos manuales). Usá _Excluir etiquetas_.                                                                                                                                                |
+| Un lead aparece dos veces                                     | Comprobá que la integración S2S o Meta Lead Ads del cliente quedó efectivamente en pausa. El mismo contacto de GHL nunca se duplica: está protegido por su id.                                                                                                      |
+| Todos los leads caen en _(sin campaña)_                       | Si el cliente hace Click-to-WhatsApp, revisá en GHL que los contactos traigan atribución (_Contact → Attribution_). Si no la traen, el problema está en cómo se configuró la campaña en Meta, no aquí.                                                              |
+| La tarjeta dice "Sincronización parcial por límite de tiempo" | Es normal en el backfill de una location grande. Continúa sola en la siguiente corrida.                                                                                                                                                                             |
 
 ---
 
@@ -228,15 +228,15 @@ cruza" sino "¿cuánto de mi captación es orgánica?".
 
 Para quien tenga que tocar el código.
 
-| Pieza | Archivo |
-|---|---|
-| Diseño y decisiones | `migrations/074_report_utm_ghl_leads.sql` |
-| Cliente HTTP de la API de GHL | `src/lib/report-utm/ghl-client.ts` |
-| Mapeo, filtro, dedup y sincronización | `src/lib/report-utm/ghl-leads.ts` |
-| Webhook por cliente | `src/app/api/report-utm/webhooks/ghl/[clienteId]/route.ts` |
-| Polling / backfill | `src/app/api/cron/sync-ghl-leads/route.ts` |
-| Alta desde la UI | `src/components/report-utm/GhlLeadsCard.tsx` + `_actions.ts` de la ficha del cliente |
-| Comprobaciones del mapeo | `npx tsx scripts/verify-ghl-leads.ts` |
+| Pieza                                 | Archivo                                                                              |
+| ------------------------------------- | ------------------------------------------------------------------------------------ |
+| Diseño y decisiones                   | `migrations/074_report_utm_ghl_leads.sql`                                            |
+| Cliente HTTP de la API de GHL         | `src/lib/report-utm/ghl-client.ts`                                                   |
+| Mapeo, filtro, dedup y sincronización | `src/lib/report-utm/ghl-leads.ts`                                                    |
+| Webhook por cliente                   | `src/app/api/report-utm/webhooks/ghl/[clienteId]/route.ts`                           |
+| Polling / backfill                    | `src/app/api/cron/sync-ghl-leads/route.ts`                                           |
+| Alta desde la UI                      | `src/components/report-utm/GhlLeadsCard.tsx` + `_actions.ts` de la ficha del cliente |
+| Comprobaciones del mapeo              | `npx tsx scripts/verify-ghl-leads.ts`                                                |
 
 Notas que evitan sustos:
 

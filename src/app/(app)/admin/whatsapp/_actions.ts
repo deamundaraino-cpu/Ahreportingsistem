@@ -7,7 +7,6 @@ import { sendWhatsAppNotification } from '@/lib/whatsapp/notify';
 import { NOTIFICATION_TYPES, type NotificationType } from '@/lib/whatsapp/types';
 import { getSesionActual } from '@/lib/auth-session';
 
-
 async function requireAdmin(): Promise<{ ok: true } | { ok: false; error: string }> {
   // Sesión y rol memoizados por petición (`lib/auth-session.ts`). Antes cada
   // llamada a este guard hacía su propio getUser() + lectura de user_profiles,
@@ -194,10 +193,7 @@ export async function getAlertTeamGroup(): Promise<{
   };
 }
 
-export async function setAlertTeamGroup(input: {
-  groupId: string | null;
-  enabled: boolean;
-}) {
+export async function setAlertTeamGroup(input: { groupId: string | null; enabled: boolean }) {
   const guard = await requireAdmin();
   if (!guard.ok) return { error: guard.error };
 

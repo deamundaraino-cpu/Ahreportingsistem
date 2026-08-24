@@ -1,7 +1,7 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { listSheetTabs } from '@/lib/integrations/google-sheets-conversiones'
-import type { ConversionesConfig } from '@/lib/integrations/google-sheets-conversiones'
-import { requireAdminRole } from '@/lib/report-utm/auth'
+import { NextRequest, NextResponse } from 'next/server';
+import { listSheetTabs } from '@/lib/integrations/google-sheets-conversiones';
+import type { ConversionesConfig } from '@/lib/integrations/google-sheets-conversiones';
+import { requireAdminRole } from '@/lib/report-utm/auth';
 
 /**
  * POST /api/admin/list-sheet-tabs
@@ -12,26 +12,23 @@ import { requireAdminRole } from '@/lib/report-utm/auth'
  */
 export async function POST(request: NextRequest) {
   // Guard de rol: el proxy ya exige sesión en /api/admin, esto añade el rol.
-  const denied = await requireAdminRole()
-  if (denied) return denied
+  const denied = await requireAdminRole();
+  if (denied) return denied;
 
   try {
-    const { sheetConfig } = await request.json() as { sheetConfig: ConversionesConfig }
+    const { sheetConfig } = (await request.json()) as { sheetConfig: ConversionesConfig };
 
     if (!sheetConfig?.sheet_url) {
-      return NextResponse.json(
-        { error: 'Configura primero la URL del Sheet' },
-        { status: 400 }
-      )
+      return NextResponse.json({ error: 'Configura primero la URL del Sheet' }, { status: 400 });
     }
 
-    const tabs = await listSheetTabs(sheetConfig)
-    return NextResponse.json({ tabs })
+    const tabs = await listSheetTabs(sheetConfig);
+    return NextResponse.json({ tabs });
   } catch (err: any) {
-    console.error('list-sheet-tabs error:', err)
+    console.error('list-sheet-tabs error:', err);
     return NextResponse.json(
       { error: err.message || 'Error al listar las pestañas del Sheet' },
       { status: 500 }
-    )
+    );
   }
 }

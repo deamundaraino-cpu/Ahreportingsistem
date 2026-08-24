@@ -11,20 +11,25 @@ El sincronizador principal (`/api/worker`) consulta todas estas APIs a diario y 
 **API**: Facebook Graph API v19.0.
 
 ### Conexión (OAuth)
+
 1. Desde `/admin/settings/[id]`, el usuario inicia OAuth → `GET /api/auth/meta?client_id=…`.
 2. Facebook pide consentimiento (scopes `ads_read`, `business_management`, `leads_retrieval`).
 3. `GET /api/auth/meta/callback` intercambia el código por un token de larga duración (~60 días) y guarda en `config_api`:
    - `meta_token`, `meta_token_expires_at`, `meta_connection_status`, `meta_account_id`.
 
 ### Renovación automática
+
 `GET /api/cron/refresh-meta-tokens` (diario) renueva los tokens que expiran en menos de 10 días usando `META_APP_ID`/`META_APP_SECRET` (grant `fb_exchange_token`). Si falla, marca `meta_connection_status = expired`.
 
 ### Datos sincronizados
-El worker consulta *insights* a nivel **campaña**, **anuncio** y **conjunto de anuncios**, además de **formularios de leads** y **demografía** (edad/género). Calcula conversiones personalizadas y enriquece con regiones de targeting. Se guardan en:
+
+El worker consulta _insights_ a nivel **campaña**, **anuncio** y **conjunto de anuncios**, además de **formularios de leads** y **demografía** (edad/género). Calcula conversiones personalizadas y enriquece con regiones de targeting. Se guardan en:
+
 - Totales: `meta_spend`, `meta_impressions`, `meta_clicks`.
 - JSONB: `meta_campaigns`, `meta_ads`, `meta_adsets`, `meta_forms`.
 
 ### Miniaturas
+
 `GET /api/v1/ad-thumbnails` obtiene `thumbnail_url`, `effective_object_story_id` y `preview_shareable_link` de los anuncios.
 
 ---
@@ -34,13 +39,16 @@ El worker consulta *insights* a nivel **campaña**, **anuncio** y **conjunto de 
 **API**: TikTok Business API v1.3.
 
 ### Conexión (OAuth)
+
 1. `GET /api/auth/tiktok?client_id=…` redirige al consentimiento de TikTok.
 2. `GET /api/auth/tiktok/callback` intercambia `auth_code` → `access_token`, extrae `advertiser_ids` y guarda en `config_api`:
    - `tiktok_access_token`, `tiktok_accounts: [{ advertiser_id, name }]`.
    - Los tokens de TikTok **no expiran** (a diferencia de Meta).
 
 ### Datos sincronizados
+
 El worker llama a `report/integrated/get` a nivel campaña/anuncio/grupo. Se guardan en:
+
 - Totales: `tiktok_spend`, `tiktok_impressions`, `tiktok_clicks`, `tiktok_conversions`.
 - JSONB: `tiktok_campaigns`, `tiktok_ads`, `tiktok_adgroups`.
 
@@ -53,12 +61,15 @@ El worker llama a `report/integrated/get` a nivel campaña/anuncio/grupo. Se gua
 **API**: `@google-analytics/data` (Data API). Declarado como `serverExternalPackages` en `next.config.ts`.
 
 ### Configuración (manual, por cliente)
+
 En `config_api`:
+
 - `ga_property_id` (p. ej. `properties/123456`)
 - `ga_private_key` (clave privada de cuenta de servicio; el formulario valida y normaliza los `\n`)
 - `ga_client_email`
 
 ### Datos sincronizados
+
 El worker obtiene **sesiones** y eventos del sitio. Se guardan en `ga_sessions`. En el motor de fórmulas, el alias `$visitas` apunta por defecto a `ga_sessions`.
 
 ---
@@ -68,13 +79,17 @@ El worker obtiene **sesiones** y eventos del sitio. Se guardan en `ga_sessions`.
 **API**: Hotmart API (sales/history, sales/commissions).
 
 ### Configuración (manual, por cliente)
+
 En `config_api`: `hotmart_basic` (basic auth) o `hotmart_api_key` (client credentials).
 
 ### Datos sincronizados
+
 El worker obtiene ventas (estados `APPROVED`/`COMPLETE`) y comisiones, y las **clasifica por embudo** según los patrones configurados en cada tab (`hotmart_funnel`):
+
 - `principal_names`, `bump_names`, `upsell_names` (soportan `%`/`_` tipo SQL LIKE).
 
 Se consolidan en:
+
 - Totales: `ventas_principal/bump/upsell` (neto), `*_bruto`, `*_count`, `hotmart_pagos_iniciados`.
 - JSONB: `hotmart_funnel_data` (desglose `by_tab` + `extras`).
 
@@ -88,12 +103,14 @@ Se consolidan en:
 **Private Integration Token** por location.
 
 ### Configuración (por cliente)
-Desde la tarjeta *GoHighLevel · CRM* de `/report-utm/clientes/[clienteId]`. Pide
+
+Desde la tarjeta _GoHighLevel · CRM_ de `/report-utm/clientes/[clienteId]`. Pide
 Location ID y PIT; el token se guarda cifrado en
 `report_utm.integrations.access_token_encrypted` y el Location ID en
 `config.location_id`. **Guía completa para el equipo: [doc 20](./20-integracion-gohighlevel.md).**
 
 ### Datos sincronizados
+
 Contactos → `report_utm.lead_events` (la MISMA tabla que el formulario web y Meta
 Lead Ads; no hay tabla ni fuente de BI nueva). Dos vías que se deduplican por
 `external_id = 'ghl:<contactId>'`:
@@ -172,28 +189,43 @@ captura el píxel (WhatsApp, llamadas, cierres manuales). Código en
 cuenta de servicio. Un solo login de Google sirve para todos los clientes.
 
 ### Configuración (por cliente)
+
 En `config_api.google_sheets_conversiones` — un **array** de sheets, cada uno con
 sus **pestañas**:
 
 ```jsonc
-[{
-  "id": "uuid",                 // clave de partición: el replace es por sheet
-  "name": "Leads WhatsApp",
-  "enabled": true,
-  "sheet_url": "https://docs.google.com/spreadsheets/d/...",
-  "tabs": [{
-    "id": "uuid",
-    "sheet_name": "Enero",      // vacío = primera pestaña del doc
+[
+  {
+    "id": "uuid", // clave de partición: el replace es por sheet
+    "name": "Leads WhatsApp",
     "enabled": true,
-    "col_fecha": "Fecha", "col_tipo": "Tipo", "col_cantidad": "Cantidad",
-    "col_valor": "Valor", "col_fuente": "Fuente", "col_notas": "Notas",
-    "custom_columns": {         // LEGACY, sin UI (ver abajo)
-      "citas_agendadas": { "col_name": "Citas Agendadas", "type": "count", "label": "Citas", "include": true }
-    },
-    "raw_mode": "all",          // capa cruda: 'all' (defecto) | 'declared' | 'none'
-    "raw_exclude": ["email"]    // columnas que nunca se guardan en crudo (PII)
-  }]
-}]
+    "sheet_url": "https://docs.google.com/spreadsheets/d/...",
+    "tabs": [
+      {
+        "id": "uuid",
+        "sheet_name": "Enero", // vacío = primera pestaña del doc
+        "enabled": true,
+        "col_fecha": "Fecha",
+        "col_tipo": "Tipo",
+        "col_cantidad": "Cantidad",
+        "col_valor": "Valor",
+        "col_fuente": "Fuente",
+        "col_notas": "Notas",
+        "custom_columns": {
+          // LEGACY, sin UI (ver abajo)
+          "citas_agendadas": {
+            "col_name": "Citas Agendadas",
+            "type": "count",
+            "label": "Citas",
+            "include": true,
+          },
+        },
+        "raw_mode": "all", // capa cruda: 'all' (defecto) | 'declared' | 'none'
+        "raw_exclude": ["email"], // columnas que nunca se guardan en crudo (PII)
+      },
+    ],
+  },
+]
 ```
 
 Las configs anteriores (mapeo plano a nivel de sheet, una sola pestaña) siguen
@@ -213,18 +245,20 @@ UI las guarda en formato `tabs` la primera vez que se editan.
 > del sheet lo usa para leer encabezados.
 
 ### Flujo
+
 `syncClienteConversiones` → por sheet: `fetchConversionesFromSheet` (abre el doc
 una vez e itera sus pestañas habilitadas, cada una con su mapeo) →
 `computeConversionesAggregates` → `saveConversionesSheetToDb` (replace por sheet)
 → `logSyncResult`. Al final, `cleanupOrphanConversiones`.
 
 ### Las dos capas del sync
+
 `parseTabPayload` recorre cada pestaña una sola vez y produce dos cosas:
 
-| Capa | Tabla | Qué entra |
-|---|---|---|
-| Interpretada | `conversiones_offline` (+ `_diarias`) | El modelo de siempre: fecha/tipo/cantidad/valor/fuente/notas y las `custom_columns` ya tipadas. Solo filas con `cantidad > 0`. |
-| Cruda | `sheet_filas` | La fila tal cual, con todas sus columnas sin convertir. Se guarda **aunque no sea conversión** (`cantidad <= 0`), porque igual tiene valores de campo. |
+| Capa         | Tabla                                 | Qué entra                                                                                                                                              |
+| ------------ | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Interpretada | `conversiones_offline` (+ `_diarias`) | El modelo de siempre: fecha/tipo/cantidad/valor/fuente/notas y las `custom_columns` ya tipadas. Solo filas con `cantidad > 0`.                         |
+| Cruda        | `sheet_filas`                         | La fila tal cual, con todas sus columnas sin convertir. Se guarda **aunque no sea conversión** (`cantidad <= 0`), porque igual tiene valores de campo. |
 
 La capa cruda es la base de los **campos de Sheet**: permite definir un campo que
 une columnas equivalentes de varias pestañas y recalcularlo leyendo solo de la
@@ -237,6 +271,7 @@ Un fallo al escribir `sheet_filas` **no** tumba el sheet — las conversiones ya
 están guardadas y el motivo queda como aviso en el log de sync.
 
 ### El `sheet_id` es la clave de partición
+
 `conversiones_offline`, `conversiones_offline_diarias` y `sheet_filas` se
 particionan por `sheet_id` (el `id` de la entrada en `config_api`, **no** el id
 del documento de Google). De ahí tres reglas:
@@ -258,14 +293,15 @@ Para el residuo ya existente: `npx tsx scripts/limpiar-sheets-huerfanos.ts`
 (informe; `--apply` para borrar).
 
 ### Disparadores
+
 - **Automático**: `GET /api/worker/google-sheets-conversiones` (job `sheets_conversiones`).
 - **Manual**: `POST /api/admin/sync-conversiones-offline`, con tres modos:
 
-  | body | qué hace |
-  |---|---|
-  | `{ clientId, sheetId, tabId, batchId }` | sincroniza UNA pestaña dentro del lote |
-  | `{ clientId, sheetId, batchId, consolidar, aggregates, quality }` | cierra el lote de ese sheet |
-  | `{ clientId, sheetId?, recalcularCampos? }` | documento(s) enteros de una vez |
+  | body                                                              | qué hace                               |
+  | ----------------------------------------------------------------- | -------------------------------------- |
+  | `{ clientId, sheetId, tabId, batchId }`                           | sincroniza UNA pestaña dentro del lote |
+  | `{ clientId, sheetId, batchId, consolidar, aggregates, quality }` | cierra el lote de ese sheet            |
+  | `{ clientId, sheetId?, recalcularCampos? }`                       | documento(s) enteros de una vez        |
 
   **"Sincronizar todos ahora" va pestaña a pestaña.** Un documento de decenas de
   miles de filas no cabe en el `maxDuration`: leer las tres pestañas de un sheet
@@ -284,6 +320,7 @@ Para el residuo ya existente: `npx tsx scripts/limpiar-sheets-huerfanos.ts`
   **sin la pestaña**, así que dos pestañas que aporten al mismo día se pisarían si
   cada una escribiera su agregado, y promediar promedios ya calculados daría otro
   número. Lo verifica `npx tsx scripts/verify-sync-por-pestana.ts --cliente=UUID`.
+
 - **Descubrimiento**: `POST /api/admin/list-sheet-tabs` (pestañas del doc) y
   `POST /api/admin/detect-sheet-columns` (encabezados de una pestaña; lo usa la
   validación del sheet para avisar de columnas mapeadas que no existen).
@@ -326,6 +363,7 @@ final, con la capa cruda ya reemplazada; si falla, no tumba el sync (las
 conversiones ya están guardadas y el recálculo se puede repetir solo).
 
 ### Dónde se usan los datos
+
 - Dashboard y motor de fórmulas: `offline_leads/ventas/revenue/total` y las
   columnas extra como `sheet_<clave>`.
 - BI builder e informes programados: las mismas cuatro métricas más las columnas
@@ -334,11 +372,11 @@ conversiones ya están guardadas y el recálculo se puede repetir solo).
 
 ### Tokens de los campos de Sheet
 
-| Uso | Token del BI | Alias en fórmulas | Clave en el dashboard clásico |
-|---|---|---|---|
-| Dimensión (agrupar / filtrar) | `sheetdim:<clave>` | — | — |
-| Métrica del campo | `sheetagg:<agg>:<clave>` | `sf__<clave>` | `sf_<clave>` |
-| Vista guardada | `sheetview:<clave>` | `sv__<clave>` | `sv_<clave>` |
+| Uso                           | Token del BI             | Alias en fórmulas | Clave en el dashboard clásico |
+| ----------------------------- | ------------------------ | ----------------- | ----------------------------- |
+| Dimensión (agrupar / filtrar) | `sheetdim:<clave>`       | —                 | —                             |
+| Métrica del campo             | `sheetagg:<agg>:<clave>` | `sf__<clave>`     | `sf_<clave>`                  |
+| Vista guardada                | `sheetview:<clave>`      | `sv__<clave>`     | `sv_<clave>`                  |
 
 La agregación viaja dentro del token de métrica para que un widget ya guardado
 siga midiendo lo mismo aunque después se cambie la agregación por defecto del
@@ -410,12 +448,12 @@ enruta a uno de **dos proveedores** según `WHATSAPP_PROVIDER`:
 Cambiar de proveedor es solo variables de entorno; `notify.ts`, el ruteo, la UI, el cron y el
 disparador de ventas no cambian. Mapeo de endpoints en `src/lib/whatsapp/providers/`:
 
-| Operación | `baileys` (gateway propio) | `evolution` (v2) |
-|-----------|----------------------------|------------------|
-| Estado | `GET /status` | `GET /instance/connectionState/{instance}` |
-| QR | `GET /qr` | `GET /instance/connect/{instance}` (`base64`) |
-| Grupos | `GET /groups` | `GET /group/fetchAllGroups/{instance}?getParticipants=false` |
-| Enviar | `POST /send` | `POST /message/sendText/{instance}` (`{ number: jid, text }`) |
+| Operación | `baileys` (gateway propio) | `evolution` (v2)                                              |
+| --------- | -------------------------- | ------------------------------------------------------------- |
+| Estado    | `GET /status`              | `GET /instance/connectionState/{instance}`                    |
+| QR        | `GET /qr`                  | `GET /instance/connect/{instance}` (`base64`)                 |
+| Grupos    | `GET /groups`              | `GET /group/fetchAllGroups/{instance}?getParticipants=false`  |
+| Enviar    | `POST /send`               | `POST /message/sendText/{instance}` (`{ number: jid, text }`) |
 
 ### Componentes
 
@@ -427,12 +465,14 @@ disparador de ventas no cambian. Mapeo de endpoints en `src/lib/whatsapp/provide
 - **UI admin**: `/admin/whatsapp` (QR/estado, sincronizar grupos, editor de rutas, envío manual, log).
 
 ### Disparadores
+
 - **Manual**: acción `sendManualWhatsApp` desde `/admin/whatsapp`.
 - **Cron**: `GET /api/cron/whatsapp-digest` (diario) → resumen de métricas, tipo `metrics_summary`.
 - **Ventas**: el webhook de Hotmart de Report-UTM dispara `sale.approved` / `sale.refunded`
   tras emitir los webhooks salientes.
 
 ### Tipos de notificación
+
 `metrics_summary`, `alert_threshold`, `report_ready`, `sale.approved`, `sale.refunded`, `manual`
 (ver `src/lib/whatsapp/types.ts`).
 
@@ -443,14 +483,14 @@ disparador de ventas no cambian. Mapeo de endpoints en `src/lib/whatsapp/provide
 
 ## Resumen
 
-| Integración | Auth | Configuración | Tablas/columnas destino |
-|-------------|------|---------------|-------------------------|
-| Meta Ads | OAuth (env app + token por cliente) | `/admin/settings/[id]` | `meta_*`, `meta_campaigns/ads/adsets/forms` |
-| TikTok Ads | OAuth (env app + token por cliente) | `/admin/settings/[id]` | `tiktok_*`, `tiktok_campaigns/ads/adgroups` |
-| GA4 | Cuenta de servicio por cliente | `config_api.ga_*` | `ga_sessions` |
-| Hotmart (reporting) | Basic/API key por cliente | `config_api.hotmart_*` + funnel por tab | `ventas_*`, `hotmart_funnel_data` |
-| Google Sheets — Leads | RETIRADA (migración 059) | `config_api.google_sheets` (respaldo) | `leads`, `leads_diarios` (solo lectura) |
-| Campos de Sheet | — (capa sobre lo anterior) | `sheet_campos`, `sheet_campo_vistas` | `sheet_campo_valores_diarios` |
-| Google Sheets (conversiones offline) | OAuth de la agencia (o cuenta de servicio) | `config_api.google_sheets_conversiones[].tabs[]` | `conversiones_offline`, `conversiones_offline_diarias`, `conversiones_offline_sync_log` |
-| Hotmart (Report-UTM) | Webhook HMAC | `report_utm.integrations` | `report_utm.sales_events` |
-| WhatsApp | Gateway Baileys (Bearer) **o** Evolution API (apikey), según `WHATSAPP_PROVIDER` | `/admin/whatsapp` + envs del proveedor | `whatsapp_groups/routes/messages` (+ `session` solo en baileys) |
+| Integración                          | Auth                                                                             | Configuración                                    | Tablas/columnas destino                                                                 |
+| ------------------------------------ | -------------------------------------------------------------------------------- | ------------------------------------------------ | --------------------------------------------------------------------------------------- |
+| Meta Ads                             | OAuth (env app + token por cliente)                                              | `/admin/settings/[id]`                           | `meta_*`, `meta_campaigns/ads/adsets/forms`                                             |
+| TikTok Ads                           | OAuth (env app + token por cliente)                                              | `/admin/settings/[id]`                           | `tiktok_*`, `tiktok_campaigns/ads/adgroups`                                             |
+| GA4                                  | Cuenta de servicio por cliente                                                   | `config_api.ga_*`                                | `ga_sessions`                                                                           |
+| Hotmart (reporting)                  | Basic/API key por cliente                                                        | `config_api.hotmart_*` + funnel por tab          | `ventas_*`, `hotmart_funnel_data`                                                       |
+| Google Sheets — Leads                | RETIRADA (migración 059)                                                         | `config_api.google_sheets` (respaldo)            | `leads`, `leads_diarios` (solo lectura)                                                 |
+| Campos de Sheet                      | — (capa sobre lo anterior)                                                       | `sheet_campos`, `sheet_campo_vistas`             | `sheet_campo_valores_diarios`                                                           |
+| Google Sheets (conversiones offline) | OAuth de la agencia (o cuenta de servicio)                                       | `config_api.google_sheets_conversiones[].tabs[]` | `conversiones_offline`, `conversiones_offline_diarias`, `conversiones_offline_sync_log` |
+| Hotmart (Report-UTM)                 | Webhook HMAC                                                                     | `report_utm.integrations`                        | `report_utm.sales_events`                                                               |
+| WhatsApp                             | Gateway Baileys (Bearer) **o** Evolution API (apikey), según `WHATSAPP_PROVIDER` | `/admin/whatsapp` + envs del proveedor           | `whatsapp_groups/routes/messages` (+ `session` solo en baileys)                         |

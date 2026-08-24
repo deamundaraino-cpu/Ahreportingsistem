@@ -12,11 +12,11 @@
 
 ## File Map
 
-| File | Action | Responsibility |
-|------|--------|---------------|
-| `migrations/015_tab_archived.sql` | Create | Add `archived boolean DEFAULT false` to `cliente_tabs` |
-| `src/app/(app)/dashboard/_actions.ts` | Modify | Add `toggleTabArchived` server action |
-| `src/app/(app)/dashboard/components/TabArchiveView.tsx` | Create | Full archive + comparative UI component |
+| File                                                     | Action | Responsibility                                         |
+| -------------------------------------------------------- | ------ | ------------------------------------------------------ |
+| `migrations/015_tab_archived.sql`                        | Create | Add `archived boolean DEFAULT false` to `cliente_tabs` |
+| `src/app/(app)/dashboard/_actions.ts`                    | Modify | Add `toggleTabArchived` server action                  |
+| `src/app/(app)/dashboard/components/TabArchiveView.tsx`  | Create | Full archive + comparative UI component                |
 | `src/app/(app)/dashboard/components/DashboardClient.tsx` | Modify | Filter tab bar, add 🗂 button, wire `showArchive` state |
 
 ---
@@ -24,6 +24,7 @@
 ## Task 1: Database Migration
 
 **Files:**
+
 - Create: `migrations/015_tab_archived.sql`
 
 - [ ] **Step 1: Create the migration file**
@@ -41,11 +42,13 @@ ADD COLUMN IF NOT EXISTS archived boolean NOT NULL DEFAULT false;
 Go to the Supabase dashboard → SQL Editor → paste the migration → Run.
 
 Verify with:
+
 ```sql
 SELECT column_name, data_type, column_default
 FROM information_schema.columns
 WHERE table_name = 'cliente_tabs' AND column_name = 'archived';
 ```
+
 Expected: one row with `data_type = boolean`, `column_default = false`.
 
 - [ ] **Step 3: Commit**
@@ -60,6 +63,7 @@ git commit -m "feat(db): add archived column to cliente_tabs"
 ## Task 2: Server Action `toggleTabArchived`
 
 **Files:**
+
 - Modify: `src/app/(app)/dashboard/_actions.ts` (add after `deleteClienteTab` around line 298)
 
 - [ ] **Step 1: Add the action**
@@ -68,15 +72,15 @@ Open `src/app/(app)/dashboard/_actions.ts`. After the `deleteClienteTab` functio
 
 ```typescript
 export async function toggleTabArchived(clienteId: string, tabId: string, archived: boolean) {
-    const supabase = await createAdminClient()
-    const { error } = await supabase
-        .from('cliente_tabs')
-        .update({ archived })
-        .eq('id', tabId)
-        .eq('cliente_id', clienteId)
-    if (error) return { error: error.message }
-    revalidatePath(`/dashboard/${clienteId}`)
-    return { success: true }
+  const supabase = await createAdminClient();
+  const { error } = await supabase
+    .from('cliente_tabs')
+    .update({ archived })
+    .eq('id', tabId)
+    .eq('cliente_id', clienteId);
+  if (error) return { error: error.message };
+  revalidatePath(`/dashboard/${clienteId}`);
+  return { success: true };
 }
 ```
 
@@ -85,6 +89,7 @@ export async function toggleTabArchived(clienteId: string, tabId: string, archiv
 ```bash
 npm run type-check
 ```
+
 Expected: no errors.
 
 - [ ] **Step 3: Commit**
@@ -99,9 +104,11 @@ git commit -m "feat: add toggleTabArchived server action"
 ## Task 3: `TabArchiveView` Component
 
 **Files:**
+
 - Create: `src/app/(app)/dashboard/components/TabArchiveView.tsx`
 
 This component renders two columns:
+
 - Left (40%): all tabs with eye toggle + expand to select cards
 - Right (60%): comparative panel with selected cards and their origin labels
 
@@ -370,6 +377,7 @@ export function TabArchiveView({
 ```bash
 npm run type-check
 ```
+
 Expected: no errors.
 
 - [ ] **Step 3: Commit**
@@ -384,9 +392,11 @@ git commit -m "feat: add TabArchiveView component with archive list and comparat
 ## Task 4: Wire `TabArchiveView` into `DashboardClient`
 
 **Files:**
+
 - Modify: `src/app/(app)/dashboard/components/DashboardClient.tsx`
 
 Four changes needed:
+
 1. Add imports
 2. Add `showArchive` state + `isTeam` + `handleToggleArchived`
 3. Filter tab bar to only show non-archived tabs
@@ -398,31 +408,87 @@ Four changes needed:
 In `src/app/(app)/dashboard/components/DashboardClient.tsx`, find the import line:
 
 ```typescript
-import { updateManualMetric, getTabTotalSpend, saveClienteLayout, saveTabOverrides, updateLayoutPuzzleState } from '../_actions'
+import {
+  updateManualMetric,
+  getTabTotalSpend,
+  saveClienteLayout,
+  saveTabOverrides,
+  updateLayoutPuzzleState,
+} from '../_actions';
 ```
 
 Replace with:
 
 ```typescript
-import { updateManualMetric, getTabTotalSpend, saveClienteLayout, saveTabOverrides, updateLayoutPuzzleState, toggleTabArchived } from '../_actions'
+import {
+  updateManualMetric,
+  getTabTotalSpend,
+  saveClienteLayout,
+  saveTabOverrides,
+  updateLayoutPuzzleState,
+  toggleTabArchived,
+} from '../_actions';
 ```
 
 Find the lucide-react import line:
 
 ```typescript
-import { LayoutDashboard, Settings2, Plus, Edit2, CalendarDays, Timer, BadgeDollarSign, Wallet, GripVertical, Search, X, Puzzle, Type, AlignLeft, AlignCenter, AlignRight, Trash2, Save, Loader2, Minus } from 'lucide-react'
+import {
+  LayoutDashboard,
+  Settings2,
+  Plus,
+  Edit2,
+  CalendarDays,
+  Timer,
+  BadgeDollarSign,
+  Wallet,
+  GripVertical,
+  Search,
+  X,
+  Puzzle,
+  Type,
+  AlignLeft,
+  AlignCenter,
+  AlignRight,
+  Trash2,
+  Save,
+  Loader2,
+  Minus,
+} from 'lucide-react';
 ```
 
 Replace with:
 
 ```typescript
-import { LayoutDashboard, Settings2, Plus, Edit2, CalendarDays, Timer, BadgeDollarSign, Wallet, GripVertical, Search, X, Puzzle, Type, AlignLeft, AlignCenter, AlignRight, Trash2, Save, Loader2, Minus, Archive } from 'lucide-react'
+import {
+  LayoutDashboard,
+  Settings2,
+  Plus,
+  Edit2,
+  CalendarDays,
+  Timer,
+  BadgeDollarSign,
+  Wallet,
+  GripVertical,
+  Search,
+  X,
+  Puzzle,
+  Type,
+  AlignLeft,
+  AlignCenter,
+  AlignRight,
+  Trash2,
+  Save,
+  Loader2,
+  Minus,
+  Archive,
+} from 'lucide-react';
 ```
 
 Add the `TabArchiveView` import after the existing component imports:
 
 ```typescript
-import { TabArchiveView } from './TabArchiveView'
+import { TabArchiveView } from './TabArchiveView';
 ```
 
 - [ ] **Step 2: Add state and handlers**
@@ -430,13 +496,16 @@ import { TabArchiveView } from './TabArchiveView'
 Inside `DynamicDashboard`, after the existing state declarations (around the `showModal` / `showTabModal` block, near line 282), add:
 
 ```typescript
-const [showArchive, setShowArchive] = useState(false)
-const isTeam = ['superadmin', 'admin', 'trafficker'].includes(userRole ?? '')
+const [showArchive, setShowArchive] = useState(false);
+const isTeam = ['superadmin', 'admin', 'trafficker'].includes(userRole ?? '');
 
-const handleToggleArchived = useCallback(async (tabId: string, archived: boolean) => {
-    setSortedTabs(prev => prev.map((t: any) => t.id === tabId ? { ...t, archived } : t))
-    await toggleTabArchived(cliente.id, tabId, archived)
-}, [cliente.id])
+const handleToggleArchived = useCallback(
+  async (tabId: string, archived: boolean) => {
+    setSortedTabs((prev) => prev.map((t: any) => (t.id === tabId ? { ...t, archived } : t)));
+    await toggleTabArchived(cliente.id, tabId, archived);
+  },
+  [cliente.id]
+);
 ```
 
 - [ ] **Step 3: Add `visibleTabs` derived variable**
@@ -444,8 +513,8 @@ const handleToggleArchived = useCallback(async (tabId: string, archived: boolean
 Right after `const tabs = sortedTabs` (around line 279), add:
 
 ```typescript
-const visibleTabs = tabs.filter((t: any) => !t.archived)
-const archivedCount = tabs.filter((t: any) => t.archived).length
+const visibleTabs = tabs.filter((t: any) => !t.archived);
+const archivedCount = tabs.filter((t: any) => t.archived).length;
 ```
 
 - [ ] **Step 4: Replace `tabs` with `visibleTabs` in the tab bar**
@@ -453,6 +522,7 @@ const archivedCount = tabs.filter((t: any) => t.archived).length
 In the non-public tab bar section (starting around line 750), find the two places where `tabs` is used to render tab buttons and replace with `visibleTabs`:
 
 **Static render (no dnd, `!isMounted`):**
+
 ```typescript
 // Before:
 {!isMounted ? (
@@ -464,6 +534,7 @@ In the non-public tab bar section (starting around line 750), find the two place
 ```
 
 **DnD render (`SortableContext`):**
+
 ```typescript
 // Before:
 <SortableContext items={tabs.map((t: any) => t.id)} strategy={horizontalListSortingStrategy}>
@@ -475,6 +546,7 @@ In the non-public tab bar section (starting around line 750), find the two place
 ```
 
 **Public tab bar** (around line 724):
+
 ```typescript
 // Before:
 {tabs.map((tab: any) => (
@@ -544,6 +616,7 @@ if (showArchive) {
 ```bash
 npm run type-check
 ```
+
 Expected: no errors.
 
 - [ ] **Step 8: Manual test**
@@ -569,6 +642,7 @@ git commit -m "feat: wire TabArchiveView into DashboardClient with archive butto
 ## Self-Review Checklist
 
 **Spec coverage:**
+
 - ✅ `archived boolean DEFAULT false` migration — Task 1
 - ✅ `toggleTabArchived` server action — Task 2
 - ✅ Tab bar shows only non-archived tabs — Task 4 Step 4

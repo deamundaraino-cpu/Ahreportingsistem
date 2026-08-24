@@ -27,7 +27,7 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=<anon-key>
 SUPABASE_SERVICE_ROLE_KEY=<service-role-key>   # ¡secreta! usada por workers, omite RLS
 ```
 
-> El *health check* (`/api/health`) verifica que estas tres estén presentes.
+> El _health check_ (`/api/health`) verifica que estas tres estén presentes.
 
 ### Aplicación
 
@@ -103,23 +103,23 @@ EVOLUTION_INSTANCE=adshouse                        # nombre de la instancia
 
 ### Resumen de variables
 
-| Variable | Ámbito | Obligatoria | Uso |
-|----------|--------|-------------|-----|
-| `NEXT_PUBLIC_SUPABASE_URL` | público | ✅ | Conexión Supabase |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | público | ✅ | Cliente browser/SSR |
-| `SUPABASE_SERVICE_ROLE_KEY` | servidor | ✅ | Workers, API v1, MCP (omite RLS) |
-| `NEXT_PUBLIC_APP_URL` | público | ✅* | Callbacks OAuth, enlaces |
-| `CRON_SECRET` | servidor | ✅* | Auth de cron/workers |
-| `META_APP_ID` / `META_APP_SECRET` | servidor | si usas Meta OAuth | OAuth + refresh tokens |
-| `TIKTOK_APP_ID` / `TIKTOK_APP_SECRET` | servidor | si usas TikTok OAuth | OAuth |
-| `GOOGLE_SERVICE_ACCOUNT_EMAIL` / `_KEY` | servidor | si usas Sheets global | Importar leads |
-| `NEXT_PUBLIC_REPORT_UTM_ENABLED` | público | no | Activa Report-UTM |
-| `WHATSAPP_PROVIDER` | servidor | si usas WhatsApp | `baileys` (default) o `evolution` |
-| `WHATSAPP_GATEWAY_URL` | servidor | si `baileys` | URL del microservicio Baileys |
-| `WHATSAPP_GATEWAY_API_KEY` | servidor | si `baileys` | Bearer compartido con el gateway |
-| `EVOLUTION_API_URL` | servidor | si `evolution` | URL de la instancia Evolution |
-| `EVOLUTION_API_KEY` | servidor | si `evolution` | Header `apikey` de Evolution |
-| `EVOLUTION_INSTANCE` | servidor | si `evolution` | Nombre de la instancia |
+| Variable                                | Ámbito   | Obligatoria           | Uso                               |
+| --------------------------------------- | -------- | --------------------- | --------------------------------- |
+| `NEXT_PUBLIC_SUPABASE_URL`              | público  | ✅                    | Conexión Supabase                 |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY`         | público  | ✅                    | Cliente browser/SSR               |
+| `SUPABASE_SERVICE_ROLE_KEY`             | servidor | ✅                    | Workers, API v1, MCP (omite RLS)  |
+| `NEXT_PUBLIC_APP_URL`                   | público  | ✅*                   | Callbacks OAuth, enlaces          |
+| `CRON_SECRET`                           | servidor | ✅*                   | Auth de cron/workers              |
+| `META_APP_ID` / `META_APP_SECRET`       | servidor | si usas Meta OAuth    | OAuth + refresh tokens            |
+| `TIKTOK_APP_ID` / `TIKTOK_APP_SECRET`   | servidor | si usas TikTok OAuth  | OAuth                             |
+| `GOOGLE_SERVICE_ACCOUNT_EMAIL` / `_KEY` | servidor | si usas Sheets global | Importar leads                    |
+| `NEXT_PUBLIC_REPORT_UTM_ENABLED`        | público  | no                    | Activa Report-UTM                 |
+| `WHATSAPP_PROVIDER`                     | servidor | si usas WhatsApp      | `baileys` (default) o `evolution` |
+| `WHATSAPP_GATEWAY_URL`                  | servidor | si `baileys`          | URL del microservicio Baileys     |
+| `WHATSAPP_GATEWAY_API_KEY`              | servidor | si `baileys`          | Bearer compartido con el gateway  |
+| `EVOLUTION_API_URL`                     | servidor | si `evolution`        | URL de la instancia Evolution     |
+| `EVOLUTION_API_KEY`                     | servidor | si `evolution`        | Header `apikey` de Evolution      |
+| `EVOLUTION_INSTANCE`                    | servidor | si `evolution`        | Nombre de la instancia            |
 
 \* Necesarias para que funcionen OAuth, enlaces y crons en producción.
 
@@ -157,18 +157,18 @@ Abre [http://localhost:3001](http://localhost:3001). Regístrate en `/signup` y 
 
 ## 5. Scripts disponibles
 
-| Script | Acción |
-|--------|--------|
-| `npm run dev` | Servidor de desarrollo (puerto 3001) |
-| `npm run build` | Build de producción |
-| `npm run start` | Servidor de producción |
-| `npm run lint` | ESLint (`--max-warnings 0`) |
-| `npm run lint:fix` | ESLint con autofix |
-| `npm run type-check` | `tsc --noEmit` |
-| `npm run format` | Prettier (escribe) |
-| `npm run format:check` | Prettier (verifica) |
-| `npm run validate` | type-check + lint + format:check |
-| `npm run test` | *(No implementado todavía)* |
+| Script                 | Acción                               |
+| ---------------------- | ------------------------------------ |
+| `npm run dev`          | Servidor de desarrollo (puerto 3001) |
+| `npm run build`        | Build de producción                  |
+| `npm run start`        | Servidor de producción               |
+| `npm run lint`         | ESLint (`--max-warnings 0`)          |
+| `npm run lint:fix`     | ESLint con autofix                   |
+| `npm run type-check`   | `tsc --noEmit`                       |
+| `npm run format`       | Prettier (escribe)                   |
+| `npm run format:check` | Prettier (verifica)                  |
+| `npm run validate`     | type-check + lint + format:check     |
+| `npm run test`         | _(No implementado todavía)_          |
 
 ## 6. Configurar OAuth (callbacks)
 

@@ -5,7 +5,9 @@ import { revalidatePath } from 'next/cache';
 
 async function requireAdmin(): Promise<boolean> {
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
   if (!user) return false;
   const { data } = await supabase.from('user_profiles').select('role').eq('id', user.id).single();
   return ['superadmin', 'admin'].includes(data?.role ?? '');
@@ -26,7 +28,9 @@ export async function getSyncPanelData(): Promise<SyncPanelData> {
   const [jobsRes, runsRes, clientesRes, cerradosRes] = await Promise.all([
     supabase
       .from('sync_jobs')
-      .select('id, tipo, cliente_id, fecha_inicio, fecha_fin, estado, prioridad, intentos, max_intentos, last_error, triggered_by, updated_at')
+      .select(
+        'id, tipo, cliente_id, fecha_inicio, fecha_fin, estado, prioridad, intentos, max_intentos, last_error, triggered_by, updated_at'
+      )
       .order('created_at', { ascending: false })
       .limit(100),
     supabase
@@ -36,7 +40,9 @@ export async function getSyncPanelData(): Promise<SyncPanelData> {
       // status HTTP, la query enviada y el cuerpo de la respuesta. Hasta ahora
       // no se seleccionaban, así que diagnosticar una caída obligaba a consultar
       // Supabase a mano.
-      .select('id, tipo, cliente_id, fecha_inicio, fecha_fin, started_at, duracion_ms, estado, filas_escritas, filas_saltadas, error, ejecutor, logs, stats')
+      .select(
+        'id, tipo, cliente_id, fecha_inicio, fecha_fin, started_at, duracion_ms, estado, filas_escritas, filas_saltadas, error, ejecutor, logs, stats'
+      )
       .order('started_at', { ascending: false })
       .limit(60),
     supabase.from('clientes').select('id, nombre').order('nombre'),

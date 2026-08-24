@@ -1,17 +1,17 @@
-import 'server-only'
-import { unstable_cache } from 'next/cache'
-import { createAdminClient } from '@/utils/supabase/server'
+import 'server-only';
+import { unstable_cache } from 'next/cache';
+import { createAdminClient } from '@/utils/supabase/server';
 
-export const BRANDING_CACHE_TAG = 'branding'
+export const BRANDING_CACHE_TAG = 'branding';
 
 export interface Branding {
-    app_name?: string
-    app_tag?: string
-    utm_name?: string
-    utm_tag?: string
-    logo_url?: string
-    favicon_url?: string
-    colors?: { primary?: string; secondary?: string }
+  app_name?: string;
+  app_tag?: string;
+  utm_name?: string;
+  utm_tag?: string;
+  logo_url?: string;
+  favicon_url?: string;
+  colors?: { primary?: string; secondary?: string };
 }
 
 /**
@@ -22,12 +22,13 @@ export interface Branding {
  * escapan del contexto y permiten reescribir la hoja de estilos entera. Solo
  * dejamos pasar formas de color inequívocas.
  */
-const COLOR_RE = /^(#[0-9a-fA-F]{3,8}|(rgb|rgba|hsl|hsla|oklch|lab|lch)\([0-9a-zA-Z.,%\s/+-]{1,64}\))$/
+const COLOR_RE =
+  /^(#[0-9a-fA-F]{3,8}|(rgb|rgba|hsl|hsla|oklch|lab|lch)\([0-9a-zA-Z.,%\s/+-]{1,64}\))$/;
 
 export function colorSeguro(value: unknown): string | undefined {
-    if (typeof value !== 'string') return undefined
-    const v = value.trim()
-    return COLOR_RE.test(v) ? v : undefined
+  if (typeof value !== 'string') return undefined;
+  const v = value.trim();
+  return COLOR_RE.test(v) ? v : undefined;
 }
 
 /**
@@ -41,52 +42,52 @@ export function colorSeguro(value: unknown): string | undefined {
  * conjunto de caracteres "no reservados"—, así que hay que mapearlos a mano.
  */
 const ESCAPES_CSS: Record<string, string> = {
-    "'": '%27',
-    '"': '%22',
-    '(': '%28',
-    ')': '%29',
-}
+  "'": '%27',
+  '"': '%22',
+  '(': '%28',
+  ')': '%29',
+};
 
 function neutralizarCierresDeUrl(s: string): string {
-    return s.replace(/['"()]/g, c => ESCAPES_CSS[c])
+  return s.replace(/['"()]/g, (c) => ESCAPES_CSS[c]);
 }
 
 export function urlLogoSegura(value: unknown): string | undefined {
-    if (typeof value !== 'string') return undefined
-    const v = value.trim()
-    if (!v) return undefined
+  if (typeof value !== 'string') return undefined;
+  const v = value.trim();
+  if (!v) return undefined;
 
-    // Ruta interna: viene en crudo, así que se codifica antes de escapar.
-    if (v.startsWith('/')) return neutralizarCierresDeUrl(encodeURI(v))
+  // Ruta interna: viene en crudo, así que se codifica antes de escapar.
+  if (v.startsWith('/')) return neutralizarCierresDeUrl(encodeURI(v));
 
-    try {
-        const u = new URL(v)
-        if (u.protocol !== 'https:' && u.protocol !== 'http:') return undefined
-        // `URL.toString()` ya devuelve la forma codificada: volver a pasarle
-        // `encodeURI` convertiría cada `%` en `%25` y rompería la URL.
-        return neutralizarCierresDeUrl(u.toString())
-    } catch {
-        return undefined
-    }
+  try {
+    const u = new URL(v);
+    if (u.protocol !== 'https:' && u.protocol !== 'http:') return undefined;
+    // `URL.toString()` ya devuelve la forma codificada: volver a pasarle
+    // `encodeURI` convertiría cada `%` en `%25` y rompería la URL.
+    return neutralizarCierresDeUrl(u.toString());
+  } catch {
+    return undefined;
+  }
 }
 
 async function leerBranding(): Promise<Branding | null> {
-    const url = process.env.NEXT_PUBLIC_SUPABASE_URL
-    const key = process.env.SUPABASE_SERVICE_ROLE_KEY
-    if (!url || !key) return null
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) return null;
 
-    try {
-        const supabase = await createAdminClient()
-        const { data } = await supabase
-            .from('system_settings')
-            .select('value')
-            .eq('key', 'branding')
-            .single()
-        return (data?.value ?? null) as Branding | null
-    } catch (e) {
-        console.error('[branding] no se pudo leer system_settings.branding:', e)
-        return null
-    }
+  try {
+    const supabase = await createAdminClient();
+    const { data } = await supabase
+      .from('system_settings')
+      .select('value')
+      .eq('key', 'branding')
+      .single();
+    return (data?.value ?? null) as Branding | null;
+  } catch (e) {
+    console.error('[branding] no se pudo leer system_settings.branding:', e);
+    return null;
+  }
 }
 
 /**
@@ -99,6 +100,6 @@ async function leerBranding(): Promise<Branding | null> {
  * desde la acción que lo guarda.
  */
 export const getBranding = unstable_cache(leerBranding, ['branding'], {
-    tags: [BRANDING_CACHE_TAG],
-    revalidate: 300,
-})
+  tags: [BRANDING_CACHE_TAG],
+  revalidate: 300,
+});

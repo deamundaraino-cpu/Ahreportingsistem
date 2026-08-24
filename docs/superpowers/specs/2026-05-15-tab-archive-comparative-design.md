@@ -62,6 +62,7 @@ Only `isTeam` (superadmin, admin, trafficker) see the 🗂 button and can toggle
 New file: `src/app/(app)/dashboard/components/TabArchiveView.tsx`
 
 Props:
+
 ```ts
 {
   tabs: any[]                    // all tabs for this client (visible + archived)
@@ -78,12 +79,14 @@ Props:
 Two-column layout:
 
 **Left column (40%):** List of ALL tabs ordered by `orden`. Each tab row shows:
+
 - Tab name + `keyword_meta` badge
 - Date range if configured (`fecha_inicio` → `fecha_finalizacion`)
 - Eye toggle button (👁 / 👁‍🗨) — only visible to team — calls `onToggleArchived` immediately
 - Expand chevron → reveals the tab's cards as checkboxes
 
 **Right column (60%):** Comparative panel
+
 - Empty state: "Selecciona tarjetas del panel izquierdo para comparar"
 - Once cards are selected: renders them grouped by origin tab
 - Each card shows: label, formatted value, and a footer tag "📌 [Tab name]"
@@ -91,6 +94,7 @@ Two-column layout:
 ### Card Selection State
 
 Local state in `TabArchiveView`:
+
 ```ts
 type SelectedCard = {
   tabId: string
@@ -118,16 +122,16 @@ function computeCardValue(
   campaignGroups: any[]
 ): number | null {
   // 1. Date filter
-  let rows = metrics
-  if (tab.fecha_inicio) rows = rows.filter(m => m.fecha >= tab.fecha_inicio)
-  if (tab.fecha_finalizacion) rows = rows.filter(m => m.fecha <= tab.fecha_finalizacion)
+  let rows = metrics;
+  if (tab.fecha_inicio) rows = rows.filter((m) => m.fecha >= tab.fecha_inicio);
+  if (tab.fecha_finalizacion) rows = rows.filter((m) => m.fecha <= tab.fecha_finalizacion);
 
   // 2. Campaign filter
-  const keyword = card.campaignFilter?.value ?? tab.keyword_meta ?? ''
-  rows = rows.map(r => enrichMetaRow(r, keyword, campaignGroups))
+  const keyword = card.campaignFilter?.value ?? tab.keyword_meta ?? '';
+  rows = rows.map((r) => enrichMetaRow(r, keyword, campaignGroups));
 
   // 3. Aggregate
-  return aggregateFormula(card.formula, rows, {}, {}, new Set(['meta']), [])
+  return aggregateFormula(card.formula, rows, {}, {}, new Set(['meta']), []);
 }
 ```
 
@@ -141,12 +145,12 @@ Use the existing `formatValue(value, card.prefix, card.suffix, card.decimals)` f
 
 ## Files Summary
 
-| File | Change |
-|------|--------|
-| `migrations/015_tab_archived.sql` | Add `archived boolean DEFAULT false` to `cliente_tabs` |
-| `src/app/(app)/dashboard/_actions.ts` | Add `toggleTabArchived` action |
+| File                                                     | Change                                                               |
+| -------------------------------------------------------- | -------------------------------------------------------------------- |
+| `migrations/015_tab_archived.sql`                        | Add `archived boolean DEFAULT false` to `cliente_tabs`               |
+| `src/app/(app)/dashboard/_actions.ts`                    | Add `toggleTabArchived` action                                       |
 | `src/app/(app)/dashboard/components/DashboardClient.tsx` | Filter tab bar; add 🗂 button; conditional render of `TabArchiveView` |
-| `src/app/(app)/dashboard/components/TabArchiveView.tsx` | New component: archive list + comparative panel |
+| `src/app/(app)/dashboard/components/TabArchiveView.tsx`  | New component: archive list + comparative panel                      |
 
 ---
 

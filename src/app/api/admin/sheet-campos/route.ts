@@ -1,12 +1,14 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@supabase/supabase-js'
+import { NextRequest, NextResponse } from 'next/server';
+import { createClient } from '@supabase/supabase-js';
 import {
-  loadCamposCliente, recalcularCamposCliente, normalizarOrigenes,
-} from '@/lib/sheets/campos-db'
-import { slugCampo, normalizarValorCrudo } from '@/lib/sheets/campos'
-import type { SheetCampoDef } from '@/lib/sheets/campos'
-import { requireAdminRole } from '@/lib/report-utm/auth'
-import { esUuid } from '@/lib/validation'
+  loadCamposCliente,
+  recalcularCamposCliente,
+  normalizarOrigenes,
+} from '@/lib/sheets/campos-db';
+import { slugCampo, normalizarValorCrudo } from '@/lib/sheets/campos';
+import type { SheetCampoDef } from '@/lib/sheets/campos';
+import { requireAdminRole } from '@/lib/report-utm/auth';
+import { esUuid } from '@/lib/validation';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -26,58 +28,61 @@ function admin() {
   return createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!
-  )
+  );
 }
 
 export async function GET(request: NextRequest) {
   // Guard de rol: el proxy ya exige sesión en /api/admin, esto añade el rol.
-  const denied = await requireAdminRole()
-  if (denied) return denied
+  const denied = await requireAdminRole();
+  if (denied) return denied;
 
-  const clienteId = request.nextUrl.searchParams.get('cliente_id')
-  if (!esUuid(clienteId)) return NextResponse.json({ error: 'cliente_id debe ser un UUID válido' }, { status: 400 })
+  const clienteId = request.nextUrl.searchParams.get('cliente_id');
+  if (!esUuid(clienteId))
+    return NextResponse.json({ error: 'cliente_id debe ser un UUID válido' }, { status: 400 });
 
   try {
-    const catalogo = await loadCamposCliente(admin(), clienteId)
-    return NextResponse.json(catalogo)
+    const catalogo = await loadCamposCliente(admin(), clienteId);
+    return NextResponse.json(catalogo);
   } catch (err: any) {
-    console.error('[sheet-campos] GET', err)
-    return NextResponse.json({ error: err.message || 'Error al leer los campos' }, { status: 500 })
+    console.error('[sheet-campos] GET', err);
+    return NextResponse.json({ error: err.message || 'Error al leer los campos' }, { status: 500 });
   }
 }
 
 /** Deja el mapa de valores en su forma canónica: la clave es el valor normalizado. */
 function normalizarMapa(raw: unknown): Record<string, string> {
-  if (!raw || typeof raw !== 'object') return {}
-  const out: Record<string, string> = {}
+  if (!raw || typeof raw !== 'object') return {};
+  const out: Record<string, string> = {};
   for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
-    const clave = normalizarValorCrudo(k)
-    const bucket = String(v ?? '').trim()
-    if (clave && bucket) out[clave] = bucket
+    const clave = normalizarValorCrudo(k);
+    const bucket = String(v ?? '').trim();
+    if (clave && bucket) out[clave] = bucket;
   }
-  return out
+  return out;
 }
 
 export async function POST(request: NextRequest) {
   // Guard de rol: el proxy ya exige sesión en /api/admin, esto añade el rol.
-  const denied = await requireAdminRole()
-  if (denied) return denied
+  const denied = await requireAdminRole();
+  if (denied) return denied;
 
   try {
-    const body = await request.json() as Partial<SheetCampoDef> & { cliente_id?: string }
-    const clienteId = body.cliente_id
-    if (!clienteId) return NextResponse.json({ error: 'cliente_id es obligatorio' }, { status: 400 })
+    const body = (await request.json()) as Partial<SheetCampoDef> & { cliente_id?: string };
+    const clienteId = body.cliente_id;
+    if (!clienteId)
+      return NextResponse.json({ error: 'cliente_id es obligatorio' }, { status: 400 });
 
-    const nombre = String(body.nombre ?? '').trim()
-    if (!nombre) return NextResponse.json({ error: 'El campo necesita un nombre' }, { status: 400 })
+    const nombre = String(body.nombre ?? '').trim();
+    if (!nombre)
+      return NextResponse.json({ error: 'El campo necesita un nombre' }, { status: 400 });
 
-    const db = admin()
-    const origenes = normalizarOrigenes(body.origenes)
+    const db = admin();
+    const origenes = normalizarOrigenes(body.origenes);
     if (origenes.length === 0) {
       return NextResponse.json(
         { error: 'Asigna al menos una pestaña con una columna' },
         { status: 400 }
-      )
+      );
     }
 
     const comun = {
@@ -94,67 +99,81 @@ export async function POST(request: NextRequest) {
       legacy_offfield: body.legacy_offfield ?? null,
       activo: body.activo !== false,
       orden: Number(body.orden) || 0,
-    }
+    };
 
-    let campoId = body.id
+    let campoId = body.id;
 
     if (campoId) {
       // La clave NO se toca al editar: es lo que apuntan los tokens ya guardados
       // en informes y layouts. El nombre visible sí es libre.
-      const { error } = await db.from('sheet_campos').update(comun).eq('id', campoId).eq('cliente_id', clienteId)
-      if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+      const { error } = await db
+        .from('sheet_campos')
+        .update(comun)
+        .eq('id', campoId)
+        .eq('cliente_id', clienteId);
+      if (error) return NextResponse.json({ error: error.message }, { status: 500 });
     } else {
-      const base = slugCampo(body.clave || nombre) || 'campo'
+      const base = slugCampo(body.clave || nombre) || 'campo';
 
       // La clave debe ser única por cliente; si el nombre choca con otro campo se
       // le añade un sufijo en vez de fallar y hacer que el analista adivine.
-      const { data: existentes } = await db.from('sheet_campos')
-        .select('clave').eq('cliente_id', clienteId)
-      const usadas = new Set(((existentes ?? []) as any[]).map(r => r.clave))
-      let clave = base
-      let i = 2
-      while (usadas.has(clave)) clave = `${base}_${i++}`
+      const { data: existentes } = await db
+        .from('sheet_campos')
+        .select('clave')
+        .eq('cliente_id', clienteId);
+      const usadas = new Set(((existentes ?? []) as any[]).map((r) => r.clave));
+      let clave = base;
+      let i = 2;
+      while (usadas.has(clave)) clave = `${base}_${i++}`;
 
-      const { data, error } = await db.from('sheet_campos')
+      const { data, error } = await db
+        .from('sheet_campos')
         .insert({ cliente_id: clienteId, clave, ...comun })
-        .select('id').single()
-      if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-      campoId = data.id
+        .select('id')
+        .single();
+      if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+      campoId = data.id;
     }
 
-    const recalculo = await recalcularCamposCliente(db, clienteId, { campoIds: [campoId!] })
+    const recalculo = await recalcularCamposCliente(db, clienteId, { campoIds: [campoId!] });
 
-    const { campos, vistas } = await loadCamposCliente(db, clienteId)
+    const { campos, vistas } = await loadCamposCliente(db, clienteId);
     return NextResponse.json({
-      campo: campos.find(c => c.id === campoId) ?? null,
+      campo: campos.find((c) => c.id === campoId) ?? null,
       campos,
       vistas,
       recalculo,
-    })
+    });
   } catch (err: any) {
-    console.error('[sheet-campos] POST', err)
-    return NextResponse.json({ error: err.message || 'Error al guardar el campo' }, { status: 500 })
+    console.error('[sheet-campos] POST', err);
+    return NextResponse.json(
+      { error: err.message || 'Error al guardar el campo' },
+      { status: 500 }
+    );
   }
 }
 
 export async function DELETE(request: NextRequest) {
   // Guard de rol: el proxy ya exige sesión en /api/admin, esto añade el rol.
-  const denied = await requireAdminRole()
-  if (denied) return denied
+  const denied = await requireAdminRole();
+  if (denied) return denied;
 
-  const id = request.nextUrl.searchParams.get('id')
-  const clienteId = request.nextUrl.searchParams.get('cliente_id')
+  const id = request.nextUrl.searchParams.get('id');
+  const clienteId = request.nextUrl.searchParams.get('cliente_id');
   if (!esUuid(id) || !esUuid(clienteId)) {
-    return NextResponse.json({ error: 'id y cliente_id deben ser UUID válidos' }, { status: 400 })
+    return NextResponse.json({ error: 'id y cliente_id deben ser UUID válidos' }, { status: 400 });
   }
 
   try {
     // El desglose, el catálogo de valores y las vistas se van por ON DELETE CASCADE.
-    const { error } = await admin().from('sheet_campos')
-      .delete().eq('id', id).eq('cliente_id', clienteId)
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-    return NextResponse.json({ success: true })
+    const { error } = await admin()
+      .from('sheet_campos')
+      .delete()
+      .eq('id', id)
+      .eq('cliente_id', clienteId);
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ success: true });
   } catch (err: any) {
-    return NextResponse.json({ error: err.message || 'Error al borrar el campo' }, { status: 500 })
+    return NextResponse.json({ error: err.message || 'Error al borrar el campo' }, { status: 500 });
   }
 }

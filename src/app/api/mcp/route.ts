@@ -17,7 +17,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { authenticateApiToken, requirePermission, type TokenContext } from '@/lib/api-token-auth';
-import { ApiError, handleUnexpectedError } from '@/lib/error-handler';
+import { ApiError } from '@/lib/error-handler';
 
 // ─── JSON-RPC helpers ────────────────────────────────────────────────────────
 
@@ -173,7 +173,9 @@ async function handleGetTabs(ctx: TokenContext, args: Record<string, string>) {
 
   const { data, error } = await supabase
     .from('cliente_tabs')
-    .select('id, nombre, keyword_meta, orden, fecha_inicio, fecha_finalizacion, presupuesto_objetivo')
+    .select(
+      'id, nombre, keyword_meta, orden, fecha_inicio, fecha_finalizacion, presupuesto_objetivo'
+    )
     .eq('cliente_id', client_id)
     .order('orden');
 
@@ -181,7 +183,7 @@ async function handleGetTabs(ctx: TokenContext, args: Record<string, string>) {
 
   return {
     client: { id: client.id, name: client.nombre },
-    tabs: (data ?? []).map(t => ({
+    tabs: (data ?? []).map((t) => ({
       id: t.id,
       name: t.nombre,
       keyword_meta: t.keyword_meta,
@@ -225,8 +227,8 @@ async function handleGetMetrics(ctx: TokenContext, args: Record<string, string>)
 
     const kw = keyword.toLowerCase();
 
-    const metrics = (data ?? []).map(row => {
-      const campaigns = ((row.meta_campaigns as any[]) ?? []).filter(c =>
+    const metrics = (data ?? []).map((row) => {
+      const campaigns = ((row.meta_campaigns as any[]) ?? []).filter((c) =>
         (c.name ?? '').toLowerCase().includes(kw)
       );
 
@@ -329,7 +331,7 @@ async function handleGetSummary(ctx: TokenContext, args: Record<string, string>)
       const manuales = (row.metricas_manuales as Record<string, number>) ?? {};
       total_ventas_cerradas += Number(manuales['VENTAS_CERRADAS'] ?? 0);
 
-      const campaigns = ((row.meta_campaigns as any[]) ?? []).filter(c =>
+      const campaigns = ((row.meta_campaigns as any[]) ?? []).filter((c) =>
         (c.name ?? '').toLowerCase().includes(kw)
       );
 
@@ -346,9 +348,7 @@ async function handleGetSummary(ctx: TokenContext, args: Record<string, string>)
     }
 
     const ctr =
-      total_impressions > 0
-        ? Math.round((total_link_clicks / total_impressions) * 10000) / 100
-        : 0;
+      total_impressions > 0 ? Math.round((total_link_clicks / total_impressions) * 10000) / 100 : 0;
     const cpc = total_link_clicks > 0 ? Math.round(total_spend / total_link_clicks) : 0;
 
     // CPL per conversion type
@@ -405,16 +405,21 @@ async function handleGetSummary(ctx: TokenContext, args: Record<string, string>)
         total_ventas_cerradas: acc.total_ventas_cerradas + ventas_cerradas,
       };
     },
-    { total_spend: 0, total_clicks: 0, total_impressions: 0, total_sessions: 0, total_revenue: 0, total_ventas_cerradas: 0 }
+    {
+      total_spend: 0,
+      total_clicks: 0,
+      total_impressions: 0,
+      total_sessions: 0,
+      total_revenue: 0,
+      total_ventas_cerradas: 0,
+    }
   );
 
   const total_ventas_cerradas = totals.total_ventas_cerradas;
 
   const roas = totals.total_spend > 0 ? totals.total_revenue / totals.total_spend : 0;
   const ctr =
-    totals.total_impressions > 0
-      ? (totals.total_clicks / totals.total_impressions) * 100
-      : 0;
+    totals.total_impressions > 0 ? (totals.total_clicks / totals.total_impressions) * 100 : 0;
   const cpc = totals.total_clicks > 0 ? totals.total_spend / totals.total_clicks : 0;
 
   return {

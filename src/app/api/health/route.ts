@@ -6,7 +6,7 @@
 
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-import { logger, ApiError } from '@/lib/error-handler';
+import { logger } from '@/lib/error-handler';
 
 interface HealthCheckResponse {
   status: 'up' | 'degraded' | 'down';
@@ -67,10 +67,7 @@ export async function GET(): Promise<NextResponse<HealthCheckResponse>> {
     );
 
     // Simple query to verify connection
-    const { error, data } = await supabase
-      .from('clientes')
-      .select('id')
-      .limit(1);
+    const { error } = await supabase.from('clientes').select('id').limit(1);
 
     const responseTime = Date.now() - dbStartTime;
 

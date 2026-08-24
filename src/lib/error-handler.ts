@@ -41,47 +41,58 @@ export class ApiError extends Error {
  */
 export const logger = {
   info: (message: string, context?: Record<string, unknown>) => {
-    console.log(JSON.stringify({
-      level: 'info',
-      timestamp: new Date().toISOString(),
-      message,
-      ...context,
-    }));
+    console.log(
+      JSON.stringify({
+        level: 'info',
+        timestamp: new Date().toISOString(),
+        message,
+        ...context,
+      })
+    );
   },
 
   warn: (message: string, context?: Record<string, unknown>) => {
-    console.warn(JSON.stringify({
-      level: 'warn',
-      timestamp: new Date().toISOString(),
-      message,
-      ...context,
-    }));
+    console.warn(
+      JSON.stringify({
+        level: 'warn',
+        timestamp: new Date().toISOString(),
+        message,
+        ...context,
+      })
+    );
   },
 
   error: (message: string, error?: unknown, context?: Record<string, unknown>) => {
-    const errorObj = error instanceof Error ? {
-      name: error.name,
-      message: error.message,
-      stack: error.stack,
-    } : error;
+    const errorObj =
+      error instanceof Error
+        ? {
+            name: error.name,
+            message: error.message,
+            stack: error.stack,
+          }
+        : error;
 
-    console.error(JSON.stringify({
-      level: 'error',
-      timestamp: new Date().toISOString(),
-      message,
-      error: errorObj,
-      ...context,
-    }));
+    console.error(
+      JSON.stringify({
+        level: 'error',
+        timestamp: new Date().toISOString(),
+        message,
+        error: errorObj,
+        ...context,
+      })
+    );
   },
 
   debug: (message: string, context?: Record<string, unknown>) => {
     if (process.env.NODE_ENV === 'development') {
-      console.log(JSON.stringify({
-        level: 'debug',
-        timestamp: new Date().toISOString(),
-        message,
-        ...context,
-      }));
+      console.log(
+        JSON.stringify({
+          level: 'debug',
+          timestamp: new Date().toISOString(),
+          message,
+          ...context,
+        })
+      );
     }
   },
 };
@@ -112,15 +123,14 @@ export function apiErrorResponse(error: ApiError): NextResponse<ApiErrorResponse
 /**
  * Handle unexpected errors with safe fallback
  */
-export function handleUnexpectedError(error: unknown, context?: string): NextResponse<ApiErrorResponse> {
+export function handleUnexpectedError(
+  error: unknown,
+  context?: string
+): NextResponse<ApiErrorResponse> {
   const message = error instanceof Error ? error.message : 'Unknown error';
   const errorObj = error instanceof Error ? error : new Error(String(error));
 
-  logger.error(
-    'Unexpected error',
-    errorObj,
-    { context, message }
-  );
+  logger.error('Unexpected error', errorObj, { context, message });
 
   return NextResponse.json(
     {
@@ -175,12 +185,10 @@ export async function fetchWithTimeout(
       throw error;
     }
 
-    throw new ApiError(
-      'EXTERNAL_API_ERROR',
-      `Failed to fetch from ${new URL(url).hostname}`,
-      502,
-      { url, error: error instanceof Error ? error.message : String(error) }
-    );
+    throw new ApiError('EXTERNAL_API_ERROR', `Failed to fetch from ${new URL(url).hostname}`, 502, {
+      url,
+      error: error instanceof Error ? error.message : String(error),
+    });
   } finally {
     clearTimeout(timeoutId);
   }
@@ -193,11 +201,8 @@ export async function safeJsonParse<T>(response: Response): Promise<T> {
   try {
     return await response.json();
   } catch (error) {
-    throw new ApiError(
-      'EXTERNAL_API_ERROR',
-      'Failed to parse API response as JSON',
-      502,
-      { error: error instanceof Error ? error.message : String(error) }
-    );
+    throw new ApiError('EXTERNAL_API_ERROR', 'Failed to parse API response as JSON', 502, {
+      error: error instanceof Error ? error.message : String(error),
+    });
   }
 }

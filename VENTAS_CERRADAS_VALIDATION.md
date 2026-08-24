@@ -3,6 +3,7 @@
 ## Estado de Implementación
 
 ✅ **Completado:**
+
 - [x] Migración SQL aplicada en Supabase (011_add_ventas_cerradas.sql)
 - [x] Campo `ventas_cerradas` agregado a tabla `metricas_diarias`
 - [x] MCP endpoint `get_summary` expone `ventas_cerradas` en totals
@@ -14,6 +15,7 @@
 ## Estructura de Respuesta
 
 ### get_summary Response
+
 ```json
 {
   "client": { "id": "...", "name": "Cris Tributario" },
@@ -33,6 +35,7 @@
 ```
 
 ### get_metrics Response (diario)
+
 ```json
 {
   "client": { "id": "...", "name": "Cris Tributario" },
@@ -57,18 +60,21 @@
 ## Cómo Usar
 
 ### Desde Cowork/MCP
+
 ```
 Pregunta a Claude: "¿Cuáles fueron las ventas cerradas de Cris Tributario en abril?"
 Claude usa get_summary → encuentra ventas_cerradas en el response
 ```
 
 ### Desde Dashboard
+
 1. Ir a Admin > Layouts
 2. Seleccionar métrica "Ventas Cerradas" (en sección "Ventas · Totales")
 3. Guardar layout
 4. Las ventas cerradas aparecerán en el dashboard
 
 ### Vía API REST
+
 ```bash
 curl -X GET "http://localhost:3000/api/v1/metrics?client_id=XXX" \
   -H "Authorization: Bearer YOUR_TOKEN"
@@ -102,6 +108,7 @@ Puedes usar `ventas_cerradas` en fórmulas personalizadas:
 ## Validación Rápida
 
 Ejecutar test:
+
 ```bash
 chmod +x test-ventas-cerradas.sh
 ./test-ventas-cerradas.sh YOUR_CLIENT_ID YOUR_API_TOKEN
@@ -111,13 +118,13 @@ Si ves `"ventas_cerradas": X` en ambas respuestas, ✅ está funcionando.
 
 ## Archivos Modificados
 
-| Archivo | Cambio |
-|---------|--------|
-| migrations/011_add_ventas_cerradas.sql | Nuevacolumna en metricas_diarias |
-| src/app/api/mcp/route.ts | Expose en get_summary y get_metrics |
-| src/app/api/v1/metrics/route.ts | Agregado a consulta SELECT |
-| src/lib/formula-engine.ts | Registrado en FIELD_MAP |
-| src/app/(app)/admin/layouts/LayoutBuilderClient.tsx | Opción selectable UI |
+| Archivo                                             | Cambio                              |
+| --------------------------------------------------- | ----------------------------------- |
+| migrations/011_add_ventas_cerradas.sql              | Nuevacolumna en metricas_diarias    |
+| src/app/api/mcp/route.ts                            | Expose en get_summary y get_metrics |
+| src/app/api/v1/metrics/route.ts                     | Agregado a consulta SELECT          |
+| src/lib/formula-engine.ts                           | Registrado en FIELD_MAP             |
+| src/app/(app)/admin/layouts/LayoutBuilderClient.tsx | Opción selectable UI                |
 
 ## Próximos Pasos
 

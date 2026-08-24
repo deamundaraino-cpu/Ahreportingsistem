@@ -17,11 +17,11 @@ Contiene **dos productos** en una sola app:
 
 ### Roles (RBAC)
 
-| Rol | Acceso |
-|-----|--------|
-| `superadmin` / `admin` | Todo: clientes, usuarios, tokens, reportes, layouts, WhatsApp, Report-UTM |
-| `trafficker` | Solo clientes asignados; puede configurar settings y layouts de esos clientes |
-| `viewer` | Solo dashboards en lectura |
+| Rol                    | Acceso                                                                        |
+| ---------------------- | ----------------------------------------------------------------------------- |
+| `superadmin` / `admin` | Todo: clientes, usuarios, tokens, reportes, layouts, WhatsApp, Report-UTM     |
+| `trafficker`           | Solo clientes asignados; puede configurar settings y layouts de esos clientes |
+| `viewer`               | Solo dashboards en lectura                                                    |
 
 ---
 
@@ -192,14 +192,14 @@ La página más compleja. Sistema de pestañas + bloques configurables.
 
 **Tipos de bloque (sistema de layouts):**
 
-| Bloque | Span | Contenido | Acciones hover |
-|--------|------|-----------|----------------|
-| **Card KPI** | 1 col | label + valor grande con color (emerald/red/blue/amber), prefijo/sufijo, decimales | duplicar, editar, colapsar; en modo puzzle: drag + borrar |
-| **Gráfico** | 4 col | 11 tipos: area, stacked_area, bar, stacked_bar, line, donut, pie, composed, radial, scatter, funnel; periodicidad día/semana/mes/año; data labels | ídem |
-| **Tabla embudo diario** | 4 col | columnas con fórmulas, celdas manuales editables, highlight verde/rojo, totales semanales, fines de semana sombreados, columnas redimensionables | filtros por grupo/keyword |
-| **Ranking** | 4 col | dimensión: campañas/anuncios/adsets (Meta) o campañas/ads/adgroups (TikTok); top-N, orden clickeable, preview de creativos al hover, consolidar por nombre | ídem cards |
-| **Texto / Separador** | 1–4 col | h1/h2/h3/p, color, fuente, alineación; separador: línea/dashed/dots/espacio | editar, duplicar |
-| **Productos Extras** | 4 col | tabla Producto / Ventas / Bruto / Neto + fila total (solo Vista General) | — |
+| Bloque                  | Span    | Contenido                                                                                                                                                  | Acciones hover                                            |
+| ----------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- |
+| **Card KPI**            | 1 col   | label + valor grande con color (emerald/red/blue/amber), prefijo/sufijo, decimales                                                                         | duplicar, editar, colapsar; en modo puzzle: drag + borrar |
+| **Gráfico**             | 4 col   | 11 tipos: area, stacked_area, bar, stacked_bar, line, donut, pie, composed, radial, scatter, funnel; periodicidad día/semana/mes/año; data labels          | ídem                                                      |
+| **Tabla embudo diario** | 4 col   | columnas con fórmulas, celdas manuales editables, highlight verde/rojo, totales semanales, fines de semana sombreados, columnas redimensionables           | filtros por grupo/keyword                                 |
+| **Ranking**             | 4 col   | dimensión: campañas/anuncios/adsets (Meta) o campañas/ads/adgroups (TikTok); top-N, orden clickeable, preview de creativos al hover, consolidar por nombre | ídem cards                                                |
+| **Texto / Separador**   | 1–4 col | h1/h2/h3/p, color, fuente, alineación; separador: línea/dashed/dots/espacio                                                                                | editar, duplicar                                          |
+| **Productos Extras**    | 4 col   | tabla Producto / Ventas / Bruto / Neto + fila total (solo Vista General)                                                                                   | —                                                         |
 
 **Modales del dashboard:**
 
@@ -208,7 +208,7 @@ La página más compleja. Sistema de pestañas + bloques configurables.
 3. **QuickEditModal** (lápiz sobre un bloque): editor contextual del bloque (card/chart/text/ranking) sin abrir la config completa.
 4. **TabArchiveView**: lista de pestañas archivadas, expandir para ver sus cards, botón restaurar.
 
-**Motor de fórmulas:** cada card/columna/serie usa expresiones como `meta_spend / meta_clicks`, con macros y alias (`$visitas`, `$ventas`). Métricas disponibles: meta_* (spend, impressions, reach, clicks, leads, purchases, roas…), tiktok_*, ga_*, hotmart (pagos iniciados, ventas principal/bump/upsell), funnel_* por tab, y leads de Sheets.
+**Motor de fórmulas:** cada card/columna/serie usa expresiones como `meta_spend / meta_clicks`, con macros y alias (`$visitas`, `$ventas`). Métricas disponibles: meta_* (spend, impressions, reach, clicks, leads, purchases, roas…), tiktok__, ga__, hotmart (pagos iniciados, ventas principal/bump/upsell), funnel_* por tab, y leads de Sheets.
 
 **Pestaña 📊 Reporte Mensual** (dentro del dashboard): selector de mes ◂ ▸, KPI cards con badges de variación vs mes anterior (▲▼), gráfico diario spend vs resultados, pie por campaña, demografía edad/género, top/bottom creativos con thumbnail, sección de notas editable (admin).
 

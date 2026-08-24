@@ -18,11 +18,7 @@ export function authenticateCron(request: NextRequest): void {
   // permitía "por compatibilidad", lo que dejaba los endpoints de cron abiertos
   // si la env var faltaba en algún entorno.
   if (!cronSecret) {
-    throw new ApiError(
-      'INVALID_CONFIG',
-      'CRON_SECRET no configurado en el servidor',
-      503
-    );
+    throw new ApiError('INVALID_CONFIG', 'CRON_SECRET no configurado en el servidor', 503);
   }
 
   // Validate authorization header format
@@ -40,11 +36,7 @@ export function authenticateCron(request: NextRequest): void {
 
   // Compare tokens using constant-time comparison to prevent timing attacks
   if (!constantTimeCompare(token, cronSecret)) {
-    throw new ApiError(
-      'UNAUTHORIZED',
-      'Invalid CRON_SECRET',
-      401
-    );
+    throw new ApiError('UNAUTHORIZED', 'Invalid CRON_SECRET', 401);
   }
 }
 
@@ -79,10 +71,11 @@ function constantTimeCompare(a: string, b: string): boolean {
   // If lengths differ, strings are definitely not equal
   // But continue comparing to avoid leaking length info
   if (a.length !== b.length) {
-    // Still do full comparison to prevent timing attack
-    let result = 0;
+    // Se recorre igualmente y se descarta el resultado: el objetivo es gastar
+    // el mismo tiempo que en el caso de longitudes iguales, no el valor.
+    let _result = 0;
     for (let i = 0; i < Math.max(a.length, b.length); i++) {
-      result |= (a.charCodeAt(i) || 0) ^ (b.charCodeAt(i) || 0);
+      _result |= (a.charCodeAt(i) || 0) ^ (b.charCodeAt(i) || 0);
     }
     return false;
   }

@@ -5,10 +5,14 @@ import { revalidatePath, updateTag } from 'next/cache';
 import { evaluateAlertRules, type RuleRow } from '@/lib/notifications/rules-engine';
 import { colombiaToday, colombiaYesterday } from '@/lib/date-utils';
 import { format, subDays, startOfMonth, endOfMonth, parseISO } from 'date-fns';
-import { enrichMetaRow, enrichTikTokRow, parseTabFilter, type AnyCampaignFilter } from '@/lib/campaign-filter';
-import { BRANDING_CACHE_TAG } from '@/lib/branding'
+import {
+  enrichMetaRow,
+  enrichTikTokRow,
+  parseTabFilter,
+  type AnyCampaignFilter,
+} from '@/lib/campaign-filter';
+import { BRANDING_CACHE_TAG } from '@/lib/branding';
 import { getSesionActual } from '@/lib/auth-session';
-
 
 async function requireAdmin(): Promise<{ ok: true } | { ok: false; error: string }> {
   // Sesión y rol memoizados por petición (`lib/auth-session.ts`). Antes cada
@@ -38,7 +42,9 @@ export async function getNotificationRules() {
   return data as RuleRow[];
 }
 
-export async function createNotificationRule(payload: Omit<RuleRow, 'id' | 'created_at' | 'updated_at' | 'last_triggered_at'>) {
+export async function createNotificationRule(
+  payload: Omit<RuleRow, 'id' | 'created_at' | 'updated_at' | 'last_triggered_at'>
+) {
   const guard = await requireAdmin();
   if (!guard.ok) return { error: guard.error };
 
@@ -70,10 +76,7 @@ export async function updateNotificationRule(
   if (!guard.ok) return { error: guard.error };
 
   const supabase = await createAdminClient();
-  const { error } = await supabase
-    .from('notification_rules')
-    .update(payload)
-    .eq('id', id);
+  const { error } = await supabase.from('notification_rules').update(payload).eq('id', id);
 
   if (error) return { error: error.message };
 
@@ -101,15 +104,14 @@ export async function getClientesAndTabs() {
   if (!guard.ok) throw new Error(guard.error);
 
   const supabase = await createAdminClient();
-  
-  const { data: clientes } = await supabase
-    .from('clientes')
-    .select('id, nombre')
-    .order('nombre');
+
+  const { data: clientes } = await supabase.from('clientes').select('id, nombre').order('nombre');
 
   const { data: tabs } = await supabase
     .from('cliente_tabs')
-    .select('id, nombre, cliente_id, keyword_meta, presupuesto_objetivo, fecha_inicio, fecha_finalizacion')
+    .select(
+      'id, nombre, cliente_id, keyword_meta, presupuesto_objetivo, fecha_inicio, fecha_finalizacion'
+    )
     .eq('archived', false)
     .order('nombre');
 
@@ -164,7 +166,7 @@ export async function testRule(ruleId: string) {
       targetClientIds = [cliente_id];
     } else {
       const { data: clients } = await db.from('clientes').select('id');
-      targetClientIds = (clients ?? []).map(c => c.id);
+      targetClientIds = (clients ?? []).map((c) => c.id);
     }
 
     if (targetClientIds.length === 0) {
@@ -174,7 +176,11 @@ export async function testRule(ruleId: string) {
     // Evaluate for the first client (in test we evaluate just one client as a sample)
     const testClientId = targetClientIds[0];
 
-    const { data: clientObj } = await db.from('clientes').select('nombre').eq('id', testClientId).single();
+    const { data: clientObj } = await db
+      .from('clientes')
+      .select('nombre')
+      .eq('id', testClientId)
+      .single();
     const clientName = clientObj?.nombre || 'Cliente';
 
     // Date range
@@ -191,7 +197,11 @@ export async function testRule(ruleId: string) {
     } else if (time_window === 'last_30_days') {
       start = format(subDays(parseISO(today), 29), 'yyyy-MM-dd');
     } else if (time_window === 'current_tab_period' && tab_id) {
-      const { data: tab } = await db.from('cliente_tabs').select('fecha_inicio, fecha_finalizacion').eq('id', tab_id).single();
+      const { data: tab } = await db
+        .from('cliente_tabs')
+        .select('fecha_inicio, fecha_finalizacion')
+        .eq('id', tab_id)
+        .single();
       if (tab?.fecha_inicio && tab?.fecha_finalizacion) {
         start = tab.fecha_inicio;
         end = tab.fecha_finalizacion;
@@ -207,7 +217,9 @@ export async function testRule(ruleId: string) {
     // Query daily metrics
     const { data: rows } = await db
       .from('metricas_diarias')
-      .select('fecha, meta_spend, tiktok_spend, meta_campaigns, tiktok_campaigns, ga_sessions, hotmart_pagos_iniciados, ventas_principal, ventas_bump, ventas_upsell, metricas_manuales')
+      .select(
+        'fecha, meta_spend, tiktok_spend, meta_campaigns, tiktok_campaigns, ga_sessions, hotmart_pagos_iniciados, ventas_principal, ventas_bump, ventas_upsell, metricas_manuales'
+      )
       .eq('cliente_id', testClientId)
       .gte('fecha', start)
       .lte('fecha', end);
@@ -218,7 +230,11 @@ export async function testRule(ruleId: string) {
     let tabName = '';
 
     if (tab_id) {
-      const { data: tab } = await db.from('cliente_tabs').select('nombre, keyword_meta, presupuesto_objetivo').eq('id', tab_id).single();
+      const { data: tab } = await db
+        .from('cliente_tabs')
+        .select('nombre, keyword_meta, presupuesto_objetivo')
+        .eq('id', tab_id)
+        .single();
       if (tab) {
         keywordFilter = parseTabFilter(tab.keyword_meta);
         tabBudget = tab.presupuesto_objetivo ? Number(tab.presupuesto_objetivo) : null;
@@ -244,7 +260,7 @@ export async function testRule(ruleId: string) {
         campaignGroups ?? []
       );
       totalSpend += (Number(enrichedRow.meta_spend) || 0) + (Number(enrichedRow.tiktok_spend) || 0);
-      
+
       const manuales = (row.metricas_manuales as Record<string, number>) ?? {};
       const ventasCerradas = Number(manuales['VENTAS_CERRADAS'] ?? 0);
       totalRevenue +=
@@ -253,7 +269,8 @@ export async function testRule(ruleId: string) {
         (Number(row.ventas_upsell) || 0) +
         ventasCerradas;
 
-      totalLeads += (Number(enrichedRow.meta_leads) || 0) + (Number(enrichedRow.tiktok_conversions) || 0);
+      totalLeads +=
+        (Number(enrichedRow.meta_leads) || 0) + (Number(enrichedRow.tiktok_conversions) || 0);
     });
 
     let actualValue = 0;
@@ -287,10 +304,18 @@ export async function testRule(ruleId: string) {
     let isTriggered = false;
     const threshold = Number(value);
     switch (operator) {
-      case '>': isTriggered = actualValue > threshold; break;
-      case '<': isTriggered = actualValue < threshold; break;
-      case '>=': isTriggered = actualValue >= threshold; break;
-      case '<=': isTriggered = actualValue <= threshold; break;
+      case '>':
+        isTriggered = actualValue > threshold;
+        break;
+      case '<':
+        isTriggered = actualValue < threshold;
+        break;
+      case '>=':
+        isTriggered = actualValue >= threshold;
+        break;
+      case '<=':
+        isTriggered = actualValue <= threshold;
+        break;
     }
 
     return {
@@ -308,9 +333,10 @@ export async function testRule(ruleId: string) {
       totalRevenue,
       totalLeads,
       tabBudget,
-      budgetWarning: metric === 'budget_percentage' && (!tabBudget || tabBudget <= 0)
-        ? 'Esta pestaña no tiene un Presupuesto Objetivo configurado. Ve a Ajustes de Sistema → Pestañas del cliente para configurarlo.'
-        : null,
+      budgetWarning:
+        metric === 'budget_percentage' && (!tabBudget || tabBudget <= 0)
+          ? 'Esta pestaña no tiene un Presupuesto Objetivo configurado. Ve a Ajustes de Sistema → Pestañas del cliente para configurarlo.'
+          : null,
     };
   } catch (err: any) {
     return { error: err.message || 'Error al probar regla' };
@@ -351,19 +377,17 @@ export async function updateBrandingSettings(brandingValue: {
   app_tag?: string;
   utm_name?: string;
   utm_tag?: string;
-  colors: { primary: string; secondary: string }
+  colors: { primary: string; secondary: string };
 }) {
   const guard = await requireSuperAdmin();
   if (!guard.ok) return { error: guard.error };
 
   const supabase = await createAdminClient();
-  const { error } = await supabase
-    .from('system_settings')
-    .upsert({
-      key: 'branding',
-      value: brandingValue,
-      updated_at: new Date().toISOString(),
-    });
+  const { error } = await supabase.from('system_settings').upsert({
+    key: 'branding',
+    value: brandingValue,
+    updated_at: new Date().toISOString(),
+  });
 
   if (error) {
     console.error('Error updating branding settings:', error);
@@ -378,4 +402,3 @@ export async function updateBrandingSettings(brandingValue: {
   revalidatePath('/', 'layout');
   return { success: true };
 }
-

@@ -10,7 +10,9 @@ export async function DELETE(
   try {
     const { id } = await params;
     const supabase = await createClient();
-    const { data: { user } } = await supabase.auth.getUser();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
 
     if (!user) {
       throw new ApiError('UNAUTHORIZED', 'Authentication required', 401);
@@ -32,14 +34,13 @@ export async function DELETE(
 }
 
 // PATCH /api/tokens/[id] — toggle is_active
-export async function PATCH(
-  request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
+export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params;
     const supabase = await createClient();
-    const { data: { user } } = await supabase.auth.getUser();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
 
     if (!user) {
       throw new ApiError('UNAUTHORIZED', 'Authentication required', 401);

@@ -27,14 +27,14 @@ En producción, mientras la flag no esté activa, el route group redirige a
 
 ## Aislamiento
 
-| Concepto | Ubicación |
-|---|---|
-| Tablas | schema Postgres `report_utm.*` (no `public.*`) |
-| Rutas UI | `src/app/(report-utm)/report-utm/**` |
-| API | `src/app/api/report-utm/**` (próximas fases) |
-| Sidebar | `src/components/report-utm/ReportUtmSidebar.tsx` |
-| Cliente Supabase | `src/lib/report-utm/client.ts` |
-| Tipos | `src/lib/report-utm/types.ts` |
+| Concepto         | Ubicación                                        |
+| ---------------- | ------------------------------------------------ |
+| Tablas           | schema Postgres `report_utm.*` (no `public.*`)   |
+| Rutas UI         | `src/app/(report-utm)/report-utm/**`             |
+| API              | `src/app/api/report-utm/**` (próximas fases)     |
+| Sidebar          | `src/components/report-utm/ReportUtmSidebar.tsx` |
+| Cliente Supabase | `src/lib/report-utm/client.ts`                   |
+| Tipos            | `src/lib/report-utm/types.ts`                    |
 
 `report_utm.clientes` tiene un FK opcional `public_cliente_id` por si
 después se quiere cruzar un cliente del módulo con uno del reporting principal,

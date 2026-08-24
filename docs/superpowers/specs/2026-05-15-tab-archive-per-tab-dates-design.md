@@ -41,8 +41,8 @@ Returns: `{ metrics: any[] } | null`
 
 ```typescript
 const [tabDateOverrides, setTabDateOverrides] = useState<
-    Record<string, { from: string; to: string }>
->({})
+  Record<string, { from: string; to: string }>
+>({});
 ```
 
 Initialized empty. Resets when archive closes (component unmounts).
@@ -63,15 +63,16 @@ Signature updated to accept overrides:
 
 ```typescript
 function computeCardValue(
-    card: CardDef,
-    tab: any,
-    metrics: any[],
-    campaignGroups: any[],
-    dateOverride?: { from: string; to: string }
-): number | null
+  card: CardDef,
+  tab: any,
+  metrics: any[],
+  campaignGroups: any[],
+  dateOverride?: { from: string; to: string }
+): number | null;
 ```
 
 Priority for date filtering:
+
 1. `dateOverride` (if present)
 2. `tab.fecha_inicio` / `tab.fecha_finalizacion` (configured)
 3. No filter (use all metrics)
@@ -81,9 +82,11 @@ Priority for date filtering:
 ## Files Changed
 
 ### 1. `src/app/(app)/dashboard/_actions.ts`
+
 - Add `getArchiveMetrics(clientId: string)` — no-filter metrics fetch + leads merge.
 
 ### 2. `src/app/(app)/dashboard/components/TabArchiveView.tsx`
+
 - Add `archiveMetrics` state (initialized from `metrics` prop).
 - Add `useEffect` to call `getArchiveMetrics` on mount.
 - Add `isLoadingArchive` boolean state for loading indicator.

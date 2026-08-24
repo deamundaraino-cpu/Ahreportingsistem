@@ -46,10 +46,10 @@ form-action 'self'
 
 ### Framing (clickjacking)
 
-| Rutas | Política |
-|-------|----------|
+| Rutas                | Política                                                     |
+| -------------------- | ------------------------------------------------------------ |
 | `/p/*` y `/report/*` | `frame-ancestors *` — **embebibles** en portales de clientes |
-| Resto | `X-Frame-Options: SAMEORIGIN` + `frame-ancestors 'self'` |
+| Resto                | `X-Frame-Options: SAMEORIGIN` + `frame-ancestors 'self'`     |
 
 ## Paquetes externos del servidor
 
@@ -57,7 +57,7 @@ form-action 'self'
 
 ## Monitoreo
 
-- **Health check**: `GET /api/health` (sin auth) verifica conexión a BD y variables de entorno. Responde 200 (`up`) o 503 (`degraded`/`down`). Útil como *uptime monitor*.
+- **Health check**: `GET /api/health` (sin auth) verifica conexión a BD y variables de entorno. Responde 200 (`up`) o 503 (`degraded`/`down`). Útil como _uptime monitor_.
 - **Logging**: `src/lib/error-handler.ts` provee `logger` (info/warn/error/debug) con salida JSON estructurada, listo para integrar Sentry u observabilidad posterior.
 - **Errores de API**: `ApiError` + `apiErrorResponse` devuelven respuestas consistentes con código, mensaje y (solo en dev) detalles.
 

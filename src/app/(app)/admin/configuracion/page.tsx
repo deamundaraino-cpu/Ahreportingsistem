@@ -16,7 +16,8 @@ import { redirect } from 'next/navigation';
 
 export const metadata = {
   title: 'Configuración y Alertas | AdsHouse',
-  description: 'Panel unificado de configuración de alertas condicionales, servidor MCP, WhatsApp y usuarios.',
+  description:
+    'Panel unificado de configuración de alertas condicionales, servidor MCP, WhatsApp y usuarios.',
 };
 
 export default async function ConfiguracionPage() {
@@ -74,8 +75,8 @@ export default async function ConfiguracionPage() {
     ('error' in waStatusRes
       ? (waStatusRes as any).error
       : waQrRes && 'error' in waQrRes
-      ? (waQrRes as any).error
-      : null) ?? null;
+        ? (waQrRes as any).error
+        : null) ?? null;
   const waQr = waQrRes && 'qr' in waQrRes ? ((waQrRes as any).qr ?? null) : null;
 
   return (
@@ -85,7 +86,8 @@ export default async function ConfiguracionPage() {
         <div>
           <h2 className="text-2xl font-bold text-foreground">Configuración Unificada</h2>
           <p className="text-muted-foreground">
-            Gestiona alertas condicionales, el servidor MCP, integraciones de WhatsApp y la administración de usuarios.
+            Gestiona alertas condicionales, el servidor MCP, integraciones de WhatsApp y la
+            administración de usuarios.
           </p>
         </div>
       </div>
@@ -112,4 +114,3 @@ export default async function ConfiguracionPage() {
     </div>
   );
 }
-

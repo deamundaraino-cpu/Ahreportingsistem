@@ -1,0 +1,8 @@
+# Revisiones que solo movieron formato. `git blame` las salta para que la
+# autoría real de cada línea siga siendo visible.
+#
+# Actívalo una vez por clon:
+#   git config blame.ignoreRevsFile .git-blame-ignore-revs
+#
+# Añade aquí el hash del commit de `npm run format` sobre todo el repo
+# (2026-08-24) cuando lo crees. Un hash por línea, con un comentario encima.

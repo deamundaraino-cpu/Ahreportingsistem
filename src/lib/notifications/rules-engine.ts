@@ -13,7 +13,8 @@ export interface RuleRow {
   metric: 'budget_percentage' | 'roas' | 'cpl' | 'spend' | 'revenue' | 'leads';
   operator: '>' | '<' | '>=' | '<=';
   value: number;
-  time_window: 'today' | 'yesterday' | 'last_7_days' | 'last_30_days' | 'current_tab_period' | 'custom_range';
+  time_window:
+    'today' | 'yesterday' | 'last_7_days' | 'last_30_days' | 'current_tab_period' | 'custom_range';
   custom_start: string | null;
   custom_end: string | null;
   channels: ('in_app' | 'whatsapp')[];
@@ -78,7 +79,7 @@ export async function evaluateAlertRules(
 
     // Build a Map keyed by "ruleId|clientId|tabId" for O(1) cooldown checks
     const cooldownMap = new Map<string, number>();
-    for (const cd of (cooldownRows ?? [])) {
+    for (const cd of cooldownRows ?? []) {
       const key = `${cd.rule_id}|${cd.cliente_id}|${cd.tab_id}`;
       cooldownMap.set(key, new Date(cd.last_triggered_at).getTime());
     }
@@ -102,7 +103,9 @@ export async function evaluateAlertRules(
           // A specific tab was configured – only use that one (and check it's not expired)
           const { data: tab } = await db
             .from('cliente_tabs')
-            .select('id, nombre, keyword_meta, presupuesto_objetivo, fecha_inicio, fecha_finalizacion')
+            .select(
+              'id, nombre, keyword_meta, presupuesto_objetivo, fecha_inicio, fecha_finalizacion'
+            )
             .eq('id', rule.tab_id)
             .single();
 
@@ -115,7 +118,9 @@ export async function evaluateAlertRules(
           // Active: fecha_finalizacion strictly > today (expired tabs are discarded)
           const { data: tabs } = await db
             .from('cliente_tabs')
-            .select('id, nombre, keyword_meta, presupuesto_objetivo, fecha_inicio, fecha_finalizacion')
+            .select(
+              'id, nombre, keyword_meta, presupuesto_objetivo, fecha_inicio, fecha_finalizacion'
+            )
             .eq('cliente_id', clientId)
             .gt('fecha_finalizacion', today); // strictly after today
 
@@ -155,15 +160,18 @@ export async function evaluateAlertRules(
               .from('metricas_diarias')
               .select(
                 'fecha, meta_spend, tiktok_spend, meta_campaigns, tiktok_campaigns, ' +
-                'ga_sessions, hotmart_pagos_iniciados, ventas_principal, ventas_bump, ' +
-                'ventas_upsell, metricas_manuales'
+                  'ga_sessions, hotmart_pagos_iniciados, ventas_principal, ventas_bump, ' +
+                  'ventas_upsell, metricas_manuales'
               )
               .eq('cliente_id', clientId)
               .gte('fecha', start)
               .lte('fecha', end);
 
             if (metricsError) {
-              console.error(`[rules-engine] Metrics query error for client ${clientId} tab ${tab.nombre}:`, metricsError.message);
+              console.error(
+                `[rules-engine] Metrics query error for client ${clientId} tab ${tab.nombre}:`,
+                metricsError.message
+              );
               continue;
             }
 
@@ -175,15 +183,14 @@ export async function evaluateAlertRules(
             let totalRevenue = 0;
             let totalLeads = 0;
 
-            for (const row of ((metricsRows ?? []) as any[])) {
+            for (const row of (metricsRows ?? []) as any[]) {
               const enrichedRow = enrichTikTokRow(
                 enrichMetaRow(row, keywordFilter, campaignGroups ?? []),
                 keywordFilter,
                 campaignGroups ?? []
               );
               totalSpend +=
-                (Number(enrichedRow.meta_spend) || 0) +
-                (Number(enrichedRow.tiktok_spend) || 0);
+                (Number(enrichedRow.meta_spend) || 0) + (Number(enrichedRow.tiktok_spend) || 0);
 
               const manuales = (row.metricas_manuales as Record<string, number>) ?? {};
               const ventasCerradas = Number(manuales['VENTAS_CERRADAS'] ?? 0);
@@ -230,10 +237,18 @@ export async function evaluateAlertRules(
             let isTriggered = false;
             const threshold = Number(rule.value);
             switch (rule.operator) {
-              case '>':  isTriggered = actualValue > threshold;  break;
-              case '<':  isTriggered = actualValue < threshold;  break;
-              case '>=': isTriggered = actualValue >= threshold; break;
-              case '<=': isTriggered = actualValue <= threshold; break;
+              case '>':
+                isTriggered = actualValue > threshold;
+                break;
+              case '<':
+                isTriggered = actualValue < threshold;
+                break;
+              case '>=':
+                isTriggered = actualValue >= threshold;
+                break;
+              case '<=':
+                isTriggered = actualValue <= threshold;
+                break;
             }
 
             if (isTriggered) {
@@ -241,26 +256,31 @@ export async function evaluateAlertRules(
 
               // J. Dispatch alert (in-app + WhatsApp based on rule.channels)
               await fireAlert(
-                db, rule, clientId, clientName,
-                tab.nombre, tab.id,
-                actualValue, start, end,
-                totalSpend, tabBudget
+                db,
+                rule,
+                clientId,
+                clientName,
+                tab.nombre,
+                tab.id,
+                actualValue,
+                start,
+                end,
+                totalSpend,
+                tabBudget
               );
 
               // K. Update per-tab cooldown in DB (skipped on forced manual
               // evaluation so it doesn't suppress the scheduled nightly run)
               if (!force) {
-                await db
-                  .from('notification_rule_cooldowns')
-                  .upsert(
-                    {
-                      rule_id: rule.id,
-                      cliente_id: clientId,
-                      tab_id: tab.id,
-                      last_triggered_at: new Date().toISOString(),
-                    },
-                    { onConflict: 'rule_id,cliente_id,tab_id' }
-                  );
+                await db.from('notification_rule_cooldowns').upsert(
+                  {
+                    rule_id: rule.id,
+                    cliente_id: clientId,
+                    tab_id: tab.id,
+                    last_triggered_at: new Date().toISOString(),
+                  },
+                  { onConflict: 'rule_id,cliente_id,tab_id' }
+                );
 
                 // Update in-memory map to prevent double-firing in same evaluation pass
                 cooldownMap.set(cooldownKey, Date.now());

@@ -13,22 +13,24 @@ Mientras la flag esté desactivada, el route group redirige a `/dashboard` y el 
 
 ## Aislamiento
 
-| Concepto | Ubicación |
-|----------|-----------|
-| Tablas | schema `report_utm.*` |
-| Rutas UI | `src/app/(report-utm)/report-utm/**` |
-| API | `src/app/api/report-utm/**` + `/t/[slug]` |
-| Sidebar | `src/components/report-utm/ReportUtmSidebar.tsx` |
+| Concepto         | Ubicación                                                                  |
+| ---------------- | -------------------------------------------------------------------------- |
+| Tablas           | schema `report_utm.*`                                                      |
+| Rutas UI         | `src/app/(report-utm)/report-utm/**`                                       |
+| API              | `src/app/api/report-utm/**` + `/t/[slug]`                                  |
+| Sidebar          | `src/components/report-utm/ReportUtmSidebar.tsx`                           |
 | Cliente Supabase | `src/lib/report-utm/client.ts` (`reportUtmClient`, `reportUtmAdminClient`) |
-| Tipos | `src/lib/report-utm/types.ts` |
-| Lógica | `src/lib/report-utm/*` |
+| Tipos            | `src/lib/report-utm/types.ts`                                              |
+| Lógica           | `src/lib/report-utm/*`                                                     |
 
 `report_utm.clientes` tiene un FK opcional `public_cliente_id` para cruzar (si se quiere) con un cliente del reporting principal; por defecto son universos separados.
 
 ## Las tres piezas de tracking
 
 ### 1. Enlaces de tracking (`/t/[slug]`)
+
 Enlaces cortos con UTMs predefinidos (`report_utm.tracking_links`). Cuando alguien visita `/t/[slug]` (`src/app/t/[slug]/route.ts`):
+
 1. Resuelve el slug → `destination_url` + UTMs.
 2. Setea **cookies de atribución** de primera parte (ver abajo).
 3. Incrementa `clicks_count` y `last_click_at`.
@@ -38,7 +40,9 @@ Enlaces cortos con UTMs predefinidos (`report_utm.tracking_links`). Cuando algui
 Gestión en `/report-utm/links`.
 
 ### 2. Pixel JavaScript
+
 Snippet (`public/report-utm-pixel.js`) que el cliente embebe en su sitio. Envía eventos a `POST /api/report-utm/pixel/event` (público, CORS `*`):
+
 - Tipos: `pageview` (automático), `click`, `custom`.
 - Datos: `cliente_slug`, `visitor_id`, `session_id`, `page_url`, `referrer`, UTMs, `click_id`, `custom_data`.
 - El endpoint resuelve el slug → cliente, valida que esté `active`, y guarda en `report_utm.pixel_events` (captura IP/país/User-Agent de cabeceras).
@@ -46,7 +50,9 @@ Snippet (`public/report-utm-pixel.js`) que el cliente embebe en su sitio. Envía
 Snippet y stream de eventos en `/report-utm/pixel`.
 
 ### 3. Webhook de ventas (Hotmart)
+
 `POST /api/report-utm/webhooks/hotmart/[clienteId]`:
+
 1. Valida la **firma** del webhook (ver auth abajo).
 2. Parsea el payload tolerante a versiones (`hotmart-parser.ts`).
 3. Hace `upsert` en `report_utm.sales_events` (dedupe por `cliente_id + platform + platform_sale_id`).
@@ -59,12 +65,12 @@ Códigos: 201 ok · 404 sin integración · 403 pausada · 401 firma inválida �
 
 `src/lib/report-utm/attribution-cookies.ts`. Son cookies de **primera parte**, accesibles por JS (`httpOnly: false`):
 
-| Cookie | Contenido | Duración |
-|--------|-----------|----------|
-| `rutm_vid` | Visitor ID persistente | 90 días |
-| `rutm_sid` | Session ID | 30 min de inactividad |
-| `rutm_ft` | First-touch (JSON: source, campaign, click_id, ts, referrer) | persistente |
-| `rutm_lt` | Last-touch (se sobrescribe en cada toque) | persistente |
+| Cookie     | Contenido                                                    | Duración              |
+| ---------- | ------------------------------------------------------------ | --------------------- |
+| `rutm_vid` | Visitor ID persistente                                       | 90 días               |
+| `rutm_sid` | Session ID                                                   | 30 min de inactividad |
+| `rutm_ft`  | First-touch (JSON: source, campaign, click_id, ts, referrer) | persistente           |
+| `rutm_lt`  | Last-touch (se sobrescribe en cada toque)                    | persistente           |
 
 `buildTouchFromUrl()` extrae UTMs + click IDs (`fbclid`, `gclid`, `ttclid`, `click_id`) y solo registra un "touch" si hay señal de atribución.
 
@@ -92,6 +98,7 @@ AttributionResult = {
 ## Verificación de firma (webhook entrante)
 
 `src/lib/report-utm/webhook-auth.ts` → `verifyWebhookSignature()`. Dos métodos:
+
 - **HMAC** (recomendado): `x-hotmart-signature` = `HMAC-SHA256(secret, rawBody)`.
 - **Hottok** (legacy): `x-hotmart-hottok`, `?hottok=` o `body.hottok` comparado contra el secreto.
 
@@ -100,6 +107,7 @@ Usa `crypto.timingSafeEqual` (anti timing-attack). `generateWebhookSecret()` cre
 ## Parser de Hotmart
 
 `src/lib/report-utm/hotmart-parser.ts` → `parseHotmartPayload()`. Tolerante a múltiples formas (v2 `data.purchase`, v1 `event.data.purchase`, `purchase` directo). Mapea el evento a `status`:
+
 - `PURCHASE_APPROVED`/`COMPLETE` → `approved`
 - `PURCHASE_BILLET_PRINTED`/`PROTEST`/`DELAYED` → `pending`
 - `PURCHASE_REFUNDED`/`CANCELED` → `refunded`
@@ -110,6 +118,7 @@ Extrae monto, moneda, producto, comprador, `transaction_type` (bump/upsell/subsc
 ## Webhooks salientes
 
 `src/lib/report-utm/outbound-emitter.ts` → `emitOutboundForSale()`. Para cada webhook habilitado que coincida con el `event_type`:
+
 1. Firma el payload (HMAC-SHA256 con el secreto del suscriptor).
 2. POST con cabeceras `X-Rutm-Signature`, `X-Rutm-Event`, `X-Rutm-Delivery-Id`.
 3. Registra el intento en `outbound_deliveries` (status, error, `duration_ms`).
@@ -120,6 +129,7 @@ Tipos de evento: `sale.approved`, `sale.pending`, `sale.refunded`, `sale.chargeb
 ## Agregación horaria
 
 `src/lib/report-utm/aggregate.ts` → `aggregateHourlyMetrics({ sinceISO, untilISO?, clienteId? })`:
+
 - Agrupa `sales_events` por `(cliente_id, hora, utm_source, utm_campaign)`.
 - Cuenta ventas aprobadas y reembolsos/chargebacks por separado.
 - Borra los buckets afectados y reinserta (idempotente) en `hourly_metrics`.
@@ -129,6 +139,7 @@ Se ejecuta vía `GET/POST /api/cron/report-utm/aggregate` (cron diario). Botón 
 ## Analítica de atribución (`/report-utm/atribucion`)
 
 Dashboard que agrega `sales_events` en vivo:
+
 - KPIs: eventos totales, revenue aprobado, AOV, fuentes distintas.
 - Gráficos: tendencia de revenue diaria, distribución por fuente.
 - Tablas: top sources (ventas, revenue, AOV, % del total) y **matriz UTM** (source × campaign con reembolsos).
@@ -143,4 +154,4 @@ Componentes en `src/components/report-utm/`: `AttributionCharts`, `AttributionBa
 - **Fase 3** — Tracking links `/t/:slug` + pixel JS
 - **Fase 4** — Meta CAPI outbound + reglas / automatizaciones
 
-> Referencia original: [`src/app/(report-utm)/README.md`](../src/app/(report-utm)/README.md).
+> Referencia original: [`src/app/(report-utm)/README.md`](<../src/app/(report-utm)/README.md>).

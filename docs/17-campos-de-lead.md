@@ -19,20 +19,20 @@ cruda (`field:<clave>`), pero el dato crudo no cuadra para cruzarlo:
 
 **La misma pregunta llega con claves distintas** según el formulario:
 
-| Origen | Clave en `raw_fields` | Leads |
-|---|---|---|
-| Meta Lead Ads | `cual_es_tu_rango_de_ingresos` | 10.404 |
-| Formulario web | `¿cuál_es_tu_rango_aproximado_de_ingresos?` | 1.725 |
-| GoHighLevel | `Rango de ingresos` (el nombre del campo personalizado) | — |
+| Origen         | Clave en `raw_fields`                                   | Leads  |
+| -------------- | ------------------------------------------------------- | ------ |
+| Meta Lead Ads  | `cual_es_tu_rango_de_ingresos`                          | 10.404 |
+| Formulario web | `¿cuál_es_tu_rango_aproximado_de_ingresos?`             | 1.725  |
+| GoHighLevel    | `Rango de ingresos` (el nombre del campo personalizado) | —      |
 
 Son dos dimensiones separadas: ningún informe suma los 12.129 leads.
 
 **El mismo valor se escribe de varias formas** y cuenta doble:
 
-| Respuesta | Leads |
-|---|---|
-| `Entre $2.000.000 a $3.000.000` | 424 |
-| `Entre $2.000.000 – $3.000.000` | 30 |
+| Respuesta                       | Leads |
+| ------------------------------- | ----- |
+| `Entre $2.000.000 a $3.000.000` | 424   |
+| `Entre $2.000.000 – $3.000.000` | 30    |
 
 Además Meta normaliza a snake_case (`entre_$2.000.000_y_$4.000.000`), feo en un
 informe de cliente, y los rangos se ordenan alfabéticamente en vez de de menor a
@@ -154,7 +154,7 @@ consultar, así que editar una agrupación se ve en el informe al recargar.
 - **Slicer**: un widget de tipo Slicer sobre el campo deja que el cliente
   cambie el valor desde el informe compartido.
 - **Tabla dinámica**: como dimensión secundaria, ej. `Campaña × Rango de
-  ingresos`.
+ingresos`.
 
 ### Filtrar anula el gasto; medir con un segmento no
 
@@ -188,20 +188,20 @@ está el campo con su valor, que sí es honesto sobre el gasto.
 
 ## Detalle técnico
 
-| Pieza | Dónde |
-|---|---|
-| Tabla del campo | `report_utm.lead_campos` (migración `060`) |
-| Tabla del segmento | `report_utm.lead_campo_segmentos` (migración `073`) |
-| Bloque del dashboard | `LeadAnswerBlockDef` + RPC `bi_respuestas_por_dia` (migración `071`) |
-| Lógica pura | [`src/lib/report-utm/lead-campos.ts`](../src/lib/report-utm/lead-campos.ts) |
-| Lectura/escritura y detección | [`src/lib/report-utm/lead-campos-db.ts`](../src/lib/report-utm/lead-campos-db.ts) |
-| Token del campo | `leadfield:<clave>` (dimensión y filtro) |
-| Token del segmento | `leadseg:<clave>` (métrica) · alias de fórmula `lseg__<clave>` |
-| Métrica por respuesta | `lf__<campo>__<respuesta>` — solo en el dashboard, derivada de los buckets |
-| API | `/api/report-utm/lead-campos`, `/lead-campos/detectar`, `/lead-campos/segmentos`, `/api/report-utm/bi/lead-fields` |
-| UI | [`LeadCamposCard`](../src/components/report-utm/LeadCamposCard.tsx) + [`LeadSegmentosEditor`](../src/components/report-utm/LeadSegmentosEditor.tsx) |
-| Comprobaciones | `npx tsx scripts/verify-lead-segmentos.ts` (puro) · `verify-lead-segmentos-db.ts` (datos reales) · `verify-lead-campos.ts` |
-| Migración de datos | `npx tsx scripts/migrar-segmentos-lead.ts` (informe · `--aplicar` · `--revertir`) |
+| Pieza                         | Dónde                                                                                                                                               |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Tabla del campo               | `report_utm.lead_campos` (migración `060`)                                                                                                          |
+| Tabla del segmento            | `report_utm.lead_campo_segmentos` (migración `073`)                                                                                                 |
+| Bloque del dashboard          | `LeadAnswerBlockDef` + RPC `bi_respuestas_por_dia` (migración `071`)                                                                                |
+| Lógica pura                   | [`src/lib/report-utm/lead-campos.ts`](../src/lib/report-utm/lead-campos.ts)                                                                         |
+| Lectura/escritura y detección | [`src/lib/report-utm/lead-campos-db.ts`](../src/lib/report-utm/lead-campos-db.ts)                                                                   |
+| Token del campo               | `leadfield:<clave>` (dimensión y filtro)                                                                                                            |
+| Token del segmento            | `leadseg:<clave>` (métrica) · alias de fórmula `lseg__<clave>`                                                                                      |
+| Métrica por respuesta         | `lf__<campo>__<respuesta>` — solo en el dashboard, derivada de los buckets                                                                          |
+| API                           | `/api/report-utm/lead-campos`, `/lead-campos/detectar`, `/lead-campos/segmentos`, `/api/report-utm/bi/lead-fields`                                  |
+| UI                            | [`LeadCamposCard`](../src/components/report-utm/LeadCamposCard.tsx) + [`LeadSegmentosEditor`](../src/components/report-utm/LeadSegmentosEditor.tsx) |
+| Comprobaciones                | `npx tsx scripts/verify-lead-segmentos.ts` (puro) · `verify-lead-segmentos-db.ts` (datos reales) · `verify-lead-campos.ts`                          |
+| Migración de datos            | `npx tsx scripts/migrar-segmentos-lead.ts` (informe · `--aplicar` · `--revertir`)                                                                   |
 
 El alias del segmento es **la misma cadena en el BI y en el dashboard**
 (`lseg__<clave>`), a diferencia de los campos de Sheet (`sf__` / `sf_`), que

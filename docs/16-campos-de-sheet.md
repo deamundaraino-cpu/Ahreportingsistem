@@ -14,9 +14,9 @@ Para el detalle técnico (tokens, tablas, límites del motor) ver
 Un cliente recoge leads con varios formularios, cada uno con su propia pestaña en
 el Sheet. La misma pregunta se llama distinto en cada uno:
 
-| Pestaña | Columna |
-|---|---|
-| `form filtro logico` | `rango de ingresos` |
+| Pestaña                                   | Columna                        |
+| ----------------------------------------- | ------------------------------ |
+| `form filtro logico`                      | `rango de ingresos`            |
 | `Formulario filtro logico- Abril 2026 V2` | `cual_es_tu_rango_de_ingresos` |
 
 Y las respuestas también se escriben distinto: `entre_$1.300.000_a_$1.600.000` en
@@ -99,15 +99,15 @@ y el motivo sale como aviso junto al resultado.
 
 Card **"Campos de Sheet"**, justo debajo de la de Sheets.
 
-> Si dice *"Aún no hay pestañas sincronizadas"*, falta el paso 5.
+> Si dice _"Aún no hay pestañas sincronizadas"_, falta el paso 5.
 
 ### 6. `Agregar campo`
 
-| Ajuste | Ejemplo | Qué significa |
-|---|---|---|
-| **Nombre** | `Rango de ingresos` | El que verás en informes, dashboards y fórmulas |
-| **Se usa como** | `Categoría` | Categoría = agrupar y filtrar · Número = sumar/promediar |
-| **Se mide** | `Contando filas` | Cómo se calcula por defecto |
+| Ajuste          | Ejemplo             | Qué significa                                            |
+| --------------- | ------------------- | -------------------------------------------------------- |
+| **Nombre**      | `Rango de ingresos` | El que verás en informes, dashboards y fórmulas          |
+| **Se usa como** | `Categoría`         | Categoría = agrupar y filtrar · Número = sumar/promediar |
+| **Se mide**     | `Contando filas`    | Cómo se calcula por defecto                              |
 
 ### 7. Di dónde está el dato
 
@@ -166,12 +166,12 @@ más. Son gratis: crea una por cada corte que vayas a mirar seguido.
 
 ### 13. `Añadir vista`
 
-| Ajuste | Ejemplo |
-|---|---|
-| **Nombre** | `Leads alto ingreso` |
-| **Se mide** | `Contar filas` |
+| Ajuste        | Ejemplo                                       |
+| ------------- | --------------------------------------------- |
+| **Nombre**    | `Leads alto ingreso`                          |
+| **Se mide**   | `Contar filas`                                |
 | **Condición** | `Donde sea` (o `Excepto` para el complemento) |
-| **Valores** | `$2M - $4M`, `Más de $4M` |
+| **Valores**   | `$2M - $4M`, `Más de $4M`                     |
 
 ### 14. `Crear vista`
 
@@ -183,13 +183,13 @@ No requiere recálculo: se evalúa sobre el desglose que el campo ya dejó guard
 
 ### En un informe del BI (`/report-utm/informes`)
 
-| Quiero… | Widget | Configuración |
-|---|---|---|
-| El número de leads del rango alto | Scorecard | Métrica: `Leads alto ingreso` |
-| Su evolución | Gráfica de líneas | Dimensión `Fecha` + la vista |
-| El reparto por rango | Barras | Dimensión `Rango de ingresos` |
-| Filtrar el informe entero | Slicer | Sobre el campo |
-| El CPL de los leads buenos | Campo calculado | `meta_spend / sv__leads_alto_ingreso` |
+| Quiero…                           | Widget            | Configuración                         |
+| --------------------------------- | ----------------- | ------------------------------------- |
+| El número de leads del rango alto | Scorecard         | Métrica: `Leads alto ingreso`         |
+| Su evolución                      | Gráfica de líneas | Dimensión `Fecha` + la vista          |
+| El reparto por rango              | Barras            | Dimensión `Rango de ingresos`         |
+| Filtrar el informe entero         | Slicer            | Sobre el campo                        |
+| El CPL de los leads buenos        | Campo calculado   | `meta_spend / sv__leads_alto_ingreso` |
 
 ### En el dashboard del cliente
 
@@ -240,13 +240,13 @@ evolución temporal, usa dimensión `Fecha`.
 
 ## Diagnóstico
 
-| Síntoma | Causa habitual |
-|---|---|
-| "Aún no hay pestañas sincronizadas" | Falta sincronizar el Sheet (paso 5) |
-| El campo no encuentra valores | La columna marcada no es la que tiene el dato, o la pestaña no está habilitada |
-| Se importaron 0 filas | Columna de fecha mal escrita, o falta `Cada fila es una conversión` |
-| Aparece el aviso "muchos valores" | El campo apunta a algo de alta cardinalidad (correo, id). Deja de ofrecerse como categoría y el excedente cae en `(otros)` |
-| Los leads no suman en `offline_leads` | Falta `Tipo fijo → Todas son leads` |
+| Síntoma                               | Causa habitual                                                                                                             |
+| ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| "Aún no hay pestañas sincronizadas"   | Falta sincronizar el Sheet (paso 5)                                                                                        |
+| El campo no encuentra valores         | La columna marcada no es la que tiene el dato, o la pestaña no está habilitada                                             |
+| Se importaron 0 filas                 | Columna de fecha mal escrita, o falta `Cada fila es una conversión`                                                        |
+| Aparece el aviso "muchos valores"     | El campo apunta a algo de alta cardinalidad (correo, id). Deja de ofrecerse como categoría y el excedente cae en `(otros)` |
+| Los leads no suman en `offline_leads` | Falta `Tipo fijo → Todas son leads`                                                                                        |
 
 El estado del último sync por sheet (filas importadas, descartadas y avisos por
 pestaña) se muestra en la propia card de Sheets.

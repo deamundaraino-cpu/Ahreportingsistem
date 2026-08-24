@@ -4,11 +4,11 @@ Sistema para generar reportes mensuales por cliente a partir de plantillas, revi
 
 ## Componentes
 
-| Pieza | Ubicación |
-|-------|-----------|
-| Tablas | `report_templates`, `monthly_reports` (migración 004) |
-| Gestión (admin) | `/admin/reports`, `/admin/reports/[id]` |
-| Vista pública por slug | `/report/monthly/[slug]` |
+| Pieza                  | Ubicación                                             |
+| ---------------------- | ----------------------------------------------------- |
+| Tablas                 | `report_templates`, `monthly_reports` (migración 004) |
+| Gestión (admin)        | `/admin/reports`, `/admin/reports/[id]`               |
+| Vista pública por slug | `/report/monthly/[slug]`                              |
 
 > **Retirado:** la pestaña «📊 Reporte Mensual» del dashboard de cliente
 > (`MonthlyReportTab.tsx`), su API `GET/POST /api/reports/monthly` y su vista pública
@@ -49,4 +49,3 @@ borrador → revision → aprobado → publicado
 5. Avanzar el estado hasta `publicado` para exponerlo públicamente.
 
 Server actions en `(app)/admin/reports/_actions.ts`: `getMonthlyReports`, `getMonthlyReport`, `getReportTemplates`, `discoverCampaigns`, `createMonthlyReport`, `updateMonthlyReport`.
-

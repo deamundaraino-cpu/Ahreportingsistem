@@ -11,7 +11,9 @@ La política de seguridad (CSP) prohíbe `eval` y `new Function`. Por eso el mot
 Una fórmula puede mezclar tres tipos de identificadores, que se resuelven en cascada:
 
 ### 1. Campos (`FIELD_MAP`)
+
 ~85 campos crudos que existen (o se inyectan) en la fila de métricas. Categorías:
+
 - **Meta — entrega**: `meta_spend`, `meta_impressions`, `meta_reach`, `meta_frequency`, `meta_clicks`, `meta_link_clicks`.
 - **Meta — eventos de pixel**: `meta_leads`, `meta_purchases`, `meta_adds_to_cart`, `meta_initiates_checkout`, `meta_landing_page_views`, `meta_complete_registration`, `meta_view_content`, `meta_contact`, `meta_schedule`, `meta_results`, etc.
 - **Meta — video**: `meta_video_views`, `meta_video_3s_views`, `meta_video_thruplay`.
@@ -24,9 +26,11 @@ Una fórmula puede mezclar tres tipos de identificadores, que se resuelven en ca
 - **Leads (Google Sheets)**: `leads_totales`, `leads_calificados`, `leads_no_calificados`, `tasa_calificacion`.
 
 ### 2. Macros (`MACRO_MAP`)
+
 Métricas derivadas que se definen como **fórmulas**, no como valores. Se expanden recursivamente antes de evaluar. Esto garantiza una **agregación correcta**: al sumar varios días no se promedian CPCs, sino que se divide el spend total entre los clics totales.
 
 Ejemplos:
+
 ```
 meta_cpc  = meta_spend / meta_clicks
 meta_cpm  = (meta_spend / meta_impressions) * 1000
@@ -48,15 +52,16 @@ total_roas = (ventas_principal + ventas_bump + ventas_upsell) / meta_spend
 La expansión detecta **referencias circulares** y devuelve `'0'` para romper ciclos.
 
 ### 3. Alias semánticos (`SEMANTIC_ALIASES`)
+
 Nombres de alto nivel (empiezan con `$`) que el usuario elige en el Layout Builder y que se mapean a un campo concreto según el `source_mapping` del layout. Permiten que un mismo layout funcione con distintas fuentes.
 
-| Alias | Fuente por defecto | Alternativas |
-|-------|--------------------|--------------|
-| `$visitas` | `ga_sessions` | `meta_landing_page_views`, `meta_link_clicks` |
-| `$pagos_iniciados` | `hotmart_pagos_iniciados` | `meta_initiates_checkout`, `meta_adds_to_cart` |
-| `$conversiones` | `meta_purchases` | `meta_leads`, `meta_complete_registration` |
-| `$facturacion_principal/bump/upsell` | `ventas_*` | — |
-| `$funnel.*` | `funnel_*` | (se inyectan según la pestaña activa) |
+| Alias                                | Fuente por defecto        | Alternativas                                   |
+| ------------------------------------ | ------------------------- | ---------------------------------------------- |
+| `$visitas`                           | `ga_sessions`             | `meta_landing_page_views`, `meta_link_clicks`  |
+| `$pagos_iniciados`                   | `hotmart_pagos_iniciados` | `meta_initiates_checkout`, `meta_adds_to_cart` |
+| `$conversiones`                      | `meta_purchases`          | `meta_leads`, `meta_complete_registration`     |
+| `$facturacion_principal/bump/upsell` | `ventas_*`                | —                                              |
+| `$funnel.*`                          | `funnel_*`                | (se inyectan según la pestaña activa)          |
 
 ## Resolución con fallback de plataforma
 
@@ -68,17 +73,17 @@ Nombres de alto nivel (empiezan con `$`) que el usuario elige en el Layout Build
 
 ## Funciones principales
 
-| Función | Propósito |
-|---------|-----------|
-| `evaluateFormula(formula, row, context?, sourceMapping?, availablePlatforms?, customMetrics?)` | Evalúa una fórmula sobre **una fila**. Devuelve `number` o `null` (división por cero, NaN, infinito o campo faltante). |
-| `aggregateFormula(formula, rows[], …)` | Evalúa sobre **varias filas** sumando numeradores y denominadores por separado (agregación correcta de ratios). |
-| `resolveAliases(formula, mapping?)` | Sustituye alias `$…` por campos (orden por longitud descendente para evitar colisiones de prefijos). |
-| `resolveAliasesWithFallback(…)` | Igual, con fallback de plataforma. |
-| `expandFormulaRecursive(formula, macroMap, path?)` | Expande macros y métricas custom con detección de ciclos. |
-| `safeEvalArithmetic(input)` | Parser de descenso recursivo (sin `eval`). |
-| `filterRowByTikTokAccount(row, accountId, filter?, campaignGroups?)` | Recalcula métricas TikTok sumando solo las campañas que coinciden con el `advertiser_id` **y** (opcional) un filtro de nombre keyword/grupo/spec. Ambos predicados se aplican sobre la misma lista `tiktok_campaigns`. |
-| `enrichTikTokRow(row, filter, campaignGroups?)` (en `campaign-filter.ts`) | Análogo de `enrichMetaRow` para TikTok: recalcula `tiktok_spend/impressions/clicks/conversions` desde las campañas de `tiktok_campaigns` que coinciden con el filtro. Conserva `tiktok_campaigns` intacto. |
-| `formatValue(value, { prefix, suffix, decimals })` | Formatea para mostrar (moneda, %, decimales). |
+| Función                                                                                        | Propósito                                                                                                                                                                                                              |
+| ---------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `evaluateFormula(formula, row, context?, sourceMapping?, availablePlatforms?, customMetrics?)` | Evalúa una fórmula sobre **una fila**. Devuelve `number` o `null` (división por cero, NaN, infinito o campo faltante).                                                                                                 |
+| `aggregateFormula(formula, rows[], …)`                                                         | Evalúa sobre **varias filas** sumando numeradores y denominadores por separado (agregación correcta de ratios).                                                                                                        |
+| `resolveAliases(formula, mapping?)`                                                            | Sustituye alias `$…` por campos (orden por longitud descendente para evitar colisiones de prefijos).                                                                                                                   |
+| `resolveAliasesWithFallback(…)`                                                                | Igual, con fallback de plataforma.                                                                                                                                                                                     |
+| `expandFormulaRecursive(formula, macroMap, path?)`                                             | Expande macros y métricas custom con detección de ciclos.                                                                                                                                                              |
+| `safeEvalArithmetic(input)`                                                                    | Parser de descenso recursivo (sin `eval`).                                                                                                                                                                             |
+| `filterRowByTikTokAccount(row, accountId, filter?, campaignGroups?)`                           | Recalcula métricas TikTok sumando solo las campañas que coinciden con el `advertiser_id` **y** (opcional) un filtro de nombre keyword/grupo/spec. Ambos predicados se aplican sobre la misma lista `tiktok_campaigns`. |
+| `enrichTikTokRow(row, filter, campaignGroups?)` (en `campaign-filter.ts`)                      | Análogo de `enrichMetaRow` para TikTok: recalcula `tiktok_spend/impressions/clicks/conversions` desde las campañas de `tiktok_campaigns` que coinciden con el filtro. Conserva `tiktok_campaigns` intacto.             |
+| `formatValue(value, { prefix, suffix, decimals })`                                             | Formatea para mostrar (moneda, %, decimales).                                                                                                                                                                          |
 
 ### Pipeline de `evaluateFormula`
 

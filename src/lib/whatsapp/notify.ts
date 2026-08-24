@@ -119,12 +119,7 @@ export async function sendWhatsAppNotification(
 ): Promise<SendNotificationResult> {
   const { db, clienteId, notificationType, message, includeTeamAlertGroup } = args;
 
-  const groups = await resolveTargetGroups(
-    db,
-    clienteId,
-    notificationType,
-    includeTeamAlertGroup
-  );
+  const groups = await resolveTargetGroups(db, clienteId, notificationType, includeTeamAlertGroup);
   if (groups.length === 0) {
     return { sent: 0, failed: 0, skipped: true };
   }

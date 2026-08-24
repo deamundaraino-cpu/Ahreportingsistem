@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useSyncExternalStore } from 'react';
 import { useTheme } from 'next-themes';
 import { Monitor, Moon, Sun } from 'lucide-react';
 
@@ -10,11 +10,18 @@ const OPTIONS = [
   { value: 'system', icon: Monitor, label: 'Tema del sistema' },
 ] as const;
 
+/** Store inmutable: nunca notifica, solo sirve para distinguir servidor de cliente. */
+const subscribeNada = () => () => {};
+
 export function ThemeToggle({ className = '' }: { className?: string }) {
   const { theme, setTheme } = useTheme();
-  const [mounted, setMounted] = useState(false);
-
-  useEffect(() => setMounted(true), []);
+  // En el servidor no hay tema resuelto todavía; hasta que hidrata no se
+  // marca ninguna opción como activa para no provocar un mismatch.
+  const mounted = useSyncExternalStore(
+    subscribeNada,
+    () => true,
+    () => false
+  );
 
   return (
     <div

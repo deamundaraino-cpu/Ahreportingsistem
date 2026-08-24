@@ -5,7 +5,14 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
 import {
   Dialog,
   DialogContent,
@@ -16,7 +23,13 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { ApiTokensManager } from '@/components/api-tokens/ApiTokensManager';
 import { toast } from 'sonner';
 import {
@@ -184,8 +197,12 @@ export function ConfiguracionClient({
   const [logoUrl, setLogoUrl] = useState<string>(initialBranding?.logo_url || '');
   const [faviconUrl, setFaviconUrl] = useState<string>(initialBranding?.favicon_url || '');
   const [uploadingFavicon, setUploadingFavicon] = useState<boolean>(false);
-  const [primaryColor, setPrimaryColor] = useState<string>(initialBranding?.colors?.primary || '#1E6AB5');
-  const [secondaryColor, setSecondaryColor] = useState<string>(initialBranding?.colors?.secondary || '#E53529');
+  const [primaryColor, setPrimaryColor] = useState<string>(
+    initialBranding?.colors?.primary || '#1E6AB5'
+  );
+  const [secondaryColor, setSecondaryColor] = useState<string>(
+    initialBranding?.colors?.secondary || '#E53529'
+  );
   const [appName, setAppName] = useState<string>(initialBranding?.app_name || 'AdsHouse');
   const [appTag, setAppTag] = useState<string>(initialBranding?.app_tag || 'Reporting');
   const [utmName, setUtmName] = useState<string>(initialBranding?.utm_name || 'Report-UTM');
@@ -224,9 +241,9 @@ export function ConfiguracionClient({
 
       if (uploadError) throw uploadError;
 
-      const { data: { publicUrl } } = supabase.storage
-        .from('bitacoras-images')
-        .getPublicUrl(filePath);
+      const {
+        data: { publicUrl },
+      } = supabase.storage.from('bitacoras-images').getPublicUrl(filePath);
 
       setLogoUrl(publicUrl);
       toast.success('Logo subido e incorporado correctamente');
@@ -261,9 +278,9 @@ export function ConfiguracionClient({
 
       if (uploadError) throw uploadError;
 
-      const { data: { publicUrl } } = supabase.storage
-        .from('bitacoras-images')
-        .getPublicUrl(filePath);
+      const {
+        data: { publicUrl },
+      } = supabase.storage.from('bitacoras-images').getPublicUrl(filePath);
 
       setFaviconUrl(publicUrl);
       toast.success('Favicon subido correctamente');
@@ -294,7 +311,7 @@ export function ConfiguracionClient({
 
       const res = await updateBrandingSettings(payload);
       if (res.error) throw new Error(res.error);
-      
+
       toast.success('Personalización y Branding guardados. La página se actualizará.');
       // Refresh the page to reload variables
       setTimeout(() => {
@@ -315,7 +332,8 @@ export function ConfiguracionClient({
   const [selectedMetric, setSelectedMetric] = useState<RuleRow['metric']>('budget_percentage');
   const [selectedOperator, setSelectedOperator] = useState<RuleRow['operator']>('>=');
   const [thresholdValue, setThresholdValue] = useState('');
-  const [selectedWindow, setSelectedWindow] = useState<RuleRow['time_window']>('current_tab_period');
+  const [selectedWindow, setSelectedWindow] =
+    useState<RuleRow['time_window']>('current_tab_period');
   const [customStart, setCustomStart] = useState('');
   const [customEnd, setCustomEnd] = useState('');
   const [channelInApp, setChannelInApp] = useState(true);
@@ -454,9 +472,7 @@ export function ConfiguracionClient({
     try {
       const res = await updateNotificationRule(rule.id, { enabled: val });
       if (res.error) throw new Error(res.error);
-      setRules((prev) =>
-        prev.map((r) => (r.id === rule.id ? { ...r, enabled: val } : r))
-      );
+      setRules((prev) => prev.map((r) => (r.id === rule.id ? { ...r, enabled: val } : r)));
       toast.success(val ? 'Regla habilitada' : 'Regla deshabilitada');
     } catch (err: any) {
       toast.error(err.message || 'Error al actualizar regla');
@@ -554,7 +570,8 @@ export function ConfiguracionClient({
             <div>
               <h3 className="text-xl font-bold text-foreground">Configurador de Alertas</h3>
               <p className="text-sm text-muted-foreground">
-                Configura límites para ROAS, presupuestos o CPL y recibe avisos por WhatsApp e in-app.
+                Configura límites para ROAS, presupuestos o CPL y recibe avisos por WhatsApp e
+                in-app.
               </p>
             </div>
             <div className="flex gap-2">
@@ -567,7 +584,10 @@ export function ConfiguracionClient({
                 <RotateCcw className={`h-4 w-4 ${isEvaluating ? 'animate-spin' : ''}`} />
                 Evaluar Ahora
               </Button>
-              <Button onClick={handleOpenNewDialog} className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-500 text-white font-medium">
+              <Button
+                onClick={handleOpenNewDialog}
+                className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-500 text-white font-medium"
+              >
                 <Plus className="h-4 w-4" />
                 Nueva Regla
               </Button>
@@ -586,8 +606,14 @@ export function ConfiguracionClient({
                 <div className="p-12 text-center text-muted-foreground">
                   <VolumeX className="h-10 w-10 text-muted-foreground/50 mx-auto mb-3" />
                   <p className="text-base font-semibold">No hay reglas de alerta configuradas</p>
-                  <p className="text-sm mt-1 mb-4">Crea tu primera regla para empezar a monitorear presupuestos y ROAS.</p>
-                  <Button variant="outline" onClick={handleOpenNewDialog} className="border-border hover:bg-muted">
+                  <p className="text-sm mt-1 mb-4">
+                    Crea tu primera regla para empezar a monitorear presupuestos y ROAS.
+                  </p>
+                  <Button
+                    variant="outline"
+                    onClick={handleOpenNewDialog}
+                    className="border-border hover:bg-muted"
+                  >
                     Crear primera regla
                   </Button>
                 </div>
@@ -606,40 +632,58 @@ export function ConfiguracionClient({
                     </TableHeader>
                     <TableBody>
                       {rules.map((rule) => {
-                        const clientName = rule.cliente_id ? clientMap.get(rule.cliente_id) || 'Cargando...' : 'Global (Todos)';
-                        const tabName = rule.tab_id ? tabMap.get(rule.tab_id) || 'Pestaña' : 'General/Completo';
+                        const clientName = rule.cliente_id
+                          ? clientMap.get(rule.cliente_id) || 'Cargando...'
+                          : 'Global (Todos)';
+                        const tabName = rule.tab_id
+                          ? tabMap.get(rule.tab_id) || 'Pestaña'
+                          : 'General/Completo';
                         const scopeStr = rule.cliente_id ? `${clientName} / ${tabName}` : 'Global';
 
-                        const operatorSymbols: Record<string, string> = {
-                          '>': 'mayor que',
-                          '<': 'menor que',
-                          '>=': 'mayor o igual a',
-                          '<=': 'menor o igual a',
-                        };
-
-                        const formattedThresh = rule.metric === 'budget_percentage' ? `${rule.value}%` : rule.value.toString();
+                        const formattedThresh =
+                          rule.metric === 'budget_percentage'
+                            ? `${rule.value}%`
+                            : rule.value.toString();
 
                         return (
-                          <TableRow key={rule.id} className="border-b border-border hover:bg-muted/10">
-                            <TableCell className="font-semibold text-foreground">{rule.nombre}</TableCell>
-                            <TableCell className="text-muted-foreground text-sm">{scopeStr}</TableCell>
+                          <TableRow
+                            key={rule.id}
+                            className="border-b border-border hover:bg-muted/10"
+                          >
+                            <TableCell className="font-semibold text-foreground">
+                              {rule.nombre}
+                            </TableCell>
+                            <TableCell className="text-muted-foreground text-sm">
+                              {scopeStr}
+                            </TableCell>
                             <TableCell className="font-mono text-sm">
-                              <span className="text-amber-500 font-semibold">{METRIC_LABELS[rule.metric] || rule.metric}</span>{' '}
+                              <span className="text-amber-500 font-semibold">
+                                {METRIC_LABELS[rule.metric] || rule.metric}
+                              </span>{' '}
                               <span className="text-foreground">{rule.operator}</span>{' '}
-                              <span className="text-emerald-500 font-semibold">{formattedThresh}</span>
+                              <span className="text-emerald-500 font-semibold">
+                                {formattedThresh}
+                              </span>
                               <div className="text-[11px] text-muted-foreground font-sans mt-0.5">
-                                Periodo: {WINDOW_LABELS[rule.time_window]} (Cooldown: {rule.cooldown_hours}h)
+                                Periodo: {WINDOW_LABELS[rule.time_window]} (Cooldown:{' '}
+                                {rule.cooldown_hours}h)
                               </div>
                             </TableCell>
                             <TableCell>
                               <div className="flex flex-wrap gap-1">
                                 {rule.channels.includes('in_app') && (
-                                  <Badge variant="outline" className="bg-amber-500/10 text-amber-500 border-amber-500/20 text-[10px] py-0.5">
+                                  <Badge
+                                    variant="outline"
+                                    className="bg-amber-500/10 text-amber-500 border-amber-500/20 text-[10px] py-0.5"
+                                  >
                                     Campanita
                                   </Badge>
                                 )}
                                 {rule.channels.includes('whatsapp') && (
-                                  <Badge variant="outline" className="bg-emerald-500/10 text-emerald-500 border-emerald-500/20 text-[10px] py-0.5">
+                                  <Badge
+                                    variant="outline"
+                                    className="bg-emerald-500/10 text-emerald-500 border-emerald-500/20 text-[10px] py-0.5"
+                                  >
                                     WhatsApp
                                   </Badge>
                                 )}
@@ -721,7 +765,7 @@ export function ConfiguracionClient({
             currentUserId={currentUserId}
           />
         </TabsContent>
-        
+
         {/* ── PERSONALIZACIÓN TAB ─────────────────────────────────────────── */}
         {currentRole === 'superadmin' && (
           <TabsContent value="branding" className="outline-none">
@@ -732,18 +776,18 @@ export function ConfiguracionClient({
                   Personalización Visual
                 </CardTitle>
                 <CardDescription>
-                  Cambia el logo principal de la aplicación y la paleta de colores. Estos cambios se aplicarán para todos los usuarios.
+                  Cambia el logo principal de la aplicación y la paleta de colores. Estos cambios se
+                  aplicarán para todos los usuarios.
                 </CardDescription>
               </CardHeader>
               <CardContent className="p-6">
                 <form onSubmit={handleSaveBranding} className="space-y-6">
-                  
                   {/* Seccion LOGO */}
                   <div className="space-y-4">
                     <h4 className="text-sm font-semibold text-foreground border-b border-border pb-1.5">
                       Logo de la Aplicación
                     </h4>
-                    
+
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                       <div className="space-y-3">
                         <Label htmlFor="logo-url-input">URL del Logo</Label>
@@ -756,11 +800,14 @@ export function ConfiguracionClient({
                           className="bg-muted/50 border-border"
                         />
                         <p className="text-xs text-muted-foreground">
-                          Puedes ingresar una URL directa de tu logo (SVG o PNG recomendado), o bien subir una imagen de tu equipo.
+                          Puedes ingresar una URL directa de tu logo (SVG o PNG recomendado), o bien
+                          subir una imagen de tu equipo.
                         </p>
-                        
+
                         <div className="pt-2">
-                          <Label className="block mb-2 text-xs font-semibold">Subir imagen desde el equipo</Label>
+                          <Label className="block mb-2 text-xs font-semibold">
+                            Subir imagen desde el equipo
+                          </Label>
                           <div className="flex items-center gap-2">
                             <label className="flex items-center gap-1.5 px-3 py-2 bg-muted hover:bg-muted/80 text-foreground text-xs font-medium rounded-md border border-border cursor-pointer transition-colors">
                               <Upload className="h-3.5 w-3.5" />
@@ -773,7 +820,9 @@ export function ConfiguracionClient({
                                 className="hidden"
                               />
                             </label>
-                            {uploadingLogo && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
+                            {uploadingLogo && (
+                              <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                            )}
                           </div>
                           <span className="text-[10px] text-muted-foreground mt-1 block">
                             Formatos soportados: PNG, JPG, WEBP, SVG. Máx. 2MB.
@@ -783,16 +832,22 @@ export function ConfiguracionClient({
 
                       {/* Preview de logo */}
                       <div className="flex flex-col items-center justify-center p-4 border border-dashed border-border rounded-lg bg-muted/20">
-                        <span className="text-xs font-semibold text-muted-foreground mb-3">Vista Previa del Logo</span>
+                        <span className="text-xs font-semibold text-muted-foreground mb-3">
+                          Vista Previa del Logo
+                        </span>
                         {logoUrl ? (
                           <div className="flex flex-col items-center gap-2">
                             {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img src={logoUrl} alt="Logo Preview" className="h-12 max-h-12 w-auto object-contain bg-white dark:bg-zinc-900 p-2 rounded border border-border" />
-                            <Button 
-                              type="button" 
-                              variant="ghost" 
-                              size="sm" 
-                              onClick={() => setLogoUrl('')} 
+                            <img
+                              src={logoUrl}
+                              alt="Logo Preview"
+                              className="h-12 max-h-12 w-auto object-contain bg-white dark:bg-zinc-900 p-2 rounded border border-border"
+                            />
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => setLogoUrl('')}
                               className="text-[10px] text-red-500 hover:text-red-600 h-6 px-2"
                             >
                               Eliminar logo
@@ -800,7 +855,8 @@ export function ConfiguracionClient({
                           </div>
                         ) : (
                           <div className="text-center p-4 text-xs text-muted-foreground/60">
-                            No hay un logo personalizado configurado. Se mostrará el logo original (AdsHouse).
+                            No hay un logo personalizado configurado. Se mostrará el logo original
+                            (AdsHouse).
                           </div>
                         )}
                       </div>
@@ -825,11 +881,14 @@ export function ConfiguracionClient({
                           className="bg-muted/50 border-border"
                         />
                         <p className="text-xs text-muted-foreground">
-                          Ícono que aparece en la pestaña del navegador. Recomendado: imagen cuadrada (.ico, .png o .svg). Se aplicará tras guardar y recargar.
+                          Ícono que aparece en la pestaña del navegador. Recomendado: imagen
+                          cuadrada (.ico, .png o .svg). Se aplicará tras guardar y recargar.
                         </p>
 
                         <div className="pt-2">
-                          <Label className="block mb-2 text-xs font-semibold">Subir favicon desde el equipo</Label>
+                          <Label className="block mb-2 text-xs font-semibold">
+                            Subir favicon desde el equipo
+                          </Label>
                           <div className="flex items-center gap-2">
                             <label className="flex items-center gap-1.5 px-3 py-2 bg-muted hover:bg-muted/80 text-foreground text-xs font-medium rounded-md border border-border cursor-pointer transition-colors">
                               <Upload className="h-3.5 w-3.5" />
@@ -842,7 +901,9 @@ export function ConfiguracionClient({
                                 className="hidden"
                               />
                             </label>
-                            {uploadingFavicon && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
+                            {uploadingFavicon && (
+                              <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                            )}
                           </div>
                           <span className="text-[10px] text-muted-foreground mt-1 block">
                             Formatos soportados: ICO, PNG, SVG. Máx. 1MB.
@@ -852,11 +913,17 @@ export function ConfiguracionClient({
 
                       {/* Preview de favicon */}
                       <div className="flex flex-col items-center justify-center p-4 border border-dashed border-border rounded-lg bg-muted/20">
-                        <span className="text-xs font-semibold text-muted-foreground mb-3">Vista Previa del Favicon</span>
+                        <span className="text-xs font-semibold text-muted-foreground mb-3">
+                          Vista Previa del Favicon
+                        </span>
                         {faviconUrl ? (
                           <div className="flex flex-col items-center gap-2">
                             {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img src={faviconUrl} alt="Favicon Preview" className="h-8 w-8 object-contain bg-white dark:bg-zinc-900 p-1 rounded border border-border" />
+                            <img
+                              src={faviconUrl}
+                              alt="Favicon Preview"
+                              className="h-8 w-8 object-contain bg-white dark:bg-zinc-900 p-1 rounded border border-border"
+                            />
                             <Button
                               type="button"
                               variant="ghost"
@@ -869,7 +936,8 @@ export function ConfiguracionClient({
                           </div>
                         ) : (
                           <div className="text-center p-4 text-xs text-muted-foreground/60">
-                            No hay un favicon personalizado configurado. Se mostrará el ícono original.
+                            No hay un favicon personalizado configurado. Se mostrará el ícono
+                            original.
                           </div>
                         )}
                       </div>
@@ -882,9 +950,10 @@ export function ConfiguracionClient({
                       Nombres y Etiquetas de la Aplicación
                     </h4>
                     <p className="text-xs text-muted-foreground">
-                      Define los títulos y etiquetas que se mostrarán en la barra lateral y en las páginas de login/registro cuando no haya un logo personalizado activo.
+                      Define los títulos y etiquetas que se mostrarán en la barra lateral y en las
+                      páginas de login/registro cuando no haya un logo personalizado activo.
                     </p>
-                    
+
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <div className="space-y-1.5">
                         <Label className="text-xs font-semibold">Nombre Principal (App)</Label>
@@ -907,7 +976,9 @@ export function ConfiguracionClient({
                         />
                       </div>
                       <div className="space-y-1.5">
-                        <Label className="text-xs font-semibold">Nombre Principal (Report-UTM)</Label>
+                        <Label className="text-xs font-semibold">
+                          Nombre Principal (Report-UTM)
+                        </Label>
                         <Input
                           type="text"
                           value={utmName}
@@ -917,7 +988,9 @@ export function ConfiguracionClient({
                         />
                       </div>
                       <div className="space-y-1.5">
-                        <Label className="text-xs font-semibold">Subtítulo / Etiqueta (Report-UTM)</Label>
+                        <Label className="text-xs font-semibold">
+                          Subtítulo / Etiqueta (Report-UTM)
+                        </Label>
                         <Input
                           type="text"
                           value={utmTag}
@@ -940,7 +1013,9 @@ export function ConfiguracionClient({
                       <Label className="text-xs font-semibold">Temas Rápidos de Color</Label>
                       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2.5">
                         {PREDEFINED_THEMES.map((theme) => {
-                          const isActive = primaryColor.toLowerCase() === theme.primary.toLowerCase() && secondaryColor.toLowerCase() === theme.secondary.toLowerCase();
+                          const isActive =
+                            primaryColor.toLowerCase() === theme.primary.toLowerCase() &&
+                            secondaryColor.toLowerCase() === theme.secondary.toLowerCase();
                           return (
                             <button
                               key={theme.name}
@@ -950,15 +1025,25 @@ export function ConfiguracionClient({
                                 setSecondaryColor(theme.secondary);
                               }}
                               className={`p-2.5 rounded-lg border text-left flex flex-col justify-between h-20 transition-all ${
-                                isActive 
-                                  ? 'border-foreground shadow-sm ring-1 ring-foreground/20 bg-muted/40' 
+                                isActive
+                                  ? 'border-foreground shadow-sm ring-1 ring-foreground/20 bg-muted/40'
                                   : 'border-border hover:border-muted-foreground/40 bg-card'
                               }`}
                             >
-                              <span className="text-[11px] font-bold text-foreground truncate w-full">{theme.name}</span>
+                              <span className="text-[11px] font-bold text-foreground truncate w-full">
+                                {theme.name}
+                              </span>
                               <div className="flex gap-1.5 mt-2">
-                                <div className="w-5 h-5 rounded-full border border-black/10" style={{ backgroundColor: theme.primary }} title="Color Primario" />
-                                <div className="w-5 h-5 rounded-full border border-black/10" style={{ backgroundColor: theme.secondary }} title="Color Secundario" />
+                                <div
+                                  className="w-5 h-5 rounded-full border border-black/10"
+                                  style={{ backgroundColor: theme.primary }}
+                                  title="Color Primario"
+                                />
+                                <div
+                                  className="w-5 h-5 rounded-full border border-black/10"
+                                  style={{ backgroundColor: theme.secondary }}
+                                  title="Color Secundario"
+                                />
                               </div>
                             </button>
                           );
@@ -1012,7 +1097,9 @@ export function ConfiguracionClient({
                         </div>
 
                         <p className="text-xs text-muted-foreground leading-normal">
-                          El <b>Color Primario</b> se usará para la barra lateral activa, botones principales, enlaces y bordes de enfoque. El <b>Color Secundario</b> se aplicará en avisos críticos, insignias y elementos acentuados.
+                          El <b>Color Primario</b> se usará para la barra lateral activa, botones
+                          principales, enlaces y bordes de enfoque. El <b>Color Secundario</b> se
+                          aplicará en avisos críticos, insignias y elementos acentuados.
                         </p>
                       </div>
 
@@ -1021,34 +1108,57 @@ export function ConfiguracionClient({
                         <span className="text-xs font-semibold text-muted-foreground block">
                           Previsualización en Tiempo Real
                         </span>
-                        
+
                         <div className="border border-border rounded-lg overflow-hidden flex h-36 bg-background">
                           {/* Sidebar mockup */}
                           <div className="w-16 border-r border-border bg-card flex flex-col p-1.5 space-y-1.5 justify-between">
                             <div className="space-y-1.5">
-                              <div className="h-4 rounded flex items-center justify-center text-[7px] font-bold" style={{ background: `linear-gradient(135deg, ${secondaryColor} 0%, ${primaryColor} 100%)`, color: '#fff' }}>
+                              <div
+                                className="h-4 rounded flex items-center justify-center text-[7px] font-bold"
+                                style={{
+                                  background: `linear-gradient(135deg, ${secondaryColor} 0%, ${primaryColor} 100%)`,
+                                  color: '#fff',
+                                }}
+                              >
                                 LOGO
                               </div>
-                              <div className="h-3 w-full rounded" style={{ backgroundColor: primaryColor }} />
+                              <div
+                                className="h-3 w-full rounded"
+                                style={{ backgroundColor: primaryColor }}
+                              />
                               <div className="h-3 w-5/6 rounded bg-muted" />
                               <div className="h-3 w-3/4 rounded bg-muted" />
                             </div>
                             <div className="h-3 w-full rounded bg-muted" />
                           </div>
-                          
+
                           {/* Content mockup */}
                           <div className="flex-1 p-3 flex flex-col justify-between">
                             <div className="space-y-1.5">
                               <div className="h-2 w-1/3 rounded bg-muted" />
-                              <div className="h-4 w-1/2 rounded" style={{ backgroundColor: primaryColor }} />
+                              <div
+                                className="h-4 w-1/2 rounded"
+                                style={{ backgroundColor: primaryColor }}
+                              />
                               <div className="h-2 w-full rounded bg-muted/50" />
                               <div className="h-2 w-full rounded bg-muted/50" />
                             </div>
                             <div className="flex gap-2">
-                              <button type="button" className="h-5 px-2 rounded text-[8px] font-medium text-white shadow-sm flex items-center" style={{ backgroundColor: primaryColor }}>
+                              <button
+                                type="button"
+                                className="h-5 px-2 rounded text-[8px] font-medium text-white shadow-sm flex items-center"
+                                style={{ backgroundColor: primaryColor }}
+                              >
                                 Guardar
                               </button>
-                              <button type="button" className="h-5 px-2 rounded text-[8px] font-medium border border-border bg-card flex items-center" style={{ color: secondaryColor, borderColor: `${secondaryColor}40` }}>
+                              <button
+                                type="button"
+                                className="h-5 px-2 rounded text-[8px] font-medium border border-border bg-card flex items-center"
+                                style={{
+                                  color: secondaryColor,
+                                  borderColor: `${secondaryColor}40`,
+                                }}
+                              >
                                 Alerta Activa
                               </button>
                             </div>
@@ -1060,9 +1170,9 @@ export function ConfiguracionClient({
 
                   {/* Submit Button */}
                   <div className="border-t border-border pt-4 flex justify-end gap-3">
-                    <Button 
-                      type="button" 
-                      variant="outline" 
+                    <Button
+                      type="button"
+                      variant="outline"
                       onClick={() => {
                         setLogoUrl(initialBranding?.logo_url || '');
                         setFaviconUrl(initialBranding?.favicon_url || '');
@@ -1093,7 +1203,6 @@ export function ConfiguracionClient({
                       )}
                     </Button>
                   </div>
-
                 </form>
               </CardContent>
             </Card>
@@ -1131,10 +1240,13 @@ export function ConfiguracionClient({
                 {/* Client Select */}
                 <div className="space-y-1.5">
                   <Label>Cliente</Label>
-                  <Select value={selectedCliente} onValueChange={(val) => {
-                    setSelectedCliente(val);
-                    setSelectedTab('overall');
-                  }}>
+                  <Select
+                    value={selectedCliente}
+                    onValueChange={(val) => {
+                      setSelectedCliente(val);
+                      setSelectedTab('overall');
+                    }}
+                  >
                     <SelectTrigger className="bg-muted/50 border-border">
                       <SelectValue placeholder="Selecciona un cliente" />
                     </SelectTrigger>
@@ -1258,7 +1370,9 @@ export function ConfiguracionClient({
               {selectedWindow === 'custom_range' && (
                 <div className="grid grid-cols-2 gap-4 bg-muted/30 border border-border rounded-lg p-3">
                   <div className="space-y-1.5">
-                    <Label htmlFor="custom-start" className="text-xs">Fecha de Inicio</Label>
+                    <Label htmlFor="custom-start" className="text-xs">
+                      Fecha de Inicio
+                    </Label>
                     <Input
                       id="custom-start"
                       type="date"
@@ -1268,7 +1382,9 @@ export function ConfiguracionClient({
                     />
                   </div>
                   <div className="space-y-1.5">
-                    <Label htmlFor="custom-end" className="text-xs">Fecha de Fin</Label>
+                    <Label htmlFor="custom-end" className="text-xs">
+                      Fecha de Fin
+                    </Label>
                     <Input
                       id="custom-end"
                       type="date"
@@ -1402,7 +1518,9 @@ export function ConfiguracionClient({
                       {testResult.isTriggered ? 'DISPARARÍA ALERTA' : 'CONDICIÓN NO CUMPLIDA (OK)'}
                     </p>
                     <p className="text-[11px] opacity-90">
-                      El valor calculado ({testResult.actualValue.toFixed(2)}) {testResult.isTriggered ? 'cumple' : 'no cumple'} la condición {testResult.operator} {testResult.threshold}
+                      El valor calculado ({testResult.actualValue.toFixed(2)}){' '}
+                      {testResult.isTriggered ? 'cumple' : 'no cumple'} la condición{' '}
+                      {testResult.operator} {testResult.threshold}
                     </p>
                   </div>
                 </div>
@@ -1431,7 +1549,9 @@ export function ConfiguracionClient({
                   </div>
                   <div className="flex justify-between font-mono border-t border-border/50 pt-1.5">
                     <span className="text-muted-foreground font-sans">Gasto en periodo:</span>
-                    <span className="text-foreground font-semibold">${testResult.totalSpend.toLocaleString('en-US', { maximumFractionDigits: 0 })}</span>
+                    <span className="text-foreground font-semibold">
+                      ${testResult.totalSpend.toLocaleString('en-US', { maximumFractionDigits: 0 })}
+                    </span>
                   </div>
                   <div className="flex justify-between font-mono">
                     <span className="text-muted-foreground font-sans">Leads en periodo:</span>
@@ -1439,12 +1559,20 @@ export function ConfiguracionClient({
                   </div>
                   <div className="flex justify-between font-mono">
                     <span className="text-muted-foreground font-sans">Ingresos en periodo:</span>
-                    <span className="text-foreground font-semibold">${testResult.totalRevenue.toLocaleString('en-US', { maximumFractionDigits: 0 })}</span>
+                    <span className="text-foreground font-semibold">
+                      $
+                      {testResult.totalRevenue.toLocaleString('en-US', {
+                        maximumFractionDigits: 0,
+                      })}
+                    </span>
                   </div>
                   {testResult.tabBudget && (
                     <div className="flex justify-between font-mono">
                       <span className="text-muted-foreground font-sans">Presupuesto Objetivo:</span>
-                      <span className="text-foreground font-semibold">${testResult.tabBudget.toLocaleString('en-US', { maximumFractionDigits: 0 })}</span>
+                      <span className="text-foreground font-semibold">
+                        $
+                        {testResult.tabBudget.toLocaleString('en-US', { maximumFractionDigits: 0 })}
+                      </span>
                     </div>
                   )}
                 </div>
@@ -1468,7 +1596,10 @@ export function ConfiguracionClient({
           </div>
 
           <DialogFooter className="border-t border-border pt-3">
-            <Button onClick={() => setIsTestOpen(false)} className="bg-blue-600 hover:bg-blue-500 text-white font-medium">
+            <Button
+              onClick={() => setIsTestOpen(false)}
+              className="bg-blue-600 hover:bg-blue-500 text-white font-medium"
+            >
               Entendido
             </Button>
           </DialogFooter>

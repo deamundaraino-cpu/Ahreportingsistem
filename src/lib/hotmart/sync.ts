@@ -33,27 +33,27 @@
 // worker devuelve un registro vacío con `apiSuccess: false` y su red de
 // seguridad omite los campos del upsert, preservando lo que ya había.
 
-import { colombiaToday } from '../colombia-date'
-import { paginarHotmart, ventanaDiaColombia } from './cliente'
-import type { FamiliaErrorHotmart } from './cliente'
-import { parsearApi } from './parser'
-import { convertirLote } from './moneda'
-import { clasificarLote, guardarLote } from './persistencia'
-import { ESTADOS_COBRADOS, ESTADOS_DEVUELTOS } from './tipos'
-import type { FunnelHotmart } from './clasificador'
-import type { EstadoVenta, ItemComisiones, ItemHistorial, VentaHotmart } from './tipos'
+import { colombiaToday } from '../colombia-date';
+import { paginarHotmart, ventanaDiaColombia } from './cliente';
+import type { FamiliaErrorHotmart } from './cliente';
+import { parsearApi } from './parser';
+import { convertirLote } from './moneda';
+import { clasificarLote, guardarLote } from './persistencia';
+import { ESTADOS_COBRADOS, ESTADOS_DEVUELTOS } from './tipos';
+import type { FunnelHotmart } from './clasificador';
+import type { EstadoVenta, ItemComisiones, ItemHistorial, VentaHotmart } from './tipos';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
-type Db = any
+type Db = any;
 
 export type DesgloseFunnel = {
-    principal: { count: number; gross: number; net: number }
-    bump: { count: number; gross: number; net: number }
-    upsell: { count: number; gross: number; net: number; page_visits: number }
-    downsell: { count: number; gross: number; net: number }
-    pagos_iniciados: number
-    landing_sessions: number
-}
+  principal: { count: number; gross: number; net: number };
+  bump: { count: number; gross: number; net: number };
+  upsell: { count: number; gross: number; net: number; page_visits: number };
+  downsell: { count: number; gross: number; net: number };
+  pagos_iniciados: number;
+  landing_sessions: number;
+};
 
 /**
  * Registro diario de Hotmart. Es lo que consume el upsert de `metricas_diarias`.
@@ -62,68 +62,80 @@ export type DesgloseFunnel = {
  * y `reembolsado`, que no existían.
  */
 export type RegistroHotmart = {
-    principal: number
-    bump: number
-    upsell: number
-    downsell: number
-    principal_count: number
-    bump_count: number
-    upsell_count: number
-    downsell_count: number
-    principal_bruto: number
-    bump_bruto: number
-    upsell_bruto: number
-    downsell_bruto: number
-    ventas_count: number
-    /** Neto de las ventas de ESTE día que acabaron devueltas. */
-    reembolsado: number
-    reembolsado_count: number
-    affiliate_net: number
-    affiliate_count: number
-    coproducer_net: number
-    by_tab: Record<string, DesgloseFunnel>
-    extras: Array<{ product_name: string; count: number; gross: number; net: number }>
-    /** false = la API falló o se agotó el tope de páginas → NO pisar la BD con ceros. */
-    apiSuccess: boolean
-    /**
-     * Familia del fallo cuando `apiSuccess` es `false`. Llega hasta el `reason`
-     * de la alerta y el título de la notificación: sin ella, un 400 por
-     * parámetros y un 401 por credencial caducada se avisaban con el mismo
-     * texto ("posible desconexión"), que no dice qué hay que arreglar.
-     */
-    familia?: FamiliaErrorHotmart
-    unconverted_count: number
-    monedas: string[]
-    /** % de ventas del día clasificadas sin recurrir al nombre del producto. */
-    cobertura_pct: number
-}
+  principal: number;
+  bump: number;
+  upsell: number;
+  downsell: number;
+  principal_count: number;
+  bump_count: number;
+  upsell_count: number;
+  downsell_count: number;
+  principal_bruto: number;
+  bump_bruto: number;
+  upsell_bruto: number;
+  downsell_bruto: number;
+  ventas_count: number;
+  /** Neto de las ventas de ESTE día que acabaron devueltas. */
+  reembolsado: number;
+  reembolsado_count: number;
+  affiliate_net: number;
+  affiliate_count: number;
+  coproducer_net: number;
+  by_tab: Record<string, DesgloseFunnel>;
+  extras: Array<{ product_name: string; count: number; gross: number; net: number }>;
+  /** false = la API falló o se agotó el tope de páginas → NO pisar la BD con ceros. */
+  apiSuccess: boolean;
+  /**
+   * Familia del fallo cuando `apiSuccess` es `false`. Llega hasta el `reason`
+   * de la alerta y el título de la notificación: sin ella, un 400 por
+   * parámetros y un 401 por credencial caducada se avisaban con el mismo
+   * texto ("posible desconexión"), que no dice qué hay que arreglar.
+   */
+  familia?: FamiliaErrorHotmart;
+  unconverted_count: number;
+  monedas: string[];
+  /** % de ventas del día clasificadas sin recurrir al nombre del producto. */
+  cobertura_pct: number;
+};
 
 export function desgloseVacio(): DesgloseFunnel {
-    return {
-        principal: { count: 0, gross: 0, net: 0 },
-        bump: { count: 0, gross: 0, net: 0 },
-        upsell: { count: 0, gross: 0, net: 0, page_visits: 0 },
-        downsell: { count: 0, gross: 0, net: 0 },
-        pagos_iniciados: 0,
-        landing_sessions: 0,
-    }
+  return {
+    principal: { count: 0, gross: 0, net: 0 },
+    bump: { count: 0, gross: 0, net: 0 },
+    upsell: { count: 0, gross: 0, net: 0, page_visits: 0 },
+    downsell: { count: 0, gross: 0, net: 0 },
+    pagos_iniciados: 0,
+    landing_sessions: 0,
+  };
 }
 
 export function registroVacio(): RegistroHotmart {
-    return {
-        principal: 0, bump: 0, upsell: 0, downsell: 0,
-        principal_count: 0, bump_count: 0, upsell_count: 0, downsell_count: 0,
-        principal_bruto: 0, bump_bruto: 0, upsell_bruto: 0, downsell_bruto: 0,
-        ventas_count: 0,
-        reembolsado: 0, reembolsado_count: 0,
-        affiliate_net: 0, affiliate_count: 0, coproducer_net: 0,
-        by_tab: {},
-        extras: [],
-        apiSuccess: true,
-        unconverted_count: 0,
-        monedas: [],
-        cobertura_pct: 100,
-    }
+  return {
+    principal: 0,
+    bump: 0,
+    upsell: 0,
+    downsell: 0,
+    principal_count: 0,
+    bump_count: 0,
+    upsell_count: 0,
+    downsell_count: 0,
+    principal_bruto: 0,
+    bump_bruto: 0,
+    upsell_bruto: 0,
+    downsell_bruto: 0,
+    ventas_count: 0,
+    reembolsado: 0,
+    reembolsado_count: 0,
+    affiliate_net: 0,
+    affiliate_count: 0,
+    coproducer_net: 0,
+    by_tab: {},
+    extras: [],
+    apiSuccess: true,
+    unconverted_count: 0,
+    monedas: [],
+    cobertura_pct: 100,
+  };
 }
 
 // ────────────────────────────────────────────────────────────────
@@ -131,17 +143,17 @@ export function registroVacio(): RegistroHotmart {
 // ────────────────────────────────────────────────────────────────
 
 export type ResultadoSync = {
-    /** `true` solo si se consumieron TODAS las páginas de AMBOS endpoints. */
-    completo: boolean
-    motivo?: string
-    /** Familia del fallo (`parametros`, `credenciales`, …) cuando `completo` es `false`. */
-    familia?: FamiliaErrorHotmart
-    ventas: number
-    escritas: number
-    descartadas: number
-    sin_tasa: number
-    monedas: string[]
-}
+  /** `true` solo si se consumieron TODAS las páginas de AMBOS endpoints. */
+  completo: boolean;
+  motivo?: string;
+  /** Familia del fallo (`parametros`, `credenciales`, …) cuando `completo` es `false`. */
+  familia?: FamiliaErrorHotmart;
+  ventas: number;
+  escritas: number;
+  descartadas: number;
+  sin_tasa: number;
+  monedas: string[];
+};
 
 /**
  * Trae las ventas de un día y las persiste.
@@ -152,93 +164,107 @@ export type ResultadoSync = {
  * los dos endpoints.
  */
 export async function sincronizarDiaHotmart(
-    db: Db,
-    clienteId: string,
-    fecha: string,
-    token: string,
-    funnels: FunnelHotmart[],
-    log: (msg: string) => void = () => {},
-    /**
-     * `persistir: false` sondea la API sin escribir NI UNA fila. Es el modo
-     * `--contar` del script de backfill: dimensionar el volumen antes de tocar
-     * una base que está en 449 MB de 500 MB.
-     */
-    opts: { persistir?: boolean } = {},
+  db: Db,
+  clienteId: string,
+  fecha: string,
+  token: string,
+  funnels: FunnelHotmart[],
+  log: (msg: string) => void = () => {},
+  /**
+   * `persistir: false` sondea la API sin escribir NI UNA fila. Es el modo
+   * `--contar` del script de backfill: dimensionar el volumen antes de tocar
+   * una base que está en 449 MB de 500 MB.
+   */
+  opts: { persistir?: boolean } = {}
 ): Promise<ResultadoSync> {
-    const persistir = opts.persistir !== false
-    const { inicio, fin } = ventanaDiaColombia(fecha)
-    const rango: Array<[string, string]> = [
-        ['start_date', String(inicio)],
-        ['end_date', String(fin)],
-        ['max_results', '100'],
-    ]
+  const persistir = opts.persistir !== false;
+  const { inicio, fin } = ventanaDiaColombia(fecha);
+  const rango: Array<[string, string]> = [
+    ['start_date', String(inicio)],
+    ['end_date', String(fin)],
+    ['max_results', '100'],
+  ];
 
-    // PASO 1 — historial. SIN filtro de estado: es lo que hace que los
-    // reembolsos existan.
-    const historial = await paginarHotmart<ItemHistorial>({
-        ruta: '/payments/api/v1/sales/history',
-        params: rango,
-        token,
-        log,
-    })
+  // PASO 1 — historial. SIN filtro de estado: es lo que hace que los
+  // reembolsos existan.
+  const historial = await paginarHotmart<ItemHistorial>({
+    ruta: '/payments/api/v1/sales/history',
+    params: rango,
+    token,
+    log,
+  });
 
-    // PASO 2 — comisiones. Es lo único que dice cuánto se cobró de verdad.
-    const comisiones = await paginarHotmart<ItemComisiones>({
-        ruta: '/payments/api/v1/sales/commissions',
-        params: rango,
-        token,
-        log,
-    })
+  // PASO 2 — comisiones. Es lo único que dice cuánto se cobró de verdad.
+  const comisiones = await paginarHotmart<ItemComisiones>({
+    ruta: '/payments/api/v1/sales/commissions',
+    params: rango,
+    token,
+    log,
+  });
 
-    const completo = historial.completo && comisiones.completo
-    const motivo = historial.motivo ?? comisiones.motivo
-    const familia = historial.familia ?? comisiones.familia
+  const completo = historial.completo && comisiones.completo;
+  const motivo = historial.motivo ?? comisiones.motivo;
+  const familia = historial.familia ?? comisiones.familia;
 
-    const porTx = new Map<string, ItemComisiones>()
-    for (const c of comisiones.items) {
-        const tx = c.transaction ?? c.purchase?.transaction
-        if (tx) porTx.set(String(tx), c)
-    }
+  const porTx = new Map<string, ItemComisiones>();
+  for (const c of comisiones.items) {
+    const tx = c.transaction ?? c.purchase?.transaction;
+    if (tx) porTx.set(String(tx), c);
+  }
 
-    const ventas: VentaHotmart[] = []
-    for (const item of historial.items) {
-        const tx = item.purchase?.transaction
-        const r = parsearApi(item, tx ? porTx.get(String(tx)) : undefined, { origen: 'api' })
-        if (r.ok) ventas.push(r.venta)
-    }
+  const ventas: VentaHotmart[] = [];
+  for (const item of historial.items) {
+    const tx = item.purchase?.transaction;
+    const r = parsearApi(item, tx ? porTx.get(String(tx)) : undefined, { origen: 'api' });
+    if (r.ok) ventas.push(r.venta);
+  }
 
-    if (ventas.length === 0) {
-        return {
-            completo, motivo, familia, ventas: 0, escritas: 0, descartadas: 0,
-            sin_tasa: 0, monedas: [],
-        }
-    }
-
-    if (!persistir) {
-        return {
-            completo, motivo, familia, ventas: ventas.length, escritas: 0, descartadas: 0,
-            sin_tasa: 0, monedas: [],
-        }
-    }
-
-    clasificarLote(ventas, funnels)
-    const fx = await convertirLote(db, ventas, fecha)
-    const guardado = await guardarLote(db, clienteId, ventas)
-
-    if (fx.sin_tasa > 0) {
-        log(`[Hotmart] ${fecha} ${fx.sin_tasa} importe(s) sin tasa de cambio (monedas: ${fx.monedas.join(', ')}) — quedaron fuera del total.`)
-    }
-
+  if (ventas.length === 0) {
     return {
-        completo,
-        motivo,
-        familia,
-        ventas: ventas.length,
-        escritas: guardado.escritas,
-        descartadas: guardado.descartadas,
-        sin_tasa: fx.sin_tasa,
-        monedas: fx.monedas,
-    }
+      completo,
+      motivo,
+      familia,
+      ventas: 0,
+      escritas: 0,
+      descartadas: 0,
+      sin_tasa: 0,
+      monedas: [],
+    };
+  }
+
+  if (!persistir) {
+    return {
+      completo,
+      motivo,
+      familia,
+      ventas: ventas.length,
+      escritas: 0,
+      descartadas: 0,
+      sin_tasa: 0,
+      monedas: [],
+    };
+  }
+
+  clasificarLote(ventas, funnels);
+  const fx = await convertirLote(db, ventas, fecha);
+  const guardado = await guardarLote(db, clienteId, ventas);
+
+  if (fx.sin_tasa > 0) {
+    log(
+      `[Hotmart] ${fecha} ${fx.sin_tasa} importe(s) sin tasa de cambio (monedas: ${fx.monedas.join(', ')}) — quedaron fuera del total.`
+    );
+  }
+
+  return {
+    completo,
+    motivo,
+    familia,
+    ventas: ventas.length,
+    escritas: guardado.escritas,
+    descartadas: guardado.descartadas,
+    sin_tasa: fx.sin_tasa,
+    monedas: fx.monedas,
+  };
 }
 
 // ────────────────────────────────────────────────────────────────
@@ -246,23 +272,23 @@ export async function sincronizarDiaHotmart(
 // ────────────────────────────────────────────────────────────────
 
 type FilaVenta = {
-    tipo: string
-    tab_id: string | null
-    estado: EstadoVenta
-    clasificacion_origen: string
-    producto_nombre: string | null
-    moneda: string | null
-    bruto: number | string | null
-    bruto_usd: number | string | null
-    neto_productor_usd: number | string | null
-    neto_afiliado_usd: number | string | null
-    neto_coproductor_usd: number | string | null
-}
+  tipo: string;
+  tab_id: string | null;
+  estado: EstadoVenta;
+  clasificacion_origen: string;
+  producto_nombre: string | null;
+  moneda: string | null;
+  bruto: number | string | null;
+  bruto_usd: number | string | null;
+  neto_productor_usd: number | string | null;
+  neto_afiliado_usd: number | string | null;
+  neto_coproductor_usd: number | string | null;
+};
 
 const num = (v: unknown): number => {
-    const n = Number(v ?? 0)
-    return Number.isFinite(n) ? n : 0
-}
+  const n = Number(v ?? 0);
+  return Number.isFinite(n) ? n : 0;
+};
 
 /**
  * Construye el registro diario leyendo `hotmart_ventas`. No toca la API.
@@ -274,108 +300,109 @@ const num = (v: unknown): number => {
  *   • Un importe sin tasa de cambio NO se suma como 0: se cuenta aparte.
  */
 export async function agregarDesdeHotmartVentas(
-    db: Db,
-    clienteId: string,
-    fecha: string,
-    funnels: FunnelHotmart[],
+  db: Db,
+  clienteId: string,
+  fecha: string,
+  funnels: FunnelHotmart[]
 ): Promise<RegistroHotmart> {
-    const registro = registroVacio()
-    for (const f of funnels) registro.by_tab[f.tab_id] = desgloseVacio()
+  const registro = registroVacio();
+  for (const f of funnels) registro.by_tab[f.tab_id] = desgloseVacio();
 
-    const { data, error } = await db
-        .from('hotmart_ventas')
-        .select('tipo, tab_id, estado, clasificacion_origen, producto_nombre, moneda, bruto, bruto_usd, neto_productor_usd, neto_afiliado_usd, neto_coproductor_usd')
-        .eq('cliente_id', clienteId)
-        .eq('fecha_venta', fecha)
-
-    if (error) throw new Error(`agregarDesdeHotmartVentas: ${error.message}`)
-
-    const filas: FilaVenta[] = data ?? []
-    const precioPorTab = new Map<string, number | undefined>(
-        funnels.map(f => [f.tab_id, f.principal_price_usd]),
+  const { data, error } = await db
+    .from('hotmart_ventas')
+    .select(
+      'tipo, tab_id, estado, clasificacion_origen, producto_nombre, moneda, bruto, bruto_usd, neto_productor_usd, neto_afiliado_usd, neto_coproductor_usd'
     )
-    const extras = new Map<string, { count: number; gross: number; net: number }>()
-    const monedas = new Set<string>()
-    let clasificadas = 0
+    .eq('cliente_id', clienteId)
+    .eq('fecha_venta', fecha);
 
-    for (const fila of filas) {
-        if (fila.moneda && fila.moneda.toUpperCase() !== 'USD') monedas.add(fila.moneda.toUpperCase())
-        if (fila.clasificacion_origen !== 'sin_clasificar') clasificadas++
+  if (error) throw new Error(`agregarDesdeHotmartVentas: ${error.message}`);
 
-        const cobrada = ESTADOS_COBRADOS.includes(fila.estado)
-        const devuelta = ESTADOS_DEVUELTOS.includes(fila.estado)
+  const filas: FilaVenta[] = data ?? [];
+  const precioPorTab = new Map<string, number | undefined>(
+    funnels.map((f) => [f.tab_id, f.principal_price_usd])
+  );
+  const extras = new Map<string, { count: number; gross: number; net: number }>();
+  const monedas = new Set<string>();
+  let clasificadas = 0;
 
-        // Un importe sin tasa no se suma como cero: se cuenta y se reporta.
-        if (fila.bruto_usd == null && num(fila.bruto) !== 0) registro.unconverted_count++
+  for (const fila of filas) {
+    if (fila.moneda && fila.moneda.toUpperCase() !== 'USD') monedas.add(fila.moneda.toUpperCase());
+    if (fila.clasificacion_origen !== 'sin_clasificar') clasificadas++;
 
-        const neto = num(fila.neto_productor_usd)
-        const bruto = num(fila.bruto_usd)
+    const cobrada = ESTADOS_COBRADOS.includes(fila.estado);
+    const devuelta = ESTADOS_DEVUELTOS.includes(fila.estado);
 
-        if (devuelta) {
-            // Se imputa a la fecha de la VENTA, no a la del reembolso: es lo que
-            // hace que el ROAS de la campaña refleje lo que de verdad dejó.
-            registro.reembolsado += neto
-            registro.reembolsado_count++
-            continue
-        }
-        if (!cobrada) continue   // pendiente / expirada / cancelada: aún no es dinero
+    // Un importe sin tasa no se suma como cero: se cuenta y se reporta.
+    if (fila.bruto_usd == null && num(fila.bruto) !== 0) registro.unconverted_count++;
 
-        registro.ventas_count++
-        registro.affiliate_net += num(fila.neto_afiliado_usd)
-        if (num(fila.neto_afiliado_usd) > 0) registro.affiliate_count++
-        registro.coproducer_net += num(fila.neto_coproductor_usd)
+    const neto = num(fila.neto_productor_usd);
+    const bruto = num(fila.bruto_usd);
 
-        const tab = fila.tab_id && registro.by_tab[fila.tab_id] ? fila.tab_id : null
-
-        switch (fila.tipo) {
-            case 'principal': {
-                // El precio configurado de la pestaña manda sobre el bruto de la
-                // API cuando existe.
-                const precio = tab ? precioPorTab.get(tab) : undefined
-                const brutoPrincipal = precio ?? bruto
-                registro.principal += neto
-                registro.principal_count++
-                registro.principal_bruto += brutoPrincipal
-                if (tab) {
-                    registro.by_tab[tab].principal.count++
-                    registro.by_tab[tab].principal.net += neto
-                    registro.by_tab[tab].principal.gross += brutoPrincipal
-                }
-                break
-            }
-            case 'bump':
-            case 'upsell':
-            case 'downsell': {
-                const k = fila.tipo as 'bump' | 'upsell' | 'downsell'
-                registro[k] += neto
-                registro[`${k}_count` as const]++
-                registro[`${k}_bruto` as const] += bruto
-                if (tab) {
-                    registro.by_tab[tab][k].count++
-                    registro.by_tab[tab][k].net += neto
-                    registro.by_tab[tab][k].gross += bruto
-                }
-                break
-            }
-            default: {
-                // Sin clasificar o suscripción → extras, igual que antes.
-                const key = fila.producto_nombre?.trim() || '(Sin nombre)'
-                const cur = extras.get(key) ?? { count: 0, gross: 0, net: 0 }
-                cur.count++
-                cur.net += neto
-                cur.gross += bruto
-                extras.set(key, cur)
-            }
-        }
+    if (devuelta) {
+      // Se imputa a la fecha de la VENTA, no a la del reembolso: es lo que
+      // hace que el ROAS de la campaña refleje lo que de verdad dejó.
+      registro.reembolsado += neto;
+      registro.reembolsado_count++;
+      continue;
     }
+    if (!cobrada) continue; // pendiente / expirada / cancelada: aún no es dinero
 
-    for (const [product_name, vals] of extras) registro.extras.push({ product_name, ...vals })
-    registro.monedas = Array.from(monedas)
-    registro.cobertura_pct = filas.length === 0
-        ? 100
-        : Math.round((clasificadas / filas.length) * 1000) / 10
+    registro.ventas_count++;
+    registro.affiliate_net += num(fila.neto_afiliado_usd);
+    if (num(fila.neto_afiliado_usd) > 0) registro.affiliate_count++;
+    registro.coproducer_net += num(fila.neto_coproductor_usd);
 
-    return registro
+    const tab = fila.tab_id && registro.by_tab[fila.tab_id] ? fila.tab_id : null;
+
+    switch (fila.tipo) {
+      case 'principal': {
+        // El precio configurado de la pestaña manda sobre el bruto de la
+        // API cuando existe.
+        const precio = tab ? precioPorTab.get(tab) : undefined;
+        const brutoPrincipal = precio ?? bruto;
+        registro.principal += neto;
+        registro.principal_count++;
+        registro.principal_bruto += brutoPrincipal;
+        if (tab) {
+          registro.by_tab[tab].principal.count++;
+          registro.by_tab[tab].principal.net += neto;
+          registro.by_tab[tab].principal.gross += brutoPrincipal;
+        }
+        break;
+      }
+      case 'bump':
+      case 'upsell':
+      case 'downsell': {
+        const k = fila.tipo as 'bump' | 'upsell' | 'downsell';
+        registro[k] += neto;
+        registro[`${k}_count` as const]++;
+        registro[`${k}_bruto` as const] += bruto;
+        if (tab) {
+          registro.by_tab[tab][k].count++;
+          registro.by_tab[tab][k].net += neto;
+          registro.by_tab[tab][k].gross += bruto;
+        }
+        break;
+      }
+      default: {
+        // Sin clasificar o suscripción → extras, igual que antes.
+        const key = fila.producto_nombre?.trim() || '(Sin nombre)';
+        const cur = extras.get(key) ?? { count: 0, gross: 0, net: 0 };
+        cur.count++;
+        cur.net += neto;
+        cur.gross += bruto;
+        extras.set(key, cur);
+      }
+    }
+  }
+
+  for (const [product_name, vals] of extras) registro.extras.push({ product_name, ...vals });
+  registro.monedas = Array.from(monedas);
+  registro.cobertura_pct =
+    filas.length === 0 ? 100 : Math.round((clasificadas / filas.length) * 1000) / 10;
+
+  return registro;
 }
 
 // ────────────────────────────────────────────────────────────────
@@ -390,46 +417,49 @@ export async function agregarDesdeHotmartVentas(
  * clasificación de todo el histórico sin gastar una sola petición a Hotmart.
  */
 export async function reclasificarRango(
-    db: Db,
-    clienteId: string,
-    desde: string,
-    hasta: string,
-    funnels: FunnelHotmart[],
+  db: Db,
+  clienteId: string,
+  desde: string,
+  hasta: string,
+  funnels: FunnelHotmart[]
 ): Promise<{ revisadas: number; cambiadas: number }> {
-    const { data, error } = await db
-        .from('hotmart_ventas')
-        .select('id, oferta_codigo, es_order_bump, parent_transaction_id, producto_nombre, tipo, tab_id, clasificacion_origen')
-        .eq('cliente_id', clienteId)
-        .gte('fecha_venta', desde)
-        .lte('fecha_venta', hasta)
+  const { data, error } = await db
+    .from('hotmart_ventas')
+    .select(
+      'id, oferta_codigo, es_order_bump, parent_transaction_id, producto_nombre, tipo, tab_id, clasificacion_origen'
+    )
+    .eq('cliente_id', clienteId)
+    .gte('fecha_venta', desde)
+    .lte('fecha_venta', hasta);
 
-    if (error) throw new Error(`reclasificarRango: ${error.message}`)
+  if (error) throw new Error(`reclasificarRango: ${error.message}`);
 
-    const filas = data ?? []
-    const copia = filas.map((f: Record<string, unknown>) => ({ ...f })) as unknown as VentaHotmart[]
-    clasificarLote(copia, funnels)
+  const filas = data ?? [];
+  const copia = filas.map((f: Record<string, unknown>) => ({ ...f })) as unknown as VentaHotmart[];
+  clasificarLote(copia, funnels);
 
-    let cambiadas = 0
-    for (let i = 0; i < filas.length; i++) {
-        const antes = filas[i]
-        const ahora = copia[i]
-        if (
-            antes.tipo === ahora.tipo &&
-            antes.tab_id === ahora.tab_id &&
-            antes.clasificacion_origen === ahora.clasificacion_origen
-        ) continue
-        await db
-            .from('hotmart_ventas')
-            .update({
-                tipo: ahora.tipo,
-                tab_id: ahora.tab_id,
-                clasificacion_origen: ahora.clasificacion_origen,
-                actualizado_at: new Date().toISOString(),
-            })
-            .eq('id', antes.id)
-        cambiadas++
-    }
-    return { revisadas: filas.length, cambiadas }
+  let cambiadas = 0;
+  for (let i = 0; i < filas.length; i++) {
+    const antes = filas[i];
+    const ahora = copia[i];
+    if (
+      antes.tipo === ahora.tipo &&
+      antes.tab_id === ahora.tab_id &&
+      antes.clasificacion_origen === ahora.clasificacion_origen
+    )
+      continue;
+    await db
+      .from('hotmart_ventas')
+      .update({
+        tipo: ahora.tipo,
+        tab_id: ahora.tab_id,
+        clasificacion_origen: ahora.clasificacion_origen,
+        actualizado_at: new Date().toISOString(),
+      })
+      .eq('id', antes.id);
+    cambiadas++;
+  }
+  return { revisadas: filas.length, cambiadas };
 }
 
 // ────────────────────────────────────────────────────────────────
@@ -447,72 +477,74 @@ export async function reclasificarRango(
  * permite calcular la tasa de reembolso en vez de perder la venta.
  */
 export async function reconciliarReembolsos(
-    db: Db,
-    clienteId: string,
-    token: string,
-    dias = 90,
-    log: (msg: string) => void = () => {},
+  db: Db,
+  clienteId: string,
+  token: string,
+  dias = 90,
+  log: (msg: string) => void = () => {}
 ): Promise<{ completo: boolean; revisadas: number; actualizadas: number; fechas: string[] }> {
-    const hasta = colombiaToday()
-    const desdeMs = new Date(`${hasta}T23:59:59.999-05:00`).getTime() - dias * 24 * 60 * 60 * 1000
-    const { fin } = ventanaDiaColombia(hasta)
+  const hasta = colombiaToday();
+  const desdeMs = new Date(`${hasta}T23:59:59.999-05:00`).getTime() - dias * 24 * 60 * 60 * 1000;
+  const { fin } = ventanaDiaColombia(hasta);
 
-    const params: Array<[string, string]> = [
-        ['start_date', String(desdeMs)],
-        ['end_date', String(fin)],
-        ['max_results', '100'],
-        ['transaction_status', 'REFUNDED'],
-        ['transaction_status', 'CHARGEBACK'],
-        ['transaction_status', 'CANCELLED'],
-    ]
+  const params: Array<[string, string]> = [
+    ['start_date', String(desdeMs)],
+    ['end_date', String(fin)],
+    ['max_results', '100'],
+    ['transaction_status', 'REFUNDED'],
+    ['transaction_status', 'CHARGEBACK'],
+    ['transaction_status', 'CANCELLED'],
+  ];
 
-    const res = await paginarHotmart<ItemHistorial>({
-        ruta: '/payments/api/v1/sales/history',
-        params,
-        token,
-        // Ventana larga: el tope se sube porque son 90 días, no uno.
-        maxPaginas: 120,
-        log,
-    })
+  const res = await paginarHotmart<ItemHistorial>({
+    ruta: '/payments/api/v1/sales/history',
+    params,
+    token,
+    // Ventana larga: el tope se sube porque son 90 días, no uno.
+    maxPaginas: 120,
+    log,
+  });
 
-    const fechas = new Set<string>()
-    let actualizadas = 0
+  const fechas = new Set<string>();
+  let actualizadas = 0;
 
-    for (const item of res.items) {
-        const r = parsearApi(item, undefined, { origen: 'reconciliacion' })
-        if (!r.ok) continue
-        const v = r.venta
+  for (const item of res.items) {
+    const r = parsearApi(item, undefined, { origen: 'reconciliacion' });
+    if (!r.ok) continue;
+    const v = r.venta;
 
-        const { data: existente } = await db
-            .from('hotmart_ventas')
-            .select('id, estado, fecha_venta')
-            .eq('cliente_id', clienteId)
-            .eq('transaction_id', v.transaction_id)
-            .maybeSingle()
+    const { data: existente } = await db
+      .from('hotmart_ventas')
+      .select('id, estado, fecha_venta')
+      .eq('cliente_id', clienteId)
+      .eq('transaction_id', v.transaction_id)
+      .maybeSingle();
 
-        if (!existente) continue
-        if (existente.estado === v.estado) continue
+    if (!existente) continue;
+    if (existente.estado === v.estado) continue;
 
-        await db
-            .from('hotmart_ventas')
-            .update({
-                estado: v.estado,
-                reembolsada_at: v.reembolsada_at ?? v.evento_ts,
-                evento_ts: v.evento_ts,
-                origen: 'reconciliacion',
-                actualizado_at: new Date().toISOString(),
-            })
-            .eq('id', existente.id)
+    await db
+      .from('hotmart_ventas')
+      .update({
+        estado: v.estado,
+        reembolsada_at: v.reembolsada_at ?? v.evento_ts,
+        evento_ts: v.evento_ts,
+        origen: 'reconciliacion',
+        actualizado_at: new Date().toISOString(),
+      })
+      .eq('id', existente.id);
 
-        actualizadas++
-        fechas.add(existente.fecha_venta)
-    }
+    actualizadas++;
+    fechas.add(existente.fecha_venta);
+  }
 
-    log(`[Hotmart] Reconciliación: ${res.items.length} revisadas, ${actualizadas} actualizadas, ${fechas.size} fecha(s) a reagregar.`)
-    return {
-        completo: res.completo,
-        revisadas: res.items.length,
-        actualizadas,
-        fechas: Array.from(fechas).sort(),
-    }
+  log(
+    `[Hotmart] Reconciliación: ${res.items.length} revisadas, ${actualizadas} actualizadas, ${fechas.size} fecha(s) a reagregar.`
+  );
+  return {
+    completo: res.completo,
+    revisadas: res.items.length,
+    actualizadas,
+    fechas: Array.from(fechas).sort(),
+  };
 }

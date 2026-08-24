@@ -1,4 +1,4 @@
-import { headers, cookies } from 'next/headers'
+import { headers, cookies } from 'next/headers';
 
 /**
  * Llamadas de la app a su propia API desde server actions.
@@ -17,24 +17,24 @@ import { headers, cookies } from 'next/headers'
  *     acabaron sin ningún control de acceso.
  */
 async function internalOrigin(): Promise<string> {
-    const configured = process.env.NEXT_PUBLIC_APP_URL?.trim()
-    if (configured) return configured.replace(/\/+$/, '')
+  const configured = process.env.NEXT_PUBLIC_APP_URL?.trim();
+  if (configured) return configured.replace(/\/+$/, '');
 
-    // Sin origen configurado solo aceptamos localhost: en producción preferimos
-    // fallar de forma visible antes que volver a confiar en el header `Host`.
-    const host = (await headers()).get('host') || 'localhost:3000'
-    if (!host.startsWith('localhost') && !host.startsWith('127.0.0.1')) {
-        throw new Error(
-            'NEXT_PUBLIC_APP_URL no está configurada: no se puede resolver el origen interno de forma segura'
-        )
-    }
-    return `http://${host}`
+  // Sin origen configurado solo aceptamos localhost: en producción preferimos
+  // fallar de forma visible antes que volver a confiar en el header `Host`.
+  const host = (await headers()).get('host') || 'localhost:3000';
+  if (!host.startsWith('localhost') && !host.startsWith('127.0.0.1')) {
+    throw new Error(
+      'NEXT_PUBLIC_APP_URL no está configurada: no se puede resolver el origen interno de forma segura'
+    );
+  }
+  return `http://${host}`;
 }
 
 /** Cabecera `cookie` de la petición actual, para que la ruta destino vea la sesión. */
 async function forwardedCookieHeader(): Promise<string> {
-    const all = (await cookies()).getAll()
-    return all.map(c => `${c.name}=${c.value}`).join('; ')
+  const all = (await cookies()).getAll();
+  return all.map((c) => `${c.name}=${c.value}`).join('; ');
 }
 
 /**
@@ -42,15 +42,15 @@ async function forwardedCookieHeader(): Promise<string> {
  * sesión del usuario reenviada.
  */
 export async function internalFetch(path: string, init: RequestInit = {}): Promise<Response> {
-    const origin = await internalOrigin()
-    const cookie = await forwardedCookieHeader()
+  const origin = await internalOrigin();
+  const cookie = await forwardedCookieHeader();
 
-    const headersInit = new Headers(init.headers)
-    if (cookie) headersInit.set('cookie', cookie)
+  const headersInit = new Headers(init.headers);
+  if (cookie) headersInit.set('cookie', cookie);
 
-    return fetch(`${origin}${path}`, {
-        ...init,
-        headers: headersInit,
-        cache: init.cache ?? 'no-store',
-    })
+  return fetch(`${origin}${path}`, {
+    ...init,
+    headers: headersInit,
+    cache: init.cache ?? 'no-store',
+  });
 }

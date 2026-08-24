@@ -11,18 +11,23 @@
 // respuesta distinta. Lo común es exactamente esto: qué filtros viajan y cuándo
 // hay que volver a pedir.
 
-import type { BiFilters, WidgetConfig } from './BiTypes'
+import type { BiFilters, WidgetConfig } from './BiTypes';
 import {
-    appendUtmFilters, utmFilterSignature,
-    appendFieldFilters, fieldFilterSignature,
-    appendDimFilters, dimFilterSignature,
-    appendAdvancedFilter, advancedFilterSignature,
-    widgetAdvancedSignature, withCampaignFilter,
-} from '@/lib/report-utm/bi-metadata'
+  appendUtmFilters,
+  utmFilterSignature,
+  appendFieldFilters,
+  fieldFilterSignature,
+  appendDimFilters,
+  dimFilterSignature,
+  appendAdvancedFilter,
+  advancedFilterSignature,
+  widgetAdvancedSignature,
+  withCampaignFilter,
+} from '@/lib/report-utm/bi-metadata';
 
 /** Filtro avanzado efectivo de un widget: el suyo + su filtro rápido de campaña. */
 export function widgetAdvanced(config: WidgetConfig) {
-    return withCampaignFilter(config.advanced_filter, config.campaign_filter)
+  return withCampaignFilter(config.advanced_filter, config.campaign_filter);
 }
 
 /**
@@ -31,14 +36,14 @@ export function widgetAdvanced(config: WidgetConfig) {
  * (informe + widget, fusionados en Y).
  */
 export function appendWidgetFilters(
-    params: URLSearchParams,
-    filters: BiFilters,
-    config: WidgetConfig
+  params: URLSearchParams,
+  filters: BiFilters,
+  config: WidgetConfig
 ): void {
-    appendUtmFilters(params, filters)
-    appendFieldFilters(params, filters)
-    appendDimFilters(params, filters)
-    appendAdvancedFilter(params, filters, widgetAdvanced(config))
+  appendUtmFilters(params, filters);
+  appendFieldFilters(params, filters);
+  appendDimFilters(params, filters);
+  appendAdvancedFilter(params, filters, widgetAdvanced(config));
 }
 
 /**
@@ -47,14 +52,14 @@ export function appendWidgetFilters(
  * expresiones sueltas que era fácil desemparejar.
  */
 export function widgetFilterSignature(filters: BiFilters, config: WidgetConfig): string {
-    return [
-        filters.cliente_id ?? '',
-        filters.date_from ?? '',
-        filters.date_to ?? '',
-        utmFilterSignature(filters),
-        fieldFilterSignature(filters),
-        dimFilterSignature(filters),
-        advancedFilterSignature(filters),
-        widgetAdvancedSignature(widgetAdvanced(config)),
-    ].join('¦')
+  return [
+    filters.cliente_id ?? '',
+    filters.date_from ?? '',
+    filters.date_to ?? '',
+    utmFilterSignature(filters),
+    fieldFilterSignature(filters),
+    dimFilterSignature(filters),
+    advancedFilterSignature(filters),
+    widgetAdvancedSignature(widgetAdvanced(config)),
+  ].join('¦');
 }

@@ -251,7 +251,9 @@ export function WhatsAppConfigClient({
                   className="flex justify-between bg-muted/60 px-3 py-1.5 rounded"
                 >
                   <span>{g.group_name}</span>
-                  <span className="text-muted-foreground/70 text-xs">{g.group_id.split('@')[0]}</span>
+                  <span className="text-muted-foreground/70 text-xs">
+                    {g.group_id.split('@')[0]}
+                  </span>
                 </li>
               ))}
             </ul>
@@ -454,10 +456,7 @@ export function WhatsAppConfigClient({
           ) : (
             <ul className="space-y-1 text-sm">
               {messages.map((m) => (
-                <li
-                  key={m.id}
-                  className="bg-muted/60 px-3 py-2 rounded flex justify-between gap-3"
-                >
+                <li key={m.id} className="bg-muted/60 px-3 py-2 rounded flex justify-between gap-3">
                   <div className="min-w-0">
                     <span className="text-foreground/90 truncate block">{m.message}</span>
                     <span className="text-muted-foreground/70 text-xs">
@@ -469,7 +468,9 @@ export function WhatsAppConfigClient({
                   </div>
                   <span
                     className={`text-xs shrink-0 ${
-                      m.status === 'sent' ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'
+                      m.status === 'sent'
+                        ? 'text-emerald-600 dark:text-emerald-400'
+                        : 'text-red-600 dark:text-red-400'
                     }`}
                     title={m.error ?? ''}
                   >

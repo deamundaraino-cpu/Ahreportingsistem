@@ -18,27 +18,32 @@
 // columnas de Google Sheets: si divergieran, la vista previa del agrupador
 // dejaría de coincidir con lo que hace el motor.
 
-import { normalizarValorCrudo, bucketDeValor, sanitizarColumna, slugCampo } from '@/lib/sheets/campos'
-import type { CampoValoresMap, CampoValorCrudo, CampoSinMapear } from '@/lib/sheets/campos'
+import {
+  normalizarValorCrudo,
+  bucketDeValor,
+  sanitizarColumna,
+  slugCampo,
+} from '@/lib/sheets/campos';
+import type { CampoValoresMap, CampoValorCrudo, CampoSinMapear } from '@/lib/sheets/campos';
 
-export { normalizarValorCrudo, slugCampo, bucketDeValor }
-export type { CampoValoresMap, CampoValorCrudo, CampoSinMapear }
+export { normalizarValorCrudo, slugCampo, bucketDeValor };
+export type { CampoValoresMap, CampoValorCrudo, CampoSinMapear };
 
 /** Definición de un campo de lead (fila de `report_utm.lead_campos`). */
 export interface LeadCampoDef {
-    id: string
-    cliente_id: string
-    clave: string
-    nombre: string
-    descripcion: string | null
-    /** Claves de raw_fields que unifica, ya sanitizadas. */
-    claves_origen: string[]
-    valores_map: CampoValoresMap
-    valores_orden: string[]
-    sin_mapear: CampoSinMapear
-    max_valores: number
-    activo: boolean
-    orden: number
+  id: string;
+  cliente_id: string;
+  clave: string;
+  nombre: string;
+  descripcion: string | null;
+  /** Claves de raw_fields que unifica, ya sanitizadas. */
+  claves_origen: string[];
+  valores_map: CampoValoresMap;
+  valores_orden: string[];
+  sin_mapear: CampoSinMapear;
+  max_valores: number;
+  activo: boolean;
+  orden: number;
 }
 
 /**
@@ -47,20 +52,20 @@ export interface LeadCampoDef {
  * consultar de nuevo.
  */
 export interface LeadCampoMeta {
-    clave: string
-    nombre: string
-    descripcion?: string | null
-    /** Buckets que produce, en el orden configurado. */
-    valores: string[]
-    /** Claves crudas que unifica, para el tooltip del editor. */
-    claves_origen: string[]
-    /** Leads del período que responden este campo. */
-    cobertura: number
-    alta_cardinalidad: boolean
+  clave: string;
+  nombre: string;
+  descripcion?: string | null;
+  /** Buckets que produce, en el orden configurado. */
+  valores: string[];
+  /** Claves crudas que unifica, para el tooltip del editor. */
+  claves_origen: string[];
+  /** Leads del período que responden este campo. */
+  cobertura: number;
+  alta_cardinalidad: boolean;
 }
 
 /** Campo cuyo valor no está en el mapa y `sin_mapear` manda agruparlo. */
-export const BUCKET_OTROS = '(otros)'
+export const BUCKET_OTROS = '(otros)';
 
 // ── Claves ────────────────────────────────────────────────────────────
 
@@ -73,7 +78,7 @@ export const BUCKET_OTROS = '(otros)'
  * el mismo idioma y un campo no deja de encontrar su origen por un acento.
  */
 export function normalizarClaveLead(key: string): string {
-    return sanitizarColumna(key)
+  return sanitizarColumna(key);
 }
 
 /**
@@ -82,19 +87,21 @@ export function normalizarClaveLead(key: string): string {
  * JSONB por cada campo multiplicaría el trabajo en consultas de decenas de miles
  * de leads.
  */
-export function indexarRawFields(rf: Record<string, unknown> | null | undefined): Map<string, unknown> {
-    const idx = new Map<string, unknown>()
-    if (!rf || typeof rf !== 'object') return idx
-    for (const [k, v] of Object.entries(rf)) {
-        if (v === null || v === undefined) continue
-        const norm = normalizarClaveLead(k)
-        if (!norm) continue
-        // La primera clave con dato manda: si un mismo lead trae la pregunta dos
-        // veces (formulario duplicado), quedarse con la primera evita que el
-        // orden de las claves del JSONB cambie el resultado.
-        if (!idx.has(norm) || idx.get(norm) === '') idx.set(norm, v)
-    }
-    return idx
+export function indexarRawFields(
+  rf: Record<string, unknown> | null | undefined
+): Map<string, unknown> {
+  const idx = new Map<string, unknown>();
+  if (!rf || typeof rf !== 'object') return idx;
+  for (const [k, v] of Object.entries(rf)) {
+    if (v === null || v === undefined) continue;
+    const norm = normalizarClaveLead(k);
+    if (!norm) continue;
+    // La primera clave con dato manda: si un mismo lead trae la pregunta dos
+    // veces (formulario duplicado), quedarse con la primera evita que el
+    // orden de las claves del JSONB cambie el resultado.
+    if (!idx.has(norm) || idx.get(norm) === '') idx.set(norm, v);
+  }
+  return idx;
 }
 
 // ── Valor de un campo en un lead ──────────────────────────────────────
@@ -106,19 +113,22 @@ export function indexarRawFields(rf: Record<string, unknown> | null | undefined)
  * vacía es la respuesta del lead.
  */
 export function bucketDeLead(campo: LeadCampoDef, idx: Map<string, unknown>): string | null {
-    for (const clave of campo.claves_origen ?? []) {
-        const v = idx.get(clave)
-        if (v === null || v === undefined) continue
-        const s = String(v).trim()
-        if (!s) continue
-        return bucketDeValor(campo, s)
-    }
-    return null
+  for (const clave of campo.claves_origen ?? []) {
+    const v = idx.get(clave);
+    if (v === null || v === undefined) continue;
+    const s = String(v).trim();
+    if (!s) continue;
+    return bucketDeValor(campo, s);
+  }
+  return null;
 }
 
 /** Igual que `bucketDeLead` pero partiendo del `raw_fields` sin indexar. */
-export function bucketDeLeadRaw(campo: LeadCampoDef, rf: Record<string, unknown> | null | undefined): string | null {
-    return bucketDeLead(campo, indexarRawFields(rf))
+export function bucketDeLeadRaw(
+  campo: LeadCampoDef,
+  rf: Record<string, unknown> | null | undefined
+): string | null {
+  return bucketDeLead(campo, indexarRawFields(rf));
 }
 
 // ── Orden de los buckets ──────────────────────────────────────────────
@@ -128,13 +138,16 @@ export function bucketDeLeadRaw(campo: LeadCampoDef, rf: Record<string, unknown>
  * orden alfabético. Es lo que hace que los rangos de ingresos salgan de menor a
  * mayor: alfabéticamente "Entre $2M" iría antes que "Menos de $2M".
  */
-export function ordenarBuckets(campo: Pick<LeadCampoDef, 'valores_orden'>, valores: string[]): string[] {
-    const orden = campo.valores_orden ?? []
-    const pos = (v: string) => {
-        const i = orden.indexOf(v)
-        return i === -1 ? orden.length : i
-    }
-    return [...valores].sort((a, b) => pos(a) - pos(b) || a.localeCompare(b))
+export function ordenarBuckets(
+  campo: Pick<LeadCampoDef, 'valores_orden'>,
+  valores: string[]
+): string[] {
+  const orden = campo.valores_orden ?? [];
+  const pos = (v: string) => {
+    const i = orden.indexOf(v);
+    return i === -1 ? orden.length : i;
+  };
+  return [...valores].sort((a, b) => pos(a) - pos(b) || a.localeCompare(b));
 }
 
 // ── Sugerencia de agrupación ──────────────────────────────────────────
@@ -153,11 +166,13 @@ export function ordenarBuckets(campo: Pick<LeadCampoDef, 'valores_orden'>, valor
  * el `valores_map` que confirma el analista.
  */
 export function firmaDeValorLead(raw: unknown): string {
-    return normalizarValorCrudo(raw)
-        // Conector de rango entre dos números, con o sin guiones bajos, espacios
-        // o símbolo de moneda de por medio.
-        .replace(/(\d)[\s_]*(?:a|y|to|and|-)[\s_]*[$€£]?\s*(\d)/g, '$1-$2')
-        .replace(/[^a-z0-9]+/g, '')
+  return (
+    normalizarValorCrudo(raw)
+      // Conector de rango entre dos números, con o sin guiones bajos, espacios
+      // o símbolo de moneda de por medio.
+      .replace(/(\d)[\s_]*(?:a|y|to|and|-)[\s_]*[$€£]?\s*(\d)/g, '$1-$2')
+      .replace(/[^a-z0-9]+/g, '')
+  );
 }
 
 /**
@@ -166,41 +181,44 @@ export function firmaDeValorLead(raw: unknown): string {
  * para fusionar con `valores_map`.
  */
 export function sugerirAgrupacionLead(valores: CampoValorCrudo[]): CampoValoresMap {
-    const porFirma = new Map<string, CampoValorCrudo[]>()
-    for (const v of valores) {
-        const f = firmaDeValorLead(v.valor_crudo)
-        if (!f) continue
-        const lista = porFirma.get(f)
-        if (lista) lista.push(v)
-        else porFirma.set(f, [v])
-    }
+  const porFirma = new Map<string, CampoValorCrudo[]>();
+  for (const v of valores) {
+    const f = firmaDeValorLead(v.valor_crudo);
+    if (!f) continue;
+    const lista = porFirma.get(f);
+    if (lista) lista.push(v);
+    else porFirma.set(f, [v]);
+  }
 
-    const out: CampoValoresMap = {}
-    for (const grupo of porFirma.values()) {
-        if (grupo.length < 2) continue   // sin variantes no hay nada que agrupar
-        const bucket = grupo.slice().sort((a, b) => b.filas - a.filas)[0].valor_crudo.trim()
-        for (const v of grupo) out[normalizarValorCrudo(v.valor_crudo)] = bucket
-    }
-    return out
+  const out: CampoValoresMap = {};
+  for (const grupo of porFirma.values()) {
+    if (grupo.length < 2) continue; // sin variantes no hay nada que agrupar
+    const bucket = grupo
+      .slice()
+      .sort((a, b) => b.filas - a.filas)[0]
+      .valor_crudo.trim();
+    for (const v of grupo) out[normalizarValorCrudo(v.valor_crudo)] = bucket;
+  }
+  return out;
 }
 
 // ── Descubrimiento de claves candidatas ───────────────────────────────
 
 /** Una clave de `raw_fields` detectada en los leads del cliente. */
 export interface ClaveDetectada {
-    /** Clave tal como llegó (la más frecuente si hay variantes de escritura). */
-    clave: string
-    /** Forma canónica con la que se guarda en `claves_origen`. */
-    clave_norm: string
-    /** Leads que la traen con valor. */
-    leads: number
-    /** Valores distintos vistos. */
-    distintos: number
-    /** ¿Parece una pregunta de opción múltiple (pocos valores repetidos)? */
-    es_opcion: boolean
-    /** Formularios donde aparece. */
-    formularios: string[]
-    valores: CampoValorCrudo[]
+  /** Clave tal como llegó (la más frecuente si hay variantes de escritura). */
+  clave: string;
+  /** Forma canónica con la que se guarda en `claves_origen`. */
+  clave_norm: string;
+  /** Leads que la traen con valor. */
+  leads: number;
+  /** Valores distintos vistos. */
+  distintos: number;
+  /** ¿Parece una pregunta de opción múltiple (pocos valores repetidos)? */
+  es_opcion: boolean;
+  /** Formularios donde aparece. */
+  formularios: string[];
+  valores: CampoValorCrudo[];
 }
 
 /**
@@ -209,24 +227,52 @@ export interface ClaveDetectada {
  * duplicadas — y el ruido técnico del plugin.
  */
 const CLAVES_IGNORADAS = new Set([
-    'email', 'correo', 'correo_electronico', 'e_mail', 'mail',
-    'nombre', 'name', 'full_name', 'fullname', 'firstname', 'lastname',
-    'nombre_y_apellido', 'apellido',
-    'phone', 'telefono', 'phone_number', 'numero_de_telefono', 'celular',
-    'whatsapp', 'whatsapp_number', 'numero_de_whatsapp', 'movil',
-    'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'utm_id',
-    'gclid', 'fbclid', 'ttclid',
-    'origen', 'version', 'phone_number_verified', 'page_url', 'referrer',
-])
+  'email',
+  'correo',
+  'correo_electronico',
+  'e_mail',
+  'mail',
+  'nombre',
+  'name',
+  'full_name',
+  'fullname',
+  'firstname',
+  'lastname',
+  'nombre_y_apellido',
+  'apellido',
+  'phone',
+  'telefono',
+  'phone_number',
+  'numero_de_telefono',
+  'celular',
+  'whatsapp',
+  'whatsapp_number',
+  'numero_de_whatsapp',
+  'movil',
+  'utm_source',
+  'utm_medium',
+  'utm_campaign',
+  'utm_content',
+  'utm_term',
+  'utm_id',
+  'gclid',
+  'fbclid',
+  'ttclid',
+  'origen',
+  'version',
+  'phone_number_verified',
+  'page_url',
+  'referrer',
+]);
 
 /** ¿Esta clave cruda merece ofrecerse como campo de lead? */
 export function esClaveOfrecible(claveNorm: string): boolean {
-    if (!claveNorm) return false
-    if (CLAVES_IGNORADAS.has(claveNorm)) return false
-    // Los campos sin etiqueta de Elementor llegan como "field_9f2a1b3": un id
-    // opaco que no significa nada en un informe de cliente.
-    if (/^(field|campo)_[a-z0-9]{4,}$/.test(claveNorm)) return false
-    return true
+  if (!claveNorm) return false;
+  if (CLAVES_IGNORADAS.has(claveNorm)) return false;
+  // Los campos sin etiqueta de Elementor llegan como "field_9f2a1b3": un id
+  // opaco que no significa nada en un informe de cliente.
+  if (/^(field|campo)_[a-z0-9]{4,}$/.test(claveNorm)) return false;
+  return true;
 }
 
 /**
@@ -235,14 +281,14 @@ export function esClaveOfrecible(claveNorm: string): boolean {
  * ignorar en el agrupador.
  */
 export function esValorPlaceholder(valor: string): boolean {
-    const v = normalizarValorCrudo(valor)
-    return (
-        v === '' ||
-        /^selecc?ion[ae]/.test(v) ||          // "Seleccione una opción."
-        /^select an option/.test(v) ||
-        /^elige/.test(v) ||
-        v.startsWith('<test lead')            // leads de prueba de Meta
-    )
+  const v = normalizarValorCrudo(valor);
+  return (
+    v === '' ||
+    /^selecc?ion[ae]/.test(v) || // "Seleccione una opción."
+    /^select an option/.test(v) ||
+    /^elige/.test(v) ||
+    v.startsWith('<test lead') // leads de prueba de Meta
+  );
 }
 
 // ── Segmentos: una respuesta (o un grupo de respuestas) como MÉTRICA ──
@@ -261,19 +307,19 @@ export function esValorPlaceholder(valor: string): boolean {
 
 /** Definición de un segmento (fila de `report_utm.lead_campo_segmentos`). */
 export interface LeadSegmentoDef {
-    id: string
-    cliente_id: string
-    campo_id: string
-    /** Clave del campo padre, desnormalizada para no volver a la base por cada fila. */
-    campo_clave: string
-    clave: string
-    nombre: string
-    descripcion: string | null
-    operador: 'in' | 'not_in'
-    /** Buckets del campo padre que incluye (o excluye, con `not_in`). */
-    valores: string[]
-    activo: boolean
-    orden: number
+  id: string;
+  cliente_id: string;
+  campo_id: string;
+  /** Clave del campo padre, desnormalizada para no volver a la base por cada fila. */
+  campo_clave: string;
+  clave: string;
+  nombre: string;
+  descripcion: string | null;
+  operador: 'in' | 'not_in';
+  /** Buckets del campo padre que incluye (o excluye, con `not_in`). */
+  valores: string[];
+  activo: boolean;
+  orden: number;
 }
 
 /**
@@ -282,23 +328,23 @@ export interface LeadSegmentoDef {
  * payload se paga por byte.
  */
 export interface LeadSegmentoLite {
-    clave: string
-    nombre: string
-    operador: 'in' | 'not_in'
-    valores: string[]
+  clave: string;
+  nombre: string;
+  operador: 'in' | 'not_in';
+  valores: string[];
 }
 
 /** Metadata de un segmento que viaja al navegador (editor de widgets y fórmulas). */
 export interface LeadSegmentoMeta {
-    clave: string
-    nombre: string
-    /** Clave del campo padre, para etiquetar «<Campo>: <Segmento>». */
-    campo_clave: string
-    campo_nombre?: string
-    operador: 'in' | 'not_in'
-    valores: string[]
-    /** Leads del período que caen dentro del segmento. */
-    cobertura: number
+  clave: string;
+  nombre: string;
+  /** Clave del campo padre, para etiquetar «<Campo>: <Segmento>». */
+  campo_clave: string;
+  campo_nombre?: string;
+  operador: 'in' | 'not_in';
+  valores: string[];
+  /** Leads del período que caen dentro del segmento. */
+  cobertura: number;
 }
 
 /**
@@ -307,11 +353,11 @@ export interface LeadSegmentoMeta {
  * de dónde saliera el dato.
  */
 export function segmentoIncluyeBucket(
-    seg: Pick<LeadSegmentoDef, 'valores' | 'operador'>,
-    bucket: string
+  seg: Pick<LeadSegmentoDef, 'valores' | 'operador'>,
+  bucket: string
 ): boolean {
-    const dentro = (seg.valores ?? []).includes(bucket)
-    return seg.operador === 'not_in' ? !dentro : dentro
+  const dentro = (seg.valores ?? []).includes(bucket);
+  return seg.operador === 'not_in' ? !dentro : dentro;
 }
 
 /**
@@ -322,13 +368,13 @@ export function segmentoIncluyeBucket(
  * contarlo inflaría el complemento con gente de la que no se sabe nada.
  */
 export function cuentaEnSegmento(
-    seg: Pick<LeadSegmentoDef, 'valores' | 'operador'>,
-    campo: LeadCampoDef,
-    idx: Map<string, unknown>
+  seg: Pick<LeadSegmentoDef, 'valores' | 'operador'>,
+  campo: LeadCampoDef,
+  idx: Map<string, unknown>
 ): boolean {
-    const bucket = bucketDeLead(campo, idx)
-    if (bucket === null) return false
-    return segmentoIncluyeBucket(seg, bucket)
+  const bucket = bucketDeLead(campo, idx);
+  if (bucket === null) return false;
+  return segmentoIncluyeBucket(seg, bucket);
 }
 
 /**
@@ -340,10 +386,10 @@ export function cuentaEnSegmento(
  * «Menos de $2M» en medio de los demás.
  */
 export function bucketsAcumulados(
-    campo: Pick<LeadCampoDef, 'valores_orden'>,
-    desde: string
+  campo: Pick<LeadCampoDef, 'valores_orden'>,
+  desde: string
 ): string[] {
-    const orden = campo.valores_orden ?? []
-    const i = orden.indexOf(desde)
-    return i === -1 ? [] : orden.slice(i)
+  const orden = campo.valores_orden ?? [];
+  const i = orden.indexOf(desde);
+  return i === -1 ? [] : orden.slice(i);
 }

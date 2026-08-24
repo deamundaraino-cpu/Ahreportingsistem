@@ -4,22 +4,22 @@
 
 La aplicación usa **Supabase Auth**. La sesión se gestiona con cookies vía `@supabase/ssr`. Hay tres "sabores" de cliente Supabase:
 
-| Cliente | Archivo | Uso |
-|---------|---------|-----|
-| Browser | `src/utils/supabase/client.ts` | Componentes cliente (`createBrowserClient`) |
-| Server | `src/utils/supabase/server.ts` → `createClient()` | Server Components / actions, gestiona cookies de sesión |
-| Admin | `src/utils/supabase/server.ts` → `createAdminClient()` | Usa `SUPABASE_SERVICE_ROLE_KEY`, **omite RLS** (workers, API v1, MCP) |
+| Cliente | Archivo                                                | Uso                                                                   |
+| ------- | ------------------------------------------------------ | --------------------------------------------------------------------- |
+| Browser | `src/utils/supabase/client.ts`                         | Componentes cliente (`createBrowserClient`)                           |
+| Server  | `src/utils/supabase/server.ts` → `createClient()`      | Server Components / actions, gestiona cookies de sesión               |
+| Admin   | `src/utils/supabase/server.ts` → `createAdminClient()` | Usa `SUPABASE_SERVICE_ROLE_KEY`, **omite RLS** (workers, API v1, MCP) |
 
 ## Roles
 
 Los roles se almacenan en la tabla **`user_profiles`** (`role`). Existen cuatro:
 
-| Rol | Permisos |
-|-----|----------|
-| `superadmin` | Acceso total a todo el sistema |
-| `admin` | Acceso total (clientes, usuarios, tokens, reportes, layouts, Report-UTM) |
+| Rol          | Permisos                                                                                                              |
+| ------------ | --------------------------------------------------------------------------------------------------------------------- |
+| `superadmin` | Acceso total a todo el sistema                                                                                        |
+| `admin`      | Acceso total (clientes, usuarios, tokens, reportes, layouts, Report-UTM)                                              |
 | `trafficker` | Solo los clientes **asignados** (vía `user_client_assignments`); puede configurar settings y layouts de esos clientes |
-| `viewer` | Solo dashboards en modo lectura; redirigido fuera de `/admin` |
+| `viewer`     | Solo dashboards en modo lectura; redirigido fuera de `/admin`                                                         |
 
 > Adicionalmente, varias políticas RLS conceden acceso total a un **email administrador hardcodeado** en `schema.sql` (`robinson@adshouse.com`). Cámbialo por tu administrador real.
 
@@ -38,13 +38,13 @@ El middleware vive en `src/proxy.ts`, que delega en `updateSession()` (`src/util
 
 ### Categorías de rutas
 
-| Categoría | Rutas | Requisito |
-|-----------|-------|-----------|
-| **Públicas** | `/login`, `/signup`, `/api/*`, `/report/*`, `/p/*`, `/t/*`, `/report-utm-pixel.js`, `/privacy`, `/terms` | Ninguno |
-| **Autenticadas** | `/dashboard`, `/dashboard/[clientId]`, `/soporte` | Sesión válida |
-| **Admin (solo admin/superadmin)** | `/admin/users`, `/admin/api-tokens`, `/admin/reports` | Rol admin/superadmin |
-| **Admin (admin/superadmin/trafficker)** | `/admin/settings`, `/admin/layouts` | Uno de esos roles |
-| **Report-UTM** | `/report-utm/*` | Sesión + rol admin + `NEXT_PUBLIC_REPORT_UTM_ENABLED=true` |
+| Categoría                               | Rutas                                                                                                    | Requisito                                                  |
+| --------------------------------------- | -------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| **Públicas**                            | `/login`, `/signup`, `/api/*`, `/report/*`, `/p/*`, `/t/*`, `/report-utm-pixel.js`, `/privacy`, `/terms` | Ninguno                                                    |
+| **Autenticadas**                        | `/dashboard`, `/dashboard/[clientId]`, `/soporte`                                                        | Sesión válida                                              |
+| **Admin (solo admin/superadmin)**       | `/admin/users`, `/admin/api-tokens`, `/admin/reports`                                                    | Rol admin/superadmin                                       |
+| **Admin (admin/superadmin/trafficker)** | `/admin/settings`, `/admin/layouts`                                                                      | Uno de esos roles                                          |
+| **Report-UTM**                          | `/report-utm/*`                                                                                          | Sesión + rol admin + `NEXT_PUBLIC_REPORT_UTM_ENABLED=true` |
 
 > Nota: las rutas `/api/*` no se bloquean en el middleware; **cada endpoint aplica su propia autenticación** (token de API, `CRON_SECRET`, firma HMAC o sesión). Ver [doc 07 · API REST](./07-api-rest.md).
 
@@ -52,13 +52,13 @@ El middleware vive en `src/proxy.ts`, que delega en `updateSession()` (`src/util
 
 La aplicación usa **distintos mecanismos según el consumidor**:
 
-| Mecanismo | Dónde | Cómo |
-|-----------|-------|------|
-| **Sesión Supabase** | UI, server actions, algunos endpoints | Cookie de sesión |
-| **Token de API** | `/api/v1/*`, `/api/mcp` | `Authorization: Bearer ads_…` (solo cabecera; ver `src/lib/api-token-auth.ts`) |
-| **Secreto de cron** | `/api/worker*`, `/api/cron/*` | `Authorization: Bearer $CRON_SECRET` (comparación de tiempo constante, `src/lib/cron-auth.ts`) |
-| **Firma HMAC** | Webhook Hotmart | `x-hotmart-signature` / `x-hotmart-hottok` (`src/lib/report-utm/webhook-auth.ts`) |
-| **Token público** | `/p/[token]`, `/report/...` | `public_token` de cliente/tab; sin login |
+| Mecanismo           | Dónde                                 | Cómo                                                                                           |
+| ------------------- | ------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| **Sesión Supabase** | UI, server actions, algunos endpoints | Cookie de sesión                                                                               |
+| **Token de API**    | `/api/v1/*`, `/api/mcp`               | `Authorization: Bearer ads_…` (solo cabecera; ver `src/lib/api-token-auth.ts`)                 |
+| **Secreto de cron** | `/api/worker*`, `/api/cron/*`         | `Authorization: Bearer $CRON_SECRET` (comparación de tiempo constante, `src/lib/cron-auth.ts`) |
+| **Firma HMAC**      | Webhook Hotmart                       | `x-hotmart-signature` / `x-hotmart-hottok` (`src/lib/report-utm/webhook-auth.ts`)              |
+| **Token público**   | `/p/[token]`, `/report/...`           | `public_token` de cliente/tab; sin login                                                       |
 
 ### Tokens de API
 

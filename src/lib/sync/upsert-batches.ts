@@ -24,7 +24,7 @@
 
 /** Firma estable de una fila: sus claves ordenadas. */
 export function firmaDeFila(fila: Record<string, unknown>): string {
-    return Object.keys(fila).sort().join('|')
+  return Object.keys(fila).sort().join('|');
 }
 
 /**
@@ -34,20 +34,20 @@ export function firmaDeFila(fila: Record<string, unknown>): string {
  * son 1-3 grupos por corrida, así que el coste en queries es despreciable.
  */
 export function agruparPorForma<T extends Record<string, unknown>>(filas: T[]): T[][] {
-    const grupos = new Map<string, T[]>()
-    for (const fila of filas) {
-        const firma = firmaDeFila(fila)
-        const grupo = grupos.get(firma)
-        if (grupo) grupo.push(fila)
-        else grupos.set(firma, [fila])
-    }
-    return [...grupos.values()]
+  const grupos = new Map<string, T[]>();
+  for (const fila of filas) {
+    const firma = firmaDeFila(fila);
+    const grupo = grupos.get(firma);
+    if (grupo) grupo.push(fila);
+    else grupos.set(firma, [fila]);
+  }
+  return [...grupos.values()];
 }
 
 /** Plataformas cuyas columnas NO viajan en este grupo (se conservan en BD). */
 export function plataformasOmitidas(
-    fila: Record<string, unknown>,
-    plataformas: readonly string[] = ['meta', 'tiktok'],
+  fila: Record<string, unknown>,
+  plataformas: readonly string[] = ['meta', 'tiktok']
 ): string[] {
-    return plataformas.filter(p => !(`${p}_spend` in fila))
+  return plataformas.filter((p) => !(`${p}_spend` in fila));
 }

@@ -12,35 +12,34 @@
 import { addDaysISO } from './colombia-date';
 
 export {
-    COLOMBIA_UTC_OFFSET_MS,
-    colombiaToday,
-    colombiaYesterday,
-    clampRangeToToday,
-    addDaysISO,
+  COLOMBIA_UTC_OFFSET_MS,
+  colombiaToday,
+  colombiaYesterday,
+  clampRangeToToday,
+  addDaysISO,
 } from './colombia-date';
 
-const FECHA_ISO = /^\d{4}-\d{2}-\d{2}$/
+const FECHA_ISO = /^\d{4}-\d{2}-\d{2}$/;
 
 /** Día de la semana con lunes = 0. Se lee en UTC: un `yyyy-MM-dd` no tiene zona. */
 function indiceDesdeLunes(fecha: string): number {
-    return (new Date(`${fecha}T00:00:00Z`).getUTCDay() + 6) % 7
+  return (new Date(`${fecha}T00:00:00Z`).getUTCDay() + 6) % 7;
 }
 
 /** `yyyy-MM-dd` que además existe en el calendario ('2026-02-31' no existe). */
 function esFechaDeCalendario(fecha: string): boolean {
-    if (!FECHA_ISO.test(fecha)) return false
-    const t = Date.parse(`${fecha}T00:00:00Z`)
-    // V8 NO devuelve NaN para '2026-02-31': lo desborda a marzo. El ida y vuelta
-    // es lo único que distingue una fecha real de una imposible.
-    return !Number.isNaN(t) && new Date(t).toISOString().slice(0, 10) === fecha
+  if (!FECHA_ISO.test(fecha)) return false;
+  const t = Date.parse(`${fecha}T00:00:00Z`);
+  // V8 NO devuelve NaN para '2026-02-31': lo desborda a marzo. El ida y vuelta
+  // es lo único que distingue una fecha real de una imposible.
+  return !Number.isNaN(t) && new Date(t).toISOString().slice(0, 10) === fecha;
 }
 
 export function getMonthWeeks(year: number, month: number) {
-    const primero = `${year}-${String(month).padStart(2, '0')}-01`
-    const primeroSiguiente = month === 12
-        ? `${year + 1}-01-01`
-        : `${year}-${String(month + 1).padStart(2, '0')}-01`
-    return getWeeksInRange(primero, addDaysISO(primeroSiguiente, -1))
+  const primero = `${year}-${String(month).padStart(2, '0')}-01`;
+  const primeroSiguiente =
+    month === 12 ? `${year + 1}-01-01` : `${year}-${String(month + 1).padStart(2, '0')}-01`;
+  return getWeeksInRange(primero, addDaysISO(primeroSiguiente, -1));
 }
 
 /**
@@ -59,34 +58,34 @@ export function getMonthWeeks(year: number, month: number) {
  * `weekNumber` es un contador secuencial desde 1, NO la semana ISO del año.
  */
 export function getWeeksInRange(startDateStr: string, endDateStr: string) {
-    // Igual que antes: una entrada que no es fecha ('all', '', basura) no produce
-    // semanas. Aquí además es obligatorio, porque `addDaysISO` devuelve intacto lo
-    // que no reconoce y el bucle no avanzaría nunca.
-    if (!esFechaDeCalendario(startDateStr) || !esFechaDeCalendario(endDateStr)) return []
+  // Igual que antes: una entrada que no es fecha ('all', '', basura) no produce
+  // semanas. Aquí además es obligatorio, porque `addDaysISO` devuelve intacto lo
+  // que no reconoce y el bucle no avanzaría nunca.
+  if (!esFechaDeCalendario(startDateStr) || !esFechaDeCalendario(endDateStr)) return [];
 
-    const rangeStart = startDateStr
-    // Un rango invertido se colapsa a un solo día, como hacía la versión anterior.
-    const rangeEnd = endDateStr < startDateStr ? startDateStr : endDateStr
+  const rangeStart = startDateStr;
+  // Un rango invertido se colapsa a un solo día, como hacía la versión anterior.
+  const rangeEnd = endDateStr < startDateStr ? startDateStr : endDateStr;
 
-    const weeks: { weekNumber: number; start: string; end: string }[] = []
-    let cursor = rangeStart
-    let weekIndex = 1
+  const weeks: { weekNumber: number; start: string; end: string }[] = [];
+  let cursor = rangeStart;
+  let weekIndex = 1;
 
-    while (cursor <= rangeEnd) {
-        // La primera semana arranca en el rango, no en su lunes: un rango que
-        // empieza a mitad de semana da una primera semana corta.
-        let weekStart = weekIndex === 1 ? rangeStart : cursor
-        if (weekStart < rangeStart) weekStart = rangeStart
+  while (cursor <= rangeEnd) {
+    // La primera semana arranca en el rango, no en su lunes: un rango que
+    // empieza a mitad de semana da una primera semana corta.
+    let weekStart = weekIndex === 1 ? rangeStart : cursor;
+    if (weekStart < rangeStart) weekStart = rangeStart;
 
-        // Domingo de esa semana, recortado al final del rango.
-        let weekEnd = addDaysISO(weekStart, 6 - indiceDesdeLunes(weekStart))
-        if (weekEnd > rangeEnd) weekEnd = rangeEnd
+    // Domingo de esa semana, recortado al final del rango.
+    let weekEnd = addDaysISO(weekStart, 6 - indiceDesdeLunes(weekStart));
+    if (weekEnd > rangeEnd) weekEnd = rangeEnd;
 
-        weeks.push({ weekNumber: weekIndex, start: weekStart, end: weekEnd })
+    weeks.push({ weekNumber: weekIndex, start: weekStart, end: weekEnd });
 
-        cursor = addDaysISO(weekEnd, 1)
-        weekIndex++
-    }
+    cursor = addDaysISO(weekEnd, 1);
+    weekIndex++;
+  }
 
-    return weeks
+  return weeks;
 }

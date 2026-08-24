@@ -1,0 +1,33 @@
+name: Validate
+
+# Candado contra la deuda de estilo y tipos. Antes de esto nada impedía que
+# `npm run validate` volviera a rojo: una rama podía añadir `any` y archivos
+# sin formatear sin coste ninguno.
+#
+# No corre `npm test`: `test:datos` golpea Supabase, Meta y Hotmart con
+# credenciales reales, eso no va en el CI de un PR.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Instalar dependencias
+        run: npm ci
+
+      # type-check + lint + format:check, encadenados en package.json.
+      - name: Validar
+        run: npm run validate

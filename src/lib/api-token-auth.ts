@@ -5,11 +5,7 @@ import { createClient } from '@supabase/supabase-js';
 import { ApiError } from './error-handler';
 
 export type TokenPermission =
-  | 'read:metrics'
-  | 'read:clients'
-  | 'read:campaigns'
-  | 'read:reports'
-  | 'write:sync';
+  'read:metrics' | 'read:clients' | 'read:campaigns' | 'read:reports' | 'write:sync';
 
 export const ALL_PERMISSIONS: TokenPermission[] = [
   'read:metrics',
@@ -51,7 +47,11 @@ export async function authenticateApiToken(request: NextRequest): Promise<TokenC
   const token = authHeader?.replace('Bearer ', '') || '';
 
   if (!token.startsWith('ads_')) {
-    throw new ApiError('UNAUTHORIZED', 'Missing or invalid token. Use the Authorization: Bearer <token> header.', 401);
+    throw new ApiError(
+      'UNAUTHORIZED',
+      'Missing or invalid token. Use the Authorization: Bearer <token> header.',
+      401
+    );
   }
 
   const tokenHash = createHash('sha256').update(token).digest('hex');

@@ -24,8 +24,8 @@
 
 /** Un valor distinto y cuántas filas lo tienen. */
 export interface ValorConConteo {
-    valor: string
-    n: number
+  valor: string;
+  n: number;
 }
 
 /**
@@ -38,28 +38,25 @@ export interface ValorConConteo {
  * dice que no se puede saber.
  */
 export type MotivoSinValores =
-    | 'sin_cliente'
-    | 'dimension_no_listable'
-    | 'error_consulta'
-    | 'timeout'
+  'sin_cliente' | 'dimension_no_listable' | 'error_consulta' | 'timeout';
 
 export interface ResultadoValores {
-    valores: ValorConConteo[]
-    /** Valores distintos totales. Con búsqueda activa, cuántos coinciden. */
-    total: number
-    /** `true` si `total` supera lo devuelto: hay más de los que se ven. */
-    truncado: boolean
-    /** Presente SOLO si la lista está vacía por un motivo concreto. */
-    motivo?: MotivoSinValores
+  valores: ValorConConteo[];
+  /** Valores distintos totales. Con búsqueda activa, cuántos coinciden. */
+  total: number;
+  /** `true` si `total` supera lo devuelto: hay más de los que se ven. */
+  truncado: boolean;
+  /** Presente SOLO si la lista está vacía por un motivo concreto. */
+  motivo?: MotivoSinValores;
 }
 
 /** Resultado vacío con su causa. Nunca se devuelve `[]` a secas. */
 export function sinValores(motivo: MotivoSinValores): ResultadoValores {
-    return { valores: [], total: 0, truncado: false, motivo }
+  return { valores: [], total: 0, truncado: false, motivo };
 }
 
 /** Resultado vacío legítimo: se consultó y de verdad no hay nada. */
-export const VACIO_HONESTO: ResultadoValores = { valores: [], total: 0, truncado: false }
+export const VACIO_HONESTO: ResultadoValores = { valores: [], total: 0, truncado: false };
 
 // ════════════════════════════════════════════════════════════════════════
 // Plegado y orden
@@ -77,16 +74,16 @@ export const VACIO_HONESTO: ResultadoValores = { valores: [], total: 0, truncado
  * bucketizador ignora, un UTM que no cruza con ninguna entidad).
  */
 export function plegarConteos(
-    filas: readonly ValorConConteo[],
-    etiquetar: (valor: string) => string | null
+  filas: readonly ValorConConteo[],
+  etiquetar: (valor: string) => string | null
 ): Map<string, number> {
-    const out = new Map<string, number>()
-    for (const f of filas) {
-        const etiqueta = etiquetar(f.valor)
-        if (etiqueta === null || etiqueta === '') continue
-        out.set(etiqueta, (out.get(etiqueta) ?? 0) + f.n)
-    }
-    return out
+  const out = new Map<string, number>();
+  for (const f of filas) {
+    const etiqueta = etiquetar(f.valor);
+    if (etiqueta === null || etiqueta === '') continue;
+    out.set(etiqueta, (out.get(etiqueta) ?? 0) + f.n);
+  }
+  return out;
 }
 
 /**
@@ -98,20 +95,20 @@ export function plegarConteos(
  * molestó en declarar; el recuento se sigue mostrando, simplemente no ordena.
  */
 export function ordenarPorFrecuencia(
-    conteos: Map<string, number>,
-    ordenFijo?: readonly string[]
+  conteos: Map<string, number>,
+  ordenFijo?: readonly string[]
 ): ValorConConteo[] {
-    const arr: ValorConConteo[] = [...conteos].map(([valor, n]) => ({ valor, n }))
+  const arr: ValorConConteo[] = [...conteos].map(([valor, n]) => ({ valor, n }));
 
-    if (ordenFijo && ordenFijo.length > 0) {
-        const pos = (v: string) => {
-            const i = ordenFijo.indexOf(v)
-            return i === -1 ? ordenFijo.length : i
-        }
-        return arr.sort((a, b) => pos(a.valor) - pos(b.valor) || a.valor.localeCompare(b.valor))
-    }
+  if (ordenFijo && ordenFijo.length > 0) {
+    const pos = (v: string) => {
+      const i = ordenFijo.indexOf(v);
+      return i === -1 ? ordenFijo.length : i;
+    };
+    return arr.sort((a, b) => pos(a.valor) - pos(b.valor) || a.valor.localeCompare(b.valor));
+  }
 
-    return arr.sort((a, b) => b.n - a.n || a.valor.localeCompare(b.valor))
+  return arr.sort((a, b) => b.n - a.n || a.valor.localeCompare(b.valor));
 }
 
 /**
@@ -123,16 +120,16 @@ export function ordenarPorFrecuencia(
  * llegaban era indefinido— y esto es justo lo que lo sustituye.
  */
 export function recortar(valores: ValorConConteo[], limite: number): ResultadoValores {
-    const total = valores.length
-    if (limite <= 0 || total <= limite) {
-        return { valores, total, truncado: false }
-    }
-    return { valores: valores.slice(0, limite), total, truncado: true }
+  const total = valores.length;
+  if (limite <= 0 || total <= limite) {
+    return { valores, total, truncado: false };
+  }
+  return { valores: valores.slice(0, limite), total, truncado: true };
 }
 
 /** Proyección al contrato histórico: solo los nombres, en el mismo orden. */
 export function aValoresPlanos(r: ResultadoValores): string[] {
-    return r.valores.map(v => v.valor)
+  return r.valores.map((v) => v.valor);
 }
 
 // ════════════════════════════════════════════════════════════════════════
@@ -154,7 +151,7 @@ export function aValoresPlanos(r: ResultadoValores): string[] {
 // reales. Se verificó además que ninguno de los 19 informes guardados contiene
 // hoy la secuencia `\,`.
 
-const ESCAPE_COMA = '\\,'
+const ESCAPE_COMA = '\\,';
 
 /**
  * Parte una selección guardada en sus valores.
@@ -164,41 +161,41 @@ const ESCAPE_COMA = '\\,'
  * hoy. Eso es lo que hace el cambio compatible hacia atrás.
  */
 export function parseSeleccion(raw: string | null | undefined): string[] {
-    const s = String(raw ?? '')
-    if (!s) return []
+  const s = String(raw ?? '');
+  if (!s) return [];
 
-    const out: string[] = []
-    let actual = ''
-    for (let i = 0; i < s.length; i++) {
-        if (s[i] === '\\' && s[i + 1] === ',') {
-            actual += ','
-            i++
-            continue
-        }
-        if (s[i] === ',') {
-            out.push(actual)
-            actual = ''
-            continue
-        }
-        actual += s[i]
+  const out: string[] = [];
+  let actual = '';
+  for (let i = 0; i < s.length; i++) {
+    if (s[i] === '\\' && s[i + 1] === ',') {
+      actual += ',';
+      i++;
+      continue;
     }
-    out.push(actual)
+    if (s[i] === ',') {
+      out.push(actual);
+      actual = '';
+      continue;
+    }
+    actual += s[i];
+  }
+  out.push(actual);
 
-    return out.map(v => v.trim()).filter(Boolean)
+  return out.map((v) => v.trim()).filter(Boolean);
 }
 
 /** Serializa una selección, escapando las comas de los propios valores. */
 export function serializarSeleccion(valores: readonly string[]): string {
-    return valores
-        .map(v => v.trim())
-        .filter(Boolean)
-        .map(v => v.split(',').join(ESCAPE_COMA))
-        .join(',')
+  return valores
+    .map((v) => v.trim())
+    .filter(Boolean)
+    .map((v) => v.split(',').join(ESCAPE_COMA))
+    .join(',');
 }
 
 /** ¿Este valor necesita escaparse para caber en el formato guardado? */
 export function tieneComa(valor: string): boolean {
-    return valor.includes(',')
+  return valor.includes(',');
 }
 
 /**
@@ -209,7 +206,7 @@ export function tieneComa(valor: string): boolean {
  * invitaría a construir un filtro que no hace lo que parece.
  */
 export function esSeleccionPorCasillas(op: string): boolean {
-    return op === 'eq' || op === 'neq'
+  return op === 'eq' || op === 'neq';
 }
 
 // ════════════════════════════════════════════════════════════════════════
@@ -225,38 +222,38 @@ export function esSeleccionPorCasillas(op: string): boolean {
  * `n: null` — no es que valgan cero, es que no se sabe cuántos hay.
  */
 export interface FilaSelector {
-    valor: string
-    /** `null` = seleccionado pero fuera de la lista consultada. */
-    n: number | null
-    marcado: boolean
+  valor: string;
+  /** `null` = seleccionado pero fuera de la lista consultada. */
+  n: number | null;
+  marcado: boolean;
 }
 
 export function componerFilas(
-    listados: readonly ValorConConteo[],
-    seleccionados: readonly string[]
+  listados: readonly ValorConConteo[],
+  seleccionados: readonly string[]
 ): FilaSelector[] {
-    const sel = new Set(seleccionados)
-    const vistos = new Set<string>()
+  const sel = new Set(seleccionados);
+  const vistos = new Set<string>();
 
-    const filas: FilaSelector[] = []
-    // Primero los seleccionados que NO están en la lista: son los que se
-    // perderían al guardar si no se representaran.
-    for (const v of seleccionados) {
-        if (listados.some(l => l.valor === v)) continue
-        filas.push({ valor: v, n: null, marcado: true })
-        vistos.add(v)
-    }
-    for (const l of listados) {
-        if (vistos.has(l.valor)) continue
-        filas.push({ valor: l.valor, n: l.n, marcado: sel.has(l.valor) })
-    }
-    return filas
+  const filas: FilaSelector[] = [];
+  // Primero los seleccionados que NO están en la lista: son los que se
+  // perderían al guardar si no se representaran.
+  for (const v of seleccionados) {
+    if (listados.some((l) => l.valor === v)) continue;
+    filas.push({ valor: v, n: null, marcado: true });
+    vistos.add(v);
+  }
+  for (const l of listados) {
+    if (vistos.has(l.valor)) continue;
+    filas.push({ valor: l.valor, n: l.n, marcado: sel.has(l.valor) });
+  }
+  return filas;
 }
 
 /** Alterna un valor dentro de una selección ya serializada. */
 export function alternarValor(seleccionActual: string, valor: string): string {
-    const actuales = parseSeleccion(seleccionActual)
-    const i = actuales.indexOf(valor)
-    if (i === -1) return serializarSeleccion([...actuales, valor])
-    return serializarSeleccion(actuales.filter((_, k) => k !== i))
+  const actuales = parseSeleccion(seleccionActual);
+  const i = actuales.indexOf(valor);
+  if (i === -1) return serializarSeleccion([...actuales, valor]);
+  return serializarSeleccion(actuales.filter((_, k) => k !== i));
 }

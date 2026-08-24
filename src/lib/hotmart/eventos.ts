@@ -19,22 +19,22 @@
 // integración, dejando la tarjeta de la UI en rojo permanente aunque la ingesta
 // de ventas funcionase perfectamente.
 
-import type { EstadoVenta } from './tipos'
+import type { EstadoVenta } from './tipos';
 
 /** Nombre de evento → estado normalizado. Solo eventos que SON una venta. */
 export const ESTADO_POR_EVENTO: Readonly<Record<string, EstadoVenta>> = {
-    PURCHASE_APPROVED: 'aprobada',
-    PURCHASE_COMPLETE: 'completa',
-    PURCHASE_BILLET_PRINTED: 'pendiente',
-    PURCHASE_PROTEST: 'pendiente',
-    PURCHASE_DELAYED: 'pendiente',
-    PURCHASE_WAITING_PAYMENT: 'pendiente',
-    PURCHASE_OUT_OF_SHOPPING_CART: 'pendiente',
-    PURCHASE_REFUNDED: 'reembolsada',
-    PURCHASE_CHARGEBACK: 'chargeback',
-    PURCHASE_CANCELED: 'cancelada',
-    PURCHASE_EXPIRED: 'expirada',
-}
+  PURCHASE_APPROVED: 'aprobada',
+  PURCHASE_COMPLETE: 'completa',
+  PURCHASE_BILLET_PRINTED: 'pendiente',
+  PURCHASE_PROTEST: 'pendiente',
+  PURCHASE_DELAYED: 'pendiente',
+  PURCHASE_WAITING_PAYMENT: 'pendiente',
+  PURCHASE_OUT_OF_SHOPPING_CART: 'pendiente',
+  PURCHASE_REFUNDED: 'reembolsada',
+  PURCHASE_CHARGEBACK: 'chargeback',
+  PURCHASE_CANCELED: 'cancelada',
+  PURCHASE_EXPIRED: 'expirada',
+};
 
 /**
  * Eventos legítimos de Hotmart que NO son una venta.
@@ -44,12 +44,12 @@ export const ESTADO_POR_EVENTO: Readonly<Record<string, EstadoVenta>> = {
  * correcto, y la integración no debe marcarse como rota por ellos.
  */
 export const EVENTOS_NO_VENTA: ReadonlySet<string> = new Set([
-    'SUBSCRIPTION_CANCELLATION',
-    'SWITCH_PLAN',
-    'UPDATE_SUBSCRIPTION_CHARGE_DATE',
-    'CLUB_FIRST_ACCESS',
-    'CLUB_MODULE_COMPLETED',
-])
+  'SUBSCRIPTION_CANCELLATION',
+  'SWITCH_PLAN',
+  'UPDATE_SUBSCRIPTION_CHARGE_DATE',
+  'CLUB_FIRST_ACCESS',
+  'CLUB_MODULE_COMPLETED',
+]);
 
 /**
  * Estado de la transacción tal y como lo devuelve la API REST (no el webhook).
@@ -59,42 +59,42 @@ export const EVENTOS_NO_VENTA: ReadonlySet<string> = new Set([
  * indexar uno con las claves del otro.
  */
 export const ESTADO_POR_STATUS_API: Readonly<Record<string, EstadoVenta>> = {
-    APPROVED: 'aprobada',
-    COMPLETE: 'completa',
-    BILLET_PRINTED: 'pendiente',
-    WAITING_PAYMENT: 'pendiente',
-    UNDER_ANALISYS: 'pendiente',
-    UNDER_ANALYSIS: 'pendiente',
-    PROTESTED: 'pendiente',
-    DELAYED: 'pendiente',
-    REFUNDED: 'reembolsada',
-    CHARGEBACK: 'chargeback',
-    CANCELLED: 'cancelada',
-    CANCELED: 'cancelada',
-    EXPIRED: 'expirada',
-    STARTED: 'pendiente',
-    DLOCAL_ANALYSIS: 'pendiente',
-}
+  APPROVED: 'aprobada',
+  COMPLETE: 'completa',
+  BILLET_PRINTED: 'pendiente',
+  WAITING_PAYMENT: 'pendiente',
+  UNDER_ANALISYS: 'pendiente',
+  UNDER_ANALYSIS: 'pendiente',
+  PROTESTED: 'pendiente',
+  DELAYED: 'pendiente',
+  REFUNDED: 'reembolsada',
+  CHARGEBACK: 'chargeback',
+  CANCELLED: 'cancelada',
+  CANCELED: 'cancelada',
+  EXPIRED: 'expirada',
+  STARTED: 'pendiente',
+  DLOCAL_ANALYSIS: 'pendiente',
+};
 
-export type ClaseEvento = 'venta' | 'no_venta' | 'desconocido'
+export type ClaseEvento = 'venta' | 'no_venta' | 'desconocido';
 
 /** Clasifica un nombre de evento. Un evento nuevo de Hotmart es `desconocido`. */
 export function clasificarEvento(nombre: string | null | undefined): ClaseEvento {
-    if (!nombre) return 'desconocido'
-    const n = nombre.trim().toUpperCase()
-    if (ESTADO_POR_EVENTO[n]) return 'venta'
-    if (EVENTOS_NO_VENTA.has(n)) return 'no_venta'
-    return 'desconocido'
+  if (!nombre) return 'desconocido';
+  const n = nombre.trim().toUpperCase();
+  if (ESTADO_POR_EVENTO[n]) return 'venta';
+  if (EVENTOS_NO_VENTA.has(n)) return 'no_venta';
+  return 'desconocido';
 }
 
 /** Estado de un evento de venta. `null` si el evento no es una venta conocida. */
 export function estadoDeEvento(nombre: string | null | undefined): EstadoVenta | null {
-    if (!nombre) return null
-    return ESTADO_POR_EVENTO[nombre.trim().toUpperCase()] ?? null
+  if (!nombre) return null;
+  return ESTADO_POR_EVENTO[nombre.trim().toUpperCase()] ?? null;
 }
 
 /** Estado de un `purchase.status` de la API REST. `null` si no se reconoce. */
 export function estadoDeStatusApi(status: string | null | undefined): EstadoVenta | null {
-    if (!status) return null
-    return ESTADO_POR_STATUS_API[status.trim().toUpperCase()] ?? null
+  if (!status) return null;
+  return ESTADO_POR_STATUS_API[status.trim().toUpperCase()] ?? null;
 }

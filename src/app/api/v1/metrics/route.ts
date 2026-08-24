@@ -54,7 +54,9 @@ export async function GET(request: NextRequest) {
 
     const { data, error } = await supabase
       .from('metricas_diarias')
-      .select('fecha, meta_spend, meta_impressions, meta_clicks, ga_sessions, hotmart_pagos_iniciados, ventas_principal, ventas_bump, ventas_upsell, ventas_cerradas')
+      .select(
+        'fecha, meta_spend, meta_impressions, meta_clicks, ga_sessions, hotmart_pagos_iniciados, ventas_principal, ventas_bump, ventas_upsell, ventas_cerradas'
+      )
       .eq('cliente_id', clientId)
       .gte('fecha', from)
       .lte('fecha', to)

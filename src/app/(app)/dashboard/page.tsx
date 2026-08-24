@@ -1,39 +1,42 @@
-import { getClientes, getActiveAlerts, type ActiveAlert } from "../admin/settings/_actions"
-import { getAllSoporteTickets } from "./_actions"
+import Link from 'next/link';
+import { getClientes, getActiveAlerts, type ActiveAlert } from '../admin/settings/_actions';
+import { getAllSoporteTickets } from './_actions';
 import {
   BarChart3,
   ArrowRight,
   Users,
   Zap,
-  Link2,
   Settings,
   Sliders,
   TrendingUp,
   Globe,
-  ShoppingCart,
   Activity,
   ChevronRight,
   AlertTriangle,
   Bell,
-} from "lucide-react"
+} from 'lucide-react';
 
 export default async function DashboardHomePage() {
-  const [clientes, activeAlerts, soporteResult] = await Promise.all([getClientes(), getActiveAlerts(), getAllSoporteTickets()])
+  const [clientes, activeAlerts, soporteResult] = await Promise.all([
+    getClientes(),
+    getActiveAlerts(),
+    getAllSoporteTickets(),
+  ]);
 
-  const totalClientes = clientes?.length ?? 0
+  const totalClientes = clientes?.length ?? 0;
   const totalIntegrations = (clientes ?? []).reduce((acc: number, c: any) => {
-    let n = 0
-    if (c.config_api?.meta_token) n++
-    if (c.config_api?.hotmart_token || c.config_api?.hotmart_basic) n++
-    if (c.config_api?.ga_property_id) n++
-    return acc + n
-  }, 0)
-  const activePlatforms = new Set<string>()
-  ;(clientes ?? []).forEach((c: any) => {
-    if (c.config_api?.meta_token) activePlatforms.add("meta")
-    if (c.config_api?.hotmart_token || c.config_api?.hotmart_basic) activePlatforms.add("hotmart")
-    if (c.config_api?.ga_property_id) activePlatforms.add("ga4")
-  })
+    let n = 0;
+    if (c.config_api?.meta_token) n++;
+    if (c.config_api?.hotmart_token || c.config_api?.hotmart_basic) n++;
+    if (c.config_api?.ga_property_id) n++;
+    return acc + n;
+  }, 0);
+  const activePlatforms = new Set<string>();
+  (clientes ?? []).forEach((c: any) => {
+    if (c.config_api?.meta_token) activePlatforms.add('meta');
+    if (c.config_api?.hotmart_token || c.config_api?.hotmart_basic) activePlatforms.add('hotmart');
+    if (c.config_api?.ga_property_id) activePlatforms.add('ga4');
+  });
 
   return (
     <div className="space-y-8">
@@ -95,30 +98,26 @@ export default async function DashboardHomePage() {
           icon={<Bell className="h-5 w-5" />}
           label="Alertas Activas"
           value={activeAlerts.length}
-          color={activeAlerts.length > 0 ? "red" : "zinc"}
+          color={activeAlerts.length > 0 ? 'red' : 'zinc'}
           pulse={activeAlerts.length > 0}
         />
       </div>
 
       {/* ── Active Alerts Panel ── */}
-      {activeAlerts.length > 0 && (
-        <AlertsPanel alerts={activeAlerts} />
-      )}
+      {activeAlerts.length > 0 && <AlertsPanel alerts={activeAlerts} />}
 
       {/* ── Clients Section ── */}
       <section className="space-y-4">
         <div className="flex items-center justify-between">
           <div>
-            <h2 className="text-lg font-semibold text-foreground">
-              Directorio de Clientes
-            </h2>
+            <h2 className="text-lg font-semibold text-foreground">Directorio de Clientes</h2>
             <p className="text-sm text-muted-foreground/70">
               Accede al embudo consolidado de cada cliente.
             </p>
           </div>
           {totalClientes > 0 && (
             <span className="text-xs text-muted-foreground/70">
-              {totalClientes} {totalClientes === 1 ? "cliente" : "clientes"}
+              {totalClientes} {totalClientes === 1 ? 'cliente' : 'clientes'}
             </span>
           )}
         </div>
@@ -172,7 +171,7 @@ export default async function DashboardHomePage() {
       {/* ── Soporte Ads House ── */}
       <SoportePanel tickets={soporteResult.data ?? []} />
     </div>
-  )
+  );
 }
 
 /* ─── Sub-components ────────────────────────────────────────────────────────── */
@@ -185,46 +184,46 @@ function StatCard({
   color,
   pulse,
 }: {
-  icon: React.ReactNode
-  label: string
-  value: number
-  suffix?: string
-  color: "blue" | "amber" | "emerald" | "red" | "zinc"
-  pulse?: boolean
+  icon: React.ReactNode;
+  label: string;
+  value: number;
+  suffix?: string;
+  color: 'blue' | 'amber' | 'emerald' | 'red' | 'zinc';
+  pulse?: boolean;
 }) {
   const colorMap = {
     blue: {
-      bg: "bg-brand-blue/10",
-      icon: "text-brand-blue dark:text-brand-blue-light",
-      ring: "ring-brand-blue/20",
-      value: "text-foreground",
+      bg: 'bg-brand-blue/10',
+      icon: 'text-brand-blue dark:text-brand-blue-light',
+      ring: 'ring-brand-blue/20',
+      value: 'text-foreground',
     },
     amber: {
-      bg: "bg-amber-500/10",
-      icon: "text-amber-600 dark:text-amber-400",
-      ring: "ring-amber-500/20",
-      value: "text-foreground",
+      bg: 'bg-amber-500/10',
+      icon: 'text-amber-600 dark:text-amber-400',
+      ring: 'ring-amber-500/20',
+      value: 'text-foreground',
     },
     emerald: {
-      bg: "bg-emerald-500/10",
-      icon: "text-emerald-600 dark:text-emerald-400",
-      ring: "ring-emerald-500/20",
-      value: "text-foreground",
+      bg: 'bg-emerald-500/10',
+      icon: 'text-emerald-600 dark:text-emerald-400',
+      ring: 'ring-emerald-500/20',
+      value: 'text-foreground',
     },
     red: {
-      bg: "bg-red-500/10",
-      icon: "text-red-600 dark:text-red-400",
-      ring: "ring-red-500/20",
-      value: "text-red-600 dark:text-red-400",
+      bg: 'bg-red-500/10',
+      icon: 'text-red-600 dark:text-red-400',
+      ring: 'ring-red-500/20',
+      value: 'text-red-600 dark:text-red-400',
     },
     zinc: {
-      bg: "bg-muted",
-      icon: "text-muted-foreground/70",
-      ring: "ring-border",
-      value: "text-foreground",
+      bg: 'bg-muted',
+      icon: 'text-muted-foreground/70',
+      ring: 'ring-border',
+      value: 'text-foreground',
     },
-  }
-  const c = colorMap[color]
+  };
+  const c = colorMap[color];
 
   return (
     <div className="relative overflow-hidden rounded-xl border border-border bg-card p-5">
@@ -236,9 +235,7 @@ function StatCard({
           <p className={`mt-2 text-3xl font-bold font-mono tabular-nums ${c.value}`}>
             {value}
             {suffix && (
-              <span className="ml-1 text-lg font-normal text-muted-foreground/70">
-                {suffix}
-              </span>
+              <span className="ml-1 text-lg font-normal text-muted-foreground/70">{suffix}</span>
             )}
           </p>
         </div>
@@ -252,23 +249,26 @@ function StatCard({
         </div>
       </div>
     </div>
-  )
+  );
 }
 
 function ClientCard({ cliente }: { cliente: any }) {
-  const hasMeta = !!cliente.config_api?.meta_token
-  const hasHotmart = !!(
-    cliente.config_api?.hotmart_token || cliente.config_api?.hotmart_basic
-  )
-  const hasGA4 = !!cliente.config_api?.ga_property_id
-  const activeCount = [hasMeta, hasHotmart, hasGA4].filter(Boolean).length
+  const hasMeta = !!cliente.config_api?.meta_token;
+  const hasHotmart = !!(cliente.config_api?.hotmart_token || cliente.config_api?.hotmart_basic);
+  const hasGA4 = !!cliente.config_api?.ga_property_id;
+  const activeCount = [hasMeta, hasHotmart, hasGA4].filter(Boolean).length;
 
   return (
     <a href={`/dashboard/${cliente.id}`} className="group block">
       <div className="relative h-full overflow-hidden rounded-xl border border-border bg-card p-5 transition-all duration-300 group-hover:border-brand-blue/40 group-hover:shadow-[0_0_24px_rgba(30,106,181,0.15)]">
         {/* Hover glow */}
-        <div className="pointer-events-none absolute inset-0 rounded-xl opacity-0 transition-opacity duration-300 group-hover:opacity-100"
-             style={{ background: "radial-gradient(circle at 50% 0%, rgba(30,106,181,0.08) 0%, transparent 70%)" }} />
+        <div
+          className="pointer-events-none absolute inset-0 rounded-xl opacity-0 transition-opacity duration-300 group-hover:opacity-100"
+          style={{
+            background:
+              'radial-gradient(circle at 50% 0%, rgba(30,106,181,0.08) 0%, transparent 70%)',
+          }}
+        />
 
         <div className="relative space-y-4">
           {/* Header */}
@@ -288,9 +288,9 @@ function ClientCard({ cliente }: { cliente: any }) {
 
           {/* Integration badges */}
           <div className="flex flex-wrap gap-1.5">
-            <IntegrationBadge active={hasMeta} label="Meta" icon="M" />
-            <IntegrationBadge active={hasHotmart} label="Hotmart" icon="H" />
-            <IntegrationBadge active={hasGA4} label="GA4" icon="G" />
+            <IntegrationBadge active={hasMeta} label="Meta" />
+            <IntegrationBadge active={hasHotmart} label="Hotmart" />
+            <IntegrationBadge active={hasGA4} label="GA4" />
           </div>
 
           {/* Footer */}
@@ -305,32 +305,24 @@ function ClientCard({ cliente }: { cliente: any }) {
         </div>
       </div>
     </a>
-  )
+  );
 }
 
-function IntegrationBadge({
-  active,
-  label,
-  icon,
-}: {
-  active: boolean
-  label: string
-  icon: string
-}) {
+function IntegrationBadge({ active, label }: { active: boolean; label: string }) {
   if (!active) {
     return (
       <span className="inline-flex items-center gap-1 rounded-md border border-border bg-muted/60 px-2 py-0.5 text-[10px] font-medium text-muted-foreground/70">
         <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground/30" />
         {label}
       </span>
-    )
+    );
   }
   return (
     <span className="inline-flex items-center gap-1 rounded-md border border-emerald-500/20 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400">
       <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 shadow-[0_0_4px_rgba(52,211,153,0.5)]" />
       {label}
     </span>
-  )
+  );
 }
 
 function EmptyClients() {
@@ -341,22 +333,22 @@ function EmptyClients() {
       </div>
       <p className="font-medium text-foreground/90">Sin clientes activos</p>
       <p className="mt-1.5 max-w-xs text-sm text-muted-foreground/70">
-        Ve a{" "}
-        <a
+        Ve a{' '}
+        <Link
           href="/admin/settings"
           className="text-brand-blue dark:text-brand-blue-light underline underline-offset-2 hover:text-brand-blue"
         >
           Ajustes de Sistema
-        </a>{" "}
+        </Link>{' '}
         para agregar tu primer cliente.
       </p>
     </div>
-  )
+  );
 }
 
 function AlertsPanel({ alerts }: { alerts: ActiveAlert[] }) {
-  const critical = alerts.filter(a => a.level === 100).length
-  const warning = alerts.filter(a => a.level === 90).length
+  const critical = alerts.filter((a) => a.level === 100).length;
+  const warning = alerts.filter((a) => a.level === 90).length;
 
   return (
     <a
@@ -370,12 +362,12 @@ function AlertsPanel({ alerts }: { alerts: ActiveAlert[] }) {
         <span className="text-sm font-semibold text-foreground">Alertas de presupuesto:</span>
         {critical > 0 && (
           <span className="rounded-full border border-red-500/30 bg-red-500/10 px-2.5 py-0.5 text-xs font-semibold text-red-600 dark:text-red-400">
-            {critical} crítica{critical !== 1 ? "s" : ""}
+            {critical} crítica{critical !== 1 ? 's' : ''}
           </span>
         )}
         {warning > 0 && (
           <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2.5 py-0.5 text-xs font-semibold text-amber-600 dark:text-amber-400">
-            {warning} advertencia{warning !== 1 ? "s" : ""}
+            {warning} advertencia{warning !== 1 ? 's' : ''}
           </span>
         )}
       </div>
@@ -384,7 +376,7 @@ function AlertsPanel({ alerts }: { alerts: ActiveAlert[] }) {
         <ChevronRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" />
       </span>
     </a>
-  )
+  );
 }
 
 function QuickLink({
@@ -394,19 +386,35 @@ function QuickLink({
   description,
   color,
 }: {
-  href: string
-  icon: React.ReactNode
-  title: string
-  description: string
-  color: "blue" | "zinc" | "amber" | "emerald"
+  href: string;
+  icon: React.ReactNode;
+  title: string;
+  description: string;
+  color: 'blue' | 'zinc' | 'amber' | 'emerald';
 }) {
   const colorMap = {
-    blue: { bg: "bg-brand-blue/10", icon: "text-brand-blue dark:text-brand-blue-light", hover: "group-hover:border-brand-blue/40" },
-    zinc: { bg: "bg-muted", icon: "text-foreground/90", hover: "group-hover:border-muted-foreground/40" },
-    amber: { bg: "bg-amber-500/10", icon: "text-amber-600 dark:text-amber-400", hover: "group-hover:border-amber-500/30" },
-    emerald: { bg: "bg-emerald-500/10", icon: "text-emerald-600 dark:text-emerald-400", hover: "group-hover:border-emerald-500/30" },
-  }
-  const c = colorMap[color]
+    blue: {
+      bg: 'bg-brand-blue/10',
+      icon: 'text-brand-blue dark:text-brand-blue-light',
+      hover: 'group-hover:border-brand-blue/40',
+    },
+    zinc: {
+      bg: 'bg-muted',
+      icon: 'text-foreground/90',
+      hover: 'group-hover:border-muted-foreground/40',
+    },
+    amber: {
+      bg: 'bg-amber-500/10',
+      icon: 'text-amber-600 dark:text-amber-400',
+      hover: 'group-hover:border-amber-500/30',
+    },
+    emerald: {
+      bg: 'bg-emerald-500/10',
+      icon: 'text-emerald-600 dark:text-emerald-400',
+      hover: 'group-hover:border-emerald-500/30',
+    },
+  };
+  const c = colorMap[color];
 
   return (
     <a href={href} className="group block">
@@ -423,22 +431,23 @@ function QuickLink({
         <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground/70 transition-transform duration-200 group-hover:translate-x-0.5 group-hover:text-muted-foreground" />
       </div>
     </a>
-  )
+  );
 }
 
 /* ─── Soporte Panel ──────────────────────────────────────────────────────────── */
 
 function SoportePanel({ tickets }: { tickets: any[] }) {
-  const total = tickets.length
-  const abiertos = tickets.filter(t => t.estado === "abierto").length
-  const enProgreso = tickets.filter(t => t.estado === "en_progreso").length
-  const completados = tickets.filter(t => t.estado === "completado").length
-  const urgentes = tickets.filter(t => {
-    if (t.estado !== "abierto" && t.estado !== "en_progreso") return false
-    if (!t.fecha_entrega) return false
-    const dl = Math.ceil((new Date(t.fecha_entrega).getTime() - Date.now()) / 86400000)
-    return dl <= 2
-  }).length
+  const total = tickets.length;
+  const abiertos = tickets.filter((t) => t.estado === 'abierto').length;
+  const enProgreso = tickets.filter((t) => t.estado === 'en_progreso').length;
+  const completados = tickets.filter((t) => t.estado === 'completado').length;
+  const urgentes = tickets.filter((t) => {
+    if (t.estado !== 'abierto' && t.estado !== 'en_progreso') return false;
+    if (!t.fecha_entrega) return false;
+    // eslint-disable-next-line react-hooks/purity -- Server Component: se evalúa una vez por request
+    const dl = Math.ceil((new Date(t.fecha_entrega).getTime() - Date.now()) / 86400000);
+    return dl <= 2;
+  }).length;
 
   return (
     <section className="space-y-4">
@@ -465,12 +474,10 @@ function SoportePanel({ tickets }: { tickets: any[] }) {
         <SoporteStat label="Abiertos" value={abiertos} color="blue" />
         <SoporteStat label="En Progreso" value={enProgreso} color="amber" />
         <SoporteStat label="Completados" value={completados} color="emerald" />
-        {urgentes > 0 && (
-          <SoporteStat label="Vencen Pronto" value={urgentes} color="red" pulse />
-        )}
+        {urgentes > 0 && <SoporteStat label="Vencen Pronto" value={urgentes} color="red" pulse />}
       </div>
     </section>
-  )
+  );
 }
 
 function SoporteStat({
@@ -479,19 +486,44 @@ function SoporteStat({
   color,
   pulse,
 }: {
-  label: string
-  value: number
-  color: "zinc" | "blue" | "amber" | "emerald" | "red"
-  pulse?: boolean
+  label: string;
+  value: number;
+  color: 'zinc' | 'blue' | 'amber' | 'emerald' | 'red';
+  pulse?: boolean;
 }) {
   const colorMap = {
-    zinc:    { bg: "bg-muted",        text: "text-foreground", sub: "text-muted-foreground/70",  border: "border-border" },
-    blue:    { bg: "bg-blue-500/10",     text: "text-blue-600 dark:text-blue-300", sub: "text-blue-500",  border: "border-blue-500/20" },
-    amber:   { bg: "bg-amber-500/10",    text: "text-amber-600 dark:text-amber-300",sub: "text-amber-500", border: "border-amber-500/20" },
-    emerald: { bg: "bg-emerald-500/10",  text: "text-emerald-600 dark:text-emerald-300", sub: "text-emerald-500", border: "border-emerald-500/20" },
-    red:     { bg: "bg-red-500/10",      text: "text-red-600 dark:text-red-300",  sub: "text-red-500",   border: "border-red-500/20" },
-  }
-  const c = colorMap[color]
+    zinc: {
+      bg: 'bg-muted',
+      text: 'text-foreground',
+      sub: 'text-muted-foreground/70',
+      border: 'border-border',
+    },
+    blue: {
+      bg: 'bg-blue-500/10',
+      text: 'text-blue-600 dark:text-blue-300',
+      sub: 'text-blue-500',
+      border: 'border-blue-500/20',
+    },
+    amber: {
+      bg: 'bg-amber-500/10',
+      text: 'text-amber-600 dark:text-amber-300',
+      sub: 'text-amber-500',
+      border: 'border-amber-500/20',
+    },
+    emerald: {
+      bg: 'bg-emerald-500/10',
+      text: 'text-emerald-600 dark:text-emerald-300',
+      sub: 'text-emerald-500',
+      border: 'border-emerald-500/20',
+    },
+    red: {
+      bg: 'bg-red-500/10',
+      text: 'text-red-600 dark:text-red-300',
+      sub: 'text-red-500',
+      border: 'border-red-500/20',
+    },
+  };
+  const c = colorMap[color];
   return (
     <div className={`relative flex flex-col gap-1 rounded-xl border p-4 ${c.bg} ${c.border}`}>
       {pulse && (
@@ -502,5 +534,5 @@ function SoporteStat({
       <span className={`text-2xl font-bold font-mono tabular-nums ${c.text}`}>{value}</span>
       <span className={`text-xs font-medium ${c.sub}`}>{label}</span>
     </div>
-  )
+  );
 }

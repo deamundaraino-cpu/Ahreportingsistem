@@ -28,11 +28,13 @@ export async function GET(request: NextRequest) {
     // Build the campaign_groups query scoped to the token's user
     let query = supabase
       .from('campaign_groups')
-      .select(`
+      .select(
+        `
         id, nombre, descripcion, color, created_at,
         clientes!inner(id, nombre, user_id),
         campaign_group_mappings(id, campaign_id, campaign_name_pattern)
-      `)
+      `
+      )
       .eq('clientes.user_id', ctx.userId)
       .order('nombre', { ascending: true });
 

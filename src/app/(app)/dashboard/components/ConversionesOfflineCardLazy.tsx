@@ -1,9 +1,9 @@
-'use client'
+'use client';
 
-import dynamic from 'next/dynamic'
-import { Skeleton } from '@/components/ui/skeleton'
-import type { ComponentProps } from 'react'
-import type { ConversionesOfflineCard as Card } from './ConversionesOfflineCard'
+import dynamic from 'next/dynamic';
+import { Skeleton } from '@/components/ui/skeleton';
+import type { ComponentProps } from 'react';
+import type { ConversionesOfflineCard as Card } from './ConversionesOfflineCard';
 
 /**
  * Envoltorio cliente de `ConversionesOfflineCard`.
@@ -18,10 +18,10 @@ import type { ConversionesOfflineCard as Card } from './ConversionesOfflineCard'
  * contenedor para dibujar, así que en SSR sale vacía igualmente.
  */
 const ConversionesOfflineCardInner = dynamic(
-    () => import('./ConversionesOfflineCard').then(m => ({ default: m.ConversionesOfflineCard })),
-    { ssr: false, loading: () => <Skeleton className="h-72 rounded-xl" /> }
-)
+  () => import('./ConversionesOfflineCard').then((m) => ({ default: m.ConversionesOfflineCard })),
+  { ssr: false, loading: () => <Skeleton className="h-72 rounded-xl" /> }
+);
 
 export function ConversionesOfflineCardLazy(props: ComponentProps<typeof Card>) {
-    return <ConversionesOfflineCardInner {...props} />
+  return <ConversionesOfflineCardInner {...props} />;
 }

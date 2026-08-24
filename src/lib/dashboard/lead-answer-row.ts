@@ -42,19 +42,19 @@
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-import { campanasPermitidas, clavesDelDia } from './lead-answer-aggregation'
-import type { LeadAnswerDatasetLite } from './lead-answer-aggregation'
-import type { AnyCampaignFilter } from '@/lib/campaign-filter'
-import type { CampaignFilterSpec } from '@/lib/layout-types'
+import { campanasPermitidas, clavesDelDia } from './lead-answer-aggregation';
+import type { LeadAnswerDatasetLite } from './lead-answer-aggregation';
+import type { AnyCampaignFilter } from '@/lib/campaign-filter';
+import type { CampaignFilterSpec } from '@/lib/layout-types';
 
 /** Propiedad de la fila que apunta al cubo. No numérica: invisible a las fórmulas. */
-export const CLAVE_CUBO = '__leadAnswers'
+export const CLAVE_CUBO = '__leadAnswers';
 
 export interface CuboRespuestasRef {
-    ds: LeadAnswerDatasetLite
-    /** Filtro de la PESTAÑA, el que ya se aplicó a los escalares de la fila. */
-    keyword: AnyCampaignFilter
-    campaignGroups: any[] | undefined
+  ds: LeadAnswerDatasetLite;
+  /** Filtro de la PESTAÑA, el que ya se aplicó a los escalares de la fila. */
+  keyword: AnyCampaignFilter;
+  campaignGroups: any[] | undefined;
 }
 
 // ── Memo del conjunto de campañas permitidas ──────────────────────────
@@ -63,22 +63,22 @@ export interface CuboRespuestasRef {
 // objeto `campaignFilter` es estable porque viene de `activeLayout`, así que
 // sirve de clave; el centinela cubre el caso `undefined`.
 
-const SIN_FILTRO = Object.freeze({}) as object
-const memo = new WeakMap<object, { ref: CuboRespuestasRef; permitidas: Set<number> }>()
+const SIN_FILTRO = Object.freeze({}) as object;
+const memo = new WeakMap<object, { ref: CuboRespuestasRef; permitidas: Set<number> }>();
 
 export function permitidasDelCubo(
-    ref: CuboRespuestasRef,
-    campaignFilter: CampaignFilterSpec | undefined,
+  ref: CuboRespuestasRef,
+  campaignFilter: CampaignFilterSpec | undefined
 ): Set<number> {
-    const clave = (campaignFilter ?? SIN_FILTRO) as object
-    const hit = memo.get(clave)
-    // Se compara `ref` por identidad: `data.leadAnswers` y el keyword de la
-    // pestaña son memos estables, así que cambian solo cuando de verdad cambian.
-    if (hit && hit.ref === ref) return hit.permitidas
+  const clave = (campaignFilter ?? SIN_FILTRO) as object;
+  const hit = memo.get(clave);
+  // Se compara `ref` por identidad: `data.leadAnswers` y el keyword de la
+  // pestaña son memos estables, así que cambian solo cuando de verdad cambian.
+  if (hit && hit.ref === ref) return hit.permitidas;
 
-    const permitidas = campanasPermitidas(ref.ds, ref.keyword, campaignFilter, ref.campaignGroups)
-    memo.set(clave, { ref, permitidas })
-    return permitidas
+  const permitidas = campanasPermitidas(ref.ds, ref.keyword, campaignFilter, ref.campaignGroups);
+  memo.set(clave, { ref, permitidas });
+  return permitidas;
 }
 
 /**
@@ -89,13 +89,13 @@ export function permitidasDelCubo(
  * `meta_campaigns`.
  */
 export function refDeCubo(
-    ds: LeadAnswerDatasetLite | null | undefined,
-    keyword: AnyCampaignFilter,
-    campaignGroups: any[] | undefined,
+  ds: LeadAnswerDatasetLite | null | undefined,
+  keyword: AnyCampaignFilter,
+  campaignGroups: any[] | undefined
 ): CuboRespuestasRef | null {
-    if (!ds) return null
-    const hayDatos = ds.campos.length > 0 || Object.keys(ds.totalesPorFecha ?? {}).length > 0
-    return hayDatos ? { ds, keyword, campaignGroups } : null
+  if (!ds) return null;
+  const hayDatos = ds.campos.length > 0 || Object.keys(ds.totalesPorFecha ?? {}).length > 0;
+  return hayDatos ? { ds, keyword, campaignGroups } : null;
 }
 
 /**
@@ -106,12 +106,12 @@ export function refDeCubo(
  * caso del archivo de pestañas, que no carga respuestas a propósito.
  */
 export function reDerivarRespuestas(
-    row: any,
-    campaignFilter: CampaignFilterSpec | undefined,
+  row: any,
+  campaignFilter: CampaignFilterSpec | undefined
 ): Record<string, number> | null {
-    const ref = row?.[CLAVE_CUBO] as CuboRespuestasRef | undefined
-    if (!ref) return null
-    return clavesDelDia(ref.ds, String(row.fecha ?? ''), permitidasDelCubo(ref, campaignFilter))
+  const ref = row?.[CLAVE_CUBO] as CuboRespuestasRef | undefined;
+  if (!ref) return null;
+  return clavesDelDia(ref.ds, String(row.fecha ?? ''), permitidasDelCubo(ref, campaignFilter));
 }
 
 /**
@@ -122,12 +122,12 @@ export function reDerivarRespuestas(
  * real, y sin esto mostraba `—` en vez de sus contactos.
  */
 export function clavesYRefDelDia(
-    ref: CuboRespuestasRef | null,
-    fecha: string,
+  ref: CuboRespuestasRef | null,
+  fecha: string
 ): Record<string, unknown> {
-    if (!ref) return {}
-    return {
-        [CLAVE_CUBO]: ref,
-        ...clavesDelDia(ref.ds, fecha, permitidasDelCubo(ref, undefined)),
-    }
+  if (!ref) return {};
+  return {
+    [CLAVE_CUBO]: ref,
+    ...clavesDelDia(ref.ds, fecha, permitidasDelCubo(ref, undefined)),
+  };
 }

@@ -38,8 +38,12 @@ import { NOTIFICATION_TYPES, type NotificationType } from '@/lib/whatsapp/types'
 import { parsearWebhook } from '@/lib/hotmart/parser';
 import { convertirLote } from '@/lib/hotmart/moneda';
 import {
-  cargarFunnels, clasificarLote, guardarVenta, publicClienteIdDe,
-  reclamarEnvio, liberarEnvio,
+  cargarFunnels,
+  clasificarLote,
+  guardarVenta,
+  publicClienteIdDe,
+  reclamarEnvio,
+  liberarEnvio,
 } from '@/lib/hotmart/persistencia';
 
 export const runtime = 'nodejs';
@@ -61,10 +65,10 @@ const hits = new Map<string, number[]>();
 
 function rateLimited(key: string): boolean {
   const now = Date.now();
-  const recent = (hits.get(key) ?? []).filter(t => now - t < RATE_WINDOW_MS);
+  const recent = (hits.get(key) ?? []).filter((t) => now - t < RATE_WINDOW_MS);
   recent.push(now);
   hits.set(key, recent);
-  if (hits.size > 5000) hits.clear();   // techo de memoria
+  if (hits.size > 5000) hits.clear(); // techo de memoria
   return recent.length > RATE_MAX;
 }
 
@@ -84,7 +88,7 @@ export async function POST(
     // 429 con Retry-After: Hotmart reintenta, así que no se pierde el evento.
     return NextResponse.json(
       { error: 'Demasiadas peticiones' },
-      { status: 429, headers: { 'Retry-After': '60' } },
+      { status: 429, headers: { 'Retry-After': '60' } }
     );
   }
 
@@ -169,7 +173,7 @@ export async function POST(
     // integración como errónea era lo que dejaba la UI en rojo para siempre.
     return NextResponse.json(
       { ok: true, ignorado: 'evento_no_venta', evento: resultado.evento },
-      { status: 200 },
+      { status: 200 }
     );
   }
   if (!resultado.ok) {
@@ -204,7 +208,8 @@ export async function POST(
         // La guarda de orden descartó el evento por ser más viejo que el
         // guardado. No es un error: es el comportamiento correcto.
         console.info('[hotmart webhook] evento descartado por orden', {
-          clienteId, transaction: venta.transaction_id,
+          clienteId,
+          transaction: venta.transaction_id,
         });
       }
     } catch (e) {
@@ -356,7 +361,7 @@ export async function POST(
   if (parsed.status === 'approved' && hotmartVentaId) {
     after(async () => {
       const reclamado = await reclamarEnvio(supabaseAdmin, hotmartVentaId, 'capi_enviado_at');
-      if (!reclamado) return;   // otro proceso ya la envió
+      if (!reclamado) return; // otro proceso ya la envió
       try {
         const { data: metaIntegration } = await trackingDb
           .from('integrations')
@@ -423,7 +428,11 @@ export async function POST(
   }
 
   // ── Google Ads Offline Conversions ────────────────────────────
-  if (parsed.status === 'approved' && hotmartVentaId && (parsed.click_id ?? attribution.first_touch)) {
+  if (
+    parsed.status === 'approved' &&
+    hotmartVentaId &&
+    (parsed.click_id ?? attribution.first_touch)
+  ) {
     after(async () => {
       const reclamado = await reclamarEnvio(supabaseAdmin, hotmartVentaId, 'gads_enviado_at');
       if (!reclamado) return;
@@ -435,7 +444,8 @@ export async function POST(
           .eq('tipo', 'google')
           .maybeSingle();
 
-        const gclid = parsed.click_id ?? (attribution.first_touch as Record<string, unknown> | null)?.click_id;
+        const gclid =
+          parsed.click_id ?? (attribution.first_touch as Record<string, unknown> | null)?.click_id;
         if (
           gadsIntegration?.status === 'active' &&
           gadsIntegration.config?.customer_id &&

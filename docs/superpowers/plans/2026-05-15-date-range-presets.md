@@ -20,6 +20,7 @@
 ## Task 1: Update `_actions.ts` to support `from=all`
 
 **Files:**
+
 - Modify: `src/app/(app)/dashboard/_actions.ts`
 
 ### Context
@@ -29,57 +30,60 @@
 - [ ] **Step 1: Update `getDashboardData` — replace the `Promise.all` for metrics+leads (lines 108–120) with conditional query building**
 
 Replace this block in `getDashboardData`:
+
 ```typescript
-    // Fetch all metrics + leads for that range
-    const [metricsRes, leadsRes] = await Promise.all([
-        supabase.from('metricas_diarias')
-            .select('*')
-            .eq('cliente_id', cliente.id)
-            .gte('fecha', startStr)
-            .lte('fecha', endStr)
-            .order('fecha', { ascending: true }),
-        supabase.from('leads_diarios')
-            .select('*')
-            .eq('client_id', cliente.id)
-            .gte('date', startStr)
-            .lte('date', endStr)
-    ])
+// Fetch all metrics + leads for that range
+const [metricsRes, leadsRes] = await Promise.all([
+  supabase
+    .from('metricas_diarias')
+    .select('*')
+    .eq('cliente_id', cliente.id)
+    .gte('fecha', startStr)
+    .lte('fecha', endStr)
+    .order('fecha', { ascending: true }),
+  supabase
+    .from('leads_diarios')
+    .select('*')
+    .eq('client_id', cliente.id)
+    .gte('date', startStr)
+    .lte('date', endStr),
+]);
 ```
 
 With:
+
 ```typescript
-    // Fetch all metrics + leads for that range
-    let metricsQuery = supabase.from('metricas_diarias')
-        .select('*')
-        .eq('cliente_id', cliente.id)
-    if (startStr !== 'all') metricsQuery = metricsQuery.gte('fecha', startStr)
-    metricsQuery = metricsQuery.lte('fecha', endStr).order('fecha', { ascending: true })
+// Fetch all metrics + leads for that range
+let metricsQuery = supabase.from('metricas_diarias').select('*').eq('cliente_id', cliente.id);
+if (startStr !== 'all') metricsQuery = metricsQuery.gte('fecha', startStr);
+metricsQuery = metricsQuery.lte('fecha', endStr).order('fecha', { ascending: true });
 
-    let leadsQuery = supabase.from('leads_diarios')
-        .select('*')
-        .eq('client_id', cliente.id)
-    if (startStr !== 'all') leadsQuery = leadsQuery.gte('date', startStr)
-    leadsQuery = leadsQuery.lte('date', endStr)
+let leadsQuery = supabase.from('leads_diarios').select('*').eq('client_id', cliente.id);
+if (startStr !== 'all') leadsQuery = leadsQuery.gte('date', startStr);
+leadsQuery = leadsQuery.lte('date', endStr);
 
-    const [metricsRes, leadsRes] = await Promise.all([metricsQuery, leadsQuery])
+const [metricsRes, leadsRes] = await Promise.all([metricsQuery, leadsQuery]);
 ```
 
 - [ ] **Step 2: Update the `getWeeksInRange` call in `getDashboardData` (line 141) to handle `'all'`**
 
 Replace:
+
 ```typescript
-    const weeks = getWeeksInRange(startStr, endStr)
+const weeks = getWeeksInRange(startStr, endStr);
 ```
 
 With:
+
 ```typescript
-    const effectiveStart = startStr === 'all' ? '2020-01-01' : startStr
-    const weeks = getWeeksInRange(effectiveStart, endStr)
+const effectiveStart = startStr === 'all' ? '2020-01-01' : startStr;
+const weeks = getWeeksInRange(effectiveStart, endStr);
 ```
 
 - [ ] **Step 3: Update `getMirrorDashboardData` — same conditional query building for its metrics+leads block (around line 648)**
 
 Replace this block in `getMirrorDashboardData`:
+
 ```typescript
     const [metricsRes, leadsRes, conversionesRes, campaignGroupsRes, tabsRes, allLayoutsRes] = await Promise.all([
         supabase.from('metricas_diarias')
@@ -96,6 +100,7 @@ Replace this block in `getMirrorDashboardData`:
 ```
 
 With:
+
 ```typescript
     let mirrorMetricsQuery = supabase.from('metricas_diarias')
         .select('*')
@@ -117,14 +122,16 @@ With:
 - [ ] **Step 4: Update `getWeeksInRange` call in `getMirrorDashboardData` (around line 681)**
 
 Replace:
+
 ```typescript
-    const weeks = getWeeksInRange(startStr, endStr)
+const weeks = getWeeksInRange(startStr, endStr);
 ```
 
 With:
+
 ```typescript
-    const effectiveStart = startStr === 'all' ? '2020-01-01' : startStr
-    const weeks = getWeeksInRange(effectiveStart, endStr)
+const effectiveStart = startStr === 'all' ? '2020-01-01' : startStr;
+const weeks = getWeeksInRange(effectiveStart, endStr);
 ```
 
 - [ ] **Step 5: Verify TypeScript compiles**
@@ -147,6 +154,7 @@ git commit -m "feat: support from=all in getDashboardData and getMirrorDashboard
 ## Task 2: Rewrite `DateRangeSelector.tsx` with preset dropdown
 
 **Files:**
+
 - Modify: `src/app/(app)/dashboard/components/DateRangeSelector.tsx`
 
 ### Context
@@ -412,6 +420,7 @@ npm run dev
 ```
 
 Open `http://localhost:3000/dashboard/<any-client-id>` and verify:
+
 1. A button with the active preset name appears (default: "Últimos 30 días")
 2. Clicking it opens a popover with 13 presets + "Personalizado" as radio buttons
 3. Clicking any preset closes the popover and updates the URL + dashboard data

@@ -21,6 +21,7 @@
 ## Task 1: Add `getArchiveMetrics` server action
 
 **Files:**
+
 - Modify: `src/app/(app)/dashboard/_actions.ts`
 
 ### Context
@@ -33,36 +34,35 @@ Append after the last export in the file:
 
 ```typescript
 export async function getArchiveMetrics(clientId: string) {
-    const supabase = await createAdminClient()
+  const supabase = await createAdminClient();
 
-    const [metricsRes, leadsRes] = await Promise.all([
-        supabase.from('metricas_diarias')
-            .select('*')
-            .eq('cliente_id', clientId)
-            .order('fecha', { ascending: true }),
-        supabase.from('leads_diarios')
-            .select('*')
-            .eq('client_id', clientId),
-    ])
+  const [metricsRes, leadsRes] = await Promise.all([
+    supabase
+      .from('metricas_diarias')
+      .select('*')
+      .eq('cliente_id', clientId)
+      .order('fecha', { ascending: true }),
+    supabase.from('leads_diarios').select('*').eq('client_id', clientId),
+  ]);
 
-    if (metricsRes.error) return null
+  if (metricsRes.error) return null;
 
-    const leadsMap = new Map((leadsRes.data || []).map((l: any) => [l.date, l]))
-    const metrics = (metricsRes.data || []).map((m: any) => {
-        const leadDay = leadsMap.get(m.fecha)
-        if (leadDay) {
-            return {
-                ...m,
-                leads_totales: leadDay.leads_totales,
-                leads_calificados: leadDay.leads_calificados,
-                leads_no_calificados: leadDay.leads_no_calificados,
-                tasa_calificacion: leadDay.tasa_calificacion,
-            }
-        }
-        return m
-    })
+  const leadsMap = new Map((leadsRes.data || []).map((l: any) => [l.date, l]));
+  const metrics = (metricsRes.data || []).map((m: any) => {
+    const leadDay = leadsMap.get(m.fecha);
+    if (leadDay) {
+      return {
+        ...m,
+        leads_totales: leadDay.leads_totales,
+        leads_calificados: leadDay.leads_calificados,
+        leads_no_calificados: leadDay.leads_no_calificados,
+        tasa_calificacion: leadDay.tasa_calificacion,
+      };
+    }
+    return m;
+  });
 
-    return { metrics }
+  return { metrics };
 }
 ```
 
@@ -86,11 +86,13 @@ git commit -m "feat: add getArchiveMetrics server action for full historical dat
 ## Task 2: Update `TabArchiveView.tsx`
 
 **Files:**
+
 - Modify: `src/app/(app)/dashboard/components/TabArchiveView.tsx`
 
 ### Context
 
 The full current file is 251 lines. Key changes:
+
 - `computeCardValue` gets a 5th optional param `dateOverride?: { from: string; to: string }` — used instead of `tab.fecha_inicio`/`tab.fecha_finalizacion` when present.
 - New state: `archiveMetrics` (initialized from `metrics` prop), `isLoadingArchive`, `tabDateOverrides`.
 - `useEffect` on mount calls `getArchiveMetrics(clientId)` and replaces `archiveMetrics`.
@@ -419,6 +421,7 @@ git commit -m "feat: add per-tab date overrides and historical metrics loading i
 ## Task 3: Pass `clientId` to `TabArchiveView` in `DashboardClient.tsx`
 
 **Files:**
+
 - Modify: `src/app/(app)/dashboard/components/DashboardClient.tsx`
 
 ### Context
@@ -428,6 +431,7 @@ git commit -m "feat: add per-tab date overrides and historical metrics loading i
 - [ ] **Step 1: Add `clientId` prop to the `<TabArchiveView>` invocation**
 
 Find this block (around line 731):
+
 ```typescript
         <TabArchiveView
             tabs={tabs}
@@ -442,6 +446,7 @@ Find this block (around line 731):
 ```
 
 Replace with:
+
 ```typescript
         <TabArchiveView
             tabs={tabs}

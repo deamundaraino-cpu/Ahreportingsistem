@@ -15,19 +15,19 @@
 // de una tanda con una sola llamada a la API de FX. Hacerlo venta a venta era
 // una petición HTTP por transacción.
 
-import { getUsdRate, preloadUsdRates } from '../fx'
-import { comisionesPendientes } from './parser'
-import type { VentaHotmart } from './tipos'
+import { getUsdRate, preloadUsdRates } from '../fx';
+import { comisionesPendientes } from './parser';
+import type { VentaHotmart } from './tipos';
 
 export type ResultadoConversion = {
-    /** Importes que no se pudieron convertir por falta de tasa. */
-    sin_tasa: number
-    /** Divisas encontradas en el lote. Alimenta la alerta del worker. */
-    monedas: string[]
-}
+  /** Importes que no se pudieron convertir por falta de tasa. */
+  sin_tasa: number;
+  /** Divisas encontradas en el lote. Alimenta la alerta del worker. */
+  monedas: string[];
+};
 
 function redondear(n: number): number {
-    return Math.round(n * 10000) / 10000
+  return Math.round(n * 10000) / 10000;
 }
 
 /**
@@ -44,62 +44,62 @@ function redondear(n: number): number {
  * de cada tanda.
  */
 export async function convertirLote(
-    db: unknown,
-    ventas: VentaHotmart[],
-    fecha: string,
+  db: unknown,
+  ventas: VentaHotmart[],
+  fecha: string
 ): Promise<ResultadoConversion> {
-    const monedas = Array.from(
-        new Set(
-            ventas
-                .flatMap(v => [v.moneda, comisionesPendientes.get(v)?.moneda ?? null])
-                .map(m => String(m ?? '').toUpperCase())
-                .filter(Boolean),
-        ),
+  const monedas = Array.from(
+    new Set(
+      ventas
+        .flatMap((v) => [v.moneda, comisionesPendientes.get(v)?.moneda ?? null])
+        .map((m) => String(m ?? '').toUpperCase())
+        .filter(Boolean)
     )
+  );
 
-    if (monedas.length === 0) return { sin_tasa: 0, monedas: [] }
+  if (monedas.length === 0) return { sin_tasa: 0, monedas: [] };
 
-    // Una sola llamada a la API de FX para todo el lote.
-    await preloadUsdRates(db, monedas, fecha)
+  // Una sola llamada a la API de FX para todo el lote.
+  await preloadUsdRates(db, monedas, fecha);
 
-    const tasas = new Map<string, number | null>()
-    for (const m of monedas) {
-        const { rate } = await getUsdRate(db, m, fecha)
-        tasas.set(m, rate)
+  const tasas = new Map<string, number | null>();
+  for (const m of monedas) {
+    const { rate } = await getUsdRate(db, m, fecha);
+    tasas.set(m, rate);
+  }
+
+  let sin_tasa = 0;
+
+  /** Convierte, contando los importes que se quedan sin tasa. */
+  const aUsd = (valor: number | null, moneda: string | null): number | null => {
+    if (valor == null) return null;
+    const cur = String(moneda ?? '').toUpperCase();
+    if (!cur) {
+      if (valor !== 0) sin_tasa++;
+      return null;
     }
-
-    let sin_tasa = 0
-
-    /** Convierte, contando los importes que se quedan sin tasa. */
-    const aUsd = (valor: number | null, moneda: string | null): number | null => {
-        if (valor == null) return null
-        const cur = String(moneda ?? '').toUpperCase()
-        if (!cur) {
-            if (valor !== 0) sin_tasa++
-            return null
-        }
-        const rate = tasas.get(cur)
-        if (rate == null) {
-            // El cero no cuenta como pérdida: convertir 0 da 0 en cualquier moneda.
-            if (valor !== 0) sin_tasa++
-            return null
-        }
-        return redondear(valor * rate)
+    const rate = tasas.get(cur);
+    if (rate == null) {
+      // El cero no cuenta como pérdida: convertir 0 da 0 en cualquier moneda.
+      if (valor !== 0) sin_tasa++;
+      return null;
     }
+    return redondear(valor * rate);
+  };
 
-    for (const v of ventas) {
-        const cur = String(v.moneda ?? '').toUpperCase()
-        v.usd_rate = cur ? (tasas.get(cur) ?? null) : null
-        v.bruto_usd = aUsd(v.bruto, v.moneda)
+  for (const v of ventas) {
+    const cur = String(v.moneda ?? '').toUpperCase();
+    v.usd_rate = cur ? (tasas.get(cur) ?? null) : null;
+    v.bruto_usd = aUsd(v.bruto, v.moneda);
 
-        const com = comisionesPendientes.get(v)
-        if (com) {
-            const monedaCom = com.moneda ?? v.moneda
-            v.neto_productor_usd = aUsd(com.productor, monedaCom)
-            v.neto_afiliado_usd = aUsd(com.afiliado, monedaCom)
-            v.neto_coproductor_usd = aUsd(com.coproductor, monedaCom)
-        }
+    const com = comisionesPendientes.get(v);
+    if (com) {
+      const monedaCom = com.moneda ?? v.moneda;
+      v.neto_productor_usd = aUsd(com.productor, monedaCom);
+      v.neto_afiliado_usd = aUsd(com.afiliado, monedaCom);
+      v.neto_coproductor_usd = aUsd(com.coproductor, monedaCom);
     }
+  }
 
-    return { sin_tasa, monedas }
+  return { sin_tasa, monedas };
 }

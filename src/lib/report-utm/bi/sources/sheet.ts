@@ -28,20 +28,20 @@
 // Lo que sigue SIN cruzar, y por eso no está en la lista: `lead_column` y
 // `sales_column`. Esas columnas no existen en el Sheet.
 
-import type { DataSource } from '../registry-types'
+import type { DataSource } from '../registry-types';
 
 export const SHEET_SOURCE: DataSource = {
-    id: 'sheet',
-    label: 'Campos de Sheet',
-    location: { kind: 'table', schema: 'public', table: 'sheet_campo_valores_diarios' },
-    clientKey: { scope: 'public', via: 'public_cliente_id' },
-    grainKind: 'daily',
-    grain: ['campo_id', 'fecha', 'valor'],
-    // `campaign`/`adset`/`ad` se resuelven leyendo `sheet_filas`, no el desglose.
-    joinAxes: ['date', 'sheet_value', 'campaign', 'adset', 'ad'],
-    dateColumn: 'fecha',
-    dateType: 'date',
-    dynamicLoader: ['sheet_campo', 'sheet_vista'],
-    // Sin campos fijos: el catálogo entero es por cliente.
-    fields: [],
-}
+  id: 'sheet',
+  label: 'Campos de Sheet',
+  location: { kind: 'table', schema: 'public', table: 'sheet_campo_valores_diarios' },
+  clientKey: { scope: 'public', via: 'public_cliente_id' },
+  grainKind: 'daily',
+  grain: ['campo_id', 'fecha', 'valor'],
+  // `campaign`/`adset`/`ad` se resuelven leyendo `sheet_filas`, no el desglose.
+  joinAxes: ['date', 'sheet_value', 'campaign', 'adset', 'ad'],
+  dateColumn: 'fecha',
+  dateType: 'date',
+  dynamicLoader: ['sheet_campo', 'sheet_vista'],
+  // Sin campos fijos: el catálogo entero es por cliente.
+  fields: [],
+};

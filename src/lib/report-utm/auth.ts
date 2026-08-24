@@ -1,5 +1,5 @@
-import { NextResponse } from 'next/server'
-import { getSesionActual } from '@/lib/auth-session'
+import { NextResponse } from 'next/server';
+import { getSesionActual } from '@/lib/auth-session';
 
 // ============================================================
 // Autorización compartida del módulo report-utm.
@@ -8,7 +8,7 @@ import { getSesionActual } from '@/lib/auth-session'
 // refuerza RLS; aquí solo se valida el rol.
 // ============================================================
 
-export const REPORT_UTM_WRITE_ROLES = new Set(['superadmin', 'admin', 'trafficker'])
+export const REPORT_UTM_WRITE_ROLES = new Set(['superadmin', 'admin', 'trafficker']);
 
 /**
  * Rol del usuario autenticado (o null si no hay sesión / perfil).
@@ -16,8 +16,8 @@ export const REPORT_UTM_WRITE_ROLES = new Set(['superadmin', 'admin', 'trafficke
  * comprobaciones dentro del mismo render no repitan las dos consultas.
  */
 export async function getUserRole(): Promise<string | null> {
-    const { userId, role } = await getSesionActual()
-    return userId ? role : null
+  const { userId, role } = await getSesionActual();
+  return userId ? role : null;
 }
 
 /**
@@ -26,12 +26,12 @@ export async function getUserRole(): Promise<string | null> {
  * decida el código de respuesta (403 en API, mensaje en server action).
  */
 export async function checkWriteRole(): Promise<{ ok: boolean; role: string | null }> {
-    const role = await getUserRole()
-    return { ok: !!role && REPORT_UTM_WRITE_ROLES.has(role), role }
+  const role = await getUserRole();
+  return { ok: !!role && REPORT_UTM_WRITE_ROLES.has(role), role };
 }
 
 /** Roles que pueden operar los endpoints internos de administración. */
-export const ADMIN_ROLES = new Set(['superadmin', 'admin'])
+export const ADMIN_ROLES = new Set(['superadmin', 'admin']);
 
 /**
  * Guard para los handlers de `/api/admin/*`. El proxy ya exige sesión en esas
@@ -43,8 +43,8 @@ export const ADMIN_ROLES = new Set(['superadmin', 'admin'])
  * el handler debe devolver tal cual.
  */
 export async function requireAdminRole(): Promise<NextResponse | null> {
-    const role = await getUserRole()
-    if (!role) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    if (!ADMIN_ROLES.has(role)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
-    return null
+  const role = await getUserRole();
+  if (!role) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  if (!ADMIN_ROLES.has(role)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  return null;
 }

@@ -1,32 +1,32 @@
-import type { Metadata, Viewport } from "next";
-import { Geist, JetBrains_Mono } from "next/font/google";
-import { ThemeProvider } from "@/components/theme/ThemeProvider";
-import { getBranding, colorSeguro, urlLogoSegura } from "@/lib/branding";
-import "./globals.css";
+import type { Metadata, Viewport } from 'next';
+import { Geist, JetBrains_Mono } from 'next/font/google';
+import { ThemeProvider } from '@/components/theme/ThemeProvider';
+import { getBranding, colorSeguro, urlLogoSegura } from '@/lib/branding';
+import './globals.css';
 
 const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-  display: "swap",
+  variable: '--font-geist-sans',
+  subsets: ['latin'],
+  display: 'swap',
 });
 
 const jetbrainsMono = JetBrains_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
-  display: "swap",
+  variable: '--font-geist-mono',
+  subsets: ['latin'],
+  display: 'swap',
 });
 
 export async function generateMetadata(): Promise<Metadata> {
   const branding = await getBranding();
-  const appName = branding?.app_name || "AdsHouse";
-  const appTag = branding?.app_tag || "Reporting";
+  const appName = branding?.app_name || 'AdsHouse';
+  const appTag = branding?.app_tag || 'Reporting';
   // Favicon personalizado del branding; si no hay, se usa /favicon.ico (public).
   // Importante: ya NO existe src/app/favicon.ico porque la convención de archivo
   // tiene prioridad sobre este campo `icons` y bloquearía el favicon personalizado.
-  const faviconUrl = branding?.favicon_url?.trim() || "/favicon.ico";
+  const faviconUrl = branding?.favicon_url?.trim() || '/favicon.ico';
   return {
     title: `${appName} ${appTag}`,
-    description: "Panel de Reportes de Meta Ads y Hotmart",
+    description: 'Panel de Reportes de Meta Ads y Hotmart',
     icons: {
       icon: faviconUrl,
       shortcut: faviconUrl,
@@ -35,11 +35,10 @@ export async function generateMetadata(): Promise<Metadata> {
   };
 }
 
-
 export const viewport: Viewport = {
   themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "#f8f8f8" },
-    { media: "(prefers-color-scheme: dark)", color: "#151515" },
+    { media: '(prefers-color-scheme: light)', color: '#f8f8f8' },
+    { media: '(prefers-color-scheme: dark)', color: '#151515' },
   ],
 };
 
@@ -63,7 +62,9 @@ export default async function RootLayout({
     <html lang="es" suppressHydrationWarning>
       <head>
         {hasBrandingCss && (
-          <style dangerouslySetInnerHTML={{ __html: `
+          <style
+            dangerouslySetInnerHTML={{
+              __html: `
             :root {
               ${primaryColor ? `--brand-blue: ${primaryColor} !important;` : ''}
               ${primaryColor ? `--brand-blue-light: color-mix(in srgb, var(--brand-blue) 85%, white) !important;` : ''}
@@ -83,7 +84,9 @@ export default async function RootLayout({
 
               ${logoUrl ? `--brand-logo-url: url('${logoUrl}') !important;` : ''}
             }
-          `}} />
+          `,
+            }}
+          />
         )}
       </head>
       <body

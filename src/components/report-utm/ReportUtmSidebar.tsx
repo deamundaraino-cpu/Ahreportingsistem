@@ -1,131 +1,144 @@
-'use client'
+'use client';
 
-import { useState } from 'react'
-import Link from 'next/link'
-import { usePathname } from 'next/navigation'
+import { useState } from 'react';
+import Link from 'next/link';
+import { usePathname } from 'next/navigation';
 import {
-    LayoutDashboard,
-    Users,
-    ShoppingBag,
-    BarChart2,
-    Settings,
-    LogOut,
-    Menu,
-    X,
-    ArrowLeftRight,
-    UserCheck,
-    PieChart,
-    Link2 as Link2Icon,
-    Activity,
-} from 'lucide-react'
-import { ThemeToggle } from '@/components/theme/ThemeToggle'
+  LayoutDashboard,
+  Users,
+  ShoppingBag,
+  BarChart2,
+  Settings,
+  LogOut,
+  Menu,
+  X,
+  ArrowLeftRight,
+  UserCheck,
+  PieChart,
+  Link2 as Link2Icon,
+  Activity,
+} from 'lucide-react';
+import { ThemeToggle } from '@/components/theme/ThemeToggle';
 
 const NAV_PRIMARY = [
-    { name: 'Overview', href: '/report-utm', icon: LayoutDashboard, exact: true },
-    { name: 'Clientes', href: '/report-utm/clientes', icon: Users },
-]
+  { name: 'Overview', href: '/report-utm', icon: LayoutDashboard, exact: true },
+  { name: 'Clientes', href: '/report-utm/clientes', icon: Users },
+];
 
 const NAV_TRACKING = [
-    { name: 'Ventas', href: '/report-utm/ventas', icon: ShoppingBag },
-    { name: 'Leads', href: '/report-utm/leads', icon: UserCheck },
-]
+  { name: 'Ventas', href: '/report-utm/ventas', icon: ShoppingBag },
+  { name: 'Leads', href: '/report-utm/leads', icon: UserCheck },
+];
 
 const NAV_ANALISIS = [
-    { name: 'Informes', href: '/report-utm/informes', icon: PieChart },
-    { name: 'Cruce Campañas', href: '/report-utm/cruce-campanas', icon: Link2Icon },
-]
+  { name: 'Informes', href: '/report-utm/informes', icon: PieChart },
+  { name: 'Cruce Campañas', href: '/report-utm/cruce-campanas', icon: Link2Icon },
+];
 
 const NAV_CONFIG = [
-    // Va junto a Integraciones porque casi todo lo que reporta se arregla ahí.
-    { name: 'Salud de fuentes', href: '/report-utm/salud', icon: Activity },
-    { name: 'Integraciones', href: '/report-utm/integraciones', icon: Settings },
-]
+  // Va junto a Integraciones porque casi todo lo que reporta se arregla ahí.
+  { name: 'Salud de fuentes', href: '/report-utm/salud', icon: Activity },
+  { name: 'Integraciones', href: '/report-utm/integraciones', icon: Settings },
+];
 
-export function ReportUtmSidebar({ 
-    role, 
-    utmName = 'Report-UTM', 
-    utmTag = 'Tracking & Atribución' 
-}: { 
-    role: string; 
-    utmName?: string; 
-    utmTag?: string 
+type NavItem = {
+  name: string;
+  href: string;
+  icon: typeof LayoutDashboard;
+  exact?: boolean;
+};
+
+function isActive(pathname: string | null, href: string, exact = false) {
+  if (!pathname) return false;
+  return exact ? pathname === href : pathname.startsWith(href);
+}
+
+function NavSection({
+  title,
+  items,
+  pathname,
+  onNavigate,
+}: {
+  title: string;
+  items: NavItem[];
+  pathname: string | null;
+  onNavigate: () => void;
 }) {
-    const pathname = usePathname()
-    const [isOpen, setIsOpen] = useState(false)
-
-    const isActive = (href: string, exact = false) => {
-        if (!pathname) return false
-        return exact ? pathname === href : pathname.startsWith(href)
-    }
-
-    const Section = ({
-        title,
-        items,
-    }: {
-        title: string
-        items: { name: string; href: string; icon: typeof LayoutDashboard; exact?: boolean }[]
-    }) => (
-        <div>
-            <p className="px-3 text-[10px] font-semibold text-muted-foreground/70 uppercase tracking-widest mb-2">
-                {title}
-            </p>
-            <div className="space-y-0.5">
-                {items.map((item) => {
-                    const active = isActive(item.href, item.exact)
-                    return (
-                        <Link
-                            key={item.name}
-                            href={item.href}
-                            onClick={() => setIsOpen(false)}
-                            className={`
+  return (
+    <div>
+      <p className="px-3 text-[10px] font-semibold text-muted-foreground/70 uppercase tracking-widest mb-2">
+        {title}
+      </p>
+      <div className="space-y-0.5">
+        {items.map((item) => {
+          const active = isActive(pathname, item.href, item.exact);
+          return (
+            <Link
+              key={item.name}
+              href={item.href}
+              onClick={onNavigate}
+              className={`
                                 group flex items-center px-3 py-2.5 text-sm font-medium rounded-lg
                                 transition-all duration-200 cursor-pointer
-                                ${active
+                                ${
+                                  active
                                     ? 'text-white nav-active-emerald'
                                     : 'text-muted-foreground hover:text-foreground hover:bg-accent'
                                 }
                             `}
-                        >
-                            <item.icon
-                                className={`
+            >
+              <item.icon
+                className={`
                                     mr-3 flex-shrink-0 h-4.5 w-4.5 transition-transform duration-200
                                     group-hover:scale-110
                                     ${active ? 'text-white' : 'text-muted-foreground/80 group-hover:text-foreground'}
                                 `}
-                            />
-                            <span className="flex-1">{item.name}</span>
-                            {active && (
-                                <div className="w-1.5 h-1.5 rounded-full bg-white/70 animate-pulse" />
-                            )}
-                        </Link>
-                    )
-                })}
-            </div>
-        </div>
-    )
+              />
+              <span className="flex-1">{item.name}</span>
+              {active && <div className="w-1.5 h-1.5 rounded-full bg-white/70 animate-pulse" />}
+            </Link>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
 
-    return (
-        <>
-            <button
-                onClick={() => setIsOpen(!isOpen)}
-                className="lg:hidden fixed top-4 left-4 z-50 p-2 rounded-md
+export function ReportUtmSidebar({
+  role,
+  utmName = 'Report-UTM',
+  utmTag = 'Tracking & Atribución',
+}: {
+  role: string;
+  utmName?: string;
+  utmTag?: string;
+}) {
+  const pathname = usePathname();
+  const [isOpen, setIsOpen] = useState(false);
+
+  return (
+    <>
+      <button
+        onClick={() => setIsOpen(!isOpen)}
+        className="lg:hidden fixed top-4 left-4 z-50 p-2 rounded-md
                            bg-card
                            border border-border
                            text-muted-foreground
                            hover:text-foreground
                            shadow-sm transition-colors"
-            >
-                {isOpen ? <X size={20} /> : <Menu size={20} />}
-            </button>
+      >
+        {isOpen ? <X size={20} /> : <Menu size={20} />}
+      </button>
 
-            {isOpen && (
-                <div
-                    className="fixed inset-0 bg-black/40 z-40 lg:hidden backdrop-blur-sm"
-                    onClick={() => setIsOpen(false)}
-                />
-            )}
+      {isOpen && (
+        <div
+          className="fixed inset-0 bg-black/40 z-40 lg:hidden backdrop-blur-sm"
+          onClick={() => setIsOpen(false)}
+        />
+      )}
 
-            <aside className={`
+      <aside
+        className={`
                 fixed top-0 left-0 z-40 h-screen w-64
                 bg-sidebar
                 border-r border-sidebar-border
@@ -133,81 +146,102 @@ export function ReportUtmSidebar({
                 flex flex-col
                 transition-transform duration-300 ease-in-out
                 ${isOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
-            `}>
-                {/* Logo + Workspace label */}
-                <div className="flex h-[68px] items-center px-5 border-b border-sidebar-border">
-                    <div className="flex items-center gap-3 w-full">
-                        <div className="flex h-9 w-9 items-center justify-center rounded-lg shadow-md brand-gradient-utm default-logo-element shrink-0">
-                            <BarChart2 className="h-4.5 w-4.5 text-white" />
-                        </div>
-                        <div className="flex flex-col leading-tight default-logo-element">
-                            <span className="text-base font-bold tracking-tight text-foreground">
-                                {utmName}
-                            </span>
-                            <span className="text-[10px] font-medium text-emerald-500 dark:text-emerald-400 tracking-wide uppercase">
-                                {utmTag}
-                            </span>
-                        </div>
-                        {/* Custom logo container */}
-                        <div 
-                            className="custom-logo-container hidden h-9 w-full max-w-[180px]" 
-                            style={{ 
-                                backgroundImage: 'var(--brand-logo-url)', 
-                                backgroundSize: 'contain', 
-                                backgroundRepeat: 'no-repeat', 
-                                backgroundPosition: 'left center' 
-                            }} 
-                        />
-                    </div>
-                </div>
+            `}
+      >
+        {/* Logo + Workspace label */}
+        <div className="flex h-[68px] items-center px-5 border-b border-sidebar-border">
+          <div className="flex items-center gap-3 w-full">
+            <div className="flex h-9 w-9 items-center justify-center rounded-lg shadow-md brand-gradient-utm default-logo-element shrink-0">
+              <BarChart2 className="h-4.5 w-4.5 text-white" />
+            </div>
+            <div className="flex flex-col leading-tight default-logo-element">
+              <span className="text-base font-bold tracking-tight text-foreground">{utmName}</span>
+              <span className="text-[10px] font-medium text-emerald-500 dark:text-emerald-400 tracking-wide uppercase">
+                {utmTag}
+              </span>
+            </div>
+            {/* Custom logo container */}
+            <div
+              className="custom-logo-container hidden h-9 w-full max-w-[180px]"
+              style={{
+                backgroundImage: 'var(--brand-logo-url)',
+                backgroundSize: 'contain',
+                backgroundRepeat: 'no-repeat',
+                backgroundPosition: 'left center',
+              }}
+            />
+          </div>
+        </div>
 
-                {/* Workspace switcher */}
-                <Link
-                    href="/dashboard"
-                    className="mx-3 mt-3 flex items-center gap-2 px-3 py-2 text-xs font-medium rounded-lg
+        {/* Workspace switcher */}
+        <Link
+          href="/dashboard"
+          className="mx-3 mt-3 flex items-center gap-2 px-3 py-2 text-xs font-medium rounded-lg
                                text-muted-foreground
                                border border-dashed border-border
                                hover:bg-accent
                                hover:text-foreground
                                transition-colors"
-                >
-                    <ArrowLeftRight className="h-3.5 w-3.5" />
-                    Cambiar a Reporting
-                </Link>
+        >
+          <ArrowLeftRight className="h-3.5 w-3.5" />
+          Cambiar a Reporting
+        </Link>
 
-                <nav className="flex-1 space-y-6 px-3 py-6 overflow-y-auto custom-scrollbar">
-                    <Section title="Panel" items={NAV_PRIMARY} />
-                    <Section title="Tracking" items={NAV_TRACKING} />
-                    <Section title="Análisis" items={NAV_ANALISIS} />
-                    <Section title="Configuración" items={NAV_CONFIG} />
-                </nav>
+        <nav className="flex-1 space-y-6 px-3 py-6 overflow-y-auto custom-scrollbar">
+          <NavSection
+            title="Panel"
+            items={NAV_PRIMARY}
+            pathname={pathname}
+            onNavigate={() => setIsOpen(false)}
+          />
+          <NavSection
+            title="Tracking"
+            items={NAV_TRACKING}
+            pathname={pathname}
+            onNavigate={() => setIsOpen(false)}
+          />
+          <NavSection
+            title="Análisis"
+            items={NAV_ANALISIS}
+            pathname={pathname}
+            onNavigate={() => setIsOpen(false)}
+          />
+          <NavSection
+            title="Configuración"
+            items={NAV_CONFIG}
+            pathname={pathname}
+            onNavigate={() => setIsOpen(false)}
+          />
+        </nav>
 
-                <div className="p-3 border-t border-sidebar-border space-y-2">
-                    <div className="flex items-center justify-between px-3">
-                        <span className="text-[10px] font-semibold text-muted-foreground/70 uppercase tracking-widest">
-                            Tema
-                        </span>
-                        <ThemeToggle />
-                    </div>
-                    <div className="px-3 py-2 rounded-lg bg-muted/60 flex items-center gap-2">
-                        <span className="text-[10px] font-semibold text-emerald-500 dark:text-emerald-400 uppercase tracking-wider">
-                            Local · {role}
-                        </span>
-                    </div>
-                    <form action="/auth/signout" method="post" className="w-full">
-                        <button className="
+        <div className="p-3 border-t border-sidebar-border space-y-2">
+          <div className="flex items-center justify-between px-3">
+            <span className="text-[10px] font-semibold text-muted-foreground/70 uppercase tracking-widest">
+              Tema
+            </span>
+            <ThemeToggle />
+          </div>
+          <div className="px-3 py-2 rounded-lg bg-muted/60 flex items-center gap-2">
+            <span className="text-[10px] font-semibold text-emerald-500 dark:text-emerald-400 uppercase tracking-wider">
+              Local · {role}
+            </span>
+          </div>
+          <form action="/auth/signout" method="post" className="w-full">
+            <button
+              className="
                             flex w-full items-center px-3 py-2.5 text-sm font-medium rounded-lg
                             text-muted-foreground
                             hover:bg-red-500/10
                             hover:text-red-600 dark:hover:text-red-400
                             transition-all duration-200 group cursor-pointer
-                        ">
-                            <LogOut className="mr-3 h-4.5 w-4.5 text-muted-foreground/80 group-hover:text-red-500 dark:group-hover:text-red-400 transition-colors" />
-                            Cerrar Sesión
-                        </button>
-                    </form>
-                </div>
-            </aside>
-        </>
-    )
+                        "
+            >
+              <LogOut className="mr-3 h-4.5 w-4.5 text-muted-foreground/80 group-hover:text-red-500 dark:group-hover:text-red-400 transition-colors" />
+              Cerrar Sesión
+            </button>
+          </form>
+        </div>
+      </aside>
+    </>
+  );
 }

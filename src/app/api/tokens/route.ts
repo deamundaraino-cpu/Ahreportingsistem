@@ -1,14 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createClient } from '@/utils/supabase/server';
-import { generateApiToken, ALL_PERMISSIONS, type TokenPermission } from '@/lib/api-token-auth';
+import { generateApiToken } from '@/lib/api-token-auth';
 import { ApiError, apiErrorResponse, handleUnexpectedError } from '@/lib/error-handler';
 
 const createTokenSchema = z.object({
   name: z.string().min(1).max(80),
-  permissions: z.array(z.enum([
-    'read:metrics', 'read:clients', 'read:campaigns', 'read:reports', 'write:sync'
-  ])).min(1).default(['read:metrics', 'read:clients', 'read:campaigns']),
+  permissions: z
+    .array(z.enum(['read:metrics', 'read:clients', 'read:campaigns', 'read:reports', 'write:sync']))
+    .min(1)
+    .default(['read:metrics', 'read:clients', 'read:campaigns']),
   expires_at: z.string().datetime().optional().nullable(),
 });
 
@@ -16,7 +17,9 @@ const createTokenSchema = z.object({
 export async function GET() {
   try {
     const supabase = await createClient();
-    const { data: { user } } = await supabase.auth.getUser();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
 
     if (!user) {
       throw new ApiError('UNAUTHORIZED', 'Authentication required', 401);
@@ -24,7 +27,9 @@ export async function GET() {
 
     const { data, error } = await supabase
       .from('api_tokens')
-      .select('id, name, token_prefix, permissions, last_used_at, expires_at, is_active, created_at')
+      .select(
+        'id, name, token_prefix, permissions, last_used_at, expires_at, is_active, created_at'
+      )
       .eq('user_id', user.id)
       .order('created_at', { ascending: false });
 
@@ -41,7 +46,9 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   try {
     const supabase = await createClient();
-    const { data: { user } } = await supabase.auth.getUser();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
 
     if (!user) {
       throw new ApiError('UNAUTHORIZED', 'Authentication required', 401);

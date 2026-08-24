@@ -1,310 +1,309 @@
-'use server'
+'use server';
 
-import { createClient, createAdminClient } from '@/utils/supabase/server'
-import { notifyUsers } from '@/lib/notifications/notify'
-import { revalidatePath } from 'next/cache'
-import { after } from 'next/server'
+import { createClient, createAdminClient } from '@/utils/supabase/server';
+import { notifyUsers } from '@/lib/notifications/notify';
+import { revalidatePath } from 'next/cache';
+import { after } from 'next/server';
 
-type Role = 'superadmin' | 'admin' | 'trafficker' | 'viewer'
+type Role = 'superadmin' | 'admin' | 'trafficker' | 'viewer';
 
 const ROLE_HIERARCHY: Record<Role, number> = {
-    superadmin: 4,
-    admin: 3,
-    trafficker: 2,
-    viewer: 1,
-}
+  superadmin: 4,
+  admin: 3,
+  trafficker: 2,
+  viewer: 1,
+};
 
 async function getCurrentUserRole(): Promise<{ userId: string; role: Role } | null> {
-    const supabase = await createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return null
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return null;
 
-    const { data: profile } = await supabase
-        .from('user_profiles')
-        .select('role')
-        .eq('id', user.id)
-        .single()
+  const { data: profile } = await supabase
+    .from('user_profiles')
+    .select('role')
+    .eq('id', user.id)
+    .single();
 
-    return { userId: user.id, role: (profile?.role ?? 'viewer') as Role }
+  return { userId: user.id, role: (profile?.role ?? 'viewer') as Role };
 }
 
 export async function getUsers() {
-    const current = await getCurrentUserRole()
-    if (!current || !['superadmin', 'admin'].includes(current.role)) return []
+  const current = await getCurrentUserRole();
+  if (!current || !['superadmin', 'admin'].includes(current.role)) return [];
 
-    const adminSupabase = await createAdminClient()
-    const { data: profiles, error: profileError } = await adminSupabase
-        .from('user_profiles')
-        .select('*')
-        .order('updated_at', { ascending: false })
+  const adminSupabase = await createAdminClient();
+  const { data: profiles, error: profileError } = await adminSupabase
+    .from('user_profiles')
+    .select('*')
+    .order('updated_at', { ascending: false });
 
-    if (profileError) return []
+  if (profileError) return [];
 
-    const { data: { users: authUsers }, error: authError } = await adminSupabase.auth.admin.listUsers()
-    if (authError) return profiles
+  const {
+    data: { users: authUsers },
+    error: authError,
+  } = await adminSupabase.auth.admin.listUsers();
+  if (authError) return profiles;
 
-    const mergedUsers = profiles.map(p => {
-        const authUser = authUsers.find(u => u.id === p.id)
-        return { ...p, email: authUser?.email || 'No email' }
-    })
+  const mergedUsers = profiles.map((p) => {
+    const authUser = authUsers.find((u) => u.id === p.id);
+    return { ...p, email: authUser?.email || 'No email' };
+  });
 
-    return mergedUsers
+  return mergedUsers;
 }
 
 export async function updateUserRole(targetUserId: string, newRole: string) {
-    const current = await getCurrentUserRole()
-    if (!current) return { error: 'No autorizado' }
+  const current = await getCurrentUserRole();
+  if (!current) return { error: 'No autorizado' };
 
-    const validRoles: Role[] = ['superadmin', 'admin', 'trafficker', 'viewer']
-    if (!validRoles.includes(newRole as Role)) return { error: 'Rol inválido' }
+  const validRoles: Role[] = ['superadmin', 'admin', 'trafficker', 'viewer'];
+  if (!validRoles.includes(newRole as Role)) return { error: 'Rol inválido' };
 
-    const newRoleLevel = ROLE_HIERARCHY[newRole as Role]
-    const currentLevel = ROLE_HIERARCHY[current.role]
+  const newRoleLevel = ROLE_HIERARCHY[newRole as Role];
+  const currentLevel = ROLE_HIERARCHY[current.role];
 
-    // Only superadmin can assign superadmin role
-    if (newRole === 'superadmin' && current.role !== 'superadmin') {
-        return { error: 'Solo el superadmin puede asignar el rol de superadmin' }
-    }
+  // Only superadmin can assign superadmin role
+  if (newRole === 'superadmin' && current.role !== 'superadmin') {
+    return { error: 'Solo el superadmin puede asignar el rol de superadmin' };
+  }
 
-    // Cannot elevate someone to your own level unless you're superadmin
-    if (newRoleLevel >= currentLevel && current.role !== 'superadmin') {
-        return { error: 'No puedes asignar un rol igual o superior al tuyo' }
-    }
+  // Cannot elevate someone to your own level unless you're superadmin
+  if (newRoleLevel >= currentLevel && current.role !== 'superadmin') {
+    return { error: 'No puedes asignar un rol igual o superior al tuyo' };
+  }
 
-    // Get target user's current role
-    const adminSupabase = await createAdminClient()
-    const { data: targetProfile } = await adminSupabase
-        .from('user_profiles')
-        .select('role')
-        .eq('id', targetUserId)
-        .single()
+  // Get target user's current role
+  const adminSupabase = await createAdminClient();
+  const { data: targetProfile } = await adminSupabase
+    .from('user_profiles')
+    .select('role')
+    .eq('id', targetUserId)
+    .single();
 
-    const targetCurrentRole = (targetProfile?.role ?? 'viewer') as Role
-    const targetCurrentLevel = ROLE_HIERARCHY[targetCurrentRole]
+  const targetCurrentRole = (targetProfile?.role ?? 'viewer') as Role;
+  const targetCurrentLevel = ROLE_HIERARCHY[targetCurrentRole];
 
-    // Admin cannot modify superadmin or other admins
-    if (current.role === 'admin' && targetCurrentLevel >= ROLE_HIERARCHY['admin']) {
-        return { error: 'No puedes modificar a un admin o superadmin' }
-    }
+  // Admin cannot modify superadmin or other admins
+  if (current.role === 'admin' && targetCurrentLevel >= ROLE_HIERARCHY['admin']) {
+    return { error: 'No puedes modificar a un admin o superadmin' };
+  }
 
-    // Prevent self-demotion
-    if (targetUserId === current.userId && newRoleLevel < currentLevel) {
-        return { error: 'No puedes reducir tu propio rol' }
-    }
+  // Prevent self-demotion
+  if (targetUserId === current.userId && newRoleLevel < currentLevel) {
+    return { error: 'No puedes reducir tu propio rol' };
+  }
 
-    const { error } = await adminSupabase
-        .from('user_profiles')
-        .update({ role: newRole, updated_at: new Date().toISOString() })
-        .eq('id', targetUserId)
+  const { error } = await adminSupabase
+    .from('user_profiles')
+    .update({ role: newRole, updated_at: new Date().toISOString() })
+    .eq('id', targetUserId);
 
-    if (error) return { error: error.message }
+  if (error) return { error: error.message };
 
-    revalidatePath('/admin/users')
-    return { success: true }
+  revalidatePath('/admin/users');
+  return { success: true };
 }
 
 export async function deleteUser(userId: string) {
-    const current = await getCurrentUserRole()
-    if (!current) return { error: 'No autorizado' }
-    if (!['superadmin', 'admin'].includes(current.role)) return { error: 'Sin permisos para eliminar usuarios' }
-    if (current.userId === userId) return { error: 'No puedes eliminarte a ti mismo' }
+  const current = await getCurrentUserRole();
+  if (!current) return { error: 'No autorizado' };
+  if (!['superadmin', 'admin'].includes(current.role))
+    return { error: 'Sin permisos para eliminar usuarios' };
+  if (current.userId === userId) return { error: 'No puedes eliminarte a ti mismo' };
 
-    const adminSupabase = await createAdminClient()
+  const adminSupabase = await createAdminClient();
 
-    // Admins cannot delete other admins or superadmins
-    const { data: targetProfile } = await adminSupabase
-        .from('user_profiles')
-        .select('role')
-        .eq('id', userId)
-        .single()
+  // Admins cannot delete other admins or superadmins
+  const { data: targetProfile } = await adminSupabase
+    .from('user_profiles')
+    .select('role')
+    .eq('id', userId)
+    .single();
 
-    const targetRole = (targetProfile?.role ?? 'viewer') as Role
-    if (current.role === 'admin' && ROLE_HIERARCHY[targetRole] >= ROLE_HIERARCHY['admin']) {
-        return { error: 'No puedes eliminar a un admin o superadmin' }
-    }
+  const targetRole = (targetProfile?.role ?? 'viewer') as Role;
+  if (current.role === 'admin' && ROLE_HIERARCHY[targetRole] >= ROLE_HIERARCHY['admin']) {
+    return { error: 'No puedes eliminar a un admin o superadmin' };
+  }
 
-    const { error: profileError } = await adminSupabase
-        .from('user_profiles')
-        .delete()
-        .eq('id', userId)
+  const { error: profileError } = await adminSupabase
+    .from('user_profiles')
+    .delete()
+    .eq('id', userId);
 
-    if (profileError) return { error: profileError.message }
+  if (profileError) return { error: profileError.message };
 
-    await adminSupabase.auth.admin.deleteUser(userId)
+  await adminSupabase.auth.admin.deleteUser(userId);
 
-    revalidatePath('/admin/users')
-    return { success: true }
+  revalidatePath('/admin/users');
+  return { success: true };
 }
 
 export async function getClientAssignments(targetUserId: string) {
-    const current = await getCurrentUserRole()
-    if (!current || !['superadmin', 'admin'].includes(current.role)) return []
+  const current = await getCurrentUserRole();
+  if (!current || !['superadmin', 'admin'].includes(current.role)) return [];
 
-    const adminSupabase = await createAdminClient()
-    const { data, error } = await adminSupabase
-        .from('user_client_assignments')
-        .select('client_id')
-        .eq('user_id', targetUserId)
+  const adminSupabase = await createAdminClient();
+  const { data, error } = await adminSupabase
+    .from('user_client_assignments')
+    .select('client_id')
+    .eq('user_id', targetUserId);
 
-    if (error) return []
-    return data.map(r => r.client_id)
+  if (error) return [];
+  return data.map((r) => r.client_id);
 }
 
 export async function setClientAssignments(targetUserId: string, clientIds: string[]) {
-    const current = await getCurrentUserRole()
-    if (!current || !['superadmin', 'admin'].includes(current.role)) {
-        return { error: 'Sin permisos para asignar clientes' }
-    }
+  const current = await getCurrentUserRole();
+  if (!current || !['superadmin', 'admin'].includes(current.role)) {
+    return { error: 'Sin permisos para asignar clientes' };
+  }
 
-    const adminSupabase = await createAdminClient()
+  const adminSupabase = await createAdminClient();
 
-    // Capture previous assignments so we only notify about newly added clients
-    const { data: previous } = await adminSupabase
-        .from('user_client_assignments')
-        .select('client_id')
-        .eq('user_id', targetUserId)
-    const previousIds = new Set((previous ?? []).map(r => r.client_id))
+  // Capture previous assignments so we only notify about newly added clients
+  const { data: previous } = await adminSupabase
+    .from('user_client_assignments')
+    .select('client_id')
+    .eq('user_id', targetUserId);
+  const previousIds = new Set((previous ?? []).map((r) => r.client_id));
 
-    // Delete all current assignments for this user
-    await adminSupabase
-        .from('user_client_assignments')
-        .delete()
-        .eq('user_id', targetUserId)
+  // Delete all current assignments for this user
+  await adminSupabase.from('user_client_assignments').delete().eq('user_id', targetUserId);
 
-    if (clientIds.length === 0) {
-        revalidatePath('/admin/users')
-        return { success: true }
-    }
+  if (clientIds.length === 0) {
+    revalidatePath('/admin/users');
+    return { success: true };
+  }
 
-    const rows = clientIds.map(client_id => ({
-        user_id: targetUserId,
-        client_id,
-        assigned_by: current.userId,
-    }))
+  const rows = clientIds.map((client_id) => ({
+    user_id: targetUserId,
+    client_id,
+    assigned_by: current.userId,
+  }));
 
-    const { error } = await adminSupabase
-        .from('user_client_assignments')
-        .insert(rows)
+  const { error } = await adminSupabase.from('user_client_assignments').insert(rows);
 
-    if (error) return { error: error.message }
+  if (error) return { error: error.message };
 
-    const addedIds = clientIds.filter(id => !previousIds.has(id))
-    if (addedIds.length > 0) {
-        // after() evita que Vercel congele la función antes de los inserts
-        after(() => notifyNewAssignments(adminSupabase, targetUserId, addedIds))
-    }
+  const addedIds = clientIds.filter((id) => !previousIds.has(id));
+  if (addedIds.length > 0) {
+    // after() evita que Vercel congele la función antes de los inserts
+    after(() => notifyNewAssignments(adminSupabase, targetUserId, addedIds));
+  }
 
-    revalidatePath('/admin/users')
-    return { success: true }
+  revalidatePath('/admin/users');
+  return { success: true };
 }
 
 // Notifica al usuario los clientes recién asignados (fire-and-forget)
 async function notifyNewAssignments(
-    adminSupabase: Awaited<ReturnType<typeof createAdminClient>>,
-    targetUserId: string,
-    clientIds: string[]
+  adminSupabase: Awaited<ReturnType<typeof createAdminClient>>,
+  targetUserId: string,
+  clientIds: string[]
 ) {
-    const { data: clientes } = await adminSupabase
-        .from('clientes')
-        .select('id, nombre')
-        .in('id', clientIds)
+  const { data: clientes } = await adminSupabase
+    .from('clientes')
+    .select('id, nombre')
+    .in('id', clientIds);
 
-    for (const cliente of clientes ?? []) {
-        await notifyUsers({
-            db: adminSupabase,
-            type: 'client_assigned',
-            severity: 'info',
-            clienteId: cliente.id,
-            audience: { userIds: [targetUserId] },
-            title: `Cliente asignado: ${cliente.nombre}`,
-            message: 'Ya puedes ver y gestionar este cliente en tu dashboard.',
-            link: `/dashboard/${cliente.id}`,
-        })
-    }
+  for (const cliente of clientes ?? []) {
+    await notifyUsers({
+      db: adminSupabase,
+      type: 'client_assigned',
+      severity: 'info',
+      clienteId: cliente.id,
+      audience: { userIds: [targetUserId] },
+      title: `Cliente asignado: ${cliente.nombre}`,
+      message: 'Ya puedes ver y gestionar este cliente en tu dashboard.',
+      link: `/dashboard/${cliente.id}`,
+    });
+  }
 }
 
 export async function getAllClients() {
-    const current = await getCurrentUserRole()
-    if (!current || !['superadmin', 'admin'].includes(current.role)) return []
+  const current = await getCurrentUserRole();
+  if (!current || !['superadmin', 'admin'].includes(current.role)) return [];
 
-    const adminSupabase = await createAdminClient()
-    const { data, error } = await adminSupabase
-        .from('clientes')
-        .select('id, nombre')
-        .order('nombre', { ascending: true })
+  const adminSupabase = await createAdminClient();
+  const { data, error } = await adminSupabase
+    .from('clientes')
+    .select('id, nombre')
+    .order('nombre', { ascending: true });
 
-    if (error) return []
-    return data
+  if (error) return [];
+  return data;
 }
 
 export async function createUser(input: {
-    email: string
-    password: string
-    fullName: string
-    role: Role
-    clientIds: string[]
+  email: string;
+  password: string;
+  fullName: string;
+  role: Role;
+  clientIds: string[];
 }) {
-    const current = await getCurrentUserRole()
-    if (!current || !['superadmin', 'admin'].includes(current.role)) {
-        return { error: 'Sin permisos para crear usuarios' }
+  const current = await getCurrentUserRole();
+  if (!current || !['superadmin', 'admin'].includes(current.role)) {
+    return { error: 'Sin permisos para crear usuarios' };
+  }
+
+  // Admin cannot create admins or superadmins
+  if (current.role === 'admin' && ['superadmin', 'admin'].includes(input.role)) {
+    return { error: 'Solo el superadmin puede crear admins' };
+  }
+
+  const adminSupabase = await createAdminClient();
+
+  // 1. Create auth user
+  const { data: authData, error: authError } = await adminSupabase.auth.admin.createUser({
+    email: input.email,
+    password: input.password,
+    email_confirm: true,
+    user_metadata: { full_name: input.fullName },
+  });
+
+  if (authError) return { error: authError.message };
+  const newUserId = authData.user.id;
+
+  // 2. Create profile (trigger may do this, but upsert to be safe)
+  const { error: profileError } = await adminSupabase.from('user_profiles').upsert({
+    id: newUserId,
+    role: input.role,
+    full_name: input.fullName,
+    updated_at: new Date().toISOString(),
+  });
+
+  if (profileError) {
+    // Rollback auth user
+    await adminSupabase.auth.admin.deleteUser(newUserId);
+    return { error: profileError.message };
+  }
+
+  // 3. Assign clients if any
+  if (input.clientIds.length > 0) {
+    const rows = input.clientIds.map((client_id) => ({
+      user_id: newUserId,
+      client_id,
+      assigned_by: current.userId,
+    }));
+    const { error: assignError } = await adminSupabase.from('user_client_assignments').insert(rows);
+    if (!assignError) {
+      after(() => notifyNewAssignments(adminSupabase, newUserId, input.clientIds));
     }
+  }
 
-    // Admin cannot create admins or superadmins
-    if (current.role === 'admin' && ['superadmin', 'admin'].includes(input.role)) {
-        return { error: 'Solo el superadmin puede crear admins' }
-    }
-
-    const adminSupabase = await createAdminClient()
-
-    // 1. Create auth user
-    const { data: authData, error: authError } = await adminSupabase.auth.admin.createUser({
-        email: input.email,
-        password: input.password,
-        email_confirm: true,
-        user_metadata: { full_name: input.fullName },
-    })
-
-    if (authError) return { error: authError.message }
-    const newUserId = authData.user.id
-
-    // 2. Create profile (trigger may do this, but upsert to be safe)
-    const { error: profileError } = await adminSupabase
-        .from('user_profiles')
-        .upsert({
-            id: newUserId,
-            role: input.role,
-            full_name: input.fullName,
-            updated_at: new Date().toISOString(),
-        })
-
-    if (profileError) {
-        // Rollback auth user
-        await adminSupabase.auth.admin.deleteUser(newUserId)
-        return { error: profileError.message }
-    }
-
-    // 3. Assign clients if any
-    if (input.clientIds.length > 0) {
-        const rows = input.clientIds.map(client_id => ({
-            user_id: newUserId,
-            client_id,
-            assigned_by: current.userId,
-        }))
-        const { error: assignError } = await adminSupabase.from('user_client_assignments').insert(rows)
-        if (!assignError) {
-            after(() => notifyNewAssignments(adminSupabase, newUserId, input.clientIds))
-        }
-    }
-
-    revalidatePath('/admin/users')
-    return {
-        success: true,
-        user: {
-            id: newUserId,
-            email: input.email,
-            role: input.role,
-            full_name: input.fullName,
-            updated_at: new Date().toISOString(),
-        },
-    }
+  revalidatePath('/admin/users');
+  return {
+    success: true,
+    user: {
+      id: newUserId,
+      email: input.email,
+      role: input.role,
+      full_name: input.fullName,
+      updated_at: new Date().toISOString(),
+    },
+  };
 }

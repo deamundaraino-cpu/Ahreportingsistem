@@ -12,7 +12,7 @@ updates:
       seguridad:
         applies-to: security-updates
         patterns:
-          - "*"
+          - '*'
       menores:
         applies-to: version-updates
         update-types:
