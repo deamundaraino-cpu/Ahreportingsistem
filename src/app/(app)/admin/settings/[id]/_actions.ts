@@ -2,7 +2,27 @@
 
 import { createClient, createAdminClient } from '@/utils/supabase/server';
 import { revalidatePath } from 'next/cache';
-import { sanitizarHtmlBitacora } from '@/lib/sanitize-html';
+
+/**
+ * El saneador se carga bajo demanda, NO con un import estático arriba.
+ *
+ * `sanitize-html.ts` arrastra `isomorphic-dompurify` → `jsdom`: 653 de los 1892
+ * ficheros que Vercel traza para `/dashboard/[clientId]`, más de un tercio de la
+ * ruta. Y esa página no lo necesita para nada — de este módulo solo usa
+ * `getBitacoras`, que lee. Entraba de rebote por compartir archivo con las
+ * escrituras.
+ *
+ * Con `await import()` el módulo (y el `require` de jsdom, que es un paquete
+ * externo) solo se evalúan cuando alguien crea o edita una bitácora, no en cada
+ * render del dashboard. Menos CPU por invocación y una función más pequeña.
+ *
+ * Ojo: `/p/[token]` sigue trayendo jsdom, y ahí no se puede evitar —
+ * `BitacorasPublicas` es un Server Component que sanea en pleno render.
+ */
+async function cargarSaneador() {
+  const { sanitizarHtmlBitacora } = await import('@/lib/sanitize-html');
+  return sanitizarHtmlBitacora;
+}
 
 export type BitacoraVisibilidad = 'privado' | 'trafficker' | 'publico';
 
@@ -51,6 +71,8 @@ export async function createBitacora(
     .eq('id', user.id)
     .single();
 
+  const sanitizarHtmlBitacora = await cargarSaneador();
+
   const { error } = await supabase.from('bitacoras').insert({
     cliente_id: clienteId,
     author_id: user.id,
@@ -73,6 +95,8 @@ export async function updateBitacora(
   visibilidad: BitacoraVisibilidad
 ): Promise<{ success?: boolean; error?: string }> {
   const supabase = await createClient();
+  const sanitizarHtmlBitacora = await cargarSaneador();
+
   const { error } = await supabase
     .from('bitacoras')
     .update({
