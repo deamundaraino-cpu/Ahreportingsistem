@@ -4,6 +4,16 @@
 
 La aplicación está pensada para **Vercel** (Next.js nativo) + **Supabase** como base de datos/Auth. El dominio de producción referenciado en el código es `https://reportes.adshouse.cloud`.
 
+## Versión de Node (obligatorio ≥ 22.12)
+
+`package.json` declara `engines.node: ">=22.12.0"`, y **no es cosmético**: por debajo de esa versión el dashboard de cliente devuelve un 500 en producción.
+
+La cadena es `sanitize-html.ts` → `isomorphic-dompurify` → `jsdom` → `html-encoding-sniffer@6`, que hace `require("@exodus/bytes/encoding-lite.js")`. Ese paquete es ESM puro en **todas** sus versiones publicadas, así que cargarlo con `require()` solo funciona en el Node que soporta `require(esm)` — desde 22.12. En Node 20 el módulo revienta con `ERR_REQUIRE_ESM` al instanciarse, antes de que la página ejecute una sola línea: no llega ni a consultar la base de datos, y el fallo se ve como "This page couldn't load".
+
+Afecta a toda ruta que importe `sanitize-html`: `/dashboard/[clientId]` (vía `getBitacoras`), `/admin/settings/[id]` y `/p/[token]`.
+
+Vercel resuelve `engines.node` contra las versiones que ofrece; conviene confirmar en el log de build cuál eligió y que la opción _Project Settings → Node.js Version_ no se quede en una anterior.
+
 ## Pasos de despliegue
 
 1. **Conectar el repo a Vercel** (framework Next.js detectado automáticamente).

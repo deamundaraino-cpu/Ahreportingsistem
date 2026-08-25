@@ -780,7 +780,13 @@ export async function getActiveAlerts(): Promise<ActiveAlert[]> {
   let query = adminSupabase
     .from('cliente_tabs')
     .select(
-      'id, nombre, cliente_id, presupuesto_objetivo, alert_sent_at_90, alert_sent_at_100, clientes(nombre)'
+      // La FK va nombrada a propósito. `clientes(nombre)` a secas devuelve un 300
+      // (PGRST201): desde la migración 040 existe `notification_rule_cooldowns`,
+      // que apunta a la vez a `cliente_tabs` y a `clientes`, así que PostgREST ve
+      // dos caminos —el directo y ese muchos-a-muchos— y se niega a elegir. Como
+      // abajo el error se traga con `return []`, la campana se quedaba sin
+      // alertas de presupuesto en silencio.
+      'id, nombre, cliente_id, presupuesto_objetivo, alert_sent_at_90, alert_sent_at_100, clientes!cliente_tabs_cliente_id_fkey(nombre)'
     )
     .eq('archived', false)
     .not('presupuesto_objetivo', 'is', null)

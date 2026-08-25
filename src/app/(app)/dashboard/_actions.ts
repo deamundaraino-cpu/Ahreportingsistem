@@ -1991,7 +1991,13 @@ export async function getMirrorDashboardData(token: string, from?: string, to?: 
   // 1. Resolve token: is it a tab-specific token?
   const { data: tab } = await supabase
     .from('cliente_tabs')
-    .select('*, cliente:clientes(*, global_layout:layouts_reporte(*))')
+    // FK nombrada: sin ella PostgREST devuelve 300 (PGRST201) porque
+    // `notification_rule_cooldowns` referencia a `cliente_tabs` y a `clientes`
+    // a la vez, y el embed hacia `clientes` se vuelve ambiguo. Aquí dolía más
+    // que en las alertas: `tab` salía null y el espejo de pestaña caía al
+    // camino de token de cliente, así que un enlace `/p/<token>` de pestaña
+    // no resolvía.
+    .select('*, cliente:clientes!cliente_tabs_cliente_id_fkey(*, global_layout:layouts_reporte(*))')
     .eq('public_token', token)
     .maybeSingle();
 
