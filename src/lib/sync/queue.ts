@@ -215,11 +215,22 @@ export async function heartbeat(
  * Es para cuando el job está perfectamente bien pero no toca ahora (ver
  * `clienteOcupado`). `failJob` no sirve: consumiría reintentos y acabaría
  * pintando de rojo en /admin/sync algo que nunca falló.
+ *
+ * @param intentos Con qué valor dejar el contador. `claim_sync_job` ya lo
+ *   incrementó al entregar el job, así que soltarlo sin más deja consumido un
+ *   intento que nadie usó; pasar `job.intentos - 1` lo restituye. Omitirlo
+ *   conserva el valor actual, que es lo correcto cuando el job sí llegó a
+ *   entregarse a un ejecutor.
  */
-export async function releaseJob(db: any, jobId: string): Promise<void> {
+export async function releaseJob(db: any, jobId: string, intentos?: number): Promise<void> {
   const { error } = await db
     .from('sync_jobs')
-    .update({ estado: 'pending', locked_at: null, locked_by: null })
+    .update({
+      estado: 'pending',
+      locked_at: null,
+      locked_by: null,
+      ...(intentos !== undefined ? { intentos: Math.max(0, intentos) } : {}),
+    })
     .eq('id', jobId);
   if (error) throw new Error(`releaseJob: ${error.message}`);
 }

@@ -11,9 +11,11 @@ Corre en dos sitios sin cambiar una línea de código:
 
 El dominio de producción referenciado en el código es `https://reportes.adshouse.cloud`.
 
-La diferencia operativa importante no es el hosting sino los **crons**: en Vercel
-los declara `vercel.json`; fuera de Vercel ese archivo no lo lee nadie y hay que
-cubrirlos desde el `sync-worker` ([doc 14](./14-cron-y-workers.md)).
+La diferencia operativa importante no es el hosting sino los **crons**: los
+declaraba `vercel.json`, que **ya no existe en el repositorio** — fuera de Vercel
+no lo leía nadie y mantenerlo sugería una programación que en realidad no
+ocurría. Hoy los cubre el `sync-worker` ([doc 14](./14-cron-y-workers.md)); si se
+volviera a Vercel habría que recrearlo.
 
 ## Versión de Node (obligatorio ≥ 22.12)
 
@@ -113,10 +115,37 @@ para no duplicar la lógica de sincronización). Variables en
 apuntar al dominio nuevo y `CRON_SECRET` coincidir **carácter a carácter** con
 el de la app.
 
+**Esta Application es obligatoria, no opcional.** Es el ejecutor principal: sin
+ella la cola la drena sólo `/api/worker/run-jobs`, que trabaja a tandas cortas y
+no digiere los rangos largos, y además **nadie refresca los tokens de Meta**
+(su único planificador es el scheduler de este worker).
+
+> Al compilar, el worker arrastra módulos sueltos de `src/lib` por ruta
+> relativa (`colombia-date`, `fetch-json`). El `Dockerfile` los copia uno a uno
+> y crea un enlace `node_modules` en la raíz del contexto. Ambas cosas hacen
+> falta y no se notan en local, donde la raíz del repo ya tiene su propio
+> `node_modules`: durante meses `npm run typecheck` pasaba mientras la imagen
+> **no llegaba a construirse**. Si añades un import relativo nuevo fuera de
+> `src/lib/sync`, añádelo también al `Dockerfile`.
+
+### 5.1 · Comprobar que el worker está realmente ejecutando
+
+Que el contenedor arranque no significa que esté drenando. La prueba está en la
+base de datos:
+
+```sql
+select ejecutor, count(*), max(started_at)
+from sync_runs where started_at > now() - interval '1 hour' group by 1;
+```
+
+Debe aparecer `vps`. Si sólo aparece `app`, el worker no está tomando jobs
+—revisa sus logs y que `CRON_SECRET` coincida—. `vercel` es histórico anterior
+a la migración.
+
 ### 6 · Los crons ya no los pone la plataforma
 
-`vercel.json` solo lo lee Vercel. En Dokploy no se ejecuta nada de ahí, así que
-sus dos crons hay que cubrirlos:
+`vercel.json` se eliminó del repositorio al migrar. Sus dos crons los cubren
+ahora:
 
 | Cron de `vercel.json`           | Quién lo cubre ahora                                           |
 | ------------------------------- | -------------------------------------------------------------- |
@@ -191,7 +220,7 @@ de extremo a extremo (la app encola, el worker reclama, los datos aterrizan).
    - Report-UTM (opcional): `NEXT_PUBLIC_REPORT_UTM_ENABLED`.
 3. **Aplicar el esquema y migraciones** en Supabase (`schema.sql` + `migrations/001…020`). Exponer `report_utm` si se usa el módulo.
 4. **Configurar callbacks OAuth** en Meta y TikTok con el dominio de producción.
-5. **Verificar los crons** definidos en `vercel.json` (ver [doc 14](./14-cron-y-workers.md)).
+5. **Recrear `vercel.json`** con los crons: se eliminó al migrar a Dokploy, así que un despliegue en Vercel partiría sin ninguna programación (ver [doc 14](./14-cron-y-workers.md)).
 6. **Configurar el secreto de la GitHub Action** (`CRON_SECRET`) para el chequeo de presupuesto.
 
 ## Headers de seguridad (`next.config.ts`)
@@ -242,6 +271,15 @@ form-action 'self'
 - Los **tokens de Meta** se renuevan solos; si `meta_connection_status = expired`, el cliente debe reconectar vía OAuth.
 - Las **alertas de presupuesto** se generan cada 4 h y se muestran en `/dashboard`.
 - Para reprocesar un periodo histórico, invocar `/api/worker` manualmente con `start`/`end`.
+
+### Anomalías conocidas que NO hay que "arreglar"
+
+- **«Somos rentable» y «Sur Profundo» comparten la cuenta de Meta
+  `226938112764088`.** Es intencional: mismo anunciante, dos vistas. Por eso su
+  `meta_spend` e `meta_impressions` coinciden día a día (202 de 238 días; los
+  que difieren es sólo porque cada uno se sincronizó en un momento distinto de
+  la jornada). Una auditoría de duplicados lo señalará: no es un error de
+  configuración y no debe "corregirse" reasignando la cuenta.
 
 ## Calidad antes de desplegar
 

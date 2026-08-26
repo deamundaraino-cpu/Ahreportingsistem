@@ -2,6 +2,7 @@
 
 import { createAdminClient, createClient } from '@/utils/supabase/server';
 import { revalidatePath } from 'next/cache';
+import { internalCronFetch } from '@/lib/internal-fetch';
 
 async function requireAdmin(): Promise<boolean> {
   const supabase = await createClient();
@@ -94,27 +95,27 @@ export async function cancelSyncJob(jobId: string) {
 /** Encola un rango manualmente desde el panel. */
 export async function enqueueSyncRange(clienteId: string | null, start: string, end: string) {
   if (!(await requireAdmin())) return { error: 'No autorizado' };
-  const secret = process.env.CRON_SECRET;
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL;
-  if (!secret || !appUrl) return { error: 'CRON_SECRET o NEXT_PUBLIC_APP_URL sin configurar' };
 
-  const res = await fetch(`${appUrl.replace(/\/$/, '')}/api/worker/enqueue`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${secret}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      tipo: 'metricas',
-      cliente_id: clienteId,
-      start,
-      end,
-      prioridad: 2,
-      triggered_by: 'admin_panel',
-    }),
-    cache: 'no-store',
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) return { error: data?.error || `HTTP ${res.status}` };
-  revalidatePath('/admin/sync');
-  return { success: true, encolados: data?.encolados ?? 0 };
+  try {
+    const res = await internalCronFetch('/api/worker/enqueue', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        tipo: 'metricas',
+        cliente_id: clienteId,
+        start,
+        end,
+        prioridad: 2,
+        triggered_by: 'admin_panel',
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { error: data?.error || `HTTP ${res.status}` };
+    revalidatePath('/admin/sync');
+    return { success: true, encolados: data?.encolados ?? 0 };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : 'Error de red al encolar' };
+  }
 }
 
 /**

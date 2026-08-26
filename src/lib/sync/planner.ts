@@ -1,7 +1,7 @@
 /**
  * Planner: decide QUÉ jobs encolar y cuándo.
  *
- * Sustituye a los 9 crons de `vercel.json` (el plan Hobby solo admite 2). En vez
+ * Sustituye a los 9 crons que llegó a declarar el antiguo `vercel.json`. En vez
  * de nueve disparadores independientes, un único planner encola el plan del día
  * y el runner lo drena en el orden que marca la prioridad.
  */

@@ -151,7 +151,7 @@ Renueva tokens de Meta próximos a expirar (< 10 días). Usa `META_APP_ID`/`META
 
 Reagrega `sales_events` → `hourly_metrics`. Params: `hours` (def. 24, máx. 720), `cliente_id`. Devuelve `{ ok, window_hours, rows_written, completed_at }`.
 
-> **Nota**: `vercel.json` también referencia `/api/cron/budget-check` (invocado por la GitHub Action de chequeo de presupuesto cada 4h), aunque su `route.ts` no figura en el árbol listado del repo. Verifica su existencia en tu instancia.
+> **Nota**: la documentación antigua citaba `/api/cron/budget-check`, invocado por la GitHub Action de chequeo de presupuesto. **Esa ruta no existe en el repositorio**: no hay `src/app/api/cron/budget-check/route.ts`. Si necesitas el chequeo de presupuesto, hay que escribirla.
 
 ---
 

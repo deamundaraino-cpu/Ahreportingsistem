@@ -26,6 +26,9 @@ import {
   type SyncJob,
 } from './queue';
 import { notifyUsers } from '../notifications/notify';
+// Ruta relativa, no alias `@/`: este archivo lo compila también el worker del
+// VPS, que no pasa por el resolver de Next.
+import { esTimeoutDeFetch } from '../fetch-json';
 
 /** Avisa a admins cuando un job agota sus reintentos. Best-effort: nunca lanza. */
 async function notifyExhausted(db: any, job: SyncJob, message: string): Promise<void> {
@@ -58,9 +61,17 @@ export type RunnerOptions = {
   cronSecret: string;
   /** Identifica al ejecutor en `locked_by` y `sync_runs.ejecutor`. */
   workerId: string;
-  /** 'vercel' | 'vps' — solo para el historial. */
+  /**
+   * Quién ejecutó, para `sync_runs.ejecutor`: `'app'` (el drenador de respaldo
+   * dentro del contenedor de Next) o `'vps'` (el `sync-worker` persistente).
+   *
+   * No es cosmético: es el ÚNICO termómetro de si el worker principal está
+   * vivo. Durante meses el default fue `'vercel'` y el worker mandaba `'vps'`,
+   * así que una consulta de una línea —`select ejecutor, count(*) from
+   * sync_runs group by 1`— revela al instante que el worker nunca arrancó.
+   */
   ejecutor?: string;
-  /** Corta el bucle al superarlo (Vercel: ~45s; VPS: sin prisa). */
+  /** Corta el bucle al superarlo. */
   budgetMs?: number;
   /** Segundos de lease; pasado ese tiempo otro ejecutor puede reclamar el job. */
   leaseSeconds?: number;
@@ -140,6 +151,16 @@ function buildRequest(job: SyncJob, appUrl: string): { url: string; method: 'GET
   }
 }
 
+/** Espera `ms` sin bloquear el bucle de eventos. */
+const dormir = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Margen que debe quedar de presupuesto para que reintentar tenga sentido.
+ * Por debajo, el reintento moriría abortado igual y solo habría gastado la
+ * espera.
+ */
+const REINTENTO_RED_MS = 1_000;
+
 async function executeJob(
   job: SyncJob,
   opts: RunnerOptions,
@@ -153,11 +174,34 @@ async function executeJob(
   message?: string;
 }> {
   const { url, method } = buildRequest(job, opts.appUrl);
-  const res = await fetch(url, {
-    method,
-    headers: { Authorization: `Bearer ${opts.cronSecret}` },
-    signal: AbortSignal.timeout(timeoutMs),
-  });
+
+  /**
+   * Un intento extra ante un fallo de RED (no de timeout).
+   *
+   * La app se llama a sí misma por su dominio público, así que un redespliegue
+   * deja una ventana de segundos en la que el proxy todavía no tiene ruta al
+   * contenedor nuevo y `fetch` revienta con `fetch failed` en ~120 ms. Sin este
+   * reintento cada corte quemaba un intento de cada job en vuelo, y tres cortes
+   * dejaban el job en rojo con datos perfectamente sincronizables. Un timeout,
+   * en cambio, NO se reintenta: significa que el destino sí respondía pero no
+   * dio tiempo, y repetirlo solo consumiría el presupuesto que queda.
+   */
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method,
+      headers: { Authorization: `Bearer ${opts.cronSecret}` },
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  } catch (e) {
+    if (esTimeoutDeFetch(e) || timeoutMs <= REINTENTO_RED_MS * 2) throw e;
+    await dormir(REINTENTO_RED_MS);
+    res = await fetch(url, {
+      method,
+      headers: { Authorization: `Bearer ${opts.cronSecret}` },
+      signal: AbortSignal.timeout(timeoutMs - REINTENTO_RED_MS),
+    });
+  }
 
   let body: any = null;
   try {
@@ -236,7 +280,7 @@ async function recordRun(
       },
       error: error?.slice(0, 2000) ?? null,
       logs,
-      ejecutor: opts.ejecutor ?? 'vercel',
+      ejecutor: opts.ejecutor ?? 'app',
     });
   } catch {
     // El historial es observabilidad, no puede hacer fallar la sincronización.
@@ -244,10 +288,20 @@ async function recordRun(
 }
 
 /**
- * Tiempo mínimo que debe quedar de presupuesto para que valga la pena reclamar
- * otro job. Por debajo, la llamada moriría abortada y solo gastaría un intento.
+ * Presupuesto mínimo que debe quedar para reclamar otro job.
+ *
+ * Estaba en 5 s, y eso era el origen del error más frecuente del sistema: un
+ * job de métricas OK tarda 15,6 s de media y llega a 48,9 s, así que reclamarlo
+ * con 5 s de margen garantizaba el aborto. Cada aborto gasta un intento y a los
+ * tres el job queda en rojo — 183 de los 219 errores registrados entre julio y
+ * agosto de 2026 fueron exactamente eso, y sus duraciones (14,6 s / 32,5 s /
+ * 41,4 s) coinciden con el presupuesto restante, no con ningún límite de las
+ * APIs externas.
+ *
+ * 60 s cubre holgado el peor caso observado: si no cabe entero, el job se deja
+ * para el ciclo siguiente en vez de quemarle un intento.
  */
-const MIN_JOB_MS = 5_000;
+const MIN_JOB_MS = 60_000;
 
 /**
  * Drena la cola hasta agotar el presupuesto o quedarse sin jobs.
@@ -312,18 +366,20 @@ export async function runJobs(db: any, opts: RunnerOptions): Promise<RunnerResul
     result.claimed++;
 
     const startedAt = Date.now();
+
+    /**
+     * El timeout de la llamada se acota a lo que queda de ciclo: un ejecutor
+     * no puede esperar por un job más de lo que él mismo va a vivir. Con los
+     * valores fijos de antes, el drenador podía arrancar un job en el segundo
+     * 39 de su presupuesto de 40 s y esperar por él otros 55, muriendo sin
+     * poder marcar el fallo y dejando el job 'running' hasta vencer el lease.
+     */
+    const timeoutAplicado = Math.min(requestTimeoutMs, restante());
+    /** El corte lo impondría nuestro presupuesto, no el timeout configurado. */
+    const cortaElPresupuesto = timeoutAplicado < requestTimeoutMs;
+
     try {
-      /**
-       * El timeout de la llamada se acota a lo que queda de ciclo.
-       *
-       * Con los valores fijos de antes, `/api/worker/run-jobs` podía
-       * arrancar un job en el segundo 39 de su presupuesto de 40 s y
-       * esperar por él otros 55: 95 s en total dentro de una función con
-       * `maxDuration = 60`. La función moría antes de poder marcar el
-       * fallo y el job quedaba 'running' hasta que venciera el lease —el
-       * origen de los intentos desbocados de arriba—.
-       */
-      const exec = await executeJob(job, opts, Math.min(requestTimeoutMs, restante()));
+      const exec = await executeJob(job, opts, timeoutAplicado);
 
       if (!exec.ok) {
         const exhausted = await failJob(db, job, exec.message ?? 'error desconocido');
@@ -370,6 +426,29 @@ export async function runJobs(db: any, opts: RunnerOptions): Promise<RunnerResul
       await recordRun(db, job, opts, startedAt, 'ok', exec.body);
     } catch (e: any) {
       const message = e?.message ?? String(e);
+
+      /**
+       * Aborto que impuso NUESTRO presupuesto, no un fallo del job.
+       *
+       * El job seguía trabajando cuando lo cortamos: no ha fallado nada suyo y
+       * castigarlo con un intento es lo que llevaba jobs perfectamente sanos a
+       * rojo tras tres ciclos apretados. Se devuelve a la cola y se restituye
+       * el intento que `claim_sync_job` incrementó al reclamarlo.
+       *
+       * Y se corta el ciclo: si no hubo presupuesto para este, tampoco lo hay
+       * para el siguiente.
+       */
+      if (esTimeoutDeFetch(e) && cortaElPresupuesto) {
+        await releaseJob(db, job.id, job.intentos - 1);
+        result.details.push({
+          jobId: job.id,
+          tipo: job.tipo,
+          estado: 'reintento',
+          message: `sin presupuesto para terminarlo (quedaban ${Math.round(timeoutAplicado / 1000)}s); devuelto a la cola`,
+        });
+        break;
+      }
+
       const exhausted = await failJob(db, job, message);
       result.failed++;
       result.details.push({

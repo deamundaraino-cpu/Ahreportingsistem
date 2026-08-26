@@ -7,10 +7,23 @@ import { ensurePlanDiario } from '@/lib/sync/planner';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+/**
+ * Inerte en Docker/Dokploy (no hay límite de plataforma); se conserva por si se
+ * vuelve a desplegar en Vercel. El techo real de este endpoint lo fija
+ * `RUNJOBS_BUDGET_MS`, más abajo.
+ */
 export const maxDuration = 60;
 
 /**
- * Drena la cola `sync_jobs` dentro del presupuesto de una función de Vercel.
+ * Número de entorno con default, tolerando basura en la variable.
+ */
+function envMs(nombre: string, porDefecto: number): number {
+  const n = Number(process.env[nombre]);
+  return Number.isFinite(n) && n > 0 ? n : porDefecto;
+}
+
+/**
+ * Drena la cola `sync_jobs`.
  *
  * Es el ejecutor de RESPALDO: el principal es `sync-worker/` en el VPS, que no
  * tiene límite de tiempo. Este endpoint existe para que la sincronización siga
@@ -54,20 +67,27 @@ async function run(request: Request) {
   const result = await runJobs(db, {
     appUrl,
     cronSecret: process.env.CRON_SECRET ?? '',
-    workerId: `vercel-${Math.random().toString(36).slice(2, 8)}`,
-    ejecutor: 'vercel',
-    // Margen dentro de los 60s de Hobby: al agotarse se deja la cola para la
-    // siguiente llamada (los jobs no procesados siguen en 'pending').
-    //
-    // `budgetMs` es el techo REAL del ciclo: el runner acota el timeout de
-    // cada llamada a lo que quede de presupuesto, así que 50 s de budget no
-    // pueden convertirse en 50+50. Antes budget (40 s) y timeout (55 s) se
-    // sumaban y la función se pasaba de los 60 s de `maxDuration`, muriendo
-    // sin marcar el fallo del job.
-    budgetMs: 50_000,
-    // Lease corto: si esta función muere a los 60s, el job vuelve a la cola pronto.
-    leaseSeconds: 180,
-    requestTimeoutMs: 50_000,
+    workerId: `app-${Math.random().toString(36).slice(2, 8)}`,
+    ejecutor: 'app',
+    /**
+     * `budgetMs` es el techo REAL del ciclo: el runner acota el timeout de cada
+     * llamada a lo que quede de presupuesto, así que el budget no puede
+     * convertirse en budget+timeout.
+     *
+     * Estuvo en 50 s para caber en los 60 s de Vercel Hobby, y ese techo era la
+     * causa del error más frecuente del sistema: el runner abortaba jobs sanos
+     * por falta de presupuesto propio y a los 3 abortos los pintaba de rojo.
+     * En un contenedor no existe tal límite, así que el default sube a 4 min.
+     * Ajustable por si el proxy de delante corta antes.
+     */
+    budgetMs: envMs('RUNJOBS_BUDGET_MS', 240_000),
+    /**
+     * Lease: pasado este tiempo otro ejecutor puede reclamar el job. Debe
+     * superar al `budgetMs` — si vence mientras el job aún corre, un segundo
+     * ejecutor lo toma en paralelo y ambos se pisan los datos del cliente.
+     */
+    leaseSeconds: envMs('RUNJOBS_LEASE_SECONDS', 300),
+    requestTimeoutMs: envMs('RUNJOBS_REQUEST_TIMEOUT_MS', 120_000),
   });
 
   return NextResponse.json({ ok: true, plan, ...result, cola: await queueStats(db) });

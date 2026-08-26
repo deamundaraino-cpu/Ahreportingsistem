@@ -16,7 +16,7 @@ import { headers, cookies } from 'next/headers';
  *     no podía comprobar quién llamaba — que es justo por lo que esas rutas
  *     acabaron sin ningún control de acceso.
  */
-async function internalOrigin(): Promise<string> {
+export async function internalOrigin(): Promise<string> {
   const configured = process.env.NEXT_PUBLIC_APP_URL?.trim();
   if (configured) return configured.replace(/\/+$/, '');
 
@@ -47,6 +47,34 @@ export async function internalFetch(path: string, init: RequestInit = {}): Promi
 
   const headersInit = new Headers(init.headers);
   if (cookie) headersInit.set('cookie', cookie);
+
+  return fetch(`${origin}${path}`, {
+    ...init,
+    headers: headersInit,
+    cache: init.cache ?? 'no-store',
+  });
+}
+
+/**
+ * `fetch` a una ruta interna autenticada con `CRON_SECRET` en vez de con la
+ * sesión del usuario. Para los endpoints de `/api/worker` y `/api/cron`, que no
+ * miran cookies.
+ *
+ * Existe para que el origen se resuelva en UN solo sitio. Antes había tres
+ * caminos distintos —`NEXT_PUBLIC_APP_URL` en unos, el header `Host` en otros,
+ * `internalFetch` en el resto—, así que un despliegue con el dominio a medio
+ * propagar rompía unos y no otros, y era imposible razonar sobre qué URL usaba
+ * cada botón.
+ *
+ * Lanza si falta `CRON_SECRET`: es preferible al 401 silencioso de después.
+ */
+export async function internalCronFetch(path: string, init: RequestInit = {}): Promise<Response> {
+  const secret = process.env.CRON_SECRET;
+  if (!secret) throw new Error('CRON_SECRET no configurado en el servidor');
+
+  const origin = await internalOrigin();
+  const headersInit = new Headers(init.headers);
+  headersInit.set('Authorization', `Bearer ${secret}`);
 
   return fetch(`${origin}${path}`, {
     ...init,

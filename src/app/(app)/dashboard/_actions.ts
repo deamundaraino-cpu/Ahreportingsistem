@@ -6,7 +6,6 @@ import { notifyUsers } from '@/lib/notifications/notify';
 import { sendWhatsAppNotification } from '@/lib/whatsapp/notify';
 import { getWeeksInRange, clampRangeToToday, colombiaToday, addDaysISO } from '@/lib/date-utils';
 import { revalidatePath } from 'next/cache';
-import { headers } from 'next/headers';
 import { after } from 'next/server';
 import { loadCamposCliente } from '@/lib/sheets/campos-db';
 import { hotmartConectado } from '@/lib/hotmart/cliente';
@@ -18,6 +17,7 @@ import { fetchAllRows } from '@/lib/supabase-paginate';
 import { normalizeSheetConfigs } from '@/lib/integrations/google-sheets-conversiones';
 import type { SyncConversionesResponse } from '@/lib/integrations/google-sheets-conversiones';
 import { leerJsonRespuesta, esTimeoutDeFetch } from '@/lib/fetch-json';
+import { internalFetch, internalCronFetch } from '@/lib/internal-fetch';
 import { resolveRtmClienteId } from '@/lib/report-utm/campaign-resolver';
 import { formulaUsaRespuestas, camposEnFormula } from '@/lib/dashboard/lead-answer-aggregation';
 import { BUCKET_OTROS } from '@/lib/report-utm/lead-campos';
@@ -114,15 +114,13 @@ export async function triggerSheetsSync(clientId: string): Promise<SheetsSyncRes
     ).filter((s) => s.enabled && s.sheet_url);
     if (sheets.length === 0) return { ok: true, configured: false };
 
-    const headersList = await headers();
-    const host = headersList.get('host') || 'localhost:3001';
-    const protocol = host.includes('localhost') ? 'http' : 'https';
-
-    const res = await fetch(`${protocol}://${host}/api/admin/sync-conversiones-offline`, {
+    // `internalFetch` y no un `fetch` con el `Host` de la petición: la ruta
+    // destino comprueba el rol con `requireAdminRole`, así que necesita la
+    // cookie de sesión reenviada.
+    const res = await internalFetch('/api/admin/sync-conversiones-offline', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ clientId }),
-      cache: 'no-store',
       // Un punto por debajo del maxDuration de la ruta, para devolver un error
       // legible en vez de que la petición muera sin más.
       signal: AbortSignal.timeout(58_000),
@@ -161,8 +159,8 @@ export async function triggerSheetsSync(clientId: string): Promise<SheetsSyncRes
  *
  * Rangos cortos van directos al worker (el usuario ve el resultado al instante).
  * Los largos se encolan en `sync_jobs`: Hotmart y GA4 se consultan día a día, así
- * que un rango de meses no cabe en los 60s de una función de Vercel — antes la
- * petición simplemente moría y el usuario no se enteraba de que faltaban datos.
+ * que un rango de meses no cabe en una sola invocación — antes la petición
+ * simplemente moría y el usuario no se enteraba de que faltaban datos.
  *
  * Solo trae `metricas_diarias`. Los Google Sheets van por `triggerSheetsSync`.
  */
@@ -175,18 +173,9 @@ export async function triggerWorkerSync(
     return { ok: false, error: 'Parámetros inválidos', platform_status: null };
   }
 
-  const secret = process.env.CRON_SECRET;
-  if (!secret) {
+  if (!process.env.CRON_SECRET) {
     return { ok: false, error: 'CRON_SECRET no configurado en el servidor', platform_status: null };
   }
-
-  const h = await headers();
-  const host = h.get('host');
-  const proto = h.get('x-forwarded-proto') || (host?.startsWith('localhost') ? 'http' : 'https');
-  if (!host) {
-    return { ok: false, error: 'No se pudo determinar el host', platform_status: null };
-  }
-  const base = `${proto}://${host}`;
 
   // El selector permite mirar un rango que termina en el futuro (la ventana
   // completa de un lanzamiento, p. ej.), pero sincronizarlo no tiene sentido: las
@@ -215,9 +204,9 @@ export async function triggerWorkerSync(
   // ─── Rango largo: a la cola ───
   if (!Number.isFinite(dias) || dias > SYNC_DIRECTO_MAX_DIAS) {
     try {
-      const res = await fetch(`${base}/api/worker/enqueue`, {
+      const res = await internalCronFetch('/api/worker/enqueue', {
         method: 'POST',
-        headers: { Authorization: `Bearer ${secret}`, 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           tipo: 'metricas',
           cliente_id: clientId,
@@ -226,7 +215,6 @@ export async function triggerWorkerSync(
           prioridad: 1,
           triggered_by: 'dashboard',
         }),
-        cache: 'no-store',
         signal: AbortSignal.timeout(30_000),
       });
       const data = await res.json().catch(() => ({}));
@@ -236,11 +224,9 @@ export async function triggerWorkerSync(
 
       // Empujón inmediato al ejecutor de respaldo para no esperar al poll del VPS.
       after(async () => {
-        await fetch(`${base}/api/worker/run-jobs`, {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${secret}` },
-          cache: 'no-store',
-        }).catch((e) => console.error('[sync] run-jobs push failed', e));
+        await internalCronFetch('/api/worker/run-jobs', { method: 'POST' }).catch((e) =>
+          console.error('[sync] run-jobs push failed', e)
+        );
       });
 
       return {
@@ -266,14 +252,13 @@ export async function triggerWorkerSync(
   }
 
   // ─── Rango corto: directo ───
-  const url = `${base}/api/worker?start=${encodeURIComponent(desde)}&end=${encodeURIComponent(hasta)}&client_id=${encodeURIComponent(clientId)}`;
+  const ruta = `/api/worker?start=${encodeURIComponent(desde)}&end=${encodeURIComponent(hasta)}&client_id=${encodeURIComponent(clientId)}`;
 
   try {
-    const res = await fetch(url, {
-      headers: { Authorization: `Bearer ${secret}` },
-      cache: 'no-store',
-      // Los endpoints tienen maxDuration=60; cortamos antes para no dejar la
-      // promesa colgada si Vercel mata la función.
+    const res = await internalCronFetch(ruta, {
+      // Techo del lado del usuario: hay alguien esperando esta respuesta en la
+      // pantalla, así que se corta antes de que la espera deje de tener sentido.
+      // Los rangos que no caben aquí ya se encolaron más arriba.
       signal: AbortSignal.timeout(58_000),
     });
     const data = await res.json().catch(() => ({}));

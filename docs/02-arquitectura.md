@@ -27,7 +27,7 @@ Ahreportingsistem/
 ├── migrations/                # Migraciones SQL (001 … 020)
 ├── schema.sql                 # Esquema base (clientes, métricas, grupos)
 ├── public/                    # Assets estáticos, landing, report-utm-pixel.js
-├── vercel.json                # Definición de cron jobs en Vercel
+├── Dockerfile                 # Imagen de la app (output standalone) para Dokploy
 ├── next.config.ts             # Config Next.js + headers de seguridad (CSP)
 ├── .github/workflows/         # GitHub Action de chequeo de presupuesto
 └── src/

@@ -2,9 +2,9 @@
   "name": "sync-worker",
   "version": "0.1.0",
   "private": true,
-  "description": "Ejecutor persistente de la cola sync_jobs (proceso self-hosted, fuera de Vercel)",
-  "type": "module",
-  "main": "dist/index.js",
+  "description": "Ejecutor persistente de la cola sync_jobs (proceso self-hosted)",
+  "//type": "CommonJS a propósito — ver el comentario de `module` en tsconfig.json",
+  "main": "dist/sync-worker/src/index.js",
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc -p tsconfig.json",

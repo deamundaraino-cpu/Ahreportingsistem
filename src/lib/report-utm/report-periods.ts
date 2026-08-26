@@ -158,10 +158,15 @@ export function computePeriod(freq: ReportFrequency, now: Date = new Date()): Re
 }
 
 /**
- * Hora fija (reloj de Bogotá) a la que salen las entregas automáticas.
- * El plan Hobby de Vercel solo permite crons de una vez al día, así que el
- * digest corre una sola vez (13:00 UTC = 08:00 Colombia) y la hora no es
- * configurable por informe. Ver `vercel.json` → /api/cron/bi-report-digest.
+ * Hora fija (reloj de Bogotá) a la que saldrían las entregas automáticas.
+ * El digest corre una sola vez al día, así que la hora no es configurable por
+ * informe.
+ *
+ * ⚠️ `/api/cron/bi-report-digest` **no lo dispara nadie**: no está en el
+ * scheduler del `sync-worker` ni en el workflow de GitHub, y tampoco llegó a
+ * estar en el `vercel.json` que existió (sólo declaraba 2 crons). Las entregas
+ * automáticas no se envían; sólo funciona el reenvío manual. Para activarlas
+ * hay que añadir una entrada al scheduler (ver doc 14).
  */
 export const DELIVERY_HOUR = 8;
 

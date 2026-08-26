@@ -2,13 +2,13 @@
 
 ## El problema que resuelve esta arquitectura
 
-La app corre en **Vercel plan Hobby**, que impone dos límites duros:
+La app nació en **Vercel plan Hobby**, que imponía dos límites duros:
 
 - **60 segundos** por invocación de función
 - **2 crons diarios** por proyecto
 
 `vercel.json` llegó a declarar 9 crons y varias rutas pedían `maxDuration = 300`.
-Eso no alarga nada: la función se corta igual a los 60s, pero los presupuestos
+Eso no alargaba nada: la función se cortaba igual a los 60s, pero los presupuestos
 internos (270s, 250s, 240s) nunca disparaban, así que en lugar de terminar
 ordenadamente el proceso moría a mitad del upsert. Sincronizar Meta + TikTok +
 Hotmart + GA4 para todos los clientes no cabe en 60s — Hotmart y GA4 se consultan
@@ -20,7 +20,46 @@ La solución tiene tres piezas:
    reanudables con cursor persistido.
 2. **Worker self-hosted** (`sync-worker/`) — proceso permanente en el VPS, sin
    límite de tiempo, que drena la cola y ejecuta el scheduler.
-3. **Endpoints de respaldo en Vercel** — por si el VPS está caído.
+3. **Endpoint de respaldo en la propia app** — por si el worker está caído.
+
+> **Desde el despliegue en Dokploy ya no existe el techo de 60 s.** Los
+> `export const maxDuration` que quedan son inertes en un contenedor; se
+> conservan por si se vuelve a Vercel. El techo real del ejecutor de respaldo lo
+> fija `RUNJOBS_BUDGET_MS` (ver abajo).
+
+## Quién ejecuta: `sync_runs.ejecutor`
+
+Es el termómetro de si el worker principal está vivo, y la primera consulta que
+hay que hacer cuando la cola se llena de errores:
+
+```sql
+select ejecutor, count(*), max(started_at)
+from sync_runs where started_at > now() - interval '1 hour' group by 1;
+```
+
+| Valor    | Quién                                                             |
+| -------- | ----------------------------------------------------------------- |
+| `vps`    | `sync-worker/` — el ejecutor **principal**, sin límite de tiempo  |
+| `app`    | `/api/worker/run-jobs` — el ejecutor de **respaldo**              |
+| `vercel` | Histórico anterior a Dokploy. No debería aparecer en filas nuevas |
+
+Si sólo aparece `app`, el worker no está drenando y toda la carga recae en el
+respaldo. Eso no rompe nada de inmediato, pero es lo que precedió a los 183
+timeouts de julio–agosto de 2026: el respaldo trabaja a tandas cortas y los
+rangos largos no le caben.
+
+## Presupuestos del ejecutor de respaldo
+
+| Variable                     | Default | Para qué                                                              |
+| ---------------------------- | ------- | --------------------------------------------------------------------- |
+| `RUNJOBS_BUDGET_MS`          | 240000  | Techo REAL del ciclo de drenado                                       |
+| `RUNJOBS_REQUEST_TIMEOUT_MS` | 120000  | Timeout de cada llamada a un endpoint de sync                         |
+| `RUNJOBS_LEASE_SECONDS`      | 300     | Debe **superar** al budget (si no, dos ejecutores toman el mismo job) |
+
+El runner acota el timeout de cada job a lo que queda del budget, así que el
+budget no puede convertirse en budget+timeout. Y no reclama un job si no le
+quedan al menos 60 s: por debajo de eso el aborto era seguro y sólo servía para
+quemarle un intento a un job sano.
 
 ## Autenticación
 
@@ -30,13 +69,15 @@ Todos los endpoints de cron/worker exigen:
 Authorization: Bearer $CRON_SECRET
 ```
 
-El mismo secreto va configurado en Vercel y en el `.env` del `sync-worker`.
+El mismo secreto va configurado en el entorno de la app (Dokploy) y en el `.env`
+del `sync-worker`. Debe coincidir **carácter a carácter**: si no, el worker
+reclama jobs y todos le responden 401.
 
 ## Zona horaria
 
 La operación es en **Colombia (`America/Bogota` = UTC−5 fijo, sin horario de
-verano)**. Vercel Cron solo acepta UTC; el scheduler del `sync-worker` sí acepta
-zona horaria directamente (`TZ_OPERACION`). El cálculo de fechas de calendario
+verano)**. El scheduler del `sync-worker` acepta la zona horaria directamente
+(`TZ_OPERACION`), así que los horarios se escriben en hora local sin convertir. El cálculo de fechas de calendario
 usa `colombiaToday()` / `colombiaYesterday()` de `src/lib/date-utils.ts`, y los
 presets del dashboard hacen lo mismo — antes usaban la hora del navegador, así
 que un usuario fuera de UTC−5 pedía días que en Colombia aún no existían.
@@ -46,25 +87,26 @@ que un usuario fuera de UTC−5 pedía días que en Colombia aún no existían.
 | Componente                  | Dónde corre | Qué hace                                                         |
 | --------------------------- | ----------- | ---------------------------------------------------------------- |
 | `sync-worker/`              | VPS         | Scheduler + drena la cola continuamente. **Ejecutor principal.** |
-| `POST /api/worker/enqueue`  | Vercel      | Crea los jobs (planner). No ejecuta nada.                        |
-| `POST /api/worker/run-jobs` | Vercel      | Drena la cola en tandas de ~40s. **Ejecutor de respaldo.**       |
-| `GET /api/worker`           | Vercel      | Sincroniza métricas de un rango. Lo invoca el runner.            |
-| Webhooks `report_utm`       | Vercel      | Ingesta en tiempo real de ventas (Hotmart, Shopify, Cartpanda).  |
+| `POST /api/worker/enqueue`  | app         | Crea los jobs (planner). No ejecuta nada.                        |
+| `POST /api/worker/run-jobs` | app         | Drena la cola. **Ejecutor de respaldo.**                         |
+| `GET /api/worker`           | app         | Sincroniza métricas de un rango. Lo invoca el runner.            |
+| Webhooks `report_utm`       | app         | Ingesta en tiempo real de ventas (Hotmart, Shopify, Cartpanda).  |
 
-## Crons de Vercel (los 2 permitidos)
+## Los crons ya no los pone la plataforma
 
-| Path                            | Schedule (UTC) | Hora 🇨🇴 | Para qué                                              |
-| ------------------------------- | -------------- | ------- | ----------------------------------------------------- |
-| `/api/cron/refresh-meta-tokens` | `0 7 * * *`    | 02:00   | Renovar tokens antes de que caduquen                  |
-| `/api/worker/run-jobs`          | `0 10 * * *`   | 05:00   | Red de seguridad: drena la cola si el VPS no responde |
+`vercel.json` **se eliminó del repositorio** al migrar a Dokploy: fuera de
+Vercel no lo leía nadie, y mantenerlo sugería una programación que no existía.
+Sus dos crons los cubren ahora:
 
-Todo lo demás lo programa el scheduler del `sync-worker`.
+| Cron que declaraba `vercel.json` | Quién lo cubre                                          |
+| -------------------------------- | ------------------------------------------------------- |
+| `/api/cron/refresh-meta-tokens`  | Scheduler del `sync-worker` (`0 2 * * *`, hora 🇨🇴)      |
+| `/api/worker/run-jobs`           | Poll continuo del `sync-worker` + el workflow de GitHub |
 
-> **Fuera de Vercel `vercel.json` no lo lee nadie.** Al desplegar en Dokploy
-> (o cualquier contenedor) esos dos crons desaparecen. `run-jobs` no importa
-> —el worker ya hace _poll_ de la cola y el workflow de GitHub sirve de red—,
-> pero `refresh-meta-tokens` sí: por eso ahora está también en el scheduler
-> del worker. Ver [doc 15](./15-despliegue.md#6--los-crons-ya-no-los-pone-la-plataforma).
+`refresh-meta-tokens` era el crítico: vivía **únicamente** como cron de Vercel,
+y sin él los tokens caducan a los ~60 días y todos los clientes de Meta quedan
+desconectados sin aviso. Ver
+[doc 15](./15-despliegue.md#6--los-crons-ya-no-los-pone-la-plataforma).
 
 ## Horarios del sync-worker (hora Colombia)
 
@@ -77,21 +119,21 @@ Todo lo demás lo programa el scheduler del `sync-worker`.
 
 Y dos entradas que no encolan nada: llaman directamente a un endpoint de cron.
 
-| Hora     | Endpoint                           | Para qué                                                              |
-| -------- | ---------------------------------- | --------------------------------------------------------------------- |
-| cada 2 h | `/api/cron/refresh-hotmart-tokens` | Los tokens de HotConnect son de vida corta                            |
-| 02:00    | `/api/cron/refresh-meta-tokens`    | Sustituye al cron de Vercel; sin él los tokens caducan a los ~60 días |
+| Hora     | Endpoint                           | Para qué                                                                      |
+| -------- | ---------------------------------- | ----------------------------------------------------------------------------- |
+| cada 2 h | `/api/cron/refresh-hotmart-tokens` | Los tokens de HotConnect son de vida corta                                    |
+| 02:00    | `/api/cron/refresh-meta-tokens`    | Único planificador de este endpoint; sin él los tokens caducan a los ~60 días |
 
 Además hace _poll_ de la cola cada 15s, que es lo que hace que el botón
 "Sincronizar" del dashboard responda en segundos.
 
 ## Cómo funciona la cola
 
-`claim_sync_job()` usa `FOR UPDATE SKIP LOCKED`: si el VPS y Vercel intentan
-tomar un job a la vez, el segundo salta al siguiente en lugar de duplicar el
-trabajo. Es el mutex que faltaba entre el sync manual y el cron.
+`claim_sync_job()` usa `FOR UPDATE SKIP LOCKED`: si el worker y el ejecutor de
+respaldo intentan tomar un job a la vez, el segundo salta al siguiente en lugar
+de duplicar el trabajo. Es el mutex que faltaba entre el sync manual y el cron.
 
-Si un ejecutor muere (deploy, OOM, corte de los 60s), el **lease** del job vence
+Si un ejecutor muere (deploy, OOM, corte del proxy), el **lease** del job vence
 y vuelve a la cola. Como el cursor está persistido y los upserts son
 idempotentes, solo se repite la unidad en curso.
 
@@ -341,8 +383,9 @@ curl -H "Authorization: Bearer $CRON_SECRET" \
   "https://reportes.adshouse.cloud/api/worker?start=2026-05-01&end=2026-05-03&client_id=<uuid>"
 ```
 
-## Si algún día se pasa a Vercel Pro
+## Por qué la cola sigue haciendo falta sin el límite de 60 s
 
-Con Pro (funciones de 300s y crons ilimitados) se puede subir `maxDuration` y
-apoyarse más en `run-jobs`, pero la cola sigue siendo útil: es lo que da el
-mutex, la reanudación y el historial. No hace falta deshacer nada.
+En Dokploy el ejecutor de respaldo ya puede correr minutos, y es tentador
+apoyarse sólo en él. La cola sigue siendo la pieza central: es lo que da el
+mutex entre ejecutores, la reanudación por tramos y el historial de
+`sync_runs`. Subir presupuestos no sustituye nada de eso.

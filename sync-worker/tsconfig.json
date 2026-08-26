@@ -1,8 +1,21 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "module": "ESNext",
-    "moduleResolution": "Bundler",
+    // CommonJS, no ESM, y es deliberado.
+    //
+    // Este proyecto compila archivos de `src/lib` de la app, y esos usan
+    // imports relativos SIN extensión (`from './queue'`), como todo el resto
+    // del código de Next. TypeScript no reescribe los especificadores, así que
+    // emitiéndolos como ESM salían tal cual y Node los rechazaba en tiempo de
+    // ejecución con ERR_MODULE_NOT_FOUND: el worker no arrancaba ni aunque la
+    // imagen construyera.
+    //
+    // Las alternativas eran poner `.js` a los imports de la app (inconsistente
+    // con los cientos de archivos restantes, y fácil de perder en el siguiente
+    // edit) o duplicar la lógica de la cola aquí. Compilar a CommonJS resuelve
+    // los extensionless de forma nativa y no obliga a tocar la app.
+    "module": "CommonJS",
+    "moduleResolution": "Node",
     "esModuleInterop": true,
     "strict": true,
     "skipLibCheck": true,
