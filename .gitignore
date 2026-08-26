@@ -40,6 +40,11 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+# ...menos las plantillas: son la lista viva de variables que hay que
+# configurar en el host, y `.env*` a secas también se las tragaba (el
+# sync-worker/.env.example que cita la doc nunca llegó a versionarse).
+!.env.example
+!**/.env.example
 
 # vercel
 .vercel

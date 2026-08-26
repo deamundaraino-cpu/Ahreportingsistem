@@ -1,0 +1,39 @@
+# Todo lo que no debe entrar en el contexto de build.
+# Ojo: el contexto es la raíz del repo también para sync-worker/Dockerfile.
+
+# Dependencias y artefactos: se reinstalan/regeneran dentro de la imagen.
+node_modules
+**/node_modules
+.next
+out
+build
+dist
+**/dist
+*.tsbuildinfo
+
+# Secretos. `.env.local` NUNCA debe viajar a una capa de la imagen; las
+# variables se inyectan desde el panel del host.
+.env
+.env.*
+!.env.example
+!**/.env.example
+
+# Historia y herramientas de desarrollo.
+.git
+.gitignore
+.github
+.vscode
+.claude
+
+# Documentación y material que no se sirve.
+docs
+backups
+migrations
+supabase
+wordpress-plugin
+*.md
+schema.sql
+test-*.sh
+
+# Salidas de test/coverage
+coverage

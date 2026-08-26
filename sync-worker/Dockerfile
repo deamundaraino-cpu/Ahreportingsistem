@@ -4,7 +4,7 @@
 # El contexto es la raíz porque el worker compila `src/lib/sync/*` de la app
 # (la lógica de la cola no se duplica aquí).
 
-FROM node:20-alpine AS build
+FROM node:22-alpine AS build
 WORKDIR /repo
 
 COPY sync-worker/package*.json sync-worker/
@@ -18,7 +18,7 @@ COPY src/lib/notifications src/lib/notifications
 
 RUN cd sync-worker && npm run build
 
-FROM node:20-alpine AS runtime
+FROM node:22-alpine AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 

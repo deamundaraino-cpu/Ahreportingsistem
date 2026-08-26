@@ -170,6 +170,14 @@ const horarios: Array<{ expr: string; nombre: string; fn: () => Promise<void> }>
     // Cada 2 horas: los tokens de HotConnect son de vida corta y el umbral del
     // endpoint es de 30 minutos, así que ninguno llega a caducar entre pasadas.
     { expr: '0 */2 * * *', nombre: 'refresco de tokens Hotmart', fn: () => llamarCron('/api/cron/refresh-hotmart-tokens', 'hotmart-tokens') },
+    // Refresco de tokens de larga duración de Meta.
+    //
+    // Vivía ÚNICAMENTE como cron de vercel.json (`0 7 * * *` UTC = 02:00 en
+    // Colombia). Al desplegar en Dokploy ese cron deja de existir, así que
+    // sin esta entrada los tokens caducarían a los ~60 días y todos los
+    // clientes de Meta quedarían desconectados sin aviso. Se mantiene la
+    // misma hora para no cambiar el comportamiento observado.
+    { expr: '0 2 * * *', nombre: 'refresco de tokens Meta', fn: () => llamarCron('/api/cron/refresh-meta-tokens', 'meta-tokens') },
 ]
 
 // ─── Healthcheck HTTP ────────────────────────────────────────────────────────

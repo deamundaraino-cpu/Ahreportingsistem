@@ -60,6 +60,12 @@ que un usuario fuera de UTC−5 pedía días que en Colombia aún no existían.
 
 Todo lo demás lo programa el scheduler del `sync-worker`.
 
+> **Fuera de Vercel `vercel.json` no lo lee nadie.** Al desplegar en Dokploy
+> (o cualquier contenedor) esos dos crons desaparecen. `run-jobs` no importa
+> —el worker ya hace _poll_ de la cola y el workflow de GitHub sirve de red—,
+> pero `refresh-meta-tokens` sí: por eso ahora está también en el scheduler
+> del worker. Ver [doc 15](./15-despliegue.md#6--los-crons-ya-no-los-pone-la-plataforma).
+
 ## Horarios del sync-worker (hora Colombia)
 
 | Hora           | Plan             | Encola                                                                                                                             |
@@ -68,6 +74,13 @@ Todo lo demás lo programa el scheduler del `sync-worker`.
 | 14:00          | `diario`         | Segunda pasada: recoge las correcciones de atribución del día                                                                      |
 | día 7, 03:00   | `cierre_mes`     | Re-descarga forzada del mes anterior (ventana de 35 días) y congelado                                                              |
 | domingo, 03:00 | `reconciliacion` | Audita el gasto de Meta contra el real de cada cuenta y repara los días con desglose incompleto                                    |
+
+Y dos entradas que no encolan nada: llaman directamente a un endpoint de cron.
+
+| Hora     | Endpoint                           | Para qué                                                              |
+| -------- | ---------------------------------- | --------------------------------------------------------------------- |
+| cada 2 h | `/api/cron/refresh-hotmart-tokens` | Los tokens de HotConnect son de vida corta                            |
+| 02:00    | `/api/cron/refresh-meta-tokens`    | Sustituye al cron de Vercel; sin él los tokens caducan a los ~60 días |
 
 Además hace _poll_ de la cola cada 15s, que es lo que hace que el botón
 "Sincronizar" del dashboard responda en segundos.

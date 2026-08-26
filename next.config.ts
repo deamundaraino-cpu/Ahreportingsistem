@@ -39,6 +39,11 @@ const baseSecurityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
+  // Empaqueta en .next/standalone el servidor y solo los módulos que la
+  // traza encuentra, con un server.js propio. Es lo que hace posible una
+  // imagen Docker sin node_modules (~10x más pequeña) para Dokploy.
+  // Ojo: Next NO copia ahí `public/` ni `.next/static`; el Dockerfile lo hace.
+  output: 'standalone',
   compress: true,
   poweredByHeader: false,
   serverExternalPackages: ['@google-analytics/data', 'google-auth-library', 'google-spreadsheet'],
