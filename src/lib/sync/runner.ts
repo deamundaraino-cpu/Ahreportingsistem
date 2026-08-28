@@ -351,7 +351,20 @@ export async function runJobs(db: any, opts: RunnerOptions): Promise<RunnerResul
       liberados.has(job.id) ||
       (await clienteOcupado(db, job.cliente_id, job.id, opts.workerId, opts.leaseSeconds ?? 600))
     ) {
-      await releaseJob(db, job.id);
+      /**
+       * Se restituye el intento que `claim_sync_job` incrementó al entregarlo.
+       *
+       * El job no ha fallado: solo llegó mientras otro ejecutor tenía cogido a
+       * su cliente. Cobrárselo era el fallo más visible del sistema — un sync
+       * manual encola varios chunks del MISMO cliente, el primero se ejecuta
+       * (20-45 s) y los demás rebotan aquí; como el job liberado vuelve a
+       * `pending` con la misma prioridad y es el más antiguo, `claim_sync_job`
+       * lo devolvía en la vuelta siguiente del propio bucle, gastando DOS
+       * intentos por pasada sin ejecutar nada. Con `max_intentos = 3` el chunk
+       * moría en dos pasadas (~15 s) acusando un lease vencido que nunca
+       * existió, y el dashboard pintaba en rojo un sync que estaba yendo bien.
+       */
+      await releaseJob(db, job.id, job.intentos - 1);
       if (liberados.has(job.id)) break;
       liberados.add(job.id);
       result.details.push({

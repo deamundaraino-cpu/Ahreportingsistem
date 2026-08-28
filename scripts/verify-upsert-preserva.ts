@@ -398,11 +398,26 @@ async function comprobarCola() {
   );
   check(
     'el job devuelto a la cola no cuenta como reclamado',
-    runner.indexOf('await releaseJob(db, job.id)') < runner.indexOf('result.claimed++')
+    runner.indexOf('await releaseJob(db, job.id, job.intentos - 1)') <
+      runner.indexOf('result.claimed++')
   );
   check(
     'no gira en vacío: corta si vuelve el mismo job liberado',
     /if \(liberados\.has\(job\.id\)\) break/.test(runner)
+  );
+  /**
+   * Rebotar por cliente ocupado NO puede gastar intentos.
+   *
+   * Sin la restitución, un sync manual (varios chunks del mismo cliente) mataba
+   * sus propios chunks en ~15 s con un "lease vencido" inventado: cada rebote
+   * quemaba un intento y `claim_sync_job` devolvía el job liberado en la vuelta
+   * siguiente, gastando dos por pasada. Se ancla en el texto porque el fallo
+   * era exactamente esa llamada sin su tercer argumento.
+   */
+  check(
+    'un rebote por cliente ocupado restituye el intento',
+    !/await releaseJob\(db, job\.id\)/.test(runner) &&
+      (runner.match(/await releaseJob\(db, job\.id, job\.intentos - 1\)/g) ?? []).length === 2
   );
 }
 
