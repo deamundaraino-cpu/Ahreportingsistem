@@ -797,13 +797,21 @@ async function getRespuestasLeadDelDia(
 
     const campos: LeadCampoDef[] = [];
     const origenes: Record<string, 'catalogo' | 'auto'> = {};
+    // Claves que un bloque pide y el catálogo activo no tiene. Se ANOTAN, no se
+    // tiran: son la diferencia entre "esta pregunta ya no existe" y "este
+    // cliente no tiene respuestas", y sin anotarlas la UI daba el segundo
+    // mensaje —falso— cuando el bloque roto era el único de la pestaña.
+    const camposAusentes: string[] = [];
     for (const b of bloques) {
       if (b.origen === 'catalogo') {
         const campo = catalogo.find((c) => c.clave === b.clave);
         // Un campo borrado del catálogo NO cae a 'auto' automáticamente: eso
         // cambiaría las cifras del bloque sin avisar. Se omite y el componente
         // muestra que la pregunta ya no existe.
-        if (!campo) continue;
+        if (!campo) {
+          if (b.clave && !camposAusentes.includes(b.clave)) camposAusentes.push(b.clave);
+          continue;
+        }
         campos.push(campo);
         origenes[campo.clave] = 'catalogo';
       } else {
@@ -837,7 +845,7 @@ async function getRespuestasLeadDelDia(
     // su `(sin respuesta)` y la tabla diaria no cerraría.
     const necesitaTotales = conTotales || bloques.length > 0;
 
-    return await cargarRespuestasLead(
+    const ds = await cargarRespuestasLead(
       rtm,
       rtmClienteId,
       desde,
@@ -847,6 +855,10 @@ async function getRespuestasLeadDelDia(
       necesitaTotales,
       segmentosPorCampo
     );
+
+    // Copia, no mutación: `cargarRespuestasLead` cachea el dataset y las claves
+    // ausentes dependen de los bloques de ESTA pestaña, no del rango.
+    return camposAusentes.length > 0 ? { ...ds, camposAusentes } : ds;
   } catch (err) {
     console.error('[dashboard] respuestas de formulario no disponibles:', err);
     return datasetVacio();

@@ -170,8 +170,10 @@ export function ScorecardWidget({ title, config, filters, calculatedFields = [] 
       className="rounded-2xl border border-border bg-card p-5 flex flex-col gap-3 h-full"
       style={accentStatus ? { borderLeft: `3px solid ${GOAL_COLOR[accentStatus]}` } : undefined}
     >
-      <p className="flex items-center gap-1 text-xs font-medium text-muted-foreground">
-        {title}
+      <p className="flex items-center gap-1 text-xs font-medium text-muted-foreground min-w-0">
+        <span className="truncate" title={title}>
+          {title}
+        </span>
         {glossary && <HelpTip text={glossary} size={12} />}
       </p>
       {loading ? (

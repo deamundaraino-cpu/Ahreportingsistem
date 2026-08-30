@@ -243,7 +243,9 @@ export function RankingTableBlock({
     return (
       <div className="col-span-1 md:col-span-4 bg-card border border-border rounded-xl overflow-hidden">
         <div className="px-4 py-3 border-b border-border bg-background/40">
-          <h3 className="text-sm font-semibold text-foreground">{def.title}</h3>
+          <h3 className="text-sm font-semibold text-foreground min-w-0 truncate" title={def.title}>
+            {def.title}
+          </h3>
         </div>
         <div className="p-8 flex flex-col items-center gap-3 text-center">
           <div className="text-2xl">📅</div>
@@ -353,7 +355,9 @@ export function RankingTableBlock({
 
       <div className="px-4 py-3 border-b border-border bg-background/40">
         <div className="flex items-center justify-between gap-2">
-          <h3 className="text-sm font-semibold text-foreground">{def.title}</h3>
+          <h3 className="text-sm font-semibold text-foreground min-w-0 truncate" title={def.title}>
+            {def.title}
+          </h3>
           {(def.dimension === 'ads' ||
             def.dimension === 'adsets' ||
             def.dimension === 'tiktok_ads' ||
@@ -476,7 +480,12 @@ export function RankingTableBlock({
                 )}
                 <td className="px-3 py-2 text-foreground max-w-[220px]">
                   <div className="flex items-center gap-1.5">
-                    <span className="truncate">{row._name}</span>
+                    {/* `title`: sin él, un nombre de campaña largo se cortaba a
+                        220px y no había forma de leerlo entero desde ninguna
+                        parte de la UI. */}
+                    <span className="truncate" title={row._name}>
+                      {row._name}
+                    </span>
                     {/* Consolidate button — only shown when multiple entries share this name */}
                     {nameCount[row._name] > 1 && (
                       <button

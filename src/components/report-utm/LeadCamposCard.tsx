@@ -2,11 +2,22 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { ListFilter, Plus, Pencil, Trash2, Loader2, AlertCircle, RefreshCw } from 'lucide-react';
+import {
+  ListFilter,
+  Plus,
+  Pencil,
+  Trash2,
+  Loader2,
+  AlertCircle,
+  RefreshCw,
+  Eye,
+  EyeOff,
+} from 'lucide-react';
 import { LeadCampoEditorDialog } from './LeadCampoEditorDialog';
 import { LeadSegmentosEditor } from './LeadSegmentosEditor';
 import { bucketDeValor, ordenarBuckets } from '@/lib/report-utm/lead-campos';
 import type { LeadCampoDef, LeadSegmentoDef, ClaveDetectada } from '@/lib/report-utm/lead-campos';
+import { resumirReferencias, type ReferenciaCampo } from '@/lib/report-utm/lead-campo-referencias';
 
 /**
  * Campos de lead del cliente: las preguntas de sus formularios convertidas en
@@ -19,6 +30,10 @@ import type { LeadCampoDef, LeadSegmentoDef, ClaveDetectada } from '@/lib/report
  */
 export function LeadCamposCard({ clienteId }: { clienteId: string }) {
   const [campos, setCampos] = useState<LeadCampoDef[]>([]);
+  // Quién usa cada campo, por clave. Es lo que convierte «¿Borrar el campo?» en
+  // una pregunta que se puede responder: sin esto, retirar un campo rompía
+  // informes y pestañas en silencio (le pasó a los cuatro umbrales de Goodprop).
+  const [referencias, setReferencias] = useState<Record<string, ReferenciaCampo[]>>({});
   const [segmentos, setSegmentos] = useState<LeadSegmentoDef[]>([]);
   const [guardandoSeg, setGuardandoSeg] = useState(false);
   const [detectadas, setDetectadas] = useState<ClaveDetectada[]>([]);
@@ -36,7 +51,7 @@ export function LeadCamposCard({ clienteId }: { clienteId: string }) {
       setError(null);
       try {
         const [resCampos, resSeg, resDet] = await Promise.all([
-          fetch(`/api/report-utm/lead-campos?cliente_id=${clienteId}`),
+          fetch(`/api/report-utm/lead-campos?cliente_id=${clienteId}&con_referencias=1`),
           fetch(`/api/report-utm/lead-campos/segmentos?cliente_id=${clienteId}`),
           // La detección escanea leads: solo se rehace a petición o en la
           // primera carga, no en cada guardado.
@@ -47,6 +62,9 @@ export function LeadCamposCard({ clienteId }: { clienteId: string }) {
         const jsonCampos = await resCampos.json();
         if (!resCampos.ok) throw new Error(jsonCampos?.error ?? 'No se pudo leer el catálogo.');
         setCampos(jsonCampos.data ?? []);
+        // La API omite `referencias` si el cálculo falló: sin aviso, pero con
+        // catálogo. Se limpia para no dejar en pantalla el de la carga anterior.
+        setReferencias(jsonCampos.referencias ?? {});
 
         // Los segmentos no rompen la card si falta la migración 073: la API
         // devuelve lista vacía y la sección simplemente no ofrece nada.
@@ -94,16 +112,60 @@ export function LeadCamposCard({ clienteId }: { clienteId: string }) {
     }
   }
 
+  /**
+   * Lista de quién se rompe, para meterla en el `confirm()`.
+   *
+   * Se nombran de uno en uno hasta cinco en vez de dar solo el número: «lo usan
+   * 3 pestañas» no permite decidir nada, «lo usa la pestaña Evergreen Captacion»
+   * sí. Es justo la información que le faltó al script de migración.
+   */
+  function detalleReferencias(campo: LeadCampoDef): string {
+    const refs = referencias[campo.clave] ?? [];
+    if (refs.length === 0) return '\n\nAhora mismo no lo usa ningún informe ni pestaña.';
+    const lista = refs.slice(0, 5).map((r) => `  · ${r.origen}: ${r.nombre} — ${r.motivo}`);
+    if (refs.length > 5) lista.push(`  · …y ${refs.length - 5} más`);
+    return `\n\nLo usan ${resumirReferencias(refs)}:\n${lista.join('\n')}`;
+  }
+
   async function borrar(campo: LeadCampoDef) {
     if (
       !confirm(
-        `¿Borrar el campo “${campo.nombre}”? Los widgets que lo usen dejarán de tener datos.`
+        `¿Borrar el campo “${campo.nombre}”? Los widgets que lo usen dejarán de tener datos, y sus segmentos se borran con él.` +
+          detalleReferencias(campo)
       )
     )
       return;
     const res = await fetch(`/api/report-utm/lead-campos?id=${campo.id}`, { method: 'DELETE' });
     if (res.ok) await cargar();
     else setError('No se pudo borrar el campo.');
+  }
+
+  /**
+   * Activar o desactivar sin pasar por el editor.
+   *
+   * `activo` existía en la tabla y en la API desde la migración 060, pero no
+   * había ninguna pantalla que lo tocara: un campo desactivado por script se
+   * quedaba desactivado para siempre, y el bloque que lo usaba, roto. Es la otra
+   * mitad del arreglo, junto con el aviso de referencias.
+   */
+  async function alternarActivo(campo: LeadCampoDef) {
+    const desactivando = campo.activo;
+    if (
+      desactivando &&
+      !confirm(
+        `¿Desactivar “${campo.nombre}”? Deja de ofrecerse como dimensión y como filtro, y los bloques que lo usen se quedan sin datos.` +
+          detalleReferencias(campo)
+      )
+    )
+      return;
+
+    const res = await fetch('/api/report-utm/lead-campos', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...campo, cliente_id: clienteId, activo: !campo.activo }),
+    });
+    if (res.ok) await cargar();
+    else setError(`No se pudo ${desactivando ? 'desactivar' : 'activar'} el campo.`);
   }
 
   async function guardarSegmento(borrador: Partial<LeadSegmentoDef>) {
@@ -242,7 +304,26 @@ export function LeadCamposCard({ clienteId }: { clienteId: string }) {
                     <p className="text-[10px] font-mono text-muted-foreground/50 mt-0.5">
                       leadfield:{campo.clave}
                     </p>
+                    {(referencias[campo.clave]?.length ?? 0) > 0 && (
+                      <p
+                        className="text-[10px] text-muted-foreground/70 mt-0.5"
+                        title={referencias[campo.clave]
+                          .map((r) => `${r.origen}: ${r.nombre} — ${r.motivo}`)
+                          .join('\n')}
+                      >
+                        En uso por {resumirReferencias(referencias[campo.clave])}
+                      </p>
+                    )}
                   </div>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => void alternarActivo(campo)}
+                    className="h-6 w-6 p-0 text-muted-foreground hover:text-foreground shrink-0"
+                    title={campo.activo ? 'Desactivar' : 'Activar'}
+                  >
+                    {campo.activo ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
+                  </Button>
                   <Button
                     variant="ghost"
                     size="sm"

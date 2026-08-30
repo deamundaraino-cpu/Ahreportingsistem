@@ -169,6 +169,22 @@ para pasar de `auto` a `catalogo` sin obligar a configurar antes de ver nada. Un
 campo del catálogo es además lo **único** que puede unir la misma pregunta
 llegada con dos claves distintas (Meta y web) en un solo desglose.
 
+#### Si la pregunta desaparece del catálogo
+
+Un bloque `catalogo` guarda la **clave desnuda**, no un token. Si ese campo se
+desactiva o se borra, el servidor no lo encuentra —el catálogo se lee con
+`soloActivos`— y lo omite del cubo: la clave viaja entonces en
+`LeadAnswerDataset.camposAusentes` y el bloque dice **«La pregunta configurada ya
+no está disponible»**, nombrándola.
+
+Ese aviso se comprueba **antes** que el vacío genérico, y no es un detalle: si el
+bloque roto era el único de la pestaña, `campos` llegaba vacío y la UI decía «no
+hay respuestas de formulario para este cliente» — falso, y manda a buscar el
+problema al sitio equivocado.
+
+El bloque **no** cae a `auto` por su cuenta: eso cambiaría las cifras sin avisar.
+Ver [doc 17 · Retirar un campo sin romper nada](./17-campos-de-lead.md).
+
 ### Cómo se calculan las cifras
 
 1. `report_utm.bi_respuestas_por_dia` (migración 071) pliega los leads a

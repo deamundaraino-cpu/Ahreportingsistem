@@ -51,6 +51,16 @@ export interface PreguntaSugerida {
   formularios: string[];
   /** Los valores más frecuentes, para la vista previa del picker. */
   valores: string[];
+  /**
+   * El campo existe pero está DESACTIVADO. Solo se devuelve para la clave que el
+   * bloque ya tiene guardada (`clave_actual`).
+   *
+   * Sin esto, la pregunta configurada simplemente no aparecía en la lista: el
+   * analista abría el picker de un bloque roto, no veía qué tenía puesto y no
+   * podía ni confirmarlo ni recuperarlo. Ofrecerlo marcado es lo que permite
+   * decidir entre reactivarlo o cambiar de pregunta.
+   */
+  inactivo?: boolean;
 }
 
 // ── Caché de módulo ───────────────────────────────────────────────────
@@ -72,8 +82,11 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'public_cliente_id requerido' }, { status: 400 });
   }
   const todas = sp.get('todas') === '1';
+  // Clave que el bloque ya tiene guardada. Se pasa para poder devolverla aunque
+  // su campo esté desactivado; ver `PreguntaSugerida.inactivo`.
+  const claveActual = sp.get('clave_actual') ?? '';
 
-  const key = `${publicClienteId}|${todas ? 'todas' : 'ofrecibles'}`;
+  const key = `${publicClienteId}|${todas ? 'todas' : 'ofrecibles'}|${claveActual}`;
   const hit = cache.get(key);
   if (hit && Date.now() - hit.ts <= TTL_MS) {
     return NextResponse.json(hit.payload, {
@@ -100,10 +113,19 @@ export async function GET(req: NextRequest) {
     const dateTo = new Date().toISOString().slice(0, 10);
 
     const rtm = await reportUtmAdminClient();
-    const [catalogo, deteccion] = await Promise.all([
-      loadLeadCampos(rtm, rtmClienteId, { soloActivos: true }),
+    // Se lee el catálogo ENTERO, no solo los activos: hace falta poder devolver
+    // el campo que el bloque tiene guardado aunque esté desactivado.
+    const [catalogoCompleto, deteccion] = await Promise.all([
+      loadLeadCampos(rtm, rtmClienteId),
       detectarCamposDeLeads(rtm, rtmClienteId, { dateFrom, dateTo, incluirIgnoradas: todas }),
     ]);
+
+    // Los activos, más —si toca— el inactivo que el bloque ya tiene puesto. Un
+    // campo desactivado NO se ofrece para elegirlo de nuevo; se ofrece para que
+    // el analista vea qué hay configurado y decida.
+    const catalogo = catalogoCompleto.filter(
+      (c) => c.activo || (claveActual !== '' && c.clave === claveActual)
+    );
 
     const delCatalogo: PreguntaSugerida[] = catalogo.map((c) => ({
       origen: 'catalogo',
@@ -118,10 +140,13 @@ export async function GET(req: NextRequest) {
       distintos: c.valores_orden.length || 0,
       formularios: [],
       valores: c.valores_orden.slice(0, 10),
+      ...(c.activo ? {} : { inactivo: true }),
     }));
 
     // Las claves que ya cubre un campo del catálogo no se vuelven a ofrecer:
     // elegirlas sueltas partiría en dos un desglose que ya está unificado.
+    // Incluye el inactivo que se acaba de añadir: ofrecer a la vez el campo y
+    // sus claves sueltas sería ofrecer dos veces la misma pregunta.
     const yaCubiertas = new Set(catalogo.flatMap((c) => c.claves_origen));
 
     const umbral = Math.max(LEADS_MINIMOS, Math.round(deteccion.leads * COBERTURA_MINIMA));

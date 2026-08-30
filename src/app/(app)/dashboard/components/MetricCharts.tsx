@@ -23,8 +23,11 @@ import {
   CartesianGrid,
   Tooltip,
   ResponsiveContainer,
-  Legend,
 } from 'recharts';
+import { anchoTextoPx, truncarAAncho } from '@/lib/chart-labels';
+import { useAnchoContenedor } from '@/lib/hooks/useAnchoContenedor';
+import { TickCategoriaX } from '@/components/charts/ChartTicks';
+import { TextoTruncado } from '@/components/ui/tooltip';
 import { evaluateFormula, aggregateFormula } from '@/lib/formula-engine';
 import { format, parseISO, isValid, startOfWeek, startOfMonth, startOfYear } from 'date-fns';
 import { es } from 'date-fns/locale';
@@ -307,35 +310,46 @@ function buildDimensionData(
 }
 
 // ─── Shared axis / grid styles ────────────────────────────────────────────────
-const TICK = { fill: '#71717a', fontSize: 11 };
-const GRID = { stroke: 'rgba(255,255,255,0.05)', strokeDasharray: '3 3' };
+//
+// Sin `fill` ni `stroke`: el chrome de estas gráficas lo pinta el scope
+// `.chart-wrapper` de `globals.css` con `!important` y tokens de tema. Aquí
+// había un `fill:'#71717a'` y un `stroke:'rgba(255,255,255,0.05)'` que NUNCA
+// llegaban a verse —el CSS los pisaba— pero hacían creer que el color se decidía
+// en el componente. `docs/DESIGN.md` es explícito: nada de colores de chrome
+// cableados.
+//
+// `fontSize` también se va: el CSS fuerza 11px, y dejarlo aquí invitaba a
+// tocarlo sin efecto. Ese 11 es el que usa el cálculo de anchos (TICK_FONT).
+const TICK = {};
+const GRID = { strokeDasharray: '3 3' };
 const CURVE = 'monotone' as const;
 
+/**
+ * Tamaño REAL del tick en este módulo.
+ *
+ * `globals.css` fuerza `font-size: 11px !important` dentro de `.chart-wrapper`,
+ * así que el recorte de etiquetas tiene que medir con 11 aunque el componente
+ * pida otra cosa. En el BI, que vive fuera de ese scope, son 10.
+ */
+const TICK_FONT = 11;
+
 // ─── Custom tooltip ───────────────────────────────────────────────────────────
+//
+// Reescrito con clases de tema. El anterior traía los colores de TEXTO en duro
+// (`#52525b`, `#a1a1aa`, `#f4f4f5`) y no los cubría ninguna regla de
+// `globals.css`: las de `.recharts-tooltip-item-name/-value/-label` apuntan a
+// clases que este tooltip custom no emite. En tema claro eso era gris claro
+// sobre fondo claro, o sea ilegible. Y no era solo cosmética: este tooltip es lo
+// que devuelve el nombre completo de una etiqueta recortada.
+//
+// De paso gana el `max-width` + `break-words` que le faltaban, que es
+// exactamente lo que impedía que un nombre largo lo estirase sin límite.
 function CustomTooltip({ active, payload, label, categories, localUnits }: any) {
   if (!active || !payload?.length) return null;
   return (
-    <div
-      style={{
-        background: '#09090b',
-        border: '1px solid rgba(255,255,255,0.12)',
-        borderRadius: 10,
-        padding: '10px 14px',
-        boxShadow: '0 8px 32px rgba(0,0,0,0.8)',
-        minWidth: 140,
-      }}
-    >
+    <div className="rounded-lg border border-border bg-popover text-popover-foreground px-3 py-2.5 shadow-md min-w-[140px] max-w-[320px]">
       {label && (
-        <p
-          style={{
-            color: '#52525b',
-            fontSize: 10,
-            textTransform: 'uppercase',
-            letterSpacing: '0.1em',
-            fontWeight: 700,
-            marginBottom: 8,
-          }}
-        >
+        <p className="text-[10px] uppercase tracking-[0.1em] font-bold text-muted-foreground mb-2 break-words">
           {label}
         </p>
       )}
@@ -344,26 +358,81 @@ function CustomTooltip({ active, payload, label, categories, localUnits }: any) 
         const catIdx = categories ? categories.indexOf(e.name) : -1;
         const unit = catIdx !== -1 && localUnits ? localUnits[catIdx] : e.unit || e.payload?.unit;
         return (
-          <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+          <div key={i} className="flex items-start gap-2 mb-1">
             <span
-              style={{
-                width: 8,
-                height: 8,
-                borderRadius: '50%',
-                background: e.color || e.fill,
-                flexShrink: 0,
-              }}
+              className="w-2 h-2 rounded-full shrink-0 mt-1"
+              style={{ background: e.color || e.fill }}
             />
-            <span style={{ color: '#a1a1aa', fontSize: 11, flex: 1 }}>{e.name}</span>
-            <span
-              style={{ color: '#f4f4f5', fontSize: 12, fontWeight: 600, fontFamily: 'monospace' }}
-            >
+            <span className="text-[11px] text-muted-foreground flex-1 min-w-0 break-words">
+              {e.name}
+            </span>
+            <span className="text-xs font-semibold font-mono text-foreground shrink-0">
               {fmtVal(val, unit)}
             </span>
           </div>
         );
       })}
     </div>
+  );
+}
+
+/**
+ * Etiqueta de una porción de dona/tarta.
+ *
+ * La anterior era `` `${name}: ${fmtVal(value)}` `` sin recortar nada: con
+ * nombres de campaña el texto salía del SVG y lo cortaba el borde del
+ * contenedor, sin dejar rastro de lo que decía.
+ *
+ * Aquí el nombre se recorta al hueco que HAY de verdad entre el punto de anclaje
+ * y el borde del gráfico, y el valor —que es el dato— nunca se recorta. El
+ * `<title>` devuelve siempre el texto entero.
+ */
+function EtiquetaPie({
+  cx,
+  cy,
+  midAngle,
+  outerRadius,
+  percent,
+  name,
+  value,
+  anchoSvg,
+  datos,
+}: any) {
+  // Una porción invisible no tiene dónde poner su etiqueta, y ponerla igual
+  // amontona texto sobre texto. El nombre sigue estando en la leyenda y en el
+  // tooltip, que es donde se puede leer.
+  if (typeof percent === 'number' && percent < 0.03) return null;
+
+  const RAD = Math.PI / 180;
+  const radio = (outerRadius ?? 0) + 12;
+  const cos = Math.cos(-midAngle * RAD);
+  const x = cx + radio * cos;
+  const y = cy + radio * Math.sin(-midAngle * RAD);
+  const anclaje = cos >= 0 ? 'start' : 'end';
+
+  const item = datos?.find((t: any) => t.name === name);
+  const valor = fmtVal(value, item?.unit);
+  const nombreCompleto = String(name ?? '');
+
+  // Píxeles reales hasta el borde por el lado en el que crece el texto.
+  const hastaElBorde = anclaje === 'start' ? (anchoSvg || 0) - x : x;
+  const presupuesto = hastaElBorde - 8 - anchoTextoPx(` · ${valor}`, TICK_FONT);
+  const nombre = truncarAAncho(nombreCompleto, Math.max(0, presupuesto), TICK_FONT);
+
+  return (
+    <text
+      x={x}
+      y={y}
+      textAnchor={anclaje}
+      dominantBaseline="central"
+      fontSize={TICK_FONT}
+      // La clase es la que engancha con el token de color de globals.css. El
+      // `fill` NO se pone aquí: sería chrome cableado.
+      className="recharts-pie-label-text"
+    >
+      <title>{`${nombreCompleto}: ${valor}`}</title>
+      {nombre ? `${nombre} · ${valor}` : valor}
+    </text>
   );
 }
 
@@ -600,12 +669,25 @@ function SingleMetricChart({
     chart.type
   );
 
+  // Lo que de verdad se pinta como porción: por dimensión son las campañas, sin
+  // dimensión son las fórmulas. Es la MISMA regla que usa `ChartBody` para
+  // `circularData`; si divergieran, la leyenda volvería a mentir.
+  const leyendaCircular = (
+    chart.dimension && dimensionTotals.length > 0 ? dimensionTotals : totalByCategory
+  ).map((t) => ({ nombre: t.name, color: t.color }));
+
   return (
     <div className="rounded-xl border border-border bg-card/80 p-5 shadow-lg relative group/chart">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3 mb-4">
-        <div>
-          <h3 className="text-sm font-semibold text-foreground">{chart.title}</h3>
+        {/* `min-w-0` para que el título pueda encogerse: sin él empuja al
+            selector de periodicidad fuera de la tarjeta. */}
+        <div className="min-w-0 flex-1">
+          <TextoTruncado
+            as="h3"
+            text={chart.title}
+            className="text-sm font-semibold text-foreground"
+          />
           {formulasNoAplicables.length > 0 && (
             <p className="text-[11px] text-amber-600 dark:text-amber-400 mt-1">
               {formulasNoAplicables.length === 1
@@ -615,66 +697,73 @@ function SingleMetricChart({
             </p>
           )}
           <div className="flex flex-wrap gap-2.5 mt-2">
-            {categories.map((cat, i) => {
-              if (!isCartesian) {
-                return (
+            {/* Circular (dona/tarta/radial/embudo): la leyenda nombra las
+                PORCIONES. Antes nombraba siempre las fórmulas, así que en un
+                gráfico por dimensión las porciones eran campañas y la leyenda
+                decía «Leads», «Gasto»… Y la leyenda nativa de recharts está
+                oculta por `globals.css`, o sea que el nombre de una porción no
+                aparecía en ningún sitio fijo. */}
+            {!isCartesian &&
+              leyendaCircular.map((it) => (
+                <span
+                  key={it.nombre}
+                  className="flex items-center gap-1.5 text-[11px] text-muted-foreground max-w-[200px] min-w-0"
+                  title={it.nombre}
+                >
                   <span
+                    style={{
+                      width: 8,
+                      height: 8,
+                      borderRadius: '50%',
+                      background: it.color,
+                      display: 'inline-block',
+                      flexShrink: 0,
+                    }}
+                  />
+                  <span className="truncate">{it.nombre}</span>
+                </span>
+              ))}
+            {isCartesian &&
+              categories.map((cat, i) => {
+                const currentType = localTypes[i] || '';
+                return (
+                  <div
                     key={cat}
-                    className="flex items-center gap-1.5 text-[11px] text-muted-foreground"
+                    className="flex items-center gap-1.5 bg-background/40 border border-border px-2 py-0.5 rounded-lg text-[10px] text-muted-foreground hover:border-muted-foreground/30 transition"
                   >
                     <span
                       style={{
-                        width: 8,
-                        height: 8,
+                        width: 6,
+                        height: 6,
                         borderRadius: '50%',
                         background: colors[i],
                         display: 'inline-block',
                         flexShrink: 0,
                       }}
                     />
-                    {cat}
-                  </span>
+                    <span className="font-medium text-foreground/90">{cat}</span>
+                    <select
+                      value={currentType}
+                      onChange={(e) => {
+                        const val = e.target.value as 'line' | 'bar' | 'area' | '';
+                        const newTypes = [...localTypes];
+                        while (newTypes.length < categories.length) newTypes.push('');
+                        newTypes[i] = val;
+                        setLocalTypes(newTypes);
+                        if (onUpdateChart) {
+                          onUpdateChart(chart.id, { ...chart, types: newTypes });
+                        }
+                      }}
+                      className="bg-card/60 border-none text-[9px] text-muted-foreground rounded px-1.5 py-0.5 outline-none hover:text-foreground cursor-pointer transition font-medium"
+                    >
+                      <option value="">Defecto</option>
+                      <option value="line">Línea</option>
+                      <option value="bar">Barra</option>
+                      <option value="area">Área</option>
+                    </select>
+                  </div>
                 );
-              }
-              const currentType = localTypes[i] || '';
-              return (
-                <div
-                  key={cat}
-                  className="flex items-center gap-1.5 bg-background/40 border border-border px-2 py-0.5 rounded-lg text-[10px] text-muted-foreground hover:border-muted-foreground/30 transition"
-                >
-                  <span
-                    style={{
-                      width: 6,
-                      height: 6,
-                      borderRadius: '50%',
-                      background: colors[i],
-                      display: 'inline-block',
-                      flexShrink: 0,
-                    }}
-                  />
-                  <span className="font-medium text-foreground/90">{cat}</span>
-                  <select
-                    value={currentType}
-                    onChange={(e) => {
-                      const val = e.target.value as 'line' | 'bar' | 'area' | '';
-                      const newTypes = [...localTypes];
-                      while (newTypes.length < categories.length) newTypes.push('');
-                      newTypes[i] = val;
-                      setLocalTypes(newTypes);
-                      if (onUpdateChart) {
-                        onUpdateChart(chart.id, { ...chart, types: newTypes });
-                      }
-                    }}
-                    className="bg-card/60 border-none text-[9px] text-muted-foreground rounded px-1.5 py-0.5 outline-none hover:text-foreground cursor-pointer transition font-medium"
-                  >
-                    <option value="">Defecto</option>
-                    <option value="line">Línea</option>
-                    <option value="bar">Barra</option>
-                    <option value="area">Área</option>
-                  </select>
-                </div>
-              );
-            })}
+              })}
           </div>
         </div>
 
@@ -723,11 +812,10 @@ function SingleMetricChart({
   );
 }
 
-const formatXAxis = (val: string) => {
-  if (!val) return '';
-  if (val.length > 15) return val.slice(0, 15) + '...';
-  return val;
-};
+// `formatXAxis` vivía aquí y cortaba a 15 caracteres a pelo, con '...' y sin
+// tooltip: un nombre de campaña quedaba irrecuperable. Lo sustituye
+// `TickCategoriaX`, que corta al ancho REAL disponible y deja el nombre completo
+// en un `<title>` del SVG.
 
 // ─── Chart Body Switcher ──────────────────────────────────────────────────────
 function ChartBody({
@@ -771,187 +859,206 @@ function ChartBody({
     type
   );
 
+  // Ancho medido, para repartirlo entre los ticks del eje X cuando son
+  // categorías (nombres de campaña) y no fechas.
+  const [refAncho, anchoContenedor] = useAnchoContenedor<HTMLDivElement>();
+  const anchoTick = Math.max(28, Math.floor(anchoContenedor / Math.max(1, data.length)) - 6);
+
   if (isCartesian) {
     const hasLeft = categories.some((_, i) => !chart.yAxes || chart.yAxes[i] !== 'right');
     const hasRight = categories.some((_, i) => chart.yAxes?.[i] === 'right');
 
     return (
-      <ResponsiveContainer width="100%" height={H}>
-        <ComposedChart
-          data={data}
-          margin={{ top: 12, right: hasRight ? 8 : 12, left: hasLeft ? -10 : 8, bottom: 0 }}
-        >
-          <defs>
-            {categories.map((_, i) => {
-              const sType = getSeriesType(i, type, localTypes);
-              if (sType !== 'area') return null;
-              return (
-                <linearGradient key={i} id={`ag-${chartId}-${i}`} x1="0" y1="0" x2="0" y2="1">
-                  <stop
-                    offset="5%"
-                    stopColor={colors[i]}
-                    stopOpacity={type === 'stacked_area' ? 0.5 : 0.3}
-                  />
-                  <stop
-                    offset="95%"
-                    stopColor={colors[i]}
-                    stopOpacity={type === 'stacked_area' ? 0.1 : 0.02}
-                  />
-                </linearGradient>
-              );
-            })}
-          </defs>
-          <CartesianGrid {...GRID} vertical={false} />
-          <XAxis
-            dataKey="date"
-            tick={TICK}
-            axisLine={false}
-            tickLine={false}
-            tickFormatter={chart.dimension ? formatXAxis : undefined}
-          />
-          {hasLeft && (
-            <YAxis
-              yAxisId="left"
-              orientation="left"
-              tickFormatter={(val) => fmtAxis(val, 'left', chart.yAxes, localUnits)}
-              tick={TICK}
+      <div ref={refAncho}>
+        <ResponsiveContainer width="100%" height={H}>
+          <ComposedChart
+            data={data}
+            margin={{ top: 12, right: hasRight ? 8 : 12, left: hasLeft ? -10 : 8, bottom: 8 }}
+          >
+            <defs>
+              {categories.map((_, i) => {
+                const sType = getSeriesType(i, type, localTypes);
+                if (sType !== 'area') return null;
+                return (
+                  <linearGradient key={i} id={`ag-${chartId}-${i}`} x1="0" y1="0" x2="0" y2="1">
+                    <stop
+                      offset="5%"
+                      stopColor={colors[i]}
+                      stopOpacity={type === 'stacked_area' ? 0.5 : 0.3}
+                    />
+                    <stop
+                      offset="95%"
+                      stopColor={colors[i]}
+                      stopOpacity={type === 'stacked_area' ? 0.1 : 0.02}
+                    />
+                  </linearGradient>
+                );
+              })}
+            </defs>
+            <CartesianGrid {...GRID} vertical={false} />
+            <XAxis
+              dataKey="date"
+              // Con dimensión el eje son categorías largas y hace falta el tick
+              // que mide y deja tooltip. Con fechas, el tick por defecto ya va
+              // bien y no merece la pena montar un `<text>` propio por punto.
+              tick={
+                chart.dimension ? <TickCategoriaX ancho={anchoTick} fontSize={TICK_FONT} /> : TICK
+              }
+              interval={chart.dimension ? 'preserveStartEnd' : undefined}
               axisLine={false}
               tickLine={false}
-              width={52}
             />
-          )}
-          {hasRight && (
-            <YAxis
-              yAxisId="right"
-              orientation="right"
-              tickFormatter={(val) => fmtAxis(val, 'right', chart.yAxes, localUnits)}
-              tick={TICK}
-              axisLine={false}
-              tickLine={false}
-              width={52}
-            />
-          )}
-          <Tooltip
-            content={<CustomTooltip categories={categories} localUnits={localUnits} />}
-            cursor={{ fill: 'rgba(255,255,255,0.04)' }}
-          />
-          {categories.map((cat, i) => {
-            const sType = getSeriesType(i, type, localTypes);
-            const yAxisId = chart.yAxes?.[i] === 'right' ? 'right' : 'left';
-            const strokeWidth = chart.strokeWidths?.[i] ?? 2;
-            const color = colors[i];
-            const unitVal = localUnits[i] || 'number';
-
-            const labelListElement = chart.showDataLabels && (
-              <LabelList
-                dataKey={cat}
-                position="top"
-                offset={10}
-                style={{ fill: '#a1a1aa', fontSize: 9, fontFamily: 'monospace' }}
-                formatter={(val: any) => (typeof val === 'number' ? fmtVal(val, unitVal) : val)}
+            {hasLeft && (
+              <YAxis
+                yAxisId="left"
+                orientation="left"
+                tickFormatter={(val) => fmtAxis(val, 'left', chart.yAxes, localUnits)}
+                tick={TICK}
+                axisLine={false}
+                tickLine={false}
+                width={52}
               />
-            );
+            )}
+            {hasRight && (
+              <YAxis
+                yAxisId="right"
+                orientation="right"
+                tickFormatter={(val) => fmtAxis(val, 'right', chart.yAxes, localUnits)}
+                tick={TICK}
+                axisLine={false}
+                tickLine={false}
+                width={52}
+              />
+            )}
+            <Tooltip
+              content={<CustomTooltip categories={categories} localUnits={localUnits} />}
+              cursor={{ fill: 'rgba(255,255,255,0.04)' }}
+            />
+            {categories.map((cat, i) => {
+              const sType = getSeriesType(i, type, localTypes);
+              const yAxisId = chart.yAxes?.[i] === 'right' ? 'right' : 'left';
+              const strokeWidth = chart.strokeWidths?.[i] ?? 2;
+              const color = colors[i];
+              const unitVal = localUnits[i] || 'number';
 
-            if (sType === 'area') {
+              const labelListElement = chart.showDataLabels && (
+                <LabelList
+                  dataKey={cat}
+                  position="top"
+                  offset={10}
+                  // Sin `fill`: el color lo pone el token de `.chart-wrapper`.
+                  // La clase se pone explícita —aunque recharts ya la añade— para
+                  // que el enganche con el CSS no dependa de un detalle interno
+                  // de la librería: si cambiara, la etiqueta se quedaría con el
+                  // gris por defecto y sería ilegible en tema claro.
+                  className="recharts-label"
+                  style={{ fontSize: 9, fontFamily: 'monospace' }}
+                  formatter={(val: any) => (typeof val === 'number' ? fmtVal(val, unitVal) : val)}
+                />
+              );
+
+              if (sType === 'area') {
+                return (
+                  <Area
+                    key={cat}
+                    type={CURVE}
+                    dataKey={cat}
+                    yAxisId={yAxisId}
+                    stackId={type === 'stacked_area' ? 's' : undefined}
+                    stroke={color}
+                    strokeWidth={strokeWidth}
+                    fill={`url(#ag-${chartId}-${i})`}
+                    dot={false}
+                    activeDot={{ r: 4, fill: color, strokeWidth: 0 }}
+                    unit={unitVal}
+                  >
+                    {labelListElement}
+                  </Area>
+                );
+              }
+
+              if (sType === 'bar') {
+                return (
+                  <Bar
+                    key={cat}
+                    dataKey={cat}
+                    yAxisId={yAxisId}
+                    stackId={type === 'stacked_bar' ? 's' : undefined}
+                    fill={color}
+                    opacity={0.85}
+                    radius={
+                      type === 'stacked_bar'
+                        ? i === categories.length - 1
+                          ? [3, 3, 0, 0]
+                          : [0, 0, 0, 0]
+                        : [3, 3, 0, 0]
+                    }
+                    maxBarSize={type === 'stacked_bar' ? 48 : 36}
+                    unit={unitVal}
+                  >
+                    {labelListElement}
+                  </Bar>
+                );
+              }
+
+              // default to line
               return (
-                <Area
+                <Line
                   key={cat}
                   type={CURVE}
                   dataKey={cat}
                   yAxisId={yAxisId}
-                  stackId={type === 'stacked_area' ? 's' : undefined}
                   stroke={color}
                   strokeWidth={strokeWidth}
-                  fill={`url(#ag-${chartId}-${i})`}
                   dot={false}
                   activeDot={{ r: 4, fill: color, strokeWidth: 0 }}
                   unit={unitVal}
                 >
                   {labelListElement}
-                </Area>
+                </Line>
               );
-            }
-
-            if (sType === 'bar') {
-              return (
-                <Bar
-                  key={cat}
-                  dataKey={cat}
-                  yAxisId={yAxisId}
-                  stackId={type === 'stacked_bar' ? 's' : undefined}
-                  fill={color}
-                  opacity={0.85}
-                  radius={
-                    type === 'stacked_bar'
-                      ? i === categories.length - 1
-                        ? [3, 3, 0, 0]
-                        : [0, 0, 0, 0]
-                      : [3, 3, 0, 0]
-                  }
-                  maxBarSize={type === 'stacked_bar' ? 48 : 36}
-                  unit={unitVal}
-                >
-                  {labelListElement}
-                </Bar>
-              );
-            }
-
-            // default to line
-            return (
-              <Line
-                key={cat}
-                type={CURVE}
-                dataKey={cat}
-                yAxisId={yAxisId}
-                stroke={color}
-                strokeWidth={strokeWidth}
-                dot={false}
-                activeDot={{ r: 4, fill: color, strokeWidth: 0 }}
-                unit={unitVal}
-              >
-                {labelListElement}
-              </Line>
-            );
-          })}
-        </ComposedChart>
-      </ResponsiveContainer>
+            })}
+          </ComposedChart>
+        </ResponsiveContainer>
+      </div>
     );
   }
 
   if (type === 'donut' || type === 'pie')
     return (
-      <ResponsiveContainer width="100%" height={H}>
-        <PieChart>
-          <Pie
-            data={circularData}
-            cx="50%"
-            cy="50%"
-            innerRadius={type === 'donut' ? '52%' : 0}
-            outerRadius="78%"
-            dataKey="value"
-            nameKey="name"
-            paddingAngle={type === 'donut' ? 3 : 1}
-            label={
-              chart.showDataLabels
-                ? ({ name, value }) => {
-                    const item = circularData.find((t) => t.name === name);
-                    return `${name}: ${fmtVal(value, item?.unit)}`;
-                  }
-                : false
-            }
-          >
-            {circularData.map((t) => (
-              <Cell key={t.name} fill={t.color} stroke="transparent" />
-            ))}
-          </Pie>
-          <Tooltip content={<CustomTooltip categories={categories} localUnits={localUnits} />} />
-          <Legend
-            formatter={(v) => <span style={{ color: '#a1a1aa', fontSize: 11 }}>{v}</span>}
-            iconType="circle"
-            iconSize={8}
-          />
-        </PieChart>
-      </ResponsiveContainer>
+      <div ref={refAncho}>
+        <ResponsiveContainer width="100%" height={H}>
+          <PieChart>
+            <Pie
+              data={circularData}
+              cx="50%"
+              cy="50%"
+              innerRadius={type === 'donut' ? '52%' : 0}
+              // Con etiquetas hay que dejarles sitio FUERA del arco. Con `78%`
+              // el texto nacía pegado al borde del SVG y lo recortaba el
+              // contenedor. Sin etiquetas no se penaliza nada y se mantiene.
+              outerRadius={chart.showDataLabels ? '62%' : '78%'}
+              dataKey="value"
+              nameKey="name"
+              paddingAngle={type === 'donut' ? 3 : 1}
+              // La línea guía sobra con el texto tan cerca: solo añade ruido.
+              labelLine={false}
+              label={
+                chart.showDataLabels
+                  ? (props: any) => (
+                      <EtiquetaPie {...props} anchoSvg={anchoContenedor} datos={circularData} />
+                    )
+                  : false
+              }
+            >
+              {circularData.map((t) => (
+                <Cell key={t.name} fill={t.color} stroke="transparent" />
+              ))}
+            </Pie>
+            <Tooltip content={<CustomTooltip categories={categories} localUnits={localUnits} />} />
+          </PieChart>
+        </ResponsiveContainer>
+      </div>
     );
 
   if (type === 'radial')
@@ -974,7 +1081,9 @@ function ChartBody({
             label={
               chart.showDataLabels
                 ? {
-                    fill: '#a1a1aa',
+                    // Sin `fill`: lo pone `globals.css` con el token, igual que
+                    // el resto del chrome. El hex de antes era gris claro y en
+                    // tema claro quedaba casi invisible.
                     fontSize: 10,
                     formatter: (val: any, index: number) => fmtVal(val, circularData[index]?.unit),
                   }
@@ -982,11 +1091,9 @@ function ChartBody({
             }
           />
           <Tooltip content={<CustomTooltip categories={categories} localUnits={localUnits} />} />
-          <Legend
-            formatter={(v) => <span style={{ color: '#a1a1aa', fontSize: 11 }}>{v}</span>}
-            iconType="circle"
-            iconSize={8}
-          />
+          {/* Sin `<Legend>`: `globals.css` oculta la nativa dentro de
+              `.chart-wrapper`, así que era código muerto. Los nombres los pinta
+              la leyenda de la cabecera, que ahora sí nombra las porciones. */}
         </RadialBarChart>
       </ResponsiveContainer>
     );

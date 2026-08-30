@@ -25,9 +25,16 @@ export const LEADS_SOURCE: DataSource = {
   grain: ['id'],
   joinAxes: ['date', 'platform', 'campaign', 'adset', 'ad', 'lead_column', 'lead_raw'],
   dateColumn: 'created_at',
-  // timestamptz: hay que convertir a día local antes de agrupar. Hoy se hace
-  // `String(created_at).slice(0,10)`, que es el día UTC, mientras el gasto usa
-  // `metricas_diarias.fecha` (un DATE) y la app muestra en America/Bogota.
+  // timestamptz: hay que convertir a día local antes de agrupar. Lo hace el
+  // motor con `colombiaDateOf` (bi-query.ts), y el recorte del rango con
+  // `colombiaRangeBounds` — tope superior EXCLUSIVO. Así el día coincide con
+  // `metricas_diarias.fecha`, que ya es día Colombia, y con las RPC del
+  // dashboard, que usan `AT TIME ZONE 'America/Bogota'`.
+  //
+  // NO se usa `String(created_at).slice(0,10)`: eso sería el día UTC y movería
+  // al día vecino los leads de las últimas 5 horas. Este comentario decía lo
+  // contrario y mandó a perseguir un desfase de zona horaria que no existía; el
+  // descuadre real era de paginación (ver migración 078).
   dateType: 'timestamptz',
   // `lead_segmento` es la ÚNICA medida dinámica de esta fuente: las otras dos
   // familias son dimensiones. Ver migración 073.

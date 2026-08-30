@@ -255,3 +255,15 @@ Small, pill-shaped components using the dual-mode tint pattern: low-saturation b
 ### Charts (Recharts)
 
 Chart chrome adapts to the theme via the `.chart-wrapper` scope in `globals.css`: axis ticks use `--muted-foreground`, grid lines `--chart-grid`, tooltips `--popover`/`--border`, pie sector strokes `--card`. Data-series colors (the saturated 500-series palette) are shared across themes — they read well on both backgrounds. Never hardcode chart chrome colors.
+
+Note that `.chart-wrapper` only wraps the dashboard charts (`MetricCharts.tsx`). The BI widgets (`ChartWidget.tsx`) sit outside that scope and satisfy the same rule the other way: `fill="currentColor"` plus a Tailwind token class. Both are valid; do not "unify" them by adding `.chart-wrapper` to the BI, because the scope also hides `.recharts-legend-wrapper` and forces an 11px tick, which the BI's own legends and axis-width maths depend on.
+
+### Truncation
+
+**Nothing is ever cut without a way to read it back.** A label that is clipped and unrecoverable is a bug, not a style choice — a campaign name is often the only thing that identifies a row.
+
+- Width comes from the actual text in the chart, not a constant. `src/lib/chart-labels.ts` estimates it and caps it at a fraction of the container so an axis can never eat the plot area.
+- In SVG (recharts ticks, pie labels) recovery is a `<title>` child of the `<text>` — the native equivalent of `title=`, no library, no portal. See `src/components/charts/ChartTicks.tsx`.
+- In HTML use `TextoTruncado` (Radix tooltip, in `components/ui/tooltip.tsx`) for the handful of elements that appear once per card — titles, legends, bar labels. Use plain `title=` in tables and rankings, where a tooltip root per cell would mean hundreds of portals for no gain.
+- `truncate` needs `min-w-0` on the flex child to do anything. A title that shares a row with a badge or a control needs `min-w-0 flex-1` on the title and `shrink-0` on the other one, or both get squashed instead of one yielding.
+- Emit the tooltip **only when the text was actually cut**. If every row has one, none of them signals anything.

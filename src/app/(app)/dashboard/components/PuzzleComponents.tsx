@@ -101,7 +101,9 @@ export const SortableCard = React.memo(function SortableCard({
         onClick={onToggleCollapse}
       >
         <ChevronRight className="w-3 h-3 text-muted-foreground/70 flex-shrink-0" />
-        <span className="text-xs text-muted-foreground/70 truncate">{card.label}</span>
+        <span className="text-xs text-muted-foreground/70 truncate" title={card.label}>
+          {card.label}
+        </span>
       </div>
     );
   }
@@ -300,7 +302,10 @@ export const SortableChart = React.memo(function SortableChart({
         onClick={onToggleCollapse}
       >
         <ChevronRight className="w-3.5 h-3.5 text-muted-foreground/70 flex-shrink-0" />
-        <span className="text-sm text-muted-foreground/70 truncate">
+        <span
+          className="text-sm text-muted-foreground/70 truncate"
+          title={chart.title || 'Gráfica'}
+        >
           {chart.title || 'Gráfica'}
         </span>
       </div>
@@ -723,7 +728,10 @@ export const SortableText = React.memo(function SortableText({
         onClick={onToggleCollapse}
       >
         <ChevronRight className="w-3 h-3 text-muted-foreground/70 flex-shrink-0" />
-        <span className="text-xs text-muted-foreground/70 truncate">
+        <span
+          className="text-xs text-muted-foreground/70 truncate"
+          title={block.content || 'Sección'}
+        >
           {block.content || 'Sección'}
         </span>
       </div>
@@ -824,7 +832,9 @@ export const SortableTable = React.memo(function SortableTable({
         onClick={onToggleCollapse}
       >
         <ChevronRight className="w-3.5 h-3.5 text-muted-foreground/70 flex-shrink-0" />
-        <span className="text-sm text-muted-foreground/70 truncate">{title || 'Tabla'}</span>
+        <span className="text-sm text-muted-foreground/70 truncate" title={title || 'Tabla'}>
+          {title || 'Tabla'}
+        </span>
       </div>
     );
   }

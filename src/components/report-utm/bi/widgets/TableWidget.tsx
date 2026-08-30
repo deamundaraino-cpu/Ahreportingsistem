@@ -277,8 +277,10 @@ export function TableWidget({ title, config, filters, calculatedFields = [], h =
     <div className="rounded-2xl border border-border bg-card overflow-hidden flex flex-col h-full">
       <div className="px-5 py-4 border-b border-border flex items-center justify-between gap-2">
         <div className="min-w-0">
-          <p className="text-sm font-semibold text-foreground">{title}</p>
-          <p className="text-[10px] text-muted-foreground mt-0.5">Por {dimLabel}</p>
+          <p className="text-sm font-semibold text-foreground truncate" title={title}>
+            {title}
+          </p>
+          <p className="text-[10px] text-muted-foreground mt-0.5 truncate">Por {dimLabel}</p>
           {/* Va en la cabecera y no al pie: en una tabla larga el
                         motivo tiene que verse sin hacer scroll hasta el final. */}
           {!loading && !error && (
@@ -327,9 +329,16 @@ export function TableWidget({ title, config, filters, calculatedFields = [], h =
             <tbody className="divide-y divide-border">
               {sorted.map((row, i) => (
                 <tr key={i} className="hover:bg-accent">
-                  <td className="px-5 py-2.5 text-xs font-mono text-emerald-600 dark:text-emerald-400">
-                    <span className="inline-flex items-center gap-1.5">
-                      {row.dimension_value ?? '(total)'}
+                  {/* Tope de ancho + `truncate`: un valor de dimensión largo
+                      (un nombre de campaña) estiraba la tabla entera y obligaba
+                      a hacer scroll horizontal para ver las métricas, que es lo
+                      que se viene a mirar. El `title` devuelve el valor entero. */}
+                  <td className="px-5 py-2.5 text-xs font-mono text-emerald-600 dark:text-emerald-400 max-w-[240px]">
+                    <span
+                      className="inline-flex items-center gap-1.5 max-w-full"
+                      title={String(row.dimension_value ?? '(total)')}
+                    >
+                      <span className="truncate">{row.dimension_value ?? '(total)'}</span>
                       {/* Sin cruce: este UTM no resolvió a ninguna campaña/anuncio real,
                                                 así que su gasto en 0 es un mapeo pendiente, no un dato. */}
                       {row.__nocross === 1 && (

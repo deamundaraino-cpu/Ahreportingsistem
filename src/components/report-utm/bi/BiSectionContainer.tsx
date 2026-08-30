@@ -101,8 +101,9 @@ export function BiSectionContainer({
           {collapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
         </button>
         <h3
-          className="flex-1 text-sm font-semibold text-foreground truncate"
+          className="flex-1 min-w-0 text-sm font-semibold text-foreground truncate"
           style={accent ? { color: accent } : undefined}
+          title={section.title}
         >
           {section.title}
         </h3>

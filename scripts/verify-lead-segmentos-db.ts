@@ -22,6 +22,10 @@
 import { config as loadEnv } from 'dotenv';
 loadEnv({ path: '.env.local' });
 
+// Estático y no dinámico como el resto: son funciones puras de fecha, sin red ni
+// `server-only`, y hacen falta antes de entrar en `main()`.
+import { addDaysISO, colombiaToday } from '../src/lib/colombia-date';
+
 let fallos = 0;
 function check(nombre: string, cond: boolean, detalle?: string) {
   if (cond) {
@@ -32,8 +36,23 @@ function check(nombre: string, cond: boolean, detalle?: string) {
   }
 }
 
-const HASTA = new Date().toISOString().slice(0, 10);
-const DESDE = new Date(Date.now() - 180 * 86400_000).toISOString().slice(0, 10);
+// El rango termina en el PASADO, no hoy, y es lo que hace fiable a este script.
+//
+// Todas sus comprobaciones cruzan números tomados en momentos distintos: el
+// total del BI se mide al arrancar y el cubo del dashboard varios minutos
+// después. Con una ventana que llega hasta hoy, cualquier lead que entre
+// mientras el script corre cae DENTRO de lo comparado y solo lo ve la segunda
+// lectura. El síntoma era un fallo intermitente —una de cada tres pasadas— con
+// el dashboard siempre un punto por encima del BI (`7135 vs 7134`), que tenía
+// toda la pinta de un error de cálculo y era la ventana moviéndose sola.
+//
+// El margen es de dos días, no de uno: un webhook de Meta o de GoHighLevel que
+// llegue tarde inserta el lead con SU hora, no con la de llegada, así que ayer
+// todavía puede recibir filas. Anteayer ya no.
+//
+// Día Colombia, que es el grano con el que agrupan las dos rutas.
+const HASTA = addDaysISO(colombiaToday(), -2);
+const DESDE = addDaysISO(HASTA, -180);
 
 async function main() {
   const { createAdminClient } = await import('../src/utils/supabase/server');
@@ -48,7 +67,15 @@ async function main() {
   const db = await createAdminClient();
   const rtm = db.schema('report_utm');
 
-  const { data: clientes } = await rtm.from('clientes').select('id,nombre').eq('status', 'active');
+  // `.order()` no es decorativo: sin él PostgREST no garantiza ningún orden, así
+  // que «el primer cliente con segmentos» podía ser otro en cada pasada y un
+  // fallo no se dejaba reproducir. Un verificador tiene que elegir siempre el
+  // mismo caso.
+  const { data: clientes } = await rtm
+    .from('clientes')
+    .select('id,nombre')
+    .eq('status', 'active')
+    .order('nombre');
 
   // Se prueba con el primer cliente que tenga segmentos configurados: sin
   // ninguno no hay nada que verificar y el script no debe fallar por eso.

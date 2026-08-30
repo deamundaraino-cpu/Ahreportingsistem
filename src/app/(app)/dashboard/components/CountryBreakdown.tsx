@@ -52,7 +52,9 @@ function CountryRow({
         <span className="text-xs font-bold text-muted-foreground/70 w-5 shrink-0">#{rank + 1}</span>
 
         {/* Country name */}
-        <span className="font-medium text-foreground w-28 shrink-0 truncate">{cm.country}</span>
+        <span className="font-medium text-foreground w-28 shrink-0 truncate" title={cm.country}>
+          {cm.country}
+        </span>
 
         {/* Spend bar */}
         <div className="flex-1 flex items-center gap-2 min-w-0">

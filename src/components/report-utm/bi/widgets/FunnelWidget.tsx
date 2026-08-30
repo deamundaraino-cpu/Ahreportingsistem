@@ -70,7 +70,9 @@ export function FunnelWidget({ title, config, filters }: Props) {
 
   return (
     <div className="rounded-2xl border border-border bg-card p-5 flex flex-col gap-4 h-full">
-      <p className="text-sm font-semibold text-foreground">{title}</p>
+      <p className="text-sm font-semibold text-foreground truncate" title={title}>
+        {title}
+      </p>
 
       {loading ? (
         <div className="flex-1 flex items-center justify-center">
@@ -101,10 +103,15 @@ export function FunnelWidget({ title, config, filters }: Props) {
                 )}
                 <div className={`rounded-xl border p-3 ${STAGE_PALETTE[i % STAGE_PALETTE.length]}`}>
                   <div className="flex items-center justify-between mb-2">
-                    <span className="text-xs font-semibold uppercase tracking-wider">
+                    {/* `min-w-0` + `truncate`: sin ellos una etapa con nombre
+                        largo empujaba al número fuera de la tarjeta. */}
+                    <span
+                      className="text-xs font-semibold uppercase tracking-wider min-w-0 truncate"
+                      title={s.label}
+                    >
                       {s.label}
                     </span>
-                    <span className="text-lg font-bold font-mono tabular-nums">
+                    <span className="text-lg font-bold font-mono tabular-nums shrink-0 pl-2">
                       {fmtN(s.value)}
                     </span>
                   </div>

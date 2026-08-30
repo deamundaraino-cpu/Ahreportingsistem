@@ -326,6 +326,16 @@
   stroke: var(--chart-axis) !important;
 }
 
+/* Etiquetas de sector (dona/tarta) y de barra radial.
+   No las cubría ninguna regla, así que se pintaban con un `fill` en duro desde
+   el componente — justo lo que prohíbe docs/DESIGN.md. Aquí se resuelven con el
+   token, y el componente se limita a decidir QUÉ texto va. */
+.chart-wrapper .recharts-pie-label-text,
+.chart-wrapper .recharts-label tspan,
+.chart-wrapper .recharts-radial-bar-label text {
+  fill: var(--muted-foreground) !important;
+}
+
 .chart-wrapper .recharts-cartesian-grid line {
   stroke: var(--chart-grid) !important;
   stroke-dasharray: 3 3;

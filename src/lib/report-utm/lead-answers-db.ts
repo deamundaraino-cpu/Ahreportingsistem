@@ -96,6 +96,20 @@ export interface LeadAnswerDataset {
   totalesPorFecha: Record<string, Array<[number, number]>>;
   /** Alguna consulta se truncó o falló: la UI tiene que decirlo. */
   incompleto: boolean;
+  /**
+   * Claves que un bloque pide y el catálogo ACTIVO no tiene.
+   *
+   * No se rellena aquí sino en el servidor del dashboard, que es quien resuelve
+   * los bloques contra el catálogo. Viaja en el dataset para que el bloque pueda
+   * distinguir "esta pregunta ya no existe" de "este cliente no tiene ninguna
+   * respuesta", que es un mensaje muy distinto y manda a buscar el problema a
+   * otro sitio.
+   *
+   * Pasó de verdad: con un único bloque roto en la pestaña, `campos` quedaba
+   * vacío y la UI decía "no hay respuestas de formulario para este cliente"
+   * cuando el cliente tenía doce mil.
+   */
+  camposAusentes?: string[];
 }
 
 export function datasetVacio(): LeadAnswerDataset {
@@ -127,6 +141,22 @@ export function datasetTieneLeads(ds: LeadAnswerDataset | null | undefined): boo
 const PAGINA_POSTGREST = 1000;
 
 /**
+ * Clave de grano de una fila de RPC: todas sus columnas MENOS las agregadas.
+ *
+ * `n` es el recuento y `total_filas` la ventana; el resto es justamente el
+ * `GROUP BY` de la función, así que dos filas con la misma clave son la misma
+ * combinación devuelta dos veces.
+ */
+function claveDeGrano(fila: Record<string, unknown>): string {
+  return JSON.stringify(
+    Object.keys(fila)
+      .filter((k) => k !== 'n' && k !== 'total_filas')
+      .sort()
+      .map((k) => [k, fila[k]])
+  );
+}
+
+/**
  * Trae TODAS las filas de una RPC, paginando con `range`.
  *
  * Detecta el truncado comparando contra `total_filas`, que la propia función
@@ -134,9 +164,19 @@ const PAGINA_POSTGREST = 1000;
  * más de mil combinaciones mostraba de menos con aspecto de dato completo —y
  * cuadrando consigo mismo, que es lo que lo hacía indetectable a ojo.
  *
- * La paginación es estable porque las dos RPC ordenan por su GRANO COMPLETO: con
- * un `ORDER BY n DESC` los empates cambiarían de página entre peticiones y se
- * duplicarían unas filas mientras se perderían otras.
+ * **La paginación por OFFSET exige que la RPC ordene por su GRANO COMPLETO.** No
+ * es un detalle de estilo: `.range()` re-ejecuta la función en cada página, así
+ * que si el `ORDER BY` deja empates (y con `n DESC, dia ASC` los deja a miles),
+ * el orden de esos empates puede cambiar entre peticiones y unas filas salen en
+ * DOS páginas mientras otras no salen en ninguna. La migración 078 lo arregló
+ * añadiendo el resto de la tupla al `ORDER BY`; si alguien recorta ese `ORDER BY`
+ * por rendimiento, esto vuelve a romperse. Antes de la 078 el síntoma era un
+ * conteo que cambiaba al recargar, y `verify-lead-segmentos-db` lo cazaba una de
+ * cada tres veces.
+ *
+ * Por eso el truncado NO basta como red de seguridad —`filas.length < total` no
+ * ve un intercambio de una duplicada por una perdida, porque el recuento cuadra—
+ * y se comprueban además los duplicados por grano.
  */
 async function traerTodasLasFilas(
   consulta: (desde: number, hasta: number) => PromiseLike<{ data: unknown; error: any }>
@@ -155,6 +195,25 @@ async function traerTodasLasFilas(
 
     if (lote.length < PAGINA_POSTGREST) break;
     if (total !== null && filas.length >= total) break;
+  }
+
+  // Solo puede haber duplicados si se paginó: con una única página el orden es
+  // el de una sola ejecución y no hay nada que pueda descuadrarse.
+  if (filas.length > PAGINA_POSTGREST) {
+    const vistos = new Set<string>();
+    let repetidas = 0;
+    for (const f of filas) {
+      const k = claveDeGrano(f);
+      if (vistos.has(k)) repetidas++;
+      else vistos.add(k);
+    }
+    if (repetidas > 0) {
+      console.error(
+        `[lead-answers] la paginación devolvió ${repetidas} fila(s) repetida(s) de ${filas.length}:` +
+          ' el ORDER BY de la RPC ya no cubre su grano completo (ver migración 078).' +
+          ' El conteo va a estar mal y va a cambiar entre recargas.'
+      );
+    }
   }
 
   return { filas, error: null, truncado: total !== null && filas.length < total };

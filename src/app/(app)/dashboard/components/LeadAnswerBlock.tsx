@@ -190,22 +190,35 @@ export function LeadAnswerBlock({
     );
   }
 
+  // El campo que este bloque pide desapareció del catálogo activo. Se comprueba
+  // ANTES del vacío genérico: si es el único bloque de la pestaña, `campos`
+  // llega vacío y el mensaje de abajo diría "este cliente no tiene respuestas",
+  // que es falso y manda a buscar el problema al sitio equivocado.
+  const claveAusente =
+    def.origen === 'catalogo' && def.clave && dataset?.camposAusentes?.includes(def.clave)
+      ? def.clave
+      : null;
+
+  if (claveAusente || res.campoAusente) {
+    return (
+      <Vacio
+        titulo={def.title || 'Respuestas de formulario'}
+        texto="La pregunta configurada ya no está disponible"
+        detalle={
+          claveAusente
+            ? `El campo de lead «${claveAusente}» está desactivado o borrado del catálogo del cliente. Reactívalo en la ficha del cliente, o elige otra pregunta en la configuración del bloque.`
+            : 'Puede que se haya borrado del catálogo de campos de lead, o que ningún lead del período la haya respondido. Vuelve a elegirla en la configuración del bloque.'
+        }
+      />
+    );
+  }
+
   if (!dataset || dataset.campos.length === 0) {
     return (
       <Vacio
         titulo={def.title || 'Respuestas de formulario'}
         texto="No hay respuestas de formulario para este cliente"
         detalle="O el cliente no está enlazado al módulo de informes, o sus formularios no hacen preguntas (solo piden nombre y correo). Los leads siguen contándose en el resto del dashboard."
-      />
-    );
-  }
-
-  if (res.campoAusente) {
-    return (
-      <Vacio
-        titulo={def.title || 'Respuestas de formulario'}
-        texto="La pregunta configurada ya no está disponible"
-        detalle="Puede que se haya borrado del catálogo de campos de lead, o que ningún lead del período la haya respondido. Vuelve a elegirla en la configuración del bloque."
       />
     );
   }
@@ -348,7 +361,15 @@ export function LeadAnswerBlock({
                   b.leadsPrevio !== null ? ` · período anterior: ${nf.format(b.leadsPrevio)}` : ''
                 }`}
               >
-                <span className="text-sm text-foreground w-48 shrink-0 truncate" title={b.label}>
+                {/* `shrink` y no `shrink-0`: con 192 px clavados más los 176 de
+                    los tres números de la derecha, la barra se quedaba sin
+                    sitio en cuanto la tarjeta se estrechaba. Ahora la etiqueta
+                    crece hasta 16rem si sobra hueco y se encoge hasta 6rem si
+                    falta, y lo que se corte lo devuelve el `title`. */}
+                <span
+                  className="text-sm text-foreground w-48 min-w-[6rem] max-w-[40%] shrink truncate"
+                  title={b.label}
+                >
                   {b.label}
                 </span>
 

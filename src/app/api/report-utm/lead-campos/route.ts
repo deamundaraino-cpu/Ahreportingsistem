@@ -1,8 +1,9 @@
 // Catálogo de campos de lead de un cliente (report_utm.lead_campos).
 //
-//   GET    ?cliente_id=       → campos definidos
-//   POST   { …campo }         → alta o edición
-//   DELETE ?id=               → baja
+//   GET    ?cliente_id=                     → campos definidos
+//   GET    ?cliente_id=&con_referencias=1   → …y quién usa cada uno
+//   POST   { …campo }                       → alta o edición
+//   DELETE ?id=                             → baja
 //
 // Es la administración que usa la ficha del cliente. La lectura que consume el
 // BI (con los valores ya calculados sobre el período) vive en
@@ -11,8 +12,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { reportUtmAdminClient } from '@/lib/report-utm/client';
 import { checkWriteRole, getUserRole } from '@/lib/report-utm/auth';
-import { loadLeadCampos, saveLeadCampo, deleteLeadCampo } from '@/lib/report-utm/lead-campos-db';
+import {
+  loadLeadCampos,
+  loadLeadSegmentos,
+  saveLeadCampo,
+  deleteLeadCampo,
+} from '@/lib/report-utm/lead-campos-db';
 import { slugCampo } from '@/lib/report-utm/lead-campos';
+import { referenciasDeCampoLead } from '@/lib/report-utm/lead-campo-referencias';
+import { createAdminClient } from '@/utils/supabase/server';
 
 export const dynamic = 'force-dynamic';
 
@@ -25,7 +33,41 @@ export async function GET(req: NextRequest) {
 
   const rtm = await reportUtmAdminClient();
   const campos = await loadLeadCampos(rtm, clienteId);
-  return NextResponse.json({ data: campos });
+
+  if (req.nextUrl.searchParams.get('con_referencias') !== '1') {
+    return NextResponse.json({ data: campos });
+  }
+
+  // Quién usa cada campo. Va detrás de un flag porque recorre los informes y
+  // todos los layouts: es barato comparado con escanear leads, pero no tiene
+  // sentido pagarlo en cada guardado, solo cuando la card lo va a enseñar.
+  //
+  // Si algo falla aquí NO se rompe el catálogo: se devuelven los campos sin
+  // referencias. Perder el aviso es peor que nada, pero perder la card entera
+  // por un aviso sería absurdo.
+  try {
+    const db = await createAdminClient();
+    const { data: cli } = await rtm
+      .from('clientes')
+      .select('public_cliente_id')
+      .eq('id', clienteId)
+      .maybeSingle();
+
+    const segmentos = await loadLeadSegmentos(rtm, clienteId, campos);
+    const referencias: Record<string, unknown[]> = {};
+    for (const campo of campos) {
+      referencias[campo.clave] = await referenciasDeCampoLead(db, {
+        rtmClienteId: clienteId,
+        publicClienteId: (cli as { public_cliente_id?: string } | null)?.public_cliente_id ?? null,
+        clave: campo.clave,
+        segmentos: segmentos.filter((s) => s.campo_clave === campo.clave),
+      });
+    }
+    return NextResponse.json({ data: campos, referencias });
+  } catch (err) {
+    console.error('[lead-campos] referencias no disponibles:', err);
+    return NextResponse.json({ data: campos });
+  }
 }
 
 export async function POST(req: NextRequest) {

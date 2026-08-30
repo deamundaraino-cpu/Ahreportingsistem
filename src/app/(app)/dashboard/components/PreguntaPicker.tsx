@@ -30,6 +30,8 @@ interface Sugerida {
   distintos: number;
   formularios: string[];
   valores: string[];
+  /** El campo existe pero está desactivado en el catálogo del cliente. */
+  inactivo?: boolean;
 }
 
 interface Props {
@@ -48,11 +50,24 @@ export function PreguntaPicker({ clienteId, def, onChange }: Props) {
   const [sugeridas, setSugeridas] = useState<Sugerida[]>([]);
   const [guardando, setGuardando] = useState(false);
 
+  // La clave que el bloque tenía guardada AL ABRIR viaja a la API para que
+  // devuelva ese campo aunque esté desactivado. Si no, el picker de un bloque
+  // roto salía sin ninguna opción marcada y sin pista de qué había configurado.
+  //
+  // Se congela con `useState` y no se recalcula en cada render a propósito: es
+  // parte de la clave de caché de `sugeridas`, y esa ruta escanea hasta 30.000
+  // leads. Si cambiara con cada pregunta elegida, cada clic fallaría la caché y
+  // dispararía un escaneo nuevo.
+  const [claveActual] = useState(def.origen === 'catalogo' ? (def.clave ?? '') : '');
+
   const cargar = useCallback(async () => {
     setCargando(true);
     setError(null);
     try {
-      const r = await fetch(`/api/report-utm/lead-campos/sugeridas?public_cliente_id=${clienteId}`);
+      const r = await fetch(
+        `/api/report-utm/lead-campos/sugeridas?public_cliente_id=${clienteId}` +
+          (claveActual ? `&clave_actual=${encodeURIComponent(claveActual)}` : '')
+      );
       const j = await r.json();
       if (!r.ok) throw new Error(j?.error ?? 'No se pudieron leer las preguntas.');
       setSugeridas(j.data ?? []);
@@ -63,7 +78,7 @@ export function PreguntaPicker({ clienteId, def, onChange }: Props) {
     } finally {
       setCargando(false);
     }
-  }, [clienteId]);
+  }, [clienteId, claveActual]);
 
   useEffect(() => {
     void cargar();
@@ -190,10 +205,25 @@ export function PreguntaPicker({ clienteId, def, onChange }: Props) {
                 }`}
               />
               <span className="min-w-0 flex-1">
-                <span className="block text-xs text-foreground truncate">{s.nombre}</span>
+                <span className="flex items-center gap-1.5 min-w-0">
+                  <span className="block text-xs text-foreground truncate" title={s.nombre}>
+                    {s.nombre}
+                  </span>
+                  {s.inactivo && (
+                    <span className="shrink-0 text-[10px] px-1.5 py-px rounded bg-amber-500/15 text-amber-700 dark:text-amber-400">
+                      inactivo
+                    </span>
+                  )}
+                </span>
                 <span className="block text-[11px] text-muted-foreground/70">
-                  {nf.format(s.leads)} leads
-                  {s.clavesOrigen.length > 1 && ` · une ${s.clavesOrigen.length} preguntas`}
+                  {s.inactivo
+                    ? // Un campo inactivo no se carga, así que el bloque no pinta
+                      // nada. Decirlo aquí evita el viaje al dashboard a mirar
+                      // por qué sigue vacío después de "elegirlo" otra vez.
+                      'desactivado en el catálogo: reactívalo en la ficha del cliente o elige otra pregunta'
+                    : `${nf.format(s.leads)} leads${
+                        s.clavesOrigen.length > 1 ? ` · une ${s.clavesOrigen.length} preguntas` : ''
+                      }`}
                 </span>
               </span>
             </button>

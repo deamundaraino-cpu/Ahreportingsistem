@@ -134,7 +134,9 @@ export function SlicerWidget({ title, config, filters, onSetFilter, onSetDateRan
                 >
                   {sel && <Check className="h-2.5 w-2.5 text-white" />}
                 </span>
-                <span className="flex-1 truncate">{v.valor}</span>
+                <span className="flex-1 truncate" title={v.valor}>
+                  {v.valor}
+                </span>
                 {/* El recuento es lo que convierte la lista en
                                     información: un «(sin campaña) · 47» junto a
                                     los demás delata el etiquetado de un vistazo. */}

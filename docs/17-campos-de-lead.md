@@ -186,22 +186,62 @@ está el campo con su valor, que sí es honesto sobre el gasto.
 
 ---
 
+## Retirar un campo sin romper nada
+
+Un campo se puede **desactivar** (botón del ojo en la card) o **borrar**. Las dos
+cosas tienen el mismo efecto para quien lo estaba usando: el catálogo se lee con
+`soloActivos`, así que el campo deja de existir para el BI y para los bloques del
+dashboard, y **eso no produce ningún error** — simplemente el widget se queda sin
+datos.
+
+Por eso, antes de desactivar o borrar, la card dice **quién lo está usando**, con
+nombre y motivo:
+
+- informes del BI que llevan `leadfield:<clave>` en una dimensión o un filtro;
+- pestañas o layouts con una fórmula `lf__<clave>__…`;
+- pestañas con un **bloque de «Respuestas de formulario»** apuntando al campo;
+- y los **segmentos** del campo (`leadseg:` / `lseg__`), que caen con él.
+
+Esa tercera vía es la que faltaba y costó una avería real: los bloques guardan la
+clave **desnuda** (`{"origen":"catalogo","clave":"…"}`), sin ningún token, así que
+la comprobación de `migrar-segmentos-lead.ts` —que solo buscaba tokens— dio el
+visto bueno al desactivar los cuatro campos-umbral de Goodprop y dejó dos bloques
+de la pestaña «Evergreen Captacion» mostrando un cartel de error durante semanas.
+
+Si un bloque se queda apuntando a un campo retirado, el dashboard **lo dice con
+esas palabras** y nombra la clave, en vez del engañoso «este cliente no tiene
+respuestas de formulario». Y el selector de pregunta sigue mostrando el campo
+configurado, marcado como `inactivo`, para poder decidir entre reactivarlo o
+cambiar de pregunta.
+
+Para re-apuntar bloques en masa: `npx tsx scripts/reapuntar-bloques-lead.ts`
+(simulación; `--aplicar` para escribir, con volcado previo para revertir).
+
+---
+
 ## Detalle técnico
 
-| Pieza                         | Dónde                                                                                                                                               |
-| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Tabla del campo               | `report_utm.lead_campos` (migración `060`)                                                                                                          |
-| Tabla del segmento            | `report_utm.lead_campo_segmentos` (migración `073`)                                                                                                 |
-| Bloque del dashboard          | `LeadAnswerBlockDef` + RPC `bi_respuestas_por_dia` (migración `071`)                                                                                |
-| Lógica pura                   | [`src/lib/report-utm/lead-campos.ts`](../src/lib/report-utm/lead-campos.ts)                                                                         |
-| Lectura/escritura y detección | [`src/lib/report-utm/lead-campos-db.ts`](../src/lib/report-utm/lead-campos-db.ts)                                                                   |
-| Token del campo               | `leadfield:<clave>` (dimensión y filtro)                                                                                                            |
-| Token del segmento            | `leadseg:<clave>` (métrica) · alias de fórmula `lseg__<clave>`                                                                                      |
-| Métrica por respuesta         | `lf__<campo>__<respuesta>` — solo en el dashboard, derivada de los buckets                                                                          |
-| API                           | `/api/report-utm/lead-campos`, `/lead-campos/detectar`, `/lead-campos/segmentos`, `/api/report-utm/bi/lead-fields`                                  |
-| UI                            | [`LeadCamposCard`](../src/components/report-utm/LeadCamposCard.tsx) + [`LeadSegmentosEditor`](../src/components/report-utm/LeadSegmentosEditor.tsx) |
-| Comprobaciones                | `npx tsx scripts/verify-lead-segmentos.ts` (puro) · `verify-lead-segmentos-db.ts` (datos reales) · `verify-lead-campos.ts`                          |
-| Migración de datos            | `npx tsx scripts/migrar-segmentos-lead.ts` (informe · `--aplicar` · `--revertir`)                                                                   |
+| Pieza                         | Dónde                                                                                                                                                           |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Tabla del campo               | `report_utm.lead_campos` (migración `060`)                                                                                                                      |
+| Tabla del segmento            | `report_utm.lead_campo_segmentos` (migración `073`)                                                                                                             |
+| Bloque del dashboard          | `LeadAnswerBlockDef` + RPC `bi_respuestas_por_dia` (migración `071`)                                                                                            |
+| Lógica pura                   | [`src/lib/report-utm/lead-campos.ts`](../src/lib/report-utm/lead-campos.ts)                                                                                     |
+| Lectura/escritura y detección | [`src/lib/report-utm/lead-campos-db.ts`](../src/lib/report-utm/lead-campos-db.ts)                                                                               |
+| Token del campo               | `leadfield:<clave>` (dimensión y filtro)                                                                                                                        |
+| Token del segmento            | `leadseg:<clave>` (métrica) · alias de fórmula `lseg__<clave>`                                                                                                  |
+| Métrica por respuesta         | `lf__<campo>__<respuesta>` — solo en el dashboard, derivada de los buckets                                                                                      |
+| Quién usa un campo            | [`src/lib/report-utm/lead-campo-referencias.ts`](../src/lib/report-utm/lead-campo-referencias.ts) · `GET /api/report-utm/lead-campos?con_referencias=1`         |
+| API                           | `/api/report-utm/lead-campos`, `/lead-campos/detectar`, `/lead-campos/segmentos`, `/lead-campos/sugeridas`, `/api/report-utm/bi/lead-fields`                    |
+| UI                            | [`LeadCamposCard`](../src/components/report-utm/LeadCamposCard.tsx) + [`LeadSegmentosEditor`](../src/components/report-utm/LeadSegmentosEditor.tsx)             |
+| Comprobaciones                | `npx tsx scripts/verify-lead-segmentos.ts` (puro) · `verify-lead-segmentos-db.ts` y `verify-lead-campo-referencias.ts` (datos reales) · `verify-lead-campos.ts` |
+| Migración de datos            | `npx tsx scripts/migrar-segmentos-lead.ts` (informe · `--aplicar` · `--revertir`) · `scripts/reapuntar-bloques-lead.ts`                                         |
+
+> **Ojo con el orden de las RPC.** `bi_respuestas_por_dia` y `bi_leads_por_dia` se
+> leen paginando por OFFSET, así que su `ORDER BY` **tiene que cubrir el grano
+> completo** o unas filas salen dos veces y otras ninguna. Lo arregló la migración
+> `078`; antes de ella el conteo del dashboard cambiaba entre recargas y
+> `verify-lead-segmentos-db` fallaba una de cada tres veces.
 
 El alias del segmento es **la misma cadena en el BI y en el dashboard**
 (`lseg__<clave>`), a diferencia de los campos de Sheet (`sf__` / `sf_`), que

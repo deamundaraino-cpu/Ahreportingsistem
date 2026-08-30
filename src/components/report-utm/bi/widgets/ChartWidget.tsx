@@ -2,6 +2,10 @@
 
 import { useEffect, useState } from 'react';
 import { Skeleton } from '@/components/ui/skeleton';
+import { anchoEjeCategoria, truncarEtiqueta } from '@/lib/chart-labels';
+import { useAnchoContenedor } from '@/lib/hooks/useAnchoContenedor';
+import { TickCategoriaY, TickCategoriaX } from '@/components/charts/ChartTicks';
+import { TextoTruncado } from '@/components/ui/tooltip';
 import {
   ResponsiveContainer,
   LineChart,
@@ -84,9 +88,15 @@ function fmtNum(value: number, format: ColFormat): string {
   return Math.round(value).toLocaleString('es-AR');
 }
 
-function truncateLabel(s: string, max = 28): string {
-  return s.length > max ? s.slice(0, max - 1) + '…' : s;
-}
+/**
+ * Tamaño real del tick en ESTE módulo.
+ *
+ * El BI no está dentro de `.chart-wrapper`, así que aquí manda el `fontSize` del
+ * prop y vale 10 de verdad. En `MetricCharts` no: allí `globals.css` fuerza
+ * `font-size: 11px !important` y el cálculo de anchos tiene que usar 11. Por eso
+ * el tamaño se pasa explícito a `anchoEjeCategoria` en vez de estar por defecto.
+ */
+const TICK_FONT = 10;
 
 // Tooltip propio con clases de tema (bg-card/text-foreground) → legible en claro y
 // oscuro. Evita depender de hsl(var(--card)) inline (puede no coincidir con el tema).
@@ -265,14 +275,25 @@ export function ChartWidget({
 
   return (
     <div className="rounded-2xl border border-border bg-card p-5 flex flex-col gap-4 h-full">
-      <div className="flex items-center justify-between">
-        <p className="flex items-center gap-1 text-sm font-semibold text-foreground">
-          {title}
+      {/* `min-w-0` en el título y `shrink-0` en el badge: sin eso los dos se
+          reparten el hueco por igual y en un widget de un cuarto de ancho el
+          título queda aplastado a cuatro letras. Ahora el título manda y el
+          badge cede, y lo que se corte se recupera con el tooltip. */}
+      <div className="flex items-center justify-between gap-2">
+        <p className="flex items-center gap-1 min-w-0 flex-1 text-sm font-semibold text-foreground">
+          <TextoTruncado text={title} />
           {metricGlossary(String(config.metric ?? '')) && (
             <HelpTip text={metricGlossary(String(config.metric ?? '')) as string} size={12} />
           )}
         </p>
-        <span className="text-[10px] text-muted-foreground font-mono">
+        <span
+          className="text-[10px] text-muted-foreground font-mono shrink-0 max-w-[45%] truncate"
+          title={`${dimLabel}${
+            dimension2
+              ? ` × ${DIMENSION_META[dimension2 as BiDimension]?.label ?? leadFieldLabel(dimension2) ?? fieldDimLabel(dimension2) ?? dimension2}`
+              : ''
+          } · ${metLabel}`}
+        >
           {dimLabel}
           {dimension2
             ? ` × ${DIMENSION_META[dimension2 as BiDimension]?.label ?? leadFieldLabel(dimension2) ?? fieldDimLabel(dimension2) ?? dimension2}`
@@ -423,48 +444,61 @@ function BarChartBody({
   onClick?: (n: string) => void;
 }) {
   const top = data.slice(0, 15);
+
+  // El eje se dimensiona con el texto que hay, no con una constante. Antes eran
+  // 100 px fijos: la misma etiqueta se cortaba igual en un widget de un cuarto
+  // de ancho que en uno de ancho completo, y no había tooltip que la recuperara.
+  const [refAncho, anchoContenedor] = useAnchoContenedor<HTMLDivElement>();
+  const anchoEje = anchoEjeCategoria(
+    top.map((d) => d.name),
+    { fontSize: TICK_FONT, minPx: 56, maxPx: 220, fraccionMax: 0.4, anchoContenedor }
+  );
+
   return (
-    <ResponsiveContainer width="100%" height={Math.max(180, top.length * 28)}>
-      <BarChart data={top} layout="vertical" margin={{ top: 0, right: 16, left: 0, bottom: 0 }}>
-        <CartesianGrid
-          strokeDasharray="3 3"
-          stroke="currentColor"
-          className="text-border"
-          strokeOpacity={0.4}
-          horizontal={false}
-        />
-        <XAxis
-          type="number"
-          tick={{ fontSize: 10, fill: 'currentColor' }}
-          className="text-muted-foreground"
-          tickLine={false}
-          tickFormatter={(v) => fmtNum(Number(v), format)}
-        />
-        <YAxis
-          type="category"
-          dataKey="name"
-          width={100}
-          tick={{ fontSize: 10, fill: 'currentColor' }}
-          className="text-muted-foreground"
-          tickLine={false}
-          axisLine={false}
-        />
-        <Tooltip
-          content={<ChartTooltip format={format} />}
-          cursor={{ fill: 'currentColor', fillOpacity: 0.05 }}
-        />
-        <Bar
-          dataKey="value"
-          radius={[0, 4, 4, 0]}
-          onClick={(d: { name?: string }) => d?.name && onClick?.(d.name)}
-          cursor={onClick ? 'pointer' : undefined}
-        >
-          {top.map((_, i) => (
-            <Cell key={i} fill={color === COLORS[0] ? COLORS[i % COLORS.length] : color} />
-          ))}
-        </Bar>
-      </BarChart>
-    </ResponsiveContainer>
+    <div ref={refAncho}>
+      <ResponsiveContainer width="100%" height={Math.max(180, top.length * 28)}>
+        <BarChart data={top} layout="vertical" margin={{ top: 0, right: 16, left: 0, bottom: 0 }}>
+          <CartesianGrid
+            strokeDasharray="3 3"
+            stroke="currentColor"
+            className="text-border"
+            strokeOpacity={0.4}
+            horizontal={false}
+          />
+          <XAxis
+            type="number"
+            tick={{ fontSize: TICK_FONT, fill: 'currentColor' }}
+            className="text-muted-foreground"
+            tickLine={false}
+            tickFormatter={(v) => fmtNum(Number(v), format)}
+          />
+          <YAxis
+            type="category"
+            dataKey="name"
+            width={anchoEje}
+            // El tick va como ELEMENTO, no como función: recharts lo clona
+            // inyectándole `x`, `y` y `payload`, y así TS los tipa bien.
+            tick={<TickCategoriaY ancho={anchoEje - 8} fontSize={TICK_FONT} temaPropio />}
+            tickLine={false}
+            axisLine={false}
+          />
+          <Tooltip
+            content={<ChartTooltip format={format} />}
+            cursor={{ fill: 'currentColor', fillOpacity: 0.05 }}
+          />
+          <Bar
+            dataKey="value"
+            radius={[0, 4, 4, 0]}
+            onClick={(d: { name?: string }) => d?.name && onClick?.(d.name)}
+            cursor={onClick ? 'pointer' : undefined}
+          >
+            {top.map((_, i) => (
+              <Cell key={i} fill={color === COLORS[0] ? COLORS[i % COLORS.length] : color} />
+            ))}
+          </Bar>
+        </BarChart>
+      </ResponsiveContainer>
+    </div>
   );
 }
 
@@ -588,21 +622,92 @@ function PivotChartBody({
   const data = pivot.rows.map((r) => ({ name: r.dimension_value, ...r.series }));
   const keys = pivot.seriesKeys;
 
+  // El eje X del pivot es de CATEGORÍAS —nombres de campaña, de anuncio— y no
+  // tenía ningún recorte: los ticks se solapaban entre sí y recharts acababa
+  // escondiendo unos cuantos. Cada tick dispone del ancho que le toca por
+  // reparto, menos un hueco para no pegarse al vecino.
+  const [refAncho, anchoContenedor] = useAnchoContenedor<HTMLDivElement>();
+  const anchoTick = Math.max(28, Math.floor(anchoContenedor / Math.max(1, data.length)) - 6);
+
   if (type === 'line' || type === 'area') {
     const Chart = type === 'area' ? AreaChart : LineChart;
     return (
-      <ResponsiveContainer width="100%" height={220}>
-        <Chart data={data} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
+      <div ref={refAncho}>
+        <ResponsiveContainer width="100%" height={220}>
+          <Chart data={data} margin={{ top: 4, right: 8, left: 0, bottom: 8 }}>
+            <CartesianGrid
+              strokeDasharray="3 3"
+              stroke="currentColor"
+              className="text-border"
+              strokeOpacity={0.5}
+            />
+            <XAxis
+              dataKey="name"
+              tick={<TickCategoriaX ancho={anchoTick} fontSize={TICK_FONT} temaPropio />}
+              interval="preserveStartEnd"
+              tickLine={false}
+            />
+            <YAxis
+              tick={{ fontSize: 10, fill: 'currentColor' }}
+              className="text-muted-foreground"
+              tickLine={false}
+              axisLine={false}
+              tickFormatter={(v) => fmtNum(Number(v), format)}
+            />
+            <Tooltip content={<ChartTooltip format={format} />} />
+            <Legend
+              iconSize={8}
+              wrapperStyle={{ fontSize: 10 }}
+              formatter={(value: string) => (
+                <span title={value} className="text-muted-foreground">
+                  {truncarEtiqueta(value, 18)}
+                </span>
+              )}
+            />
+            {keys.map((k, i) =>
+              type === 'area' ? (
+                <Area
+                  key={k}
+                  type="monotone"
+                  dataKey={k}
+                  stackId="1"
+                  stroke={COLORS[i % COLORS.length]}
+                  fill={COLORS[i % COLORS.length]}
+                  fillOpacity={0.5}
+                />
+              ) : (
+                <Line
+                  key={k}
+                  type="monotone"
+                  dataKey={k}
+                  stroke={COLORS[i % COLORS.length]}
+                  strokeWidth={2}
+                  dot={false}
+                />
+              )
+            )}
+          </Chart>
+        </ResponsiveContainer>
+      </div>
+    );
+  }
+
+  // bar / combo → barras apiladas
+  const ChartComp = type === 'combo' ? ComposedChart : BarChart;
+  return (
+    <div ref={refAncho}>
+      <ResponsiveContainer width="100%" height={Math.max(200, data.length * 30)}>
+        <ChartComp data={data} margin={{ top: 4, right: 16, left: 0, bottom: 8 }}>
           <CartesianGrid
             strokeDasharray="3 3"
             stroke="currentColor"
             className="text-border"
-            strokeOpacity={0.5}
+            strokeOpacity={0.4}
           />
           <XAxis
             dataKey="name"
-            tick={{ fontSize: 10, fill: 'currentColor' }}
-            className="text-muted-foreground"
+            tick={<TickCategoriaX ancho={anchoTick} fontSize={TICK_FONT} temaPropio />}
+            interval="preserveStartEnd"
             tickLine={false}
           />
           <YAxis
@@ -612,90 +717,30 @@ function PivotChartBody({
             axisLine={false}
             tickFormatter={(v) => fmtNum(Number(v), format)}
           />
-          <Tooltip content={<ChartTooltip format={format} />} />
+          <Tooltip
+            content={<ChartTooltip format={format} />}
+            cursor={{ fill: 'currentColor', fillOpacity: 0.05 }}
+          />
           <Legend
             iconSize={8}
             wrapperStyle={{ fontSize: 10 }}
             formatter={(value: string) => (
               <span title={value} className="text-muted-foreground">
-                {truncateLabel(value, 18)}
+                {truncarEtiqueta(value, 18)}
               </span>
             )}
           />
-          {keys.map((k, i) =>
-            type === 'area' ? (
-              <Area
-                key={k}
-                type="monotone"
-                dataKey={k}
-                stackId="1"
-                stroke={COLORS[i % COLORS.length]}
-                fill={COLORS[i % COLORS.length]}
-                fillOpacity={0.5}
-              />
-            ) : (
-              <Line
-                key={k}
-                type="monotone"
-                dataKey={k}
-                stroke={COLORS[i % COLORS.length]}
-                strokeWidth={2}
-                dot={false}
-              />
-            )
-          )}
-        </Chart>
+          {keys.map((k, i) => (
+            <Bar
+              key={k}
+              dataKey={k}
+              stackId="a"
+              fill={COLORS[i % COLORS.length]}
+              radius={i === keys.length - 1 ? [4, 4, 0, 0] : undefined}
+            />
+          ))}
+        </ChartComp>
       </ResponsiveContainer>
-    );
-  }
-
-  // bar / combo → barras apiladas
-  const ChartComp = type === 'combo' ? ComposedChart : BarChart;
-  return (
-    <ResponsiveContainer width="100%" height={Math.max(200, data.length * 30)}>
-      <ChartComp data={data} margin={{ top: 4, right: 16, left: 0, bottom: 0 }}>
-        <CartesianGrid
-          strokeDasharray="3 3"
-          stroke="currentColor"
-          className="text-border"
-          strokeOpacity={0.4}
-        />
-        <XAxis
-          dataKey="name"
-          tick={{ fontSize: 10, fill: 'currentColor' }}
-          className="text-muted-foreground"
-          tickLine={false}
-        />
-        <YAxis
-          tick={{ fontSize: 10, fill: 'currentColor' }}
-          className="text-muted-foreground"
-          tickLine={false}
-          axisLine={false}
-          tickFormatter={(v) => fmtNum(Number(v), format)}
-        />
-        <Tooltip
-          content={<ChartTooltip format={format} />}
-          cursor={{ fill: 'currentColor', fillOpacity: 0.05 }}
-        />
-        <Legend
-          iconSize={8}
-          wrapperStyle={{ fontSize: 10 }}
-          formatter={(value: string) => (
-            <span title={value} className="text-muted-foreground">
-              {truncateLabel(value, 18)}
-            </span>
-          )}
-        />
-        {keys.map((k, i) => (
-          <Bar
-            key={k}
-            dataKey={k}
-            stackId="a"
-            fill={COLORS[i % COLORS.length]}
-            radius={i === keys.length - 1 ? [4, 4, 0, 0] : undefined}
-          />
-        ))}
-      </ChartComp>
-    </ResponsiveContainer>
+    </div>
   );
 }

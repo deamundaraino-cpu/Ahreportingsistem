@@ -48,6 +48,12 @@ export interface LeadAnswerDatasetLite {
   porFecha: Record<string, Array<Array<[number, number, number]>>>;
   totalesPorFecha?: Record<string, Array<[number, number]>>;
   incompleto: boolean;
+  /**
+   * Claves que un bloque pide y el catálogo activo no tiene. La agregación no
+   * las usa —no aportan números— pero viajan hasta el componente, que las
+   * necesita para dar el mensaje correcto. Ver `LeadAnswerDataset`.
+   */
+  camposAusentes?: string[];
 }
 
 // ── Claves de fórmula ─────────────────────────────────────────────────

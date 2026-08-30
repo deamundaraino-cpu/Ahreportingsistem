@@ -61,3 +61,7 @@ supabase/.temp/
 
 # Respaldos locales (CSV de tablas retiradas) - no versionar
 /backups
+
+# Volcados de estado previo que dejan los scripts de migración de datos.
+# Son una red para revertir, no algo que deba viajar en el repo.
+scripts/.backup-*.json
