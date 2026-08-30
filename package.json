@@ -38,7 +38,7 @@
     "@tiptap/starter-kit": "^3.26.1",
     "class-variance-authority": "^0.7.1",
     "date-fns": "^4.1.0",
-    "google-auth-library": "^10.6.1",
+    "google-auth-library": "^11.0.2",
     "google-spreadsheet": "^5.2.0",
     "html2canvas": "^1.4.1",
     "isomorphic-dompurify": "^3.19.0",
