@@ -5,14 +5,34 @@ import { createClient } from '@supabase/supabase-js';
 import { ApiError } from './error-handler';
 
 export type TokenPermission =
-  'read:metrics' | 'read:clients' | 'read:campaigns' | 'read:reports' | 'write:sync';
+  | 'read:metrics'
+  | 'read:clients'
+  | 'read:campaigns'
+  | 'read:reports'
+  | 'read:context'
+  | 'write:sync'
+  | 'write:context'
+  | 'write:reports'
+  | 'write:tasks'
+  | 'write:logs'
+  | 'write:clients'
+  | 'agent:chat';
 
+// Los scopes de escritura son nuevos: ningun token existente los tiene, asi que
+// todos siguen siendo de solo lectura hasta que alguien los conceda a proposito.
 export const ALL_PERMISSIONS: TokenPermission[] = [
   'read:metrics',
   'read:clients',
   'read:campaigns',
   'read:reports',
+  'read:context',
   'write:sync',
+  'write:context',
+  'write:reports',
+  'write:tasks',
+  'write:logs',
+  'write:clients',
+  'agent:chat',
 ];
 
 export const PERMISSION_LABELS: Record<TokenPermission, string> = {
@@ -20,7 +40,14 @@ export const PERMISSION_LABELS: Record<TokenPermission, string> = {
   'read:clients': 'Leer clientes',
   'read:campaigns': 'Leer grupos de campañas',
   'read:reports': 'Leer reportes mensuales',
+  'read:context': 'Leer perfiles y estrategias de cliente',
   'write:sync': 'Disparar sincronización de datos',
+  'write:context': 'Editar perfiles y estrategias de cliente',
+  'write:reports': 'Crear y editar informes',
+  'write:tasks': 'Crear y editar tareas',
+  'write:logs': 'Escribir bitácoras de cliente',
+  'write:clients': 'Crear y editar clientes',
+  'agent:chat': 'Conversar con el agente',
 };
 
 export interface TokenContext {

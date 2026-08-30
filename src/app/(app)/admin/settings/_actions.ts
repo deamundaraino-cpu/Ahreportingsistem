@@ -1,6 +1,7 @@
 'use server';
 
 import { createClient, createAdminClient } from '@/utils/supabase/server';
+import { sanearClienteParaListado } from '@/lib/cliente-seguro';
 import { revalidatePath } from 'next/cache';
 import { BetaAnalyticsDataClient } from '@google-analytics/data';
 import type {
@@ -54,7 +55,7 @@ export async function getClientes() {
         .order('created_at', { ascending: false });
 
       if (error) return [];
-      return clientes;
+      return (clientes ?? []).map(sanearClienteParaListado);
     }
   }
 
@@ -68,7 +69,9 @@ export async function getClientes() {
     return [];
   }
 
-  return clientes;
+  // Este listado llega a /dashboard y /soporte, que ve cualquier rol: nunca
+  // debe cargar credenciales. El editor usa getCliente(), que sí las necesita.
+  return (clientes ?? []).map(sanearClienteParaListado);
 }
 
 export async function getCliente(id: string) {

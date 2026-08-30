@@ -1416,7 +1416,7 @@ async function adsDailyCubre(
   dateFrom: string,
   dateTo: string
 ): Promise<boolean> {
-  const cacheKey = `${publicId} ${nivel}`;
+  const cacheKey = `${publicId}${nivel}`;
   const now = Date.now();
   let rango = adsDailyCoberturaCache.get(cacheKey);
   if (!rango || now - rango.ts > ADS_DAILY_COBERTURA_TTL_MS) {
@@ -2144,7 +2144,7 @@ async function querySheetLeadsDirect(
   /** Acumulador por (dimensión, campo, bucket). */
   const acc = new Map<string, CampoValorDiario & { dim: string }>();
   const acumular = (dim: string, campoId: string, bucket: string, n: number | null) => {
-    const key = `${dim} ${campoId} ${bucket}`;
+    const key = `${dim}${campoId}${bucket}`;
     let e = acc.get(key);
     if (!e) {
       e = {

@@ -16,6 +16,10 @@ const eslintConfig = defineConfig([
     // Coinciden con los `exclude` de tsconfig.json y con .prettierignore.
     'whatsapp-gateway/**',
     'sync-worker/**',
+    // Scripts de diagnostico ad-hoc. La convencion `_` de descarte explicito
+    // que rige mas abajo para identificadores vale tambien para archivos:
+    // `_tmp-*` no forma parte del proyecto y no se versiona.
+    'scripts/_tmp-*',
   ]),
 
   // Convención de descarte explícito: un identificador que empieza por `_` es

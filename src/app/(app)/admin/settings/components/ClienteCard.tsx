@@ -32,7 +32,7 @@ export function ClienteCard({ cliente }: ClienteCardProps) {
           <div className="text-sm text-muted-foreground flex flex-col gap-2">
             <div className="flex justify-between items-center bg-muted/60 p-2 rounded">
               <span className="text-foreground/90">Meta Ads</span>
-              {cliente.config_api?.meta_token ? (
+              {cliente.conexiones?.meta ? (
                 <span className="text-emerald-600 dark:text-emerald-400 flex items-center gap-1 text-xs font-medium">
                   ● Conectado
                 </span>
@@ -44,7 +44,7 @@ export function ClienteCard({ cliente }: ClienteCardProps) {
             </div>
             <div className="flex justify-between items-center bg-muted/60 p-2 rounded">
               <span className="text-foreground/90">Hotmart API</span>
-              {cliente.config_api?.hotmart_token || cliente.config_api?.hotmart_basic ? (
+              {cliente.conexiones?.hotmart ? (
                 <span className="text-emerald-600 dark:text-emerald-400 flex items-center gap-1 text-xs font-medium">
                   ● Conectado
                 </span>
@@ -56,8 +56,7 @@ export function ClienteCard({ cliente }: ClienteCardProps) {
             </div>
             <div className="flex justify-between items-center bg-muted/60 p-2 rounded">
               <span className="text-foreground/90">TikTok Ads</span>
-              {cliente.config_api?.tiktok_access_token &&
-              cliente.config_api?.tiktok_advertiser_id ? (
+              {cliente.conexiones?.tiktok ? (
                 <span className="text-emerald-600 dark:text-emerald-400 flex items-center gap-1 text-xs font-medium">
                   ● Conectado
                 </span>
@@ -69,7 +68,7 @@ export function ClienteCard({ cliente }: ClienteCardProps) {
             </div>
             <div className="flex justify-between items-center bg-muted/60 p-2 rounded">
               <span className="text-foreground/90">Google Analytics</span>
-              {cliente.config_api?.ga_property_id ? (
+              {cliente.conexiones?.ga ? (
                 <span className="text-emerald-600 dark:text-emerald-400 flex items-center gap-1 text-xs font-medium">
                   ● Conectado
                 </span>

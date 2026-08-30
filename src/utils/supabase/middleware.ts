@@ -36,6 +36,9 @@ const API_SELF_AUTH_PREFIXES = [
   '/api/report-utm/webhooks/',
   '/api/report-utm/pixel/',
   '/api/report-utm/bi/public/',
+  // El gateway de WhatsApp firma con HMAC: no tiene cookie de sesion y sin esto
+  // el proxy lo rechazaria antes de llegar al handler.
+  '/api/agent/whatsapp/',
 ];
 
 /**

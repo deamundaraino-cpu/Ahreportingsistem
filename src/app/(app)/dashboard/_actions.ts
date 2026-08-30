@@ -13,6 +13,7 @@ import { enqueueJob } from '@/lib/sync/queue';
 import { agregarDiarios, vistaIncluyeValor, clavesPlanasDelDia } from '@/lib/sheets/campos';
 import type { CampoValorDiario, CampoAgg, CampoFormato } from '@/lib/sheets/campos';
 import { mergeMetricasDelRango, agruparOfflinePorFecha } from '@/lib/dashboard/merge-metrics';
+import { sanearClienteParaUI } from '@/lib/cliente-seguro';
 import { fetchAllRows } from '@/lib/supabase-paginate';
 import { normalizeSheetConfigs } from '@/lib/integrations/google-sheets-conversiones';
 import type { SyncConversionesResponse } from '@/lib/integrations/google-sheets-conversiones';
@@ -1063,7 +1064,9 @@ export async function getDashboardData(clientId: string, startStr: string, endSt
   const weeks = getWeeksInRange(effectiveStart, endStr);
 
   return {
-    cliente,
+    // `cliente` cruza a <DashboardClient>, que es un componente de cliente:
+    // sin sanear, `config_api` viaja con las credenciales en el payload RSC.
+    cliente: sanearClienteParaUI(cliente),
     metrics: metrics || [],
     prevMetrics: (previo?.metrics ?? []) as any[],
     sheetCampos,
@@ -2118,7 +2121,8 @@ export async function getMirrorDashboardData(token: string, from?: string, to?: 
 
   return {
     data: {
-      cliente,
+      // Enlace publico y sin sesion: aqui la fuga era directamente explotable.
+      cliente: sanearClienteParaUI(cliente),
       metrics: metrics || [],
       conversionesOfflineRaw,
       sheetCampos,

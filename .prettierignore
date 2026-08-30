@@ -37,3 +37,6 @@ backups
 # Microservicios con su propio toolchain (ya ignorados por eslint/tsconfig)
 whatsapp-gateway
 sync-worker
+
+# Scripts de diagnóstico ad-hoc (ver eslint.config.mjs)
+scripts/_tmp-*

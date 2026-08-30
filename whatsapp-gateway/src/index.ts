@@ -19,6 +19,7 @@ import { Boom } from '@hapi/boom'
 import QRCode from 'qrcode'
 import pino from 'pino'
 import { useSupabaseAuthState } from './auth-state.js'
+import { registrarEntrantes } from './inbound.js'
 
 const PORT = Number(process.env.PORT ?? 8080)
 const API_KEY = process.env.WHATSAPP_GATEWAY_API_KEY
@@ -26,6 +27,10 @@ const SUPABASE_URL = process.env.SUPABASE_URL
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY
 // Throttle mínimo entre envíos (anti-baneo).
 const SEND_THROTTLE_MS = Number(process.env.WHATSAPP_SEND_THROTTLE_MS ?? 1500)
+// Para que la app pueda conversar: adonde se reenvia lo que llega y con que
+// secreto se firma. Sin ambos, el gateway sigue siendo solo de salida.
+const APP_URL = process.env.APP_URL ?? process.env.NEXT_PUBLIC_APP_URL
+const AGENT_INBOUND_SECRET = process.env.AGENT_INBOUND_SECRET
 
 if (!API_KEY || !SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
     console.error(
@@ -63,6 +68,15 @@ async function startSock(): Promise<void> {
     })
 
     sock.ev.on('creds.update', () => saveCreds?.())
+
+    // Mensajes entrantes. Solo si esta configurado: sin secreto no se reenvia
+    // nada, para no mandar conversaciones a un endpoint sin firmar.
+    if (APP_URL && AGENT_INBOUND_SECRET) {
+        registrarEntrantes(sock, { appUrl: APP_URL, secret: AGENT_INBOUND_SECRET, logger })
+        logger.info('Escucha de mensajes entrantes activada')
+    } else {
+        logger.info('Sin APP_URL/AGENT_INBOUND_SECRET: el gateway funciona solo de salida')
+    }
 
     sock.ev.on('connection.update', async (update) => {
         const { connection, lastDisconnect, qr } = update
@@ -163,8 +177,15 @@ app.post('/send', async (req, res) => {
     if (typeof groupId !== 'string' || typeof message !== 'string' || !message.trim()) {
         return res.status(400).json({ error: 'groupId y message son requeridos' })
     }
-    if (!groupId.endsWith('@g.us')) {
-        return res.status(400).json({ error: 'groupId debe ser un jid de grupo (...@g.us)' })
+    // Se acepta tambien el chat privado: el agente responde a quien le escribe,
+    // no solo a grupos. La validacion de sufijo se mantiene explicita para que
+    // un jid mal formado falle aqui y no dentro de Baileys.
+    const esGrupo = groupId.endsWith('@g.us')
+    const esContacto = groupId.endsWith('@s.whatsapp.net')
+    if (!esGrupo && !esContacto) {
+        return res
+            .status(400)
+            .json({ error: 'groupId debe ser un jid de grupo (...@g.us) o de contacto (...@s.whatsapp.net)' })
     }
     if (!sock || !connected) {
         return res.status(503).json({ error: 'WhatsApp no conectado' })

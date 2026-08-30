@@ -283,7 +283,7 @@ async function main() {
     );
     check(
       'y es exactamente la proyección del motor',
-      planos.join(' ') === conConteo.valores.map((v) => v.valor).join(' ')
+      planos.join('') === conConteo.valores.map((v) => v.valor).join('')
     );
   }
 
