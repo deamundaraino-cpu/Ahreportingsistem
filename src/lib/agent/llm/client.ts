@@ -48,19 +48,19 @@ export type PoliticaTier = {
 export const POLITICA_POR_DEFECTO: Record<Tier, PoliticaTier> = {
   nano: {
     primary: 'openrouter/free',
-    fallbacks: ['google/gemini-2.5-flash-lite'],
+    fallbacks: ['qwen/qwen3.7-flash', 'google/gemini-2.5-flash-lite'],
     maxTokens: 2048,
     allowTools: false,
   },
   work: {
-    primary: 'google/gemini-2.5-flash',
-    fallbacks: ['openai/gpt-5-mini', 'anthropic/claude-haiku-4.5'],
+    primary: 'google/gemini-3.5-flash-lite',
+    fallbacks: ['minimax/minimax-m3', 'deepseek/deepseek-v4-flash-latest'],
     maxTokens: 8192,
     allowTools: true,
   },
   power: {
-    primary: 'anthropic/claude-sonnet-4.5',
-    fallbacks: ['openai/gpt-5', 'google/gemini-2.5-pro'],
+    primary: 'anthropic/claude-sonnet-5',
+    fallbacks: ['x-ai/grok-4.6', 'google/gemini-3.1-pro-preview'],
     maxTokens: 16384,
     allowTools: true,
   },

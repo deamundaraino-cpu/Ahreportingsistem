@@ -1220,6 +1220,10 @@ export async function saveClienteTab(
     fecha_inicio?: string;
     fecha_finalizacion?: string;
     presupuesto_objetivo?: number;
+    /** Tipo de estrategia. `null` la desasigna; `undefined` no la toca. */
+    estrategia_tipo_id?: string | null;
+    /** Metas propias de la pestaña; anulan las del cliente en la cascada. */
+    metas?: Record<string, number>;
     /** Solo al crear: copia la visualización de esta plantilla de pestaña (tab_templates). */
     template_id?: string;
     hotmart_funnel?: {
@@ -1253,6 +1257,14 @@ export async function saveClienteTab(
     fecha_finalizacion: payload.fecha_finalizacion || null,
     presupuesto_objetivo: payload.presupuesto_objetivo || null,
   };
+
+  // Mismo criterio que `hotmart_funnel`: undefined = no tocar, null = borrar.
+  if (payload.estrategia_tipo_id !== undefined) {
+    baseFields.estrategia_tipo_id = payload.estrategia_tipo_id;
+  }
+  if (payload.metas !== undefined) {
+    baseFields.metas = payload.metas;
+  }
   if (payload.hotmart_funnel !== undefined) {
     baseFields.hotmart_funnel = payload.hotmart_funnel;
   }

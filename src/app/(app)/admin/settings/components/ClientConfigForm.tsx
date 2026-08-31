@@ -47,6 +47,7 @@ import type { SheetEliminarPreview } from '../_actions';
 import type { GA4Property } from '@/lib/integrations/google-analytics';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { SheetCamposSection } from './sheet-campos/SheetCamposSection';
+import { PerfilIASection } from './perfil-ia/PerfilIASection';
 import {
   Loader2,
   ArrowLeft,
@@ -2823,6 +2824,11 @@ export function ClientConfigForm({
                 esta define QUÉ SE MIDE. Va aparte porque un campo cruza varias
                 pestañas y puede cruzar varios documentos. */}
       <SheetCamposSection clienteId={cliente.id} />
+
+      {/* Frontera natural: arriba está cómo se conectan los datos, abajo cómo se
+          presentan. El perfil es cómo se interpretan. Se autogestiona: no toca
+          `config` ni el botón "Guardar Todo". */}
+      <PerfilIASection clienteId={cliente.id} />
 
       {/* ─── Filtros de Dashboard ─────────────────────────────────────── */}
       <Card className="bg-card border-border">

@@ -20,6 +20,7 @@ import {
   ArrowLeftRight,
   Bell,
   Map,
+  Bot,
 } from 'lucide-react';
 
 const REPORT_UTM_ENABLED = process.env.NEXT_PUBLIC_REPORT_UTM_ENABLED === 'true';
@@ -91,6 +92,10 @@ export function AppSidebar({
   const isSuperAdmin = role === 'superadmin';
   const isAdmin = role === 'admin';
   const hasAdminAccess = isSuperAdmin || isAdmin;
+  // El rol existía pero no tenía booleano. El agente sí lo necesita: un
+  // trafficker puede consultar sus clientes, aunque no configure la plataforma.
+  const isTrafficker = role === 'trafficker';
+  const puedeUsarAgente = hasAdminAccess || isTrafficker;
 
   const navigation = [
     { name: 'General Overview', href: '/dashboard', icon: LayoutDashboard },
@@ -98,6 +103,7 @@ export function AppSidebar({
   ];
 
   const settingsNavigation = [
+    { name: 'Agente', href: '/admin/agente', icon: Bot, show: puedeUsarAgente },
     { name: 'Ajustes de Sistema', href: '/admin/settings', icon: Settings, show: true },
     { name: 'Constructor de Layouts', href: '/admin/layouts', icon: Users, show: true },
     { name: 'Reportes Mensuales', href: '/admin/reports', icon: FileText, show: hasAdminAccess },

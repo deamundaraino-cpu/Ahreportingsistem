@@ -123,5 +123,29 @@ check('aprobar sin identificador no es un comando', parsearComando('aprobar') ==
 check('un identificador demasiado corto no cuela', parsearComando('aprobar 12') === null);
 check('texto libre no es un comando', parsearComando('cómo va Goodprop') === null);
 
+console.log('\n── Los comandos NO dependen del prefijo ─────────────────────');
+
+// La ruta de entrada comprueba los comandos ANTES de la activación y sobre el
+// texto crudo. El agente pide "Responde APROBAR 47" y nadie va a escribir
+// "/ah APROBAR 47": exigir prefijo perdería las aprobaciones en silencio, que
+// es el peor final para una acción que alguien está esperando.
+check(
+  'APROBAR se reconoce tal cual, sin prefijo',
+  parsearComando('APROBAR 4258e5f4')?.tipo === 'aprobar'
+);
+check('con prefijo delante ya no es un comando', parsearComando('/ah APROBAR 4258e5f4') === null);
+
+// A cambio, el patrón tiene que ser estrecho: la palabra sola seguida de un
+// identificador, nada más.
+for (const frase of [
+  'a ver si aprobamos eso',
+  'hay que aprobar el informe de agosto',
+  'aprobar',
+  'rechazar porque no cuadra',
+  'lo apruebo entonces',
+]) {
+  check('"' + frase + '" no se confunde con un comando', parsearComando(frase) === null);
+}
+
 console.log(`\n${fail === 0 ? '✅' : '❌'} ${ok} comprobaciones pasadas, ${fail} fallidas\n`);
 process.exit(fail === 0 ? 0 : 1);

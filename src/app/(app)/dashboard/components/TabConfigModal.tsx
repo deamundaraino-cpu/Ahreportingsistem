@@ -137,6 +137,40 @@ export function TabConfigModal({
     tabToEdit?.presupuesto_objetivo?.toString() || ''
   );
 
+  // Estrategia y metas: es lo que el agente usa para saber qué mirar en esta
+  // pestaña y si las cifras son buenas o malas.
+  const [estrategiaTipoId, setEstrategiaTipoId] = useState<string>(
+    tabToEdit?.estrategia_tipo_id || 'none'
+  );
+  const [estrategias, setEstrategias] = useState<
+    { id: string; nombre: string; categoria: string; subcategoria: string }[]
+  >([]);
+  const [metaCpl, setMetaCpl] = useState(
+    tabToEdit?.metas?.cpl_max != null ? String(tabToEdit.metas.cpl_max) : ''
+  );
+  const [metaRoas, setMetaRoas] = useState(
+    tabToEdit?.metas?.roas_min != null ? String(tabToEdit.metas.roas_min) : ''
+  );
+  const [metaLeads, setMetaLeads] = useState(
+    tabToEdit?.metas?.leads_target != null ? String(tabToEdit.metas.leads_target) : ''
+  );
+
+  useEffect(() => {
+    let vivo = true;
+    void (async () => {
+      try {
+        const { listarEstrategias } = await import('@/app/(app)/admin/agente/_actions');
+        const filas = await listarEstrategias();
+        if (vivo) setEstrategias(filas.filter((f) => f.activo));
+      } catch {
+        // Sin catálogo el selector queda vacío; no impide guardar la pestaña.
+      }
+    })();
+    return () => {
+      vivo = false;
+    };
+  }, []);
+
   // Hotmart funnel state
   const initialFunnel: HotmartFunnel = (tabToEdit?.hotmart_funnel as HotmartFunnel) || {};
   const [funnelEnabled, setFunnelEnabled] = useState<boolean>(!!initialFunnel.enabled);
@@ -283,7 +317,14 @@ export function TabConfigModal({
       };
     }
 
-    await saveClienteTab(clienteId, {
+    // Solo las metas con valor: un objeto con nulos haría que la cascada
+    // creyera que la pestaña define metas propias y tapara las del cliente.
+    const metas: Record<string, number> = {};
+    if (metaCpl) metas.cpl_max = parseFloat(metaCpl);
+    if (metaRoas) metas.roas_min = parseFloat(metaRoas);
+    if (metaLeads) metas.leads_target = parseFloat(metaLeads);
+
+    const res = await saveClienteTab(clienteId, {
       id: tabToEdit?.id,
       nombre,
       keyword_meta,
@@ -291,10 +332,21 @@ export function TabConfigModal({
       fecha_inicio: fechaInicio || undefined,
       fecha_finalizacion: fechaFinalizacion || undefined,
       presupuesto_objetivo: presupuestoObjetivo ? parseFloat(presupuestoObjetivo) : undefined,
+      estrategia_tipo_id: estrategiaTipoId === 'none' ? null : estrategiaTipoId,
+      metas,
       template_id: !tabToEdit && templateId !== 'none' ? templateId : undefined,
       hotmart_funnel,
     });
+
     setSaving(false);
+
+    // Antes el resultado se descartaba, así que un fallo al guardar pasaba
+    // desapercibido y el modal se cerraba como si todo hubiera ido bien.
+    if (res && 'error' in res && res.error) {
+      toast.error('No se pudo guardar: ' + res.error);
+      return;
+    }
+
     onClose();
   };
 
@@ -486,6 +538,69 @@ export function TabConfigModal({
             </div>
 
             <div className="space-y-2 col-span-2">
+              <label className="text-xs font-semibold text-muted-foreground">
+                Tipo de estrategia (para el agente)
+              </label>
+              <Select value={estrategiaTipoId} onValueChange={setEstrategiaTipoId}>
+                <SelectTrigger className="bg-card border-border">
+                  <SelectValue placeholder="Sin asignar" />
+                </SelectTrigger>
+                <SelectContent className="bg-card border-border z-[120]">
+                  <SelectItem value="none">Sin asignar</SelectItem>
+                  {estrategias.map((e) => (
+                    <SelectItem key={e.id} value={e.id}>
+                      {e.nombre}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-[11px] text-muted-foreground/70">
+                Sin esto, el agente no sabe qué métricas importan en esta pestaña ni cuáles no
+                aplican, y analiza a ciegas.
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-xs font-semibold text-muted-foreground">
+                CPL máximo (Opcional)
+              </label>
+              <Input
+                type="number"
+                placeholder="Ej. 2500"
+                value={metaCpl}
+                onChange={(e) => setMetaCpl(e.target.value)}
+                className="bg-card border-border"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-xs font-semibold text-muted-foreground">
+                ROAS mínimo (Opcional)
+              </label>
+              <Input
+                type="number"
+                step="0.1"
+                placeholder="Ej. 2.5"
+                value={metaRoas}
+                onChange={(e) => setMetaRoas(e.target.value)}
+                className="bg-card border-border"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-xs font-semibold text-muted-foreground">
+                Leads objetivo (Opcional)
+              </label>
+              <Input
+                type="number"
+                placeholder="Ej. 300"
+                value={metaLeads}
+                onChange={(e) => setMetaLeads(e.target.value)}
+                className="bg-card border-border"
+              />
+            </div>
+
+            <div className="space-y-2">
               <label className="text-xs font-semibold text-muted-foreground">
                 Presupuesto ($) (Opcional)
               </label>

@@ -15,11 +15,26 @@
  *   1. Firma — antes de mirar nada más.
  *   2. Deduplicación — Baileys reentrega mensajes al reconectar; sin esto el
  *      agente respondería dos veces al mismo mensaje.
- *   3. Canal — dice DÓNDE puede operar y con qué techo de permisos.
- *   4. Remitente — dice QUÉ puede pedir. La autorización es de la persona, no
- *      del grupo: si fuera del grupo, cualquiera que entrase heredaría sus
- *      permisos.
- *   5. Activación — en grupo hace falta prefijo o mención.
+ *   3. Remitente — dice QUÉ puede pedir. La autorización es de la PERSONA,
+ *      nunca del grupo: si fuera del grupo, cualquiera que entrase heredaría
+ *      sus permisos.
+ *   4. Canal — dice DÓNDE puede operar y con qué techo. Va después del
+ *      remitente porque en privado la decisión depende de quién escribe.
+ *   5. Comandos de aprobación — se atienden sin exigir prefijo (ver abajo).
+ *   6. Activación — para el resto, en grupo hace falta prefijo o mención.
+ *
+ * Grupo y privado se tratan distinto, y la diferencia no es caprichosa:
+ *
+ *   · En un GRUPO el agente es visible para terceros a los que nadie ha
+ *     autorizado, así que operar ahí tiene que ser una decisión explícita: el
+ *     canal nace deshabilitado aunque quien escriba esté dado de alta.
+ *   · En PRIVADO la conversación es solo entre esa persona y el agente. Si ya
+ *     pasó el control de contactos, no hay nadie más a quien proteger, y pedir
+ *     además que un administrador habilite el chat sería fricción sin ninguna
+ *     ganancia. El canal se abre solo en el primer mensaje.
+ *
+ * Un canal apagado a mano se respeta en ambos casos: es la forma de cortarle el
+ * acceso a alguien sin borrar su contacto ni su historial.
  *
  * A un remitente no reconocido se le responde con silencio: no se confirma que
  * hay un bot escuchando ni se dan pistas de lo que hace. El intento queda en el
@@ -107,29 +122,59 @@ export async function POST(request: NextRequest) {
     logger.warn('No se pudo deduplicar el mensaje entrante', { code: errDedup.code });
   }
 
-  // 3 · Canal.
-  const canal = await resolverCanal(db, msg.chatId);
+  // 3 · Remitente. Se prueban todas sus identidades posibles: en un grupo llega
+  // el LID y en privado el número, y la misma persona puede tener una, otra o
+  // las dos registradas.
+  const contacto = await resolverContacto(db, [msg.participant, msg.participantPn]);
+
+  // 4 · Canal. Se resuelve después del remitente porque en privado la decisión
+  // depende de quién escribe.
+  let canal = await resolverCanal(db, msg.chatId);
 
   if (!canal) {
-    // Un chat desconocido se registra para que aparezca en el panel, pero
-    // deshabilitado: que alguien añada el bot a un grupo no basta para que
-    // empiece a responder ahí.
-    await db
+    // Un chat PRIVADO de alguien ya autorizado nace habilitado: la conversación
+    // es solo entre esa persona y el agente, y esa persona ya pasó el control.
+    // Exigir además que un administrador habilite el chat sería fricción sin
+    // ninguna ganancia de seguridad.
+    //
+    // Un GRUPO nace deshabilitado, y eso sí importa: ahí el agente es visible
+    // para terceros que nadie ha autorizado, así que operar en él tiene que ser
+    // una decisión explícita.
+    const activarDeEntrada = !msg.isGroup && contacto !== null;
+
+    const { data: creado } = await db
       .from('agent_channels')
       .upsert(
         {
           channel: 'whatsapp',
           external_id: msg.chatId,
           kind: msg.isGroup ? 'group' : 'dm',
-          is_active: false,
+          nombre: msg.isGroup ? null : (msg.pushName ?? null),
+          // En privado el techo no restringe: quien manda es el nivel del
+          // contacto y su rol. En grupo, lo más cerrado por defecto.
+          max_level: activarDeEntrada ? 'admin' : 'consulta',
+          // En privado toda la conversación es con el agente.
+          require_mention: msg.isGroup,
+          is_active: activarDeEntrada,
         },
         { onConflict: 'channel,external_id' }
       )
-      .select('id');
-    return ok('canal_desconocido');
+      .select('id')
+      .maybeSingle();
+
+    if (!activarDeEntrada) return ok('canal_pendiente_de_habilitar');
+
+    // Se relee para seguir con la misma forma que devuelve resolverCanal.
+    canal = await resolverCanal(db, msg.chatId);
+    if (!canal) {
+      logger.warn('No se pudo abrir el canal privado', { chatId: msg.chatId, creado });
+      return ok('error_al_abrir_canal');
+    }
   }
 
   if (!canal.isActive) {
+    // Un canal apagado a propósito se respeta, también en privado: es la forma
+    // de cortarle el acceso a alguien sin borrar su contacto.
     if (canal.learningMode) {
       await registrarRemitenteVisto(db, canal.id, {
         lid: msg.participant,
@@ -140,9 +185,6 @@ export async function POST(request: NextRequest) {
     }
     return ok('canal_inactivo');
   }
-
-  // 4 · Remitente. Se prueban todas sus identidades posibles.
-  const contacto = await resolverContacto(db, [msg.participant, msg.participantPn]);
 
   if (!contacto) {
     if (canal.learningMode) {
@@ -163,7 +205,26 @@ export async function POST(request: NextRequest) {
     return ok('remitente_no_autorizado');
   }
 
-  // 5 · Activación.
+  // 5 · Comandos de aprobación.
+  //
+  // Se comprueban ANTES de la activación y sin exigir prefijo, a propósito: el
+  // agente pide "Responde APROBAR 47" y nadie va a escribir "/ah APROBAR 47".
+  // Obligar al prefijo aquí haría que las aprobaciones se perdieran en silencio,
+  // que es el peor final posible para una acción que alguien está esperando.
+  //
+  // El riesgo de confundir una frase normal con un comando es mínimo: el patrón
+  // exige la palabra sola seguida de un identificador, quien escribe ya está
+  // autorizado, y al ejecutarlo tiene que casar con una propuesta pendiente real.
+  const comando = parsearComando(msg.texto);
+  if (comando) {
+    return ok('comando', {
+      comando: comando.tipo,
+      // La ejecución la hace el worker, con el contexto completo del contacto.
+      encolado: await encolarComando(db, canal.id, contacto.id, msg, comando),
+    });
+  }
+
+  // 6 · Activación.
   const activacion = evaluarActivacion({
     esGrupo: msg.isGroup,
     texto: msg.texto,
@@ -173,17 +234,6 @@ export async function POST(request: NextRequest) {
   });
 
   if (!activacion.activado) return ok('sin_activacion');
-
-  // Los comandos de aprobación se atienden aquí, sin pasar por el modelo: son
-  // una decisión, no una pregunta.
-  const comando = parsearComando(activacion.texto);
-  if (comando) {
-    return ok('comando', {
-      comando: comando.tipo,
-      // La ejecución la hace el worker, con el contexto completo del contacto.
-      encolado: await encolarComando(db, canal.id, contacto.id, msg, comando),
-    });
-  }
 
   // Turno normal: se encola y el worker lo procesa.
   const conversationId = await conversacionDe(db, msg.chatId, canal.id, contacto);

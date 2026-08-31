@@ -68,6 +68,15 @@ export type OpcionesTurno = {
   /** Instrucciones adicionales, por ejemplo el contexto de un cliente. */
   contextoExtra?: string;
   maxIteraciones?: number;
+  /**
+   * Se llama al terminar cada herramienta, mientras el turno sigue en curso.
+   *
+   * Existe para que la interfaz pueda mostrar el progreso: un análisis encadena
+   * varias herramientas y tarda entre cinco y quince segundos, y sin señales
+   * intermedias la espera parece que se ha roto. Un fallo aquí no interrumpe el
+   * turno — informar del progreso nunca puede tumbar el trabajo.
+   */
+  onPaso?: (paso: { nombre: string; ok: boolean; ms: number }) => void | Promise<void>;
 };
 
 /**
@@ -198,6 +207,17 @@ export async function ejecutarTurno(opts: OpcionesTurno): Promise<ResultadoTurno
     for (const r of resultados) {
       herramientas.push({ nombre: r.nombre, ok: r.ok, ms: r.ms });
       mensajes.push({ role: 'tool', tool_call_id: r.id, content: r.texto });
+
+      if (opts.onPaso) {
+        try {
+          await opts.onPaso({ nombre: r.nombre, ok: r.ok, ms: r.ms });
+        } catch (e) {
+          logger.warn('Falló el aviso de progreso', {
+            tool: r.nombre,
+            error: e instanceof Error ? e.message : String(e),
+          });
+        }
+      }
     }
   }
 

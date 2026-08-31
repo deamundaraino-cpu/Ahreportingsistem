@@ -62,6 +62,69 @@ async function cargarHistorial(
     .filter((m) => m.content.length > 0);
 }
 
+/**
+ * Mensajes de una conversación posteriores a una fecha.
+ *
+ * Es lo que sondea la consola MIENTRAS espera una respuesta, para ir mostrando
+ * las herramientas según se ejecutan. Solo corre durante esos segundos: en
+ * reposo la interfaz no consulta nada.
+ *
+ * Se eligió sondeo y no Supabase Realtime porque este último exige que
+ * `agent_messages` esté en la publicación `supabase_realtime`, y eso depende de
+ * la configuración de la base. El sondeo funciona siempre.
+ */
+export async function GET(request: NextRequest) {
+  try {
+    const supabase = await createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) throw new ApiError('UNAUTHORIZED', 'Hay que iniciar sesión.', 401);
+
+    const conversationId = request.nextUrl.searchParams.get('conversation_id');
+    const desde = request.nextUrl.searchParams.get('desde');
+    if (!conversationId) {
+      throw new ApiError('VALIDATION_ERROR', 'Falta conversation_id.', 400);
+    }
+
+    const db = await createAdminClient();
+
+    // La conversación tiene que ser de quien pregunta: el id viaja en la URL.
+    const { data: conv } = await db
+      .from('agent_conversations')
+      .select('id, user_id')
+      .eq('id', conversationId)
+      .maybeSingle();
+
+    if (!conv || (conv as { user_id: string | null }).user_id !== user.id) {
+      throw new ApiError('NOT_FOUND', 'No se encuentra la conversación.', 404);
+    }
+
+    let q = db
+      .from('agent_messages')
+      .select('id, role, content, tool_calls, model_used, cost_usd, created_at')
+      .eq('conversation_id', conversationId)
+      .order('created_at', { ascending: true })
+      .limit(100);
+
+    if (desde) q = q.gt('created_at', desde);
+
+    const { data, error } = await q;
+    if (error) {
+      throw new ApiError(
+        'DATABASE_ERROR',
+        `No se pudieron leer los mensajes: ${error.message}`,
+        500
+      );
+    }
+
+    return NextResponse.json({ mensajes: data ?? [] });
+  } catch (error) {
+    if (error instanceof ApiError) return apiErrorResponse(error);
+    return handleUnexpectedError(error, 'GET /api/agent/chat');
+  }
+}
+
 export async function POST(request: NextRequest) {
   try {
     const supabase = await createClient();
@@ -138,7 +201,24 @@ export async function POST(request: NextRequest) {
       content: mensaje,
     });
 
-    const turno = await ejecutarTurno({ ctx, entrada: mensaje, historial, contextoExtra });
+    // Cada paso se guarda en cuanto termina, no al final: es lo que permite a
+    // la consola enseñar el progreso mientras el turno sigue en curso. Un
+    // análisis encadena varias herramientas y tarda bastante; sin señales
+    // intermedias, la espera parece que se ha colgado.
+    const turno = await ejecutarTurno({
+      ctx,
+      entrada: mensaje,
+      historial,
+      contextoExtra,
+      onPaso: async (paso) => {
+        await db.from('agent_messages').insert({
+          conversation_id: conversationId,
+          role: 'tool',
+          content: paso.nombre,
+          tool_calls: { nombre: paso.nombre, ok: paso.ok, ms: paso.ms },
+        });
+      },
+    });
 
     await db.from('agent_messages').insert({
       conversation_id: conversationId,
