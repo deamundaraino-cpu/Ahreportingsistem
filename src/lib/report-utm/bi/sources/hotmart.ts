@@ -70,6 +70,24 @@ export const HOTMART_SOURCE: DataSource = {
       'hotmart',
       { column: 'bruto_usd' }
     ),
+    // Gemelas SIN convertir a la moneda de reporte: las mismas columnas, que
+    // el motor deja en dólares (ver `lib/moneda-reporte.ts`).
+    money(
+      S,
+      'revenue_neto_usd',
+      'Facturación Hotmart (neto, USD)',
+      'La facturación neta de Hotmart SIN convertir: en dólares, como la guarda Hotmart. Sirve para ponerla al lado de la convertida a la moneda del cliente.',
+      'hotmart',
+      { column: 'neto_productor_usd' }
+    ),
+    money(
+      S,
+      'revenue_bruto_usd',
+      'Facturación Hotmart (bruto, USD)',
+      'El bruto de Hotmart SIN convertir: en dólares, antes de comisiones. Sirve para ponerlo al lado del convertido a la moneda del cliente.',
+      'hotmart',
+      { column: 'bruto_usd' }
+    ),
     measure(
       S,
       'reembolsos',
@@ -136,6 +154,18 @@ export const HOTMART_SOURCE: DataSource = {
       'hotmart',
       'hotmart.revenue_neto / hotmart.ventas',
       { format: 'currency', nullUnless: ['hotmart.ventas'] }
+    ),
+    // Declarada como convertida ÷ sin convertir para que el registro sepa de
+    // qué fuente cuelga; el motor la calcula como el promedio de las tasas
+    // diarias guardadas en `fx_rates`, que es lo que dice su ayuda.
+    derived(
+      S,
+      'tasa_cambio',
+      'Tasa de cambio (USD → moneda del cliente)',
+      'Cuántas unidades de la moneda del cliente vale 1 USD. Por día es la tasa guardada de ese día; en un período, el promedio de las tasas diarias. Es la tasa con la que se convierte la facturación de Hotmart. Con el cliente en dólares vale 1.',
+      'hotmart',
+      'hotmart.revenue_bruto / hotmart.revenue_bruto_usd',
+      { format: 'decimal', nullUnless: ['hotmart.revenue_bruto_usd'] }
     ),
 
     // ── Dimensiones exclusivas de ventas ─────────────────────────────

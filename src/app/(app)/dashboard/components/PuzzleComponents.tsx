@@ -28,6 +28,7 @@ const MetricCharts = dynamic(
   { ssr: false, loading: () => <Skeleton className="h-64 rounded-xl" /> }
 );
 import { formatValue } from '@/lib/formula-engine';
+import { useMonedaReporte } from './MonedaReporteContext';
 // El sparkline vive aparte para que recharts no entre en el bundle inicial.
 const Sparkline = dynamic(() => import('./Sparkline').then((m) => ({ default: m.Sparkline })), {
   ssr: false,
@@ -91,6 +92,9 @@ export const SortableCard = React.memo(function SortableCard({
     opacity: isDragging ? 0.5 : 1,
     zIndex: isDragging ? 50 : ('auto' as any),
   };
+
+  // Antes del return anticipado: un hook no puede ir detrás de una condición.
+  const monedaReporte = useMonedaReporte();
 
   if (isCollapsed) {
     return (
@@ -201,6 +205,7 @@ export const SortableCard = React.memo(function SortableCard({
             prefix: card.prefix,
             suffix: card.suffix,
             decimals: card.decimals ?? 2,
+            moneda: monedaReporte,
           })}
         </p>
 
@@ -248,12 +253,14 @@ export const SortableCard = React.memo(function SortableCard({
                 prefix: card.prefix,
                 suffix: card.suffix,
                 decimals: card.decimals ?? 0,
+                moneda: monedaReporte,
               })}
               {' / '}
               {formatValue(targetVal, {
                 prefix: card.prefix,
                 suffix: card.suffix,
                 decimals: card.decimals ?? 0,
+                moneda: monedaReporte,
               })}
             </p>
           </div>

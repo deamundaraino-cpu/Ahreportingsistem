@@ -11,6 +11,7 @@
 import type { SheetCampoResumen, SheetVistaResumen } from '@/app/(app)/dashboard/_actions';
 import { clavesDeCampo, claveSinRespuesta, claveSegmento } from './lead-answer-aggregation';
 import { SUFIJO_NUM, SUFIJO_DEN, SUFIJO_MIN, SUFIJO_MAX } from '@/lib/sheets/campos';
+import { METRICAS_EN_USD } from '@/lib/moneda-reporte';
 
 const SUMANDOS_DE_SHEET = [SUFIJO_NUM, SUFIJO_DEN, SUFIJO_MIN, SUFIJO_MAX];
 
@@ -187,6 +188,23 @@ export const AVAILABLE_METRICS: MetricOption[] = [
   { id: 'total_roi', label: 'Hotmart: ROI total' },
   { id: 'total_dinero_bolsa', label: 'Hotmart: Dinero en bolsa total ($)' },
   { id: 'total_costo_compra', label: 'Hotmart: Costo por compra total ($)' },
+
+  // ── Moneda de reporte ─────────────────────────────────────────────────────
+  // La facturación de Hotmart se convierte a la moneda del cliente con la tasa
+  // del día de cada venta. Estas son la tasa y la facturación SIN convertir, en
+  // dólares, para ponerla al lado de la convertida.
+  { id: 'tasa_cambio', label: 'Moneda: Tasa de cambio (1 USD = X moneda del cliente)' },
+  { id: 'total_facturacion_neta_usd', label: 'Hotmart: Facturación neta total (USD)' },
+  { id: 'total_facturacion_bruta_usd', label: 'Hotmart: Facturación bruta total (USD)' },
+  { id: 'ventas_principal_usd', label: 'Hotmart: Neto principal (USD)' },
+  { id: 'ventas_bump_usd', label: 'Hotmart: Neto order bump (USD)' },
+  { id: 'ventas_upsell_usd', label: 'Hotmart: Neto upsell (USD)' },
+  { id: 'ventas_downsell_usd', label: 'Hotmart: Neto downsell (USD)' },
+  { id: 'ventas_principal_bruto_usd', label: 'Hotmart: Bruto principal (USD)' },
+  { id: 'ventas_bump_bruto_usd', label: 'Hotmart: Bruto order bump (USD)' },
+  { id: 'ventas_upsell_bruto_usd', label: 'Hotmart: Bruto upsell (USD)' },
+  { id: 'ventas_downsell_bruto_usd', label: 'Hotmart: Bruto downsell (USD)' },
+  { id: 'ventas_reembolsado_usd', label: 'Hotmart: Reembolsado (USD)' },
 
   // ── Funnel Hotmart · Métricas por pestaña ─────────────────────────────────
   // Se retiraron del selector las que ningún layout, pestaña, informe ni regla
@@ -395,11 +413,20 @@ export function buildAvailableMetrics(
 }
 // ─── Metric Type Selector ─────────────────────────────────────────────────────
 
-export type MetricType = 'number' | 'currency' | 'percent';
+/**
+ * `currency` = importe en la moneda de reporte del cliente (prefijo `$`, que se
+ * pinta como «CLP …» si el cliente no reporta en dólares). `currency_usd` =
+ * importe SIEMPRE en dólares (prefijo `USD `), para las gemelas sin convertir.
+ */
+export type MetricType = 'number' | 'currency' | 'currency_usd' | 'percent';
+
+/** Prefijo que guarda un bloque de importe siempre en dólares. */
+export const PREFIJO_USD = 'USD ';
 
 export function getMetricType(prefix?: string, suffix?: string): MetricType {
   if (suffix === '%') return 'percent';
   if (prefix === '$') return 'currency';
+  if (prefix === PREFIJO_USD) return 'currency_usd';
   return 'number';
 }
 
@@ -410,6 +437,7 @@ export function applyMetricType(type: MetricType): {
   decimals: number;
 } {
   if (type === 'currency') return { prefix: '$', suffix: '', decimals: 2 };
+  if (type === 'currency_usd') return { prefix: PREFIJO_USD, suffix: '', decimals: 2 };
   if (type === 'percent') return { prefix: '', suffix: '%', decimals: 2 };
   return { prefix: '', suffix: '', decimals: 0 };
 }
@@ -442,5 +470,7 @@ export function buildMetricFormats(
   };
   for (const c of sheetCampos) out[`sf_${c.clave}`] = formatoDe(c.agregacion, c.formato);
   for (const v of sheetVistas) out[`sv_${v.clave}`] = formatoDe(v.agregacion, v.formato);
+  // Las gemelas sin convertir salen de fábrica como importe en dólares.
+  for (const m of METRICAS_EN_USD) out[m] = 'currency_usd';
   return out;
 }

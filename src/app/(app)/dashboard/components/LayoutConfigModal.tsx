@@ -290,6 +290,16 @@ export function MetricTypeSelector({
         'bg-card text-muted-foreground/70 border-border hover:border-emerald-500/40 hover:text-emerald-400',
     },
     {
+      // Importe SIEMPRE en dólares: para las gemelas sin convertir de Hotmart
+      // cuando el cliente reporta en otra moneda.
+      type: 'currency_usd',
+      icon: 'U$',
+      label: 'Moneda USD (siempre dólares)',
+      active: 'bg-teal-600/30 text-teal-600 dark:text-teal-300 border-teal-500/60',
+      inactive:
+        'bg-card text-muted-foreground/70 border-border hover:border-teal-500/40 hover:text-teal-400',
+    },
+    {
       type: 'percent',
       icon: '%',
       label: 'Porcentaje',

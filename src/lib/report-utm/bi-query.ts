@@ -1,7 +1,14 @@
 import { createAdminClient } from '@/utils/supabase/server';
 import { fetchAllRows } from '@/lib/supabase-paginate';
 import { columnaExcluidoDisponible } from './lead-exclusion';
-import { cargarConversor, COLUMNAS_USD_METRICAS, monedaDeClienteUtm } from '@/lib/moneda-reporte';
+import {
+  cargarConversor,
+  clavesDeRango,
+  COLUMNAS_USD_METRICAS,
+  monedaDeClienteUtm,
+  rangoDeClave,
+  tasaPromedio,
+} from '@/lib/moneda-reporte';
 import type {
   BiMetric,
   BiDimension,
@@ -116,6 +123,9 @@ const HOTMART_METRICS = [
   'hm_bruto',
   'hm_reembolsos',
   'hm_neto_reembolsado',
+  // Las mismas columnas SIN convertir a la moneda de reporte.
+  'hm_neto_usd',
+  'hm_bruto_usd',
 ] as const;
 
 /** Todas las de la fuente `hotmart`, incluidas las derivadas. */
@@ -126,6 +136,13 @@ const HOTMART_ALL_METRICS = [
   'hm_cpa',
   'hm_ticket_medio',
 ] as const;
+
+/**
+ * Tasa de cambio de la moneda de reporte por clave de fila (`hm_tasa_cambio`).
+ * `claves` son las filas que deben existir aunque no haya ventas: por fecha, un
+ * día sin ventas también tiene su tasa.
+ */
+type TasaBi = { deClave: (key: string) => number | null; claves: string[] };
 
 /** Dimensión histórica → columna de `hotmart_ventas`. */
 const HOTMART_DIM_COL: Readonly<Record<string, string>> = {
@@ -469,6 +486,34 @@ export async function runBiQuery(params: BiQueryParams): Promise<BiQueryRow[]> {
   }
 
   // ── Merge results ─────────────────────────────────────────────────
+  // ── Tasa de cambio de la moneda de reporte (`hm_tasa_cambio`) ─────
+  // Por fecha, la de los días de cada fila; con cualquier otra dimensión, la
+  // del rango entero. Siempre el promedio de las tasas diarias guardadas. Solo
+  // se carga si alguien la pide (métrica o campo calculado) y hay cliente.
+  const pideTasa =
+    params.metrics.includes('hm_tasa_cambio') ||
+    (params.calculated ?? []).some((c) => c.expression.includes('hm_tasa_cambio'));
+  let tasaBi: TasaBi | null = null;
+  if (pideTasa && params.cliente_id) {
+    const moneda = await monedaDeClienteUtm(supabase, params.cliente_id);
+    const conv = await cargarConversor(supabase, moneda, dateFrom, dateTo);
+    const agrupacion = params.date_grouping ?? 'day';
+    const porFecha = params.dimension === 'date';
+    tasaBi = {
+      deClave: (key) => {
+        const r =
+          porFecha && key !== 'total'
+            ? rangoDeClave(key, agrupacion, dateFrom, dateTo)
+            : { desde: dateFrom, hasta: dateTo };
+        return tasaPromedio(conv, r.desde, r.hasta);
+      },
+      claves:
+        porFecha && params.metrics.includes('hm_tasa_cambio')
+          ? clavesDeRango(dateFrom, dateTo, agrupacion)
+          : [],
+    };
+  }
+
   const fusionado = mergeResults(
     params,
     leadsData,
@@ -483,7 +528,8 @@ export async function runBiQuery(params: BiQueryParams): Promise<BiQueryRow[]> {
     leadCampos,
     nocross,
     hotmartData,
-    leadSegs
+    leadSegs,
+    tasaBi
   );
 
   // ── Conversiones personalizadas de Meta (`metacc:<clave>`) ─────────
@@ -1158,6 +1204,9 @@ export interface HotmartRow {
   bruto: number;
   reembolsos: number;
   neto_reembolsado: number;
+  /** Neto y bruto SIN convertir a la moneda de reporte: en dólares. */
+  neto_usd: number;
+  bruto_usd: number;
 }
 
 /**
@@ -1241,6 +1290,8 @@ async function queryHotmartDirect(
       bruto: 0,
       reembolsos: 0,
       neto_reembolsado: 0,
+      neto_usd: 0,
+      bruto_usd: 0,
     };
     const estado = String(r.estado ?? '');
     // USD → moneda de reporte con la tasa del día de ESTA venta (identidad si
@@ -1256,6 +1307,8 @@ async function queryHotmartDirect(
       entry.ventas += 1;
       entry.neto += neto;
       entry.bruto += bruto;
+      entry.neto_usd += Number(r.neto_productor_usd ?? 0) || 0;
+      entry.bruto_usd += Number(r.bruto_usd ?? 0) || 0;
     }
     // Pendiente / expirada / cancelada: todavía no es dinero, no se cuenta.
     map.set(dim, entry);
@@ -2366,7 +2419,8 @@ function mergeResults(
   leadCampos: LeadCampoDef[] = [],
   nocross: Set<string> = new Set(),
   hotmartData: HotmartRow[] = [],
-  leadSegs: LeadSegReq[] = []
+  leadSegs: LeadSegReq[] = [],
+  tasa: TasaBi | null = null
 ): BiQueryRow[] {
   const keys = new Set<string>();
   leadsData.forEach((r) => keys.add(r.dim ?? 'total'));
@@ -2376,6 +2430,7 @@ function mergeResults(
   offlineData.forEach((r) => keys.add(r.dim ?? 'total'));
   sheetData.forEach((r) => keys.add(r.dim));
   if (subsData) keys.add('total'); // snapshot: solo a nivel global
+  tasa?.claves.forEach((k) => keys.add(k));
 
   if (keys.size === 0) {
     if (params.dimension === 'none') keys.add('total');
@@ -2510,6 +2565,12 @@ function mergeResults(
       row.hm_cpa = spend > 0 && hmVentas > 0 ? round2(spend / hmVentas) : null;
     if (params.metrics.includes('hm_ticket_medio'))
       row.hm_ticket_medio = hmVentas > 0 ? round2(hmNeto / hmVentas) : null;
+    // Moneda de reporte: la facturación sin convertir (en dólares) y la tasa
+    // del grupo. Sin cliente la tasa es desconocida (null), no 1.
+    if (params.metrics.includes('hm_neto_usd')) row.hm_neto_usd = round2(hm?.neto_usd ?? 0);
+    if (params.metrics.includes('hm_bruto_usd')) row.hm_bruto_usd = round2(hm?.bruto_usd ?? 0);
+    if (params.metrics.includes('hm_tasa_cambio'))
+      row.hm_tasa_cambio = tasa ? tasa.deClave(key) : null;
 
     // Conversiones offline
     const off = offlineData.find((r) => (r.dim ?? 'total') === key);
@@ -2612,6 +2673,9 @@ function mergeResults(
       baseValues.hm_roas = spend > 0 ? round2(hmNeto / spend) : 0;
       baseValues.hm_cpa = hmVentas > 0 && spend > 0 ? round2(spend / hmVentas) : 0;
       baseValues.hm_ticket_medio = hmVentas > 0 ? round2(hmNeto / hmVentas) : 0;
+      baseValues.hm_neto_usd = round2(hm?.neto_usd ?? 0);
+      baseValues.hm_bruto_usd = round2(hm?.bruto_usd ?? 0);
+      baseValues.hm_tasa_cambio = (tasa ? tasa.deClave(key) : null) ?? 0;
       baseValues.offline_leads = off?.offline_leads ?? 0;
       baseValues.offline_ventas = off?.offline_ventas ?? 0;
       baseValues.offline_revenue = round2(off?.offline_revenue ?? 0);

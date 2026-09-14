@@ -95,6 +95,7 @@ import { LeadAnswerBlock } from './LeadAnswerBlock';
 import type { LeadAnswerDatasetLite } from '@/lib/dashboard/lead-answer-aggregation';
 import { refDeCubo, clavesYRefDelDia } from '@/lib/dashboard/lead-answer-row';
 import { TabArchiveView } from './TabArchiveView';
+import { MonedaReporteProvider, useMonedaReporte } from './MonedaReporteContext';
 
 const SupportModule = dynamic(
   () => import('./SupportModule').then((m) => ({ default: m.SupportModule })),
@@ -282,6 +283,9 @@ function SortableTab({
 // Aparece en Vista General y agrega los productos "extras" del rango filtrado.
 // Se nutre de hotmart_funnel_data.extras[] de cada metricas_diarias del rango.
 function ExtrasPanel({ filteredMetrics }: { filteredMetrics: any[] }) {
+  // Los extras llegan ya convertidos a la moneda de reporte (convertirFilasMetricas).
+  const moneda = useMonedaReporte();
+  const fmt = (n: number) => formatValue(n, { prefix: '$', decimals: 2, moneda });
   const aggregated = useMemo(() => {
     const map = new Map<string, { count: number; gross: number; net: number }>();
     for (const row of filteredMetrics) {
@@ -321,7 +325,7 @@ function ExtrasPanel({ filteredMetrics }: { filteredMetrics: any[] }) {
           <div className="text-xs text-muted-foreground">
             {aggregated.length} producto{aggregated.length !== 1 ? 's' : ''} ·{' '}
             <span className="text-emerald-600 dark:text-emerald-400 font-mono">
-              ${totalNet.toFixed(2)}
+              {fmt(totalNet)}
             </span>{' '}
             neto
           </div>
@@ -333,8 +337,8 @@ function ExtrasPanel({ filteredMetrics }: { filteredMetrics: any[] }) {
             <TableRow className="border-border bg-background *:text-foreground/90 *:font-semibold *:text-xs">
               <TableHead className="pl-4">Producto</TableHead>
               <TableHead className="text-right">Ventas</TableHead>
-              <TableHead className="text-right">Bruto (USD)</TableHead>
-              <TableHead className="text-right pr-4">Neto (USD)</TableHead>
+              <TableHead className="text-right">Bruto ({moneda})</TableHead>
+              <TableHead className="text-right pr-4">Neto ({moneda})</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -343,10 +347,10 @@ function ExtrasPanel({ filteredMetrics }: { filteredMetrics: any[] }) {
                 <TableCell className="pl-4 text-foreground">{r.name}</TableCell>
                 <TableCell className="text-right font-mono text-foreground/90">{r.count}</TableCell>
                 <TableCell className="text-right font-mono text-muted-foreground">
-                  ${r.gross.toFixed(2)}
+                  {fmt(r.gross)}
                 </TableCell>
                 <TableCell className="text-right pr-4 font-mono text-emerald-600 dark:text-emerald-400">
-                  ${r.net.toFixed(2)}
+                  {fmt(r.net)}
                 </TableCell>
               </TableRow>
             ))}
@@ -354,10 +358,10 @@ function ExtrasPanel({ filteredMetrics }: { filteredMetrics: any[] }) {
               <TableCell className="pl-4 text-foreground">Total</TableCell>
               <TableCell className="text-right font-mono text-foreground">{totalCount}</TableCell>
               <TableCell className="text-right font-mono text-foreground">
-                ${totalGross.toFixed(2)}
+                {fmt(totalGross)}
               </TableCell>
               <TableCell className="text-right pr-4 font-mono text-emerald-600 dark:text-emerald-400">
-                ${totalNet.toFixed(2)}
+                {fmt(totalNet)}
               </TableCell>
             </TableRow>
           </TableBody>
@@ -397,6 +401,8 @@ function DynamicDashboard({
     conversionesCatalogo = [],
     availablePlatforms: availablePlatformsArr = ['meta'],
   } = data;
+  // Moneda de reporte: «$» de los bloques se pinta como «CLP …» si no es USD.
+  const monedaReporte = useMonedaReporte();
   const platformSet = useMemo(
     () => new Set<string>(availablePlatformsArr),
     [availablePlatformsArr]
@@ -2068,6 +2074,7 @@ function DynamicDashboard({
                                             prefix: col.prefix,
                                             suffix: col.suffix,
                                             decimals: col.decimals,
+                                            moneda: monedaReporte,
                                           })}
                                         </span>
                                       </div>
@@ -2268,6 +2275,7 @@ function DynamicDashboard({
                                                 prefix: col.prefix,
                                                 suffix: col.suffix,
                                                 decimals: col.decimals,
+                                                moneda: monedaReporte,
                                               })}
                                               {col.suffix === '%' &&
                                                 col.highlight &&
@@ -2338,6 +2346,7 @@ function DynamicDashboard({
                                                 prefix: col.prefix,
                                                 suffix: col.suffix,
                                                 decimals: col.decimals,
+                                                moneda: monedaReporte,
                                               })}
                                               {col.suffix === '%' &&
                                                 col.highlight &&
@@ -2772,17 +2781,21 @@ export function DashboardClient({
 
   // Always use DynamicDashboard for MIRROR effect (identical view)
   // DynamicDashboard handles isPublic to hide/show buttons
+  // La moneda de reporte del cliente la leen todos los bloques que pintan
+  // importes (tarjetas, tablas, ranking, archivo, extras).
   return (
-    <Suspense fallback={null}>
-      <DynamicDashboard
-        data={data}
-        initialLayout={layout || DEFAULT_MEGALAYOUT}
-        isCustomized={!!clienteLayoutId}
-        isPublic={isPublic}
-        initialTabId={initialTabId}
-        initialKeyword={initialKeyword}
-        userRole={userRole}
-      />
-    </Suspense>
+    <MonedaReporteProvider value={data.moneda ?? 'USD'}>
+      <Suspense fallback={null}>
+        <DynamicDashboard
+          data={data}
+          initialLayout={layout || DEFAULT_MEGALAYOUT}
+          isCustomized={!!clienteLayoutId}
+          isPublic={isPublic}
+          initialTabId={initialTabId}
+          initialKeyword={initialKeyword}
+          userRole={userRole}
+        />
+      </Suspense>
+    </MonedaReporteProvider>
   );
 }

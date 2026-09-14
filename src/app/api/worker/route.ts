@@ -16,6 +16,7 @@ import { expandirFila } from '@/lib/ads/ads-daily-writer';
 import { agruparPorForma, plataformasOmitidas } from '@/lib/sync/upsert-batches';
 import { hotmartConectado, obtenerToken } from '@/lib/hotmart/cliente';
 import { cargarFunnels } from '@/lib/hotmart/persistencia';
+import { capturarTasasDelDia } from '@/lib/fx';
 import {
   agregarDesdeHotmartVentas,
   desgloseVacio,
@@ -238,6 +239,11 @@ export async function GET(request: Request) {
   const runStartedAt = Date.now();
   setRetryDeadline(runStartedAt + 50_000);
   const budgetExhausted = () => Date.now() - runStartedAt > WORKER_BUDGET_MS;
+
+  // Tasa de HOY de las monedas de reporte, haya o no ventas que sincronizar.
+  // Una fila por (fecha, moneda) que no se reescribe: es la tasa congelada con
+  // la que los informes convierten Hotmart. Nunca lanza.
+  await capturarTasasDelDia(adminSupabase);
 
   const { searchParams } = new URL(request.url);
   const singleDate = searchParams.get('date');

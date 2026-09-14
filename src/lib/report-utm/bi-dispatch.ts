@@ -15,6 +15,8 @@ import {
   NON_ATTRIBUTABLE_FIELDS,
 } from './bi-metadata';
 import { resolvePublicClienteId } from './campaign-resolver';
+import { createAdminClient } from '@/utils/supabase/server';
+import { monedaDeClienteUtm } from '@/lib/moneda-reporte';
 import { computeDiagnostics } from './bi/diagnostics';
 import type { QueryDiagnostics } from './bi/diagnostics';
 import type { ParsedBiQuery } from './bi-query-params';
@@ -27,8 +29,11 @@ export interface DispatchResult {
    * Por qué un campo no se pudo medir. ADITIVO: los widgets que solo leen
    * `data` siguen funcionando igual. Es lo que permite pintar «—» con su
    * motivo en vez de un 0 que no significa cero.
+   *
+   * `moneda` es la moneda de reporte del cliente: con ella los widgets pintan
+   * «CLP 233.487» en vez de un «$» que no dice qué moneda es.
    */
-  meta?: QueryDiagnostics;
+  meta?: QueryDiagnostics & { moneda?: string };
   error?: string;
   status?: number;
 }
@@ -87,6 +92,25 @@ async function diagnosticarSeguro(p: ParsedBiQuery): Promise<QueryDiagnostics | 
   }
 }
 
+/** Moneda de reporte del cliente, o `undefined` si no hay cliente o falla. */
+async function monedaSegura(q: ParsedBiQuery): Promise<string | undefined> {
+  if (!q.cliente_id) return undefined;
+  try {
+    return await monedaDeClienteUtm(await createAdminClient(), q.cliente_id);
+  } catch {
+    return undefined;
+  }
+}
+
+/** El diagnóstico de siempre más la moneda de reporte, en paralelo. */
+async function diagnosticarConMoneda(
+  q: ParsedBiQuery
+): Promise<(QueryDiagnostics & { moneda?: string }) | undefined> {
+  const [diag, moneda] = await Promise.all([diagnosticarSeguro(q), monedaSegura(q)]);
+  if (!diag) return undefined;
+  return moneda ? { ...diag, moneda } : diag;
+}
+
 export async function dispatchBiQuery(rawParams: ParsedBiQuery): Promise<DispatchResult> {
   // "Campaña (cruzada)" tuvo su propio motor (`runCampaignQuery`), que solo
   // emitía ~20 de las 72 métricas e ignoraba los campos calculados. Hoy la
@@ -124,7 +148,7 @@ export async function dispatchBiQuery(rawParams: ParsedBiQuery): Promise<Dispatc
         advancedFilter: p.advancedFilter,
         metrics: p.metrics,
       }),
-      diagnosticarSeguro(p),
+      diagnosticarConMoneda(p),
     ]);
     return { data, meta };
   }
@@ -178,7 +202,7 @@ export async function dispatchBiQuery(rawParams: ParsedBiQuery): Promise<Dispatc
     }
     const [data, meta] = await Promise.all([
       runPivotQuery(base, p.metrics[0]),
-      diagnosticarSeguro(p),
+      diagnosticarConMoneda(p),
     ]);
     return { data, meta };
   }
@@ -191,10 +215,10 @@ export async function dispatchBiQuery(rawParams: ParsedBiQuery): Promise<Dispatc
   }
 
   if (p.type === 'compare') {
-    const [data, meta] = await Promise.all([runComparison(base), diagnosticarSeguro(p)]);
+    const [data, meta] = await Promise.all([runComparison(base), diagnosticarConMoneda(p)]);
     return { data, meta };
   }
 
-  const [data, meta] = await Promise.all([runBiQuery(base), diagnosticarSeguro(p)]);
+  const [data, meta] = await Promise.all([runBiQuery(base), diagnosticarConMoneda(p)]);
   return { data, meta };
 }

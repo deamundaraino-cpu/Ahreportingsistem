@@ -133,6 +133,11 @@ export type BiMetric =
   | 'hm_roas'
   | 'hm_cpa'
   | 'hm_ticket_medio'
+  // Moneda de reporte: la facturación SIN convertir (en dólares) y la tasa con
+  // la que se convierte.
+  | 'hm_neto_usd'
+  | 'hm_bruto_usd'
+  | 'hm_tasa_cambio'
   // ── Conversiones offline (conversiones_offline_diarias) ──
   | 'offline_leads'
   | 'offline_ventas'
@@ -280,6 +285,10 @@ export const ADDITIVE_METRICS: ReadonlySet<string> = new Set<string>([
   'hm_bruto',
   'hm_reembolsos',
   'hm_neto_reembolsado',
+  // Las gemelas en dólares suman igual que las convertidas. La tasa de cambio
+  // (`hm_tasa_cambio`) NO: es un promedio.
+  'hm_neto_usd',
+  'hm_bruto_usd',
 ]);
 
 /** ¿La fila "Total" de una tabla puede sumar esta métrica directamente? */
@@ -343,6 +352,9 @@ export const PIVOT_METRICS: BiMetric[] = [
   'hm_bruto',
   'hm_reembolsos',
   'hm_neto_reembolsado',
+  // Sus gemelas sin convertir: misma columna, mismo grano de fila.
+  'hm_neto_usd',
+  'hm_bruto_usd',
 ];
 
 /** ¿Esta métrica se puede usar con una dimensión secundaria (gráfica apilada)? */
@@ -490,7 +502,8 @@ export type MetricBreakdown = 'any' | 'campaign' | 'total' | 'global';
 
 export interface MetricMetaEntry {
   label: string;
-  format: 'number' | 'currency' | 'percent' | 'ratio';
+  /** `decimal`: 2 decimales sin abreviar a «k» (la tasa de cambio). */
+  format: 'number' | 'currency' | 'percent' | 'ratio' | 'decimal';
   group: MetricGroup;
   breakdown: MetricBreakdown;
 }
@@ -823,6 +836,27 @@ export const METRIC_META: Record<BiMetric, MetricMetaEntry> = {
   hm_bruto: {
     label: 'Facturación Hotmart (bruto)',
     format: 'currency',
+    group: 'hotmart',
+    breakdown: 'any',
+  },
+  // Gemelas SIN convertir: siempre en dólares, sea cual sea la moneda del
+  // cliente (ver `METRICAS_EN_USD` en lib/moneda-reporte.ts).
+  hm_neto_usd: {
+    label: 'Facturación Hotmart (neto, USD)',
+    format: 'currency',
+    group: 'hotmart',
+    breakdown: 'any',
+  },
+  hm_bruto_usd: {
+    label: 'Facturación Hotmart (bruto, USD)',
+    format: 'currency',
+    group: 'hotmart',
+    breakdown: 'any',
+  },
+  // Una tasa: nunca se suma en la fila Total (no está en ADDITIVE_METRICS).
+  hm_tasa_cambio: {
+    label: 'Tasa de cambio (USD → moneda del cliente)',
+    format: 'decimal',
     group: 'hotmart',
     breakdown: 'any',
   },
@@ -2382,6 +2416,12 @@ export const METRIC_GLOSSARY: Record<string, string> = {
     'Cuánto costó, en promedio, cada venta de Hotmart atribuida a la campaña. Cuanto MÁS BAJO, mejor.',
   hm_ticket_medio:
     'Facturación neta dividida entre el número de ventas: cuánto deja, en promedio, cada compra.',
+  hm_neto_usd:
+    'La facturación neta de Hotmart SIN convertir: en dólares, como la guarda Hotmart. Sirve para ponerla al lado de la convertida a la moneda del cliente.',
+  hm_bruto_usd:
+    'El bruto de Hotmart SIN convertir: en dólares, antes de comisiones. Sirve para ponerlo al lado del convertido a la moneda del cliente.',
+  hm_tasa_cambio:
+    'Cuántas unidades de la moneda del cliente vale 1 USD. Por día es la tasa guardada de ese día; en un período, el promedio de las tasas diarias. Es la tasa con la que se convierte la facturación de Hotmart. Con el cliente en dólares vale 1.',
   // ── Las tres métricas que se llaman "leads" y NO son comparables ──
   leads_form:
     'Leads que reporta el píxel de Meta desde sus propios formularios. Puede no coincidir con “Leads (contactos)”: mide otra cosa, en otro sistema, y los mismos contactos pueden estar en ambas. No las sumes.',

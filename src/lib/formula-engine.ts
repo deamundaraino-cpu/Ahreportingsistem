@@ -4,6 +4,7 @@
  * Returns null when division by zero or any referenced value is missing (0).
  */
 import { filterCampaignList, type AnyCampaignFilter } from './campaign-filter';
+import { CLAVE_TASA_CAMBIO, decimalesDe } from './moneda-reporte';
 
 // All available fields from metricas_diarias that formulas can reference.
 export const FIELD_MAP: Record<string, string> = {
@@ -145,6 +146,21 @@ export const FIELD_MAP: Record<string, string> = {
   offline_ventas: 'offline_ventas', // ventas cerradas offline
   offline_revenue: 'offline_revenue', // revenue reportado en el sheet
   offline_total: 'offline_total', // suma de todas las cantidades offline
+
+  // ── Moneda de reporte (lib/moneda-reporte.ts) ────────────────────────
+  // Tasa del día: unidades de la moneda del cliente por 1 USD. En un rango es
+  // el PROMEDIO de las tasas diarias (ver `reagregarNoAditivas`), nunca la suma.
+  tasa_cambio: 'tasa_cambio',
+  // Facturación de Hotmart SIN convertir: en dólares, al lado de la convertida.
+  ventas_principal_usd: 'ventas_principal_usd',
+  ventas_bump_usd: 'ventas_bump_usd',
+  ventas_upsell_usd: 'ventas_upsell_usd',
+  ventas_downsell_usd: 'ventas_downsell_usd',
+  ventas_principal_bruto_usd: 'ventas_principal_bruto_usd',
+  ventas_bump_bruto_usd: 'ventas_bump_bruto_usd',
+  ventas_upsell_bruto_usd: 'ventas_upsell_bruto_usd',
+  ventas_downsell_bruto_usd: 'ventas_downsell_bruto_usd',
+  ventas_reembolsado_usd: 'ventas_reembolsado_usd',
 };
 
 // Complex metrics that should be resolved dynamically (as formulas)
@@ -249,6 +265,12 @@ export const MACRO_MAP: Record<string, string> = {
     '(ventas_principal + ventas_bump + ventas_upsell + ventas_downsell) - ventas_reembolsado',
   total_tasa_reembolso:
     'ventas_reembolsado / (ventas_principal + ventas_bump + ventas_upsell + ventas_downsell)',
+
+  // ── Moneda de reporte: totales en dólares, sin convertir ────────────
+  total_facturacion_neta_usd:
+    'ventas_principal_usd + ventas_bump_usd + ventas_upsell_usd + ventas_downsell_usd',
+  total_facturacion_bruta_usd:
+    'ventas_principal_bruto_usd + ventas_bump_bruto_usd + ventas_upsell_bruto_usd + ventas_downsell_bruto_usd',
 };
 
 // ── Semantic Aliases ─────────────────────────────────────────────────────────
@@ -726,8 +748,9 @@ export function aggregateFormula(
  * (`sf_x__num` / `sf_x__den`, o `__min` / `__max`), así que aquí basta con
  * detectarlos por el nombre y recalcular.
  *
- * Deliberadamente acotado a `sf_`/`sv_`: cualquier otra métrica queda EXACTAMENTE
- * como estaba. Eso incluye `meta_frequency`, `ga_bounce_rate` y
+ * Deliberadamente acotado a `sf_`/`sv_` y a `tasa_cambio` (que nace con su par
+ * `__num`/`__den` en `convertirFilasMetricas`): cualquier otra métrica queda
+ * EXACTAMENTE como estaba. Eso incluye `meta_frequency`, `ga_bounce_rate` y
  * `ga_avg_session_duration`, que hoy también se suman mal — corregirlas cambiaría
  * cifras de dashboards que los clientes ya dieron por buenas, y es una decisión
  * aparte.
@@ -737,12 +760,13 @@ export function reagregarNoAditivas(
   rows: Record<string, unknown>[]
 ): void {
   const esCampoDeSheet = (base: string) => base.startsWith('sf_') || base.startsWith('sv_');
+  const esPromedio = (base: string) => esCampoDeSheet(base) || base === CLAVE_TASA_CAMBIO;
 
   for (const clave of Object.keys(totalRow)) {
     // Promedio: Σnumerador / Σdenominador, correcto a cualquier grano.
     if (clave.endsWith('__den')) {
       const base = clave.slice(0, -'__den'.length);
-      if (!esCampoDeSheet(base)) continue;
+      if (!esPromedio(base)) continue;
       const den = totalRow[clave];
       totalRow[base] = den > 0 ? (totalRow[base + '__num'] ?? 0) / den : 0;
       continue;
@@ -799,10 +823,20 @@ export function filterRowByTikTokAccount(
  */
 export function formatValue(
   value: number | null,
-  opts: { prefix?: string; suffix?: string; decimals?: number }
+  opts: { prefix?: string; suffix?: string; decimals?: number; moneda?: string | null }
 ): string {
   if (value === null) return '-';
-  const { prefix = '', suffix = '', decimals = 2 } = opts;
+  let { prefix = '', decimals = 2 } = opts;
+  const { suffix = '' } = opts;
+  // «$» es el marcador de «importe» del bloque. Con el cliente reportando en
+  // otra moneda se pinta su código y sus decimales («CLP 233.487»); en dólares,
+  // exactamente igual que siempre. Un prefijo `USD ` (gemelas sin convertir) no
+  // se toca.
+  const moneda = String(opts.moneda || 'USD').toUpperCase();
+  if (prefix === '$' && moneda !== 'USD') {
+    prefix = `${moneda} `;
+    decimals = decimalesDe(moneda);
+  }
   const formatted = value.toLocaleString('en-US', {
     minimumFractionDigits: decimals,
     maximumFractionDigits: decimals,

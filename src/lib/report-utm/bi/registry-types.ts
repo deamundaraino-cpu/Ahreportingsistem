@@ -71,7 +71,8 @@ export type GrainKind = 'row' | 'daily' | 'snapshot';
 export type Agg =
   'sum' | 'avg' | 'weighted_avg' | 'min' | 'max' | 'count' | 'count_distinct' | 'last';
 
-export type Fmt = 'number' | 'currency' | 'percent' | 'ratio' | 'text';
+/** `decimal`: número con 2 decimales y sin abreviar a «k» (una tasa de cambio). */
+export type Fmt = 'number' | 'currency' | 'percent' | 'ratio' | 'decimal' | 'text';
 
 /**
  * Grupo de presentación en el selector del editor.

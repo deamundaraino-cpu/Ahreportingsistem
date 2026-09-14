@@ -6,7 +6,7 @@ import { createAdminClient } from '@/utils/supabase/server';
 import { asegurarEspejoUtm } from '@/lib/clientes/ciclo-de-vida';
 import { ConexionesCliente } from '@/components/report-utm/ConexionesCliente';
 import { MonedaReporteCard } from '@/components/report-utm/MonedaReporteCard';
-import { monedaDeClienteUtm } from '@/lib/moneda-reporte';
+import { monedaDeClienteUtm, ultimasTasasGuardadas } from '@/lib/moneda-reporte';
 
 export default async function ClientDetailPage(props: { params: Promise<{ id: string }> }) {
   const params = await props.params;
@@ -56,6 +56,7 @@ export default async function ClientDetailPage(props: { params: Promise<{ id: st
           <MonedaReporteCard
             rtmClienteId={espejo.id}
             inicial={await monedaDeClienteUtm(await createAdminClient(), espejo.id)}
+            ultimasTasas={await ultimasTasasGuardadas(await createAdminClient())}
           />
           <ConexionesCliente rtmClienteId={espejo.id} publicClienteId={cliente.id} />
         </section>

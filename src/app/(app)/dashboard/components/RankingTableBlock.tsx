@@ -10,6 +10,7 @@ import {
   leadsFueraDeRanking,
 } from '@/lib/ranking-aggregation';
 import { formulaUsaRespuestas } from '@/lib/dashboard/lead-answer-aggregation';
+import { useMonedaReporte } from './MonedaReporteContext';
 
 interface Props {
   def: RankingTableDef;
@@ -48,6 +49,7 @@ export function RankingTableBlock({
   );
   const [colWidths, setColWidths] = useState<Record<string, number>>({});
   const [consolidateModal, setConsolidateModal] = useState<ConsolidateModal | null>(null);
+  const monedaReporte = useMonedaReporte();
   const resizingRef = useRef<{ key: string; startX: number; startW: number } | null>(null);
 
   useEffect(() => {
@@ -344,6 +346,7 @@ export function RankingTableBlock({
                       prefix: col.prefix,
                       suffix: col.suffix,
                       decimals: col.decimals,
+                      moneda: monedaReporte,
                     })}
                   </span>
                 </div>
@@ -552,6 +555,7 @@ export function RankingTableBlock({
                         prefix: col.prefix,
                         suffix: col.suffix,
                         decimals: col.decimals,
+                        moneda: monedaReporte,
                       })}
                     </td>
                   );

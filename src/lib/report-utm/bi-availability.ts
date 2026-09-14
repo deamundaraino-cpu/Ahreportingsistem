@@ -192,6 +192,8 @@ export async function getMetricAvailability(
       bump('hm_ventas', 1);
       bump('hm_neto', Number(v.neto_productor_usd ?? 0));
       bump('hm_bruto', Number(v.bruto_usd ?? 0));
+      bump('hm_neto_usd', Number(v.neto_productor_usd ?? 0));
+      bump('hm_bruto_usd', Number(v.bruto_usd ?? 0));
     }
   }
 
@@ -331,6 +333,10 @@ export async function getMetricAvailability(
         break;
       case 'hm_ticket_medio':
         out[metric] = has('hm_neto') && has('hm_ventas');
+        break;
+      // La tasa existe haya o no ventas (con el cliente en dólares vale 1).
+      case 'hm_tasa_cambio':
+        out[metric] = true;
         break;
       default:
         out[metric] = has(metric);

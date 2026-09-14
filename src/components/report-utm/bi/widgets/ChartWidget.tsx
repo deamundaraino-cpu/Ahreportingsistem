@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { createContext, useContext, useEffect, useState } from 'react';
 import { Skeleton } from '@/components/ui/skeleton';
 import { anchoEjeCategoria, truncarEtiqueta } from '@/lib/chart-labels';
 import { useAnchoContenedor } from '@/lib/hooks/useAnchoContenedor';
@@ -53,6 +53,13 @@ import { appendWidgetFilters, widgetFilterSignature } from '../widgetQuery';
 import { HelpTip } from '../HelpTip';
 import { readUnavailable, UnavailableNote } from '../widgetDiagnostics';
 import type { WidgetUnavailable } from '../widgetDiagnostics';
+import { monedaDeMetrica, prefijoMoneda, simboloMoneda } from '@/lib/moneda-reporte';
+
+/**
+ * Prefijo de los importes de la gráfica («$» o «CLP »). Va por contexto porque
+ * lo usan los ejes, el tooltip y la leyenda de siete cuerpos de gráfica.
+ */
+const PrefijoMonedaCtx = createContext('$');
 
 const COLORS = [
   '#10b981',
@@ -67,7 +74,7 @@ const COLORS = [
   '#84cc16',
 ];
 
-type ColFormat = 'number' | 'currency' | 'percent' | 'ratio';
+type ColFormat = 'number' | 'currency' | 'percent' | 'ratio' | 'decimal';
 
 interface Props {
   title: string;
@@ -78,9 +85,11 @@ interface Props {
   onDrill?: (dimension: string, value: string) => void;
 }
 
-function fmtNum(value: number, format: ColFormat): string {
+function fmtNum(value: number, format: ColFormat, prefijo = '$'): string {
   if (format === 'currency')
-    return `$${value.toLocaleString('es-AR', { maximumFractionDigits: 0 })}`;
+    return `${prefijo}${value.toLocaleString('es-AR', { maximumFractionDigits: 0 })}`;
+  if (format === 'decimal')
+    return value.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   if (format === 'percent') return `${value.toFixed(1)}%`;
   if (format === 'ratio') return `${value.toFixed(2)}x`;
   if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
@@ -107,6 +116,7 @@ interface ChartTooltipProps {
   format: ColFormat;
 }
 function ChartTooltip({ active, payload, label, format }: ChartTooltipProps) {
+  const prefijo = useContext(PrefijoMonedaCtx);
   if (!active || !payload || payload.length === 0) return null;
   const hasLabel = label !== undefined && label !== null && String(label) !== '';
   return (
@@ -125,7 +135,7 @@ function ChartTooltip({ active, payload, label, format }: ChartTooltipProps) {
               </span>
             )}
             <span className="text-foreground font-mono tabular-nums ml-auto shrink-0 pl-2">
-              {fmtNum(Number(p.value ?? 0), format)}
+              {fmtNum(Number(p.value ?? 0), format, prefijo)}
             </span>
           </div>
         );
@@ -152,6 +162,8 @@ export function ChartWidget({
   const [error, setError] = useState<string | null>(null);
   /** Motivo por el que la métrica de la gráfica no se pudo medir, si es el caso. */
   const [naInfo, setNaInfo] = useState<WidgetUnavailable | null>(null);
+  /** Moneda de reporte del cliente (viaja en `meta` de la respuesta). */
+  const [monedaCliente, setMonedaCliente] = useState<string | null>(null);
 
   // Fórmula propia del widget: manda sobre `metric` y viaja bajo una clave fija.
   const formula = config.formula?.trim();
@@ -225,6 +237,7 @@ export function ChartWidget({
       .then((r) => r.json())
       .then((json) => {
         setNaInfo(readUnavailable(json.meta, metric));
+        setMonedaCliente(json.meta?.moneda ?? null);
         if (usePivot) {
           setPivot(json.data ?? { rows: [], seriesKeys: [] });
           setRows([]);
@@ -273,63 +286,70 @@ export function ChartWidget({
     if (onDrill && dimension !== 'date' && dimension !== 'none') onDrill(dimension, name);
   }
 
+  // «$» con el cliente en dólares; el código de la moneda si no (USD en las gemelas).
+  const prefijo = prefijoMoneda(
+    simboloMoneda(monedaDeMetrica(metric, monedaCliente), monedaCliente)
+  );
+
   return (
-    <div className="rounded-2xl border border-border bg-card p-5 flex flex-col gap-4 h-full">
-      {/* `min-w-0` en el título y `shrink-0` en el badge: sin eso los dos se
+    <PrefijoMonedaCtx.Provider value={prefijo}>
+      <div className="rounded-2xl border border-border bg-card p-5 flex flex-col gap-4 h-full">
+        {/* `min-w-0` en el título y `shrink-0` en el badge: sin eso los dos se
           reparten el hueco por igual y en un widget de un cuarto de ancho el
           título queda aplastado a cuatro letras. Ahora el título manda y el
           badge cede, y lo que se corte se recupera con el tooltip. */}
-      <div className="flex items-center justify-between gap-2">
-        <p className="flex items-center gap-1 min-w-0 flex-1 text-sm font-semibold text-foreground">
-          <TextoTruncado text={title} />
-          {metricGlossary(String(config.metric ?? '')) && (
-            <HelpTip text={metricGlossary(String(config.metric ?? '')) as string} size={12} />
-          )}
-        </p>
-        <span
-          className="text-[10px] text-muted-foreground font-mono shrink-0 max-w-[45%] truncate"
-          title={`${dimLabel}${
-            dimension2
+        <div className="flex items-center justify-between gap-2">
+          <p className="flex items-center gap-1 min-w-0 flex-1 text-sm font-semibold text-foreground">
+            <TextoTruncado text={title} />
+            {metricGlossary(String(config.metric ?? '')) && (
+              <HelpTip text={metricGlossary(String(config.metric ?? '')) as string} size={12} />
+            )}
+          </p>
+          <span
+            className="text-[10px] text-muted-foreground font-mono shrink-0 max-w-[45%] truncate"
+            title={`${dimLabel}${
+              dimension2
+                ? ` × ${DIMENSION_META[dimension2 as BiDimension]?.label ?? leadFieldLabel(dimension2) ?? fieldDimLabel(dimension2) ?? dimension2}`
+                : ''
+            } · ${metLabel}`}
+          >
+            {dimLabel}
+            {dimension2
               ? ` × ${DIMENSION_META[dimension2 as BiDimension]?.label ?? leadFieldLabel(dimension2) ?? fieldDimLabel(dimension2) ?? dimension2}`
-              : ''
-          } · ${metLabel}`}
-        >
-          {dimLabel}
-          {dimension2
-            ? ` × ${DIMENSION_META[dimension2 as BiDimension]?.label ?? leadFieldLabel(dimension2) ?? fieldDimLabel(dimension2) ?? dimension2}`
-            : ''}{' '}
-          · {metLabel}
-        </span>
-      </div>
+              : ''}{' '}
+            · {metLabel}
+          </span>
+        </div>
 
-      {/* Una gráfica plana a cero engaña más que un hueco: si la métrica no
+        {/* Una gráfica plana a cero engaña más que un hueco: si la métrica no
                 se pudo medir, se dice antes de dibujarla. */}
-      {!loading && !error && <UnavailableNote info={naInfo} />}
+        {!loading && !error && <UnavailableNote info={naInfo} />}
 
-      {loading ? (
-        <Skeleton className="flex-1 min-h-[180px] rounded-xl" />
-      ) : error ? (
-        <p className="text-xs text-red-500">{error}</p>
-      ) : usePivot && pivot ? (
-        pivot.rows.length === 0 ? (
+        {loading ? (
+          <Skeleton className="flex-1 min-h-[180px] rounded-xl" />
+        ) : error ? (
+          <p className="text-xs text-red-500">{error}</p>
+        ) : usePivot && pivot ? (
+          pivot.rows.length === 0 ? (
+            <Empty />
+          ) : (
+            <PivotChartBody type={type} pivot={pivot} format={format} />
+          )
+        ) : chartData.length === 0 ? (
           <Empty />
-        ) : (
-          <PivotChartBody type={type} pivot={pivot} format={format} />
-        )
-      ) : chartData.length === 0 ? (
-        <Empty />
-      ) : type === 'line' ? (
-        <LineChartBody data={chartData} format={format} color={baseColor} />
-      ) : type === 'area' ? (
-        <AreaChartBody data={chartData} format={format} color={baseColor} />
-      ) : type === 'bar' || type === 'combo' ? (
-        <BarChartBody data={chartData} format={format} color={baseColor} onClick={handleClick} />
-      ) : type === 'scatter' ? (
-        <ScatterChartBody data={chartData} format={format} color={baseColor} />
-      ) : type === 'pie' ? (
-        <PieChartBody data={chartData} format={format} onClick={handleClick} />
-      ) : null}
-    </div>
+        ) : type === 'line' ? (
+          <LineChartBody data={chartData} format={format} color={baseColor} />
+        ) : type === 'area' ? (
+          <AreaChartBody data={chartData} format={format} color={baseColor} />
+        ) : type === 'bar' || type === 'combo' ? (
+          <BarChartBody data={chartData} format={format} color={baseColor} onClick={handleClick} />
+        ) : type === 'scatter' ? (
+          <ScatterChartBody data={chartData} format={format} color={baseColor} />
+        ) : type === 'pie' ? (
+          <PieChartBody data={chartData} format={format} onClick={handleClick} />
+        ) : null}
+      </div>
+    </PrefijoMonedaCtx.Provider>
   );
 }
 
@@ -346,6 +366,7 @@ function LineChartBody({
   format: ColFormat;
   color: string;
 }) {
+  const prefijo = useContext(PrefijoMonedaCtx);
   return (
     <ResponsiveContainer width="100%" height={200}>
       <LineChart data={data} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
@@ -366,7 +387,7 @@ function LineChartBody({
           className="text-muted-foreground"
           tickLine={false}
           axisLine={false}
-          tickFormatter={(v) => fmtNum(Number(v), format)}
+          tickFormatter={(v) => fmtNum(Number(v), format, prefijo)}
         />
         <Tooltip content={<ChartTooltip format={format} />} />
         <Line
@@ -391,6 +412,7 @@ function AreaChartBody({
   format: ColFormat;
   color: string;
 }) {
+  const prefijo = useContext(PrefijoMonedaCtx);
   return (
     <ResponsiveContainer width="100%" height={200}>
       <AreaChart data={data} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
@@ -417,7 +439,7 @@ function AreaChartBody({
           className="text-muted-foreground"
           tickLine={false}
           axisLine={false}
-          tickFormatter={(v) => fmtNum(Number(v), format)}
+          tickFormatter={(v) => fmtNum(Number(v), format, prefijo)}
         />
         <Tooltip content={<ChartTooltip format={format} />} />
         <Area
@@ -443,6 +465,7 @@ function BarChartBody({
   color: string;
   onClick?: (n: string) => void;
 }) {
+  const prefijo = useContext(PrefijoMonedaCtx);
   const top = data.slice(0, 15);
 
   // El eje se dimensiona con el texto que hay, no con una constante. Antes eran
@@ -470,7 +493,7 @@ function BarChartBody({
             tick={{ fontSize: TICK_FONT, fill: 'currentColor' }}
             className="text-muted-foreground"
             tickLine={false}
-            tickFormatter={(v) => fmtNum(Number(v), format)}
+            tickFormatter={(v) => fmtNum(Number(v), format, prefijo)}
           />
           <YAxis
             type="category"
@@ -511,6 +534,7 @@ function ScatterChartBody({
   format: ColFormat;
   color: string;
 }) {
+  const prefijo = useContext(PrefijoMonedaCtx);
   const points = data.map((d, i) => ({ x: i + 1, y: d.value, name: d.name }));
   return (
     <ResponsiveContainer width="100%" height={220}>
@@ -536,7 +560,7 @@ function ScatterChartBody({
           className="text-muted-foreground"
           tickLine={false}
           axisLine={false}
-          tickFormatter={(v) => fmtNum(Number(v), format)}
+          tickFormatter={(v) => fmtNum(Number(v), format, prefijo)}
         />
         <ZAxis range={[60, 60]} />
         <Tooltip content={<ChartTooltip format={format} />} cursor={{ strokeDasharray: '3 3' }} />
@@ -555,6 +579,7 @@ function PieChartBody({
   format: ColFormat;
   onClick?: (n: string) => void;
 }) {
+  const prefijo = useContext(PrefijoMonedaCtx);
   const top = data.slice(0, 8);
   return (
     <div className="flex flex-col gap-2 h-full min-h-0">
@@ -600,7 +625,7 @@ function PieChartBody({
             />
             <span className="text-[11px] text-foreground truncate flex-1">{d.name}</span>
             <span className="text-[11px] text-muted-foreground font-mono tabular-nums shrink-0">
-              {fmtNum(d.value, format)}
+              {fmtNum(d.value, format, prefijo)}
             </span>
           </button>
         ))}
@@ -619,6 +644,7 @@ function PivotChartBody({
   pivot: { rows: BiPivotRow[]; seriesKeys: string[] };
   format: ColFormat;
 }) {
+  const prefijo = useContext(PrefijoMonedaCtx);
   const data = pivot.rows.map((r) => ({ name: r.dimension_value, ...r.series }));
   const keys = pivot.seriesKeys;
 
@@ -652,7 +678,7 @@ function PivotChartBody({
               className="text-muted-foreground"
               tickLine={false}
               axisLine={false}
-              tickFormatter={(v) => fmtNum(Number(v), format)}
+              tickFormatter={(v) => fmtNum(Number(v), format, prefijo)}
             />
             <Tooltip content={<ChartTooltip format={format} />} />
             <Legend
@@ -715,7 +741,7 @@ function PivotChartBody({
             className="text-muted-foreground"
             tickLine={false}
             axisLine={false}
-            tickFormatter={(v) => fmtNum(Number(v), format)}
+            tickFormatter={(v) => fmtNum(Number(v), format, prefijo)}
           />
           <Tooltip
             content={<ChartTooltip format={format} />}

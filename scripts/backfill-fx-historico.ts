@@ -21,6 +21,7 @@
 import { config as loadEnv } from 'dotenv';
 import { createClient } from '@supabase/supabase-js';
 import { MONEDAS_REPORTE } from '../src/lib/moneda-reporte';
+import { fetchRatesHistoricas, FUENTE_HISTORICA } from '../src/lib/fx';
 
 loadEnv({ path: '.env.local' });
 
@@ -46,19 +47,6 @@ function dias(desde: string, hasta: string): string[] {
   return out;
 }
 
-/** Unidades de cada moneda por 1 USD en esa fecha. */
-async function tasasDelDia(fecha: string): Promise<Record<string, number> | null> {
-  const url = `https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@${fecha}/v1/currencies/usd.json`;
-  try {
-    const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
-    if (!res.ok) return null;
-    const j = (await res.json()) as { usd?: Record<string, number> };
-    return j.usd ?? null;
-  } catch {
-    return null;
-  }
-}
-
 async function main() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -82,16 +70,16 @@ async function main() {
 
   const filas: Array<{ fecha: string; moneda: string; usd_rate: number; fuente: string }> = [];
   for (const fecha of faltan) {
-    const t = await tasasDelDia(fecha);
+    const t = await fetchRatesHistoricas(fecha);
     if (!t) {
       console.log(`  ${fecha}: sin datos en la fuente`);
       continue;
     }
     for (const m of MONEDAS) {
       if (hay.has(`${fecha}|${m}`)) continue;
-      const porUsd = Number(t[m.toLowerCase()]);
-      if (!Number.isFinite(porUsd) || porUsd <= 0) continue;
-      filas.push({ fecha, moneda: m, usd_rate: 1 / porUsd, fuente: 'fawazahmed0/currency-api' });
+      const usdRate = t.get(m);
+      if (!usdRate) continue;
+      filas.push({ fecha, moneda: m, usd_rate: usdRate, fuente: FUENTE_HISTORICA });
     }
   }
 

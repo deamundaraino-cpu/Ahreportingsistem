@@ -38,8 +38,6 @@ import { paginarHotmart, ventanaDiaColombia } from './cliente';
 import type { FamiliaErrorHotmart } from './cliente';
 import { parsearApi } from './parser';
 import { convertirLote } from './moneda';
-import { preloadUsdRates } from '../fx';
-import { MONEDAS_REPORTE } from '../moneda-reporte';
 import { clasificarLote, guardarLote } from './persistencia';
 import { ESTADOS_COBRADOS, ESTADOS_DEVUELTOS } from './tipos';
 import type { FunnelHotmart } from './clasificador';
@@ -248,12 +246,10 @@ export async function sincronizarDiaHotmart(
   }
 
   clasificarLote(ventas, funnels);
+  // La tasa diaria de las monedas de REPORTE ya no se precarga aquí: solo
+  // corría los días con ventas, y un cliente sin ventas se quedaba sin tasas.
+  // La guarda `capturarTasasDelDia` al inicio de cada corrida del worker.
   const fx = await convertirLote(db, ventas, fecha);
-  // Deja cacheada la tasa del día de TODAS las monedas de reporte, no solo de
-  // las que cobró Hotmart hoy: una venta en USD de un cliente que reporta en
-  // pesos chilenos necesita la tasa CLP de esa fecha, y `preloadUsdRates` solo
-  // pide a la API las que faltan (una llamada como mucho).
-  await preloadUsdRates(db, [...MONEDAS_REPORTE], fecha).catch(() => {});
   const guardado = await guardarLote(db, clienteId, ventas);
 
   if (fx.sin_tasa > 0) {

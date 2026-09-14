@@ -893,6 +893,8 @@ async function cargarMetricasEnriquecidas(
   sheetCampos: SheetCampoResumen[];
   sheetVistas: SheetVistaResumen[];
   leadAnswers: LeadAnswerDataset;
+  /** Moneda de reporte del cliente: la de los importes de Hotmart ya convertidos. */
+  moneda: string;
 }> {
   // Todas paginadas por keyset: sin esto PostgREST corta en ~1000 filas. Para
   // `metricas_diarias` es 1 fila/día (solo se nota en el archivo, que abarca
@@ -966,6 +968,7 @@ async function cargarMetricasEnriquecidas(
     sheetCampos: sheetData.campos,
     sheetVistas: sheetData.vistas,
     leadAnswers,
+    moneda: conv.moneda,
   };
 }
 
@@ -1116,6 +1119,8 @@ export async function getDashboardData(clientId: string, startStr: string, endSt
     leadAnswers,
     prevLeadAnswers: previo?.leadAnswers ?? null,
     leadAnswerCatalogo,
+    // Moneda de los importes de Hotmart: los bloques la pintan («CLP …»).
+    moneda: actual.moneda,
   };
 }
 
@@ -2169,6 +2174,7 @@ export async function getMirrorDashboardData(token: string, from?: string, to?: 
       conversionesOfflineRaw,
       sheetCampos,
       sheetVistas,
+      moneda: enriquecido.moneda,
       leadAnswers,
       // El espejo no calcula periodo anterior, así que sus bloques de respuestas
       // no muestran variación. Es coherente con el resto del enlace público, que

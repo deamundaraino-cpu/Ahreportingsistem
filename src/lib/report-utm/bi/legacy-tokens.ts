@@ -118,6 +118,9 @@ export const LEGACY_MEASURE_IDS: Readonly<Record<string, string>> = {
   hm_roas: 'hotmart.roas',
   hm_cpa: 'hotmart.cpa',
   hm_ticket_medio: 'hotmart.ticket_medio',
+  hm_neto_usd: 'hotmart.revenue_neto_usd',
+  hm_bruto_usd: 'hotmart.revenue_bruto_usd',
+  hm_tasa_cambio: 'hotmart.tasa_cambio',
 
   // ── Offline ──
   offline_leads: 'offline.leads',

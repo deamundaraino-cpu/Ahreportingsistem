@@ -31,6 +31,7 @@ import { useBiQueryBase } from '../BiQueryContext';
 import { appendWidgetFilters, widgetFilterSignature } from '../widgetQuery';
 import { readUnavailable, UnavailableNote } from '../widgetDiagnostics';
 import type { WidgetUnavailable } from '../widgetDiagnostics';
+import { decimalesDe, monedaDeMetrica, prefijoMoneda, simboloMoneda } from '@/lib/moneda-reporte';
 
 interface Props {
   title: string;
@@ -44,23 +45,34 @@ interface Props {
 // Altura visible (px) de la tabla según el "Alto" del widget. Más allá, scroll interno.
 const TABLE_MAX_H: Record<number, number> = { 1: 320, 2: 540, 3: 760 };
 
-type ColFormat = 'number' | 'currency' | 'percent' | 'ratio';
+type ColFormat = 'number' | 'currency' | 'percent' | 'ratio' | 'decimal';
 
-/** `decimals` (campos calculados) fija los decimales y desactiva el abreviado k/M. */
-function fmtVal(value: number | null | undefined, format: ColFormat, decimals?: number): string {
+/**
+ * `decimals` (campos calculados) fija los decimales y desactiva el abreviado k/M.
+ * `prefijo`/`decMoneda`: símbolo y decimales de la moneda del importe.
+ */
+function fmtVal(
+  value: number | null | undefined,
+  format: ColFormat,
+  decimals?: number,
+  prefijo = '$',
+  decMoneda = 2
+): string {
   if (value === null || value === undefined) return '—';
   if (decimals !== undefined) {
     const n = value.toLocaleString('es-AR', {
       minimumFractionDigits: decimals,
       maximumFractionDigits: decimals,
     });
-    if (format === 'currency') return `$${n}`;
+    if (format === 'currency') return `${prefijo}${n}`;
     if (format === 'percent') return `${n}%`;
     if (format === 'ratio') return `${n}x`;
     return n;
   }
   if (format === 'currency')
-    return `$${value.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    return `${prefijo}${value.toLocaleString('es-AR', { minimumFractionDigits: decMoneda, maximumFractionDigits: decMoneda })}`;
+  if (format === 'decimal')
+    return value.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   if (format === 'percent') return `${value.toFixed(1)}%`;
   if (format === 'ratio') return `${value.toFixed(2)}x`;
   if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
@@ -80,6 +92,8 @@ export function TableWidget({ title, config, filters, calculatedFields = [], h =
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>(config.sort === 'asc' ? 'asc' : 'desc');
   /** Motivo de la primera columna que no se pudo medir, si hay alguna. */
   const [naInfo, setNaInfo] = useState<WidgetUnavailable | null>(null);
+  /** Moneda de reporte del cliente (viaja en `meta` de la respuesta). */
+  const [monedaCliente, setMonedaCliente] = useState<string | null>(null);
 
   const rawMetrics = config.metric ?? 'leads_count';
   const colKeys = rawMetrics
@@ -121,6 +135,11 @@ export function TableWidget({ title, config, filters, calculatedFields = [], h =
       offlineFieldFormat(key) ??
       sheetFieldFormat(key) ??
       'number') as ColFormat;
+  }
+  /** Prefijo y decimales del importe de una columna: moneda del cliente o USD. */
+  function monedaCol(key: string): { prefijo: string; dec: number } {
+    const simbolo = simboloMoneda(monedaDeMetrica(key, monedaCliente), monedaCliente);
+    return { prefijo: prefijoMoneda(simbolo), dec: simbolo === '$' ? 2 : decimalesDe(simbolo) };
   }
 
   useEffect(() => {
@@ -164,6 +183,7 @@ export function TableWidget({ title, config, filters, calculatedFields = [], h =
       .then((r) => r.json())
       .then((json) => {
         setRows(Array.isArray(json.data) ? json.data : []);
+        setMonedaCliente(json.meta?.moneda ?? null);
         // Una tabla mezcla columnas de varias fuentes, así que es donde
         // más se nota: se explica la primera columna que no se pudo
         // medir en vez de dejar una columna entera de ceros.
@@ -357,7 +377,13 @@ export function TableWidget({ title, config, filters, calculatedFields = [], h =
                         key={key}
                         className={`px-5 py-2.5 text-right text-xs font-mono tabular-nums text-foreground/90 ${cellColor(key, v)}`}
                       >
-                        {fmtVal(v, colFormat(key), calcMap.get(key)?.decimals)}
+                        {fmtVal(
+                          v,
+                          colFormat(key),
+                          calcMap.get(key)?.decimals,
+                          monedaCol(key).prefijo,
+                          monedaCol(key).dec
+                        )}
                       </td>
                     );
                   })}
@@ -374,7 +400,13 @@ export function TableWidget({ title, config, filters, calculatedFields = [], h =
                       className="px-5 py-2.5 text-right font-mono tabular-nums text-foreground"
                     >
                       {key in totals
-                        ? fmtVal(totals[key], colFormat(key), calcMap.get(key)?.decimals)
+                        ? fmtVal(
+                            totals[key],
+                            colFormat(key),
+                            calcMap.get(key)?.decimals,
+                            monedaCol(key).prefijo,
+                            monedaCol(key).dec
+                          )
                         : '—'}
                     </td>
                   ))}

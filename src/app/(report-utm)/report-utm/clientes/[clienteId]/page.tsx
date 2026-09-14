@@ -8,7 +8,8 @@ import { LeadCamposCard } from '@/components/report-utm/LeadCamposCard';
 import { FiltroAtribucionCard } from '@/components/report-utm/FiltroAtribucionCard';
 import { ConexionesCliente } from '@/components/report-utm/ConexionesCliente';
 import { MonedaReporteCard } from '@/components/report-utm/MonedaReporteCard';
-import { leerMonedaReporte } from '@/lib/moneda-reporte';
+import { leerMonedaReporte, ultimasTasasGuardadas } from '@/lib/moneda-reporte';
+import { createAdminClient } from '@/utils/supabase/server';
 import { columnaExcluidoDisponible, leerRegla } from '@/lib/report-utm/lead-exclusion';
 import type { ClienteGoals } from '@/lib/report-utm/bi-metadata';
 import {
@@ -209,7 +210,12 @@ export default async function ClienteDetailPage({
       )}
 
       {/* Moneda de reporte: Hotmart en la moneda del cliente (reunión del 2026-09-08) */}
-      <MonedaReporteCard rtmClienteId={cliente.id} inicial={leerMonedaReporte(cliente.config)} />
+      <MonedaReporteCard
+        rtmClienteId={cliente.id}
+        inicial={leerMonedaReporte(cliente.config)}
+        // `fx_rates` vive en `public`: el cliente de esta página es de report_utm.
+        ultimasTasas={await ultimasTasasGuardadas(await createAdminClient())}
+      />
 
       {/* Qué leads cuentan: regla de exclusión (reunión del 2026-09-08) */}
       <FiltroAtribucionCard

@@ -2,7 +2,8 @@
 
 import { useState, useTransition } from 'react';
 import { Coins, Check, Loader2 } from 'lucide-react';
-import { MONEDAS_REPORTE, type MonedaReporte } from '@/lib/moneda-reporte';
+import { MONEDAS_REPORTE, type MonedaReporte, type TasaGuardada } from '@/lib/moneda-reporte';
+import { addDaysISO, colombiaToday } from '@/lib/colombia-date';
 import { guardarMonedaReporteAction } from '@/app/(report-utm)/report-utm/clientes/_moneda';
 
 const NOMBRE: Record<MonedaReporte, string> = {
@@ -23,13 +24,19 @@ const NOMBRE: Record<MonedaReporte, string> = {
  * que el ROAS divida dos cifras en la misma moneda. Cada venta se convierte con
  * la tasa del día en que se hizo, así que cambiar la moneda no reescribe nada:
  * solo cambia cómo se lee.
+ *
+ * Muestra la última tasa guardada de la moneda elegida: es la forma de ver, sin
+ * abrir la base, que el worker sigue guardando la tasa de cada día.
  */
 export function MonedaReporteCard({
   rtmClienteId,
   inicial,
+  ultimasTasas = {},
 }: {
   rtmClienteId: string;
   inicial: MonedaReporte;
+  /** Última tasa guardada en `fx_rates` por moneda (ver `ultimasTasasGuardadas`). */
+  ultimasTasas?: Partial<Record<MonedaReporte, TasaGuardada>>;
 }) {
   const [moneda, setMoneda] = useState<MonedaReporte>(inicial);
   const [pendiente, start] = useTransition();
@@ -47,6 +54,10 @@ export function MonedaReporteCard({
     });
   }
 
+  const tasa = moneda === 'USD' ? undefined : ultimasTasas[moneda];
+  // Más de 2 días sin tasa nueva = el worker no la está guardando.
+  const vieja = !!tasa && tasa.fecha < addDaysISO(colombiaToday(), -2);
+
   return (
     <div className="rounded-2xl border border-border bg-card p-6 space-y-3">
       <div className="flex items-center gap-2">
@@ -54,9 +65,9 @@ export function MonedaReporteCard({
         <h2 className="text-sm font-semibold text-foreground">Moneda de reporte</h2>
       </div>
       <p className="text-xs text-muted-foreground max-w-2xl">
-        Hotmart cobra en dólares y la cuenta publicitaria gasta en su propia moneda. Elige la moneda
-        del cliente —la de su cuenta de Meta— y las ventas se convierten con la tasa del día de cada
-        venta, que queda fija. Así el ROAS y el ROI comparan lo mismo con lo mismo.
+        Hotmart guarda las ventas en dólares y la cuenta publicitaria gasta en su propia moneda.
+        Elige la moneda del cliente —la de su cuenta de Meta— y las ventas se convierten con la tasa
+        del día de cada venta, que queda fija. Así el ROAS y el ROI comparan lo mismo con lo mismo.
       </p>
       <div className="flex flex-wrap items-center gap-2">
         <select
@@ -85,6 +96,30 @@ export function MonedaReporteCard({
           </span>
         )}
       </div>
+      {moneda !== 'USD' && (
+        <p className={`text-[11px] ${vieja ? 'text-amber-600' : 'text-muted-foreground'}`}>
+          {tasa ? (
+            <>
+              Última tasa guardada: 1 USD ={' '}
+              {tasa.porUsd.toLocaleString('es-AR', {
+                minimumFractionDigits: 2,
+                maximumFractionDigits: 2,
+              })}{' '}
+              {moneda} ({fechaCorta(tasa.fecha)})
+              {vieja &&
+                ' — lleva más de 2 días sin actualizarse: revisa que el worker esté corriendo.'}
+            </>
+          ) : (
+            `Todavía no hay ninguna tasa ${moneda} guardada: las ventas se quedan en dólares hasta que el worker guarde la primera.`
+          )}
+        </p>
+      )}
     </div>
   );
+}
+
+/** `yyyy-MM-dd` → `dd-MM-yyyy`. */
+function fechaCorta(fecha: string): string {
+  const [y, m, d] = fecha.split('-');
+  return d && m && y ? `${d}-${m}-${y}` : fecha;
 }

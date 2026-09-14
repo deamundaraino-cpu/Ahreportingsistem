@@ -24,6 +24,7 @@ import { appendWidgetFilters, widgetFilterSignature } from '../widgetQuery';
 import { HelpTip } from '../HelpTip';
 import { readUnavailable, readValue, UnavailableNote } from '../widgetDiagnostics';
 import type { WidgetUnavailable } from '../widgetDiagnostics';
+import { decimalesDe, monedaDeMetrica, simboloMoneda } from '@/lib/moneda-reporte';
 
 interface Props {
   title: string;
@@ -32,10 +33,13 @@ interface Props {
   calculatedFields?: CalculatedField[];
 }
 
-type ValFormat = 'number' | 'currency' | 'percent' | 'ratio';
+type ValFormat = 'number' | 'currency' | 'percent' | 'ratio' | 'decimal';
 
-/** `decimals` (campos calculados) fija los decimales y desactiva el abreviado k/M. */
-function formatVal(value: number, format: ValFormat, decimals?: number): string {
+/**
+ * `decimals` (campos calculados) fija los decimales y desactiva el abreviado k/M.
+ * `decMoneda`: decimales de la moneda del importe (el peso chileno no usa centavos).
+ */
+function formatVal(value: number, format: ValFormat, decimals?: number, decMoneda = 2): string {
   if (decimals !== undefined) {
     const n = value.toLocaleString('es-AR', {
       minimumFractionDigits: decimals,
@@ -46,6 +50,12 @@ function formatVal(value: number, format: ValFormat, decimals?: number): string 
     return n;
   }
   if (format === 'currency') {
+    return value.toLocaleString('es-AR', {
+      minimumFractionDigits: decMoneda,
+      maximumFractionDigits: decMoneda,
+    });
+  }
+  if (format === 'decimal') {
     return value.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   }
   if (format === 'percent') return `${value.toFixed(1)}%`;
@@ -67,6 +77,8 @@ export function ScorecardWidget({ title, config, filters, calculatedFields = [] 
   const [goals, setGoals] = useState<ClienteGoals | null>(null);
   /** Motivo por el que esta métrica no se pudo medir, si es el caso. */
   const [naInfo, setNaInfo] = useState<WidgetUnavailable | null>(null);
+  /** Moneda de reporte del cliente (viaja en `meta` de la respuesta). */
+  const [monedaCliente, setMonedaCliente] = useState<string | null>(null);
 
   const compare = !!config.compare_period;
   // Fórmula propia del widget: manda sobre `metric` y viaja bajo una clave fija.
@@ -118,6 +130,7 @@ export function ScorecardWidget({ title, config, filters, calculatedFields = [] 
         // "salió cero" se veían igual.
         const na = readUnavailable(json.meta, metric);
         setNaInfo(na);
+        setMonedaCliente(json.meta?.moneda ?? null);
         if (compare) {
           setValue(readValue(json.data?.current?.[0], metric, na));
           setPrev(readValue(json.data?.previous?.[0], metric, na));
@@ -157,6 +170,10 @@ export function ScorecardWidget({ title, config, filters, calculatedFields = [] 
     thresholdStatus === null && value !== null ? evaluateGoal(metric, value, goals) : null;
   const accentStatus = thresholdStatus ?? goal?.status ?? null;
   const glossary = metricGlossary(metric);
+  // Moneda del importe: la del cliente, salvo las gemelas que siempre son USD.
+  // Con el cliente en dólares se sigue pintando «$», como siempre.
+  const simbolo = simboloMoneda(monedaDeMetrica(metric, monedaCliente), monedaCliente);
+  const decMoneda = simbolo === '$' ? 2 : decimalesDe(simbolo);
 
   // Progreso hacia el objetivo del widget (0-100, tolera superarlo).
   const target = config.target;
@@ -187,13 +204,13 @@ export function ScorecardWidget({ title, config, filters, calculatedFields = [] 
         <div className="space-y-1.5">
           <div className="flex items-end gap-1">
             {format === 'currency' && (
-              <span className="text-base font-medium text-muted-foreground pb-0.5">$ </span>
+              <span className="text-base font-medium text-muted-foreground pb-0.5">{simbolo} </span>
             )}
             <p
               className="text-3xl font-bold font-mono tabular-nums leading-none text-foreground"
               style={thresholdStatus ? { color: GOAL_COLOR[thresholdStatus] } : undefined}
             >
-              {value !== null ? formatVal(value, format, decimals) : '—'}
+              {value !== null ? formatVal(value, format, decimals, decMoneda) : '—'}
             </p>
           </div>
           {progressPct !== null && (
@@ -205,7 +222,8 @@ export function ScorecardWidget({ title, config, filters, calculatedFields = [] 
                 />
               </div>
               <p className="text-[10px] text-muted-foreground">
-                {progressPct.toFixed(0)}% del objetivo ({formatVal(target as number, format)})
+                {progressPct.toFixed(0)}% del objetivo (
+                {formatVal(target as number, format, undefined, decMoneda)})
               </p>
             </div>
           )}
@@ -219,7 +237,8 @@ export function ScorecardWidget({ title, config, filters, calculatedFields = [] 
             <div className="flex items-center gap-1" style={{ color: GOAL_COLOR[goal.status] }}>
               <Target className="h-3 w-3" />
               <span className="text-[10px] font-medium">
-                Meta: {goal.mustNotExceed ? '≤' : '≥'} {formatVal(goal.target, format)}
+                Meta: {goal.mustNotExceed ? '≤' : '≥'}{' '}
+                {formatVal(goal.target, format, undefined, decMoneda)}
                 {' · '}
                 {GOAL_TEXT[goal.status]}
               </span>

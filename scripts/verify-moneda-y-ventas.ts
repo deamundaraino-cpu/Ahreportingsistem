@@ -15,7 +15,15 @@ import {
   convertirFilasMetricas,
   leerMonedaReporte,
   esMonedaReporte,
+  tasaPromedio,
+  clavesDeRango,
+  rangoDeClave,
+  formatearMoneda,
+  monedaDeMetrica,
+  simboloMoneda,
 } from '../src/lib/moneda-reporte';
+import { aggregateFormula, formatValue } from '../src/lib/formula-engine';
+import { fuenteParaFecha } from '../src/lib/fx';
 import { interpretarEstadoCuenta } from '../src/lib/meta/estado-cuenta';
 import { cuentasMetaDe, mensajeAlerta } from '../src/lib/meta/alerta-cuenta';
 import { leerVentaGhl, esVentaGanada, numero } from '../src/lib/report-utm/ghl-ventas';
@@ -87,10 +95,143 @@ check(
 check('el gasto de la cuenta NO se toca', conv[0].meta_spend === 32000);
 check('los conteos NO se tocan', conv[0].ventas_principal_count === 1);
 check('no muta la fila original', filas[0].ventas_principal === 9.7);
+const c0 = conv[0] as Record<string, unknown>;
 check(
-  'con moneda USD las filas salen idénticas',
-  convertirFilasMetricas(filas, conversorIdentidad()) === filas
+  'deja la copia SIN convertir al lado (ventas_principal_usd = 9,70)',
+  c0.ventas_principal_usd === 9.7 && c0.ventas_bump_usd === 3.11
 );
+check(
+  'añade la tasa del día con su par num/den',
+  c0.tasa_cambio === 950 && c0.tasa_cambio__num === 950 && c0.tasa_cambio__den === 1
+);
+const usd = convertirFilasMetricas(filas, conversorIdentidad())[0] as Record<string, unknown>;
+check(
+  'con moneda USD los importes no cambian, la copia es igual y la tasa vale 1',
+  usd.ventas_principal === 9.7 && usd.ventas_principal_usd === 9.7 && usd.tasa_cambio === 1
+);
+
+// El dinero que viaja en JSON (desglose por pestaña y extras) también se convierte.
+const conFunnel = [
+  {
+    fecha: '2026-08-20',
+    ventas_principal: 9.7,
+    hotmart_funnel_data: {
+      by_tab: { t1: { principal: { count: 1, net: 9.7, gross: 19 }, bump: { count: 0, net: 0 } } },
+      extras: [{ product_name: 'Guía', count: 1, gross: 10, net: 8 }],
+    },
+  },
+];
+// Mismo tipo que `conFunnel`: la conversión no cambia la forma de la fila.
+const fConv = convertirFilasMetricas(conFunnel, clp)[0];
+check(
+  'convierte by_tab (9,70 USD → 9.215 CLP) y conserva los conteos',
+  fConv.hotmart_funnel_data.by_tab.t1.principal.net === 9215 &&
+    fConv.hotmart_funnel_data.by_tab.t1.principal.gross === 18050 &&
+    fConv.hotmart_funnel_data.by_tab.t1.principal.count === 1
+);
+check(
+  'convierte extras (8 USD → 7.600 CLP)',
+  fConv.hotmart_funnel_data.extras[0].net === 7600 &&
+    fConv.hotmart_funnel_data.extras[0].gross === 9500
+);
+check(
+  'no muta el JSON original',
+  conFunnel[0].hotmart_funnel_data.by_tab.t1.principal.net === 9.7 &&
+    conFunnel[0].hotmart_funnel_data.extras[0].net === 8
+);
+
+// ── 1b. La tasa en el reporting ───────────────────────────────────────
+console.log('\n1b. La tasa en el reporting');
+// Tres días con tasas 900, 950 y 1000: el total del rango es el PROMEDIO.
+const tresDias = [900, 950, 1000].map((t, i) => ({
+  fecha: `2026-08-0${i + 1}`,
+  tasa_cambio: t,
+  tasa_cambio__num: t,
+  tasa_cambio__den: 1,
+}));
+check(
+  'tasa_cambio en un rango de 3 días da el promedio (950), no la suma',
+  aggregateFormula('tasa_cambio', tresDias) === 950,
+  String(aggregateFormula('tasa_cambio', tresDias))
+);
+check(
+  'tasaPromedio de dos días con la misma tasa',
+  tasaPromedio(clp, '2026-08-06', '2026-08-07') === 900
+);
+check(
+  'tasaPromedio mezcla la tasa de cada día (900 y 950 → 925)',
+  tasaPromedio(clp, '2026-08-19', '2026-08-20') === 925
+);
+check(
+  'tasaPromedio sin ninguna tasa es null',
+  tasaPromedio(sin, '2026-08-01', '2026-08-03') === null
+);
+check(
+  'claves por mes',
+  JSON.stringify(clavesDeRango('2026-08-30', '2026-09-02', 'month')) === '["2026-08","2026-09"]'
+);
+check(
+  'claves por semana (lunes, como el BI)',
+  JSON.stringify(clavesDeRango('2026-08-30', '2026-09-02', 'week')) ===
+    '["2026-08-24","2026-08-31"]'
+);
+check(
+  'un mes se recorta al rango consultado',
+  JSON.stringify(rangoDeClave('2026-08', 'month', '2026-08-10', '2026-09-30')) ===
+    '{"desde":"2026-08-10","hasta":"2026-08-31"}'
+);
+check(
+  'una semana cubre siete días, recortados',
+  JSON.stringify(rangoDeClave('2026-08-31', 'week', '2026-08-01', '2026-09-02')) ===
+    '{"desde":"2026-08-31","hasta":"2026-09-02"}'
+);
+check(
+  'una clave que no es fecha cubre el rango entero',
+  JSON.stringify(rangoDeClave('Camp A', 'day', '2026-08-01', '2026-08-31')) ===
+    '{"desde":"2026-08-01","hasta":"2026-08-31"}'
+);
+
+// ── 1c. Formato de moneda ─────────────────────────────────────────────
+console.log('\n1c. Formato de moneda');
+check('formatearMoneda CLP sin decimales', formatearMoneda(233487, 'CLP') === 'CLP 233.487');
+check('formatearMoneda USD con centavos', formatearMoneda(12.81, 'USD') === 'USD 12,81');
+check('las gemelas siempre en USD', monedaDeMetrica('hm_neto_usd', 'CLP') === 'USD');
+check(
+  'el resto en la moneda del cliente',
+  monedaDeMetrica('hm_neto', 'CLP') === 'CLP' &&
+    monedaDeMetrica('ventas_principal_usd', 'CLP') === 'USD'
+);
+check('cliente en dólares: sigue el «$» de siempre', simboloMoneda('USD', 'USD') === '$');
+check(
+  'cliente en pesos: código ISO en cada cifra',
+  simboloMoneda('CLP', 'CLP') === 'CLP' && simboloMoneda('USD', 'CLP') === 'USD'
+);
+check(
+  'dashboard: «$» se pinta como CLP sin decimales',
+  formatValue(233487, { prefix: '$', decimals: 2, moneda: 'CLP' }) === 'CLP 233,487',
+  formatValue(233487, { prefix: '$', decimals: 2, moneda: 'CLP' })
+);
+check(
+  'dashboard: con el cliente en USD, igual que siempre',
+  formatValue(12.81, { prefix: '$', decimals: 2, moneda: 'USD' }) === '$12.81'
+);
+check(
+  'dashboard: un bloque «USD » no se toca',
+  formatValue(12.81, { prefix: 'USD ', decimals: 2, moneda: 'CLP' }) === 'USD 12.81'
+);
+
+// ── 1d. Qué API sirve para la tasa de cada fecha ──────────────────────
+console.log('\n1d. Fuente de la tasa');
+check('hoy usa la cotización actual', fuenteParaFecha('2026-09-14', '2026-09-14') === 'latest');
+check(
+  'ayer también (el worker sincroniza ayer)',
+  fuenteParaFecha('2026-09-13', '2026-09-14') === 'latest'
+);
+check(
+  'anteayer pide la histórica: nunca la de hoy con fecha pasada',
+  fuenteParaFecha('2026-09-12', '2026-09-14') === 'historica'
+);
+check('una fecha de julio, histórica', fuenteParaFecha('2026-07-12', '2026-09-14') === 'historica');
 
 // ── 2. Estado de cuenta de Meta ───────────────────────────────────────
 console.log('\n2. Estado de cuenta de Meta');

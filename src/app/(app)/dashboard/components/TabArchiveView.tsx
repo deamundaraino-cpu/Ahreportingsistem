@@ -7,6 +7,7 @@ import { enrichOfflineRow } from '@/lib/offline-filter';
 import { aggregateFormula, formatValue } from '@/lib/formula-engine';
 import type { CardDef } from '@/lib/layout-types';
 import { getArchiveMetrics } from '../_actions';
+import { useMonedaReporte } from './MonedaReporteContext';
 
 type SelectedCard = {
   tabId: string;
@@ -66,6 +67,7 @@ export function TabArchiveView({
   onToggleArchived: (tabId: string, archived: boolean) => Promise<void>;
   isTeam: boolean;
 }) {
+  const monedaReporte = useMonedaReporte();
   const [expandedTabIds, setExpandedTabIds] = useState<Set<string>>(new Set());
   const [selectedCards, setSelectedCards] = useState<SelectedCard[]>([]);
   const [togglingId, setTogglingId] = useState<string | null>(null);
@@ -332,6 +334,7 @@ export function TabArchiveView({
                             prefix: sel.card.prefix,
                             suffix: sel.card.suffix,
                             decimals: sel.card.decimals,
+                            moneda: monedaReporte,
                           });
                           return (
                             <div
