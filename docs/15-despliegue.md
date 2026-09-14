@@ -35,6 +35,11 @@ en `.next/standalone` un `server.js` y **solo** los módulos que la traza
 encuentra, así que la imagen final no lleva `node_modules` completo (~67 MB en
 lugar de ~1 GB).
 
+`standalone` se activa solo cuando **no** existe `VERCEL` (`next.config.ts`). En
+Vercel el adapter de la plataforma empaqueta las funciones por su cuenta y, con
+`standalone` puesto, el build compila entero y muere al final con
+`ENOENT … .next/next-server.js.nft.json`.
+
 ### Qué se despliega
 
 | Aplicación    | Dockerfile               | Puerto | Dominio           |

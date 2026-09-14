@@ -43,7 +43,12 @@ const nextConfig: NextConfig = {
   // traza encuentra, con un server.js propio. Es lo que hace posible una
   // imagen Docker sin node_modules (~10x más pequeña) para Dokploy.
   // Ojo: Next NO copia ahí `public/` ni `.next/static`; el Dockerfile lo hace.
-  output: 'standalone',
+  //
+  // En Vercel NO: su adapter (`onBuildComplete`) empaqueta las funciones por
+  // su cuenta y con él Turbopack no escribe `.next/next-server.js.nft.json`,
+  // que es justo lo que el paso standalone lee → `ENOENT` al final del build.
+  // Vercel pone `VERCEL=1` al construir; el Dockerfile no.
+  output: process.env.VERCEL ? undefined : 'standalone',
   compress: true,
   poweredByHeader: false,
   serverExternalPackages: ['@google-analytics/data', 'google-auth-library', 'google-spreadsheet'],
