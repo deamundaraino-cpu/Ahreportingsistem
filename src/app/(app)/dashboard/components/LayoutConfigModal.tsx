@@ -1315,8 +1315,14 @@ export function CampaignFilterPicker({
   campaignGroups: { id: string; nombre: string }[];
   campaignNames?: string[];
 }) {
+  // El operador elegido vive aquí porque un filtro sin valor se guarda como
+  // `undefined`: si solo se derivara de `value`, elegir «Inicia con» con el
+  // buscador vacío lo devolvía a «Incluye» en el acto.
+  const [pendingOp, setPendingOp] = useState<CampaignFilterOperator>(
+    value?.type === 'keyword' && value.operator ? value.operator : 'includes'
+  );
   const currentOp: CampaignFilterOperator =
-    value?.type === 'keyword' && value.operator ? value.operator : 'includes';
+    value?.type === 'keyword' && value.operator ? value.operator : pendingOp;
   const isMulti = FILTER_OPERATORS.find((o) => o.value === currentOp)?.multi ?? false;
 
   const [kwSearch, setKwSearch] = useState(
@@ -1329,6 +1335,10 @@ export function CampaignFilterPicker({
   useEffect(() => {
     if (value?.type !== 'keyword' || isMulti) setKwSearch('');
   }, [value, isMulti]);
+
+  useEffect(() => {
+    if (value?.type === 'keyword' && value.operator) setPendingOp(value.operator);
+  }, [value]);
 
   const selectedMulti: string[] =
     value?.type === 'keyword' && Array.isArray(value.value) ? value.value : [];
@@ -1343,6 +1353,7 @@ export function CampaignFilterPicker({
 
   function handleOperatorChange(op: CampaignFilterOperator) {
     const opDef = FILTER_OPERATORS.find((o) => o.value === op)!;
+    setPendingOp(op);
     if (opDef.multi) {
       onChange({ type: 'keyword', operator: op, value: selectedMulti });
       setShowMultiPanel(true);
@@ -1548,6 +1559,7 @@ export function CampaignFilterPicker({
           onClick={() => {
             onChange(undefined);
             setKwSearch('');
+            setPendingOp('includes');
           }}
           title="Limpiar filtro de campaña"
           className="text-muted-foreground/70 hover:text-red-400 transition flex-shrink-0"
