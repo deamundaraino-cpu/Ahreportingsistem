@@ -21,7 +21,7 @@ import { leerJsonRespuesta, esTimeoutDeFetch } from '@/lib/fetch-json';
 import { internalFetch } from '@/lib/internal-fetch';
 import {
   archivarCliente,
-  asegurarEspejoUtm,
+  crearCliente,
   eliminarClienteCompleto,
   mapaArchivados,
   resumenBorrado,
@@ -117,28 +117,19 @@ export async function getCliente(id: string) {
 }
 
 export async function createCliente(data: { nombre: string }) {
-  const supabase = await createAdminClient();
-
-  const { data: newClient, error } = await supabase
-    .from('clientes')
-    .insert([{ nombre: data.nombre, config_api: {} }])
-    .select()
-    .single();
-
-  if (error) {
-    console.error('Error creating client:', error);
-    return { error: error.message };
-  }
-
   // Una sola casa: el cliente nace también en Report-UTM, ya enlazado. Antes
   // aparecía allí solo cuando alguien visitaba su listado, y un cliente creado
   // desde Report-UTM nacía huérfano, sin gasto con el que cruzar.
-  const espejo = await asegurarEspejoUtm(supabase, newClient.id, data.nombre);
-  if (!espejo.id) console.error('[createCliente] sin espejo en Report-UTM:', espejo.error);
+  const r = await crearCliente(await createAdminClient(), data.nombre);
+  if (!r.ok) {
+    console.error('Error creating client:', r.error);
+    return { error: r.error };
+  }
+  if (r.aviso) console.error('[createCliente]', r.aviso);
 
   revalidatePath('/admin/settings');
   revalidatePath('/report-utm/clientes');
-  return { success: true, data: newClient };
+  return { success: true, data: r.cliente };
 }
 
 async function rolActual(): Promise<string | null> {
@@ -255,7 +246,9 @@ export async function deleteCliente(id: string) {
   revalidatePath('/admin/settings');
   revalidatePath('/dashboard');
   revalidatePath('/report-utm/clientes');
-  return { success: true };
+  // Lo de fuera (Storage, Meta, WhatsApp) que no se pudo limpiar: el cliente
+  // ya está borrado, pero quien lo borró tiene que saberlo.
+  return { success: true, avisos: r.avisos };
 }
 
 // ─── Layout CRUD ────────────────────────────────────────────────────────────

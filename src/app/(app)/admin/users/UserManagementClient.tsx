@@ -26,6 +26,7 @@ import {
   getClientAssignments,
   setClientAssignments,
   createUser,
+  reasignarDuenoClientes,
 } from './_actions';
 
 type Role = 'superadmin' | 'admin' | 'trafficker' | 'viewer';
@@ -338,6 +339,12 @@ export function UserManagementClient({
 
   const [showCreateModal, setShowCreateModal] = useState(false);
 
+  // Usuario dueño de clientes: no se puede eliminar hasta pasarlos a otro.
+  const [transferir, setTransferir] = useState<{ user: UserRow; clientes: Client[] } | null>(null);
+  const [destinoTransferir, setDestinoTransferir] = useState('');
+  const [transfiriendo, setTransfiriendo] = useState(false);
+  const [errorTransferir, setErrorTransferir] = useState('');
+
   const availableRoles = getRolesForCurrentUser(currentRole);
   const canCreateUsers = ['superadmin', 'admin'].includes(currentRole);
 
@@ -359,12 +366,38 @@ export function UserManagementClient({
     if (!confirm('¿Eliminar este usuario? Esta acción no se puede deshacer.')) return;
     setLoading(userId);
     const res = await deleteUser(userId);
+    const user = users.find((u) => u.id === userId);
     if (res.success) {
       setUsers((prev) => prev.filter((u) => u.id !== userId));
+    } else if (res.clientesPropios?.length && user) {
+      setTransferir({ user, clientes: res.clientesPropios });
+      setDestinoTransferir('');
+      setErrorTransferir('');
     } else {
       alert(res.error || 'Error al eliminar usuario');
     }
     setLoading(null);
+  };
+
+  const transferirYEliminar = async () => {
+    if (!transferir || !destinoTransferir) return;
+    setTransfiriendo(true);
+    setErrorTransferir('');
+    const r = await reasignarDuenoClientes(transferir.user.id, destinoTransferir);
+    if (r.error) {
+      setErrorTransferir(r.error);
+      setTransfiriendo(false);
+      return;
+    }
+    const res = await deleteUser(transferir.user.id);
+    setTransfiriendo(false);
+    if (res.success) {
+      const id = transferir.user.id;
+      setUsers((prev) => prev.filter((u) => u.id !== id));
+      setTransferir(null);
+    } else {
+      setErrorTransferir(res.error || 'Error al eliminar usuario');
+    }
   };
 
   const openAssignPanel = async (user: UserRow) => {
@@ -402,6 +435,81 @@ export function UserManagementClient({
           onClose={() => setShowCreateModal(false)}
           onCreated={(newUser) => setUsers((prev) => [newUser, ...prev])}
         />
+      )}
+
+      {/* Transfer owned clients before deleting */}
+      {transferir && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <Card className="bg-card border-border w-full max-w-md shadow-2xl">
+            <CardContent className="p-6 space-y-4">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <h3 className="text-foreground font-semibold text-lg">Pasar sus clientes</h3>
+                  <p className="text-muted-foreground text-sm truncate">{transferir.user.email}</p>
+                </div>
+                <button
+                  onClick={() => setTransferir(null)}
+                  disabled={transfiriendo}
+                  className="text-muted-foreground/70 hover:text-foreground transition-colors"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+              <p className="text-sm text-muted-foreground">
+                Es dueño de estos clientes. Eliminar un usuario nunca borra clientes: pásalos a otro
+                usuario y después se elimina.
+              </p>
+              <ul className="text-sm text-foreground space-y-1 max-h-40 overflow-y-auto">
+                {transferir.clientes.map((c) => (
+                  <li key={c.id}>· {c.nombre}</li>
+                ))}
+              </ul>
+              <label className="block text-xs font-medium text-muted-foreground">
+                Pasar sus clientes a
+                <select
+                  value={destinoTransferir}
+                  onChange={(e) => setDestinoTransferir(e.target.value)}
+                  className="mt-1.5 w-full bg-background border border-input rounded-lg px-3 py-2.5 text-sm text-foreground"
+                >
+                  <option value="">Elige un usuario…</option>
+                  {users
+                    .filter((u) => u.id !== transferir.user.id)
+                    .map((u) => (
+                      <option key={u.id} value={u.id}>
+                        {u.full_name ? `${u.full_name} · ${u.email}` : u.email}
+                      </option>
+                    ))}
+                </select>
+              </label>
+              {errorTransferir && (
+                <div className="bg-red-500/10 border border-red-500/20 rounded-lg px-4 py-3 text-sm text-red-600 dark:text-red-400">
+                  {errorTransferir}
+                </div>
+              )}
+              <div className="flex gap-3 pt-2">
+                <Button
+                  variant="outline"
+                  className="flex-1 bg-secondary border-input text-secondary-foreground hover:bg-accent"
+                  onClick={() => setTransferir(null)}
+                  disabled={transfiriendo}
+                >
+                  Cancelar
+                </Button>
+                <Button
+                  className="flex-1 bg-red-600 hover:bg-red-500 text-white"
+                  onClick={transferirYEliminar}
+                  disabled={!destinoTransferir || transfiriendo}
+                >
+                  {transfiriendo ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    'Pasar y eliminar'
+                  )}
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
       )}
 
       {/* Client assignment panel */}

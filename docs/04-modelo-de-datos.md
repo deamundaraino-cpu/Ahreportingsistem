@@ -26,7 +26,7 @@ Registro maestro de clientes del reporting principal.
 CREATE TABLE public.clientes (
   id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   nombre      TEXT NOT NULL,
-  user_id     UUID REFERENCES auth.users(id) ON DELETE CASCADE,
+  user_id     UUID REFERENCES auth.users(id) ON DELETE RESTRICT,  -- 081: borrar un usuario no borra clientes
   config_api  JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at  TIMESTAMPTZ NOT NULL DEFAULT timezone('utc', now()),
   public_token UUID UNIQUE DEFAULT gen_random_uuid(),  -- migración 006
@@ -37,6 +37,10 @@ CREATE TABLE public.clientes (
 - **`config_api`** (JSONB): contenedor de credenciales e integraciones. Ver estructura abajo.
 - **`public_token`**: token para enlaces públicos/espejo.
 - **RLS**: SELECT propio (`auth.uid() = user_id`) + acceso total admin.
+- **Borrado**: toda tabla con `cliente_id` (en los dos esquemas) cae en cascada con
+  el cliente (migraciones 080 y 081); `scripts/verify-borrado-cascada.ts` lo
+  comprueba en el catálogo. Se borra con `eliminarClienteCompleto`, que limpia
+  además lo que no tiene FK. Ver [doc 23](./23-runbook-empalme.md).
 
 #### Estructura de `config_api`
 
@@ -407,7 +411,7 @@ CREATE TABLE report_utm.clientes (
   slug        TEXT UNIQUE NOT NULL,
   descripcion TEXT,
   color       TEXT DEFAULT 'blue',
-  public_cliente_id UUID REFERENCES public.clientes(id) ON DELETE SET NULL,
+  public_cliente_id UUID REFERENCES public.clientes(id) ON DELETE CASCADE,  -- 080
   config      JSONB NOT NULL DEFAULT '{}',
   status      TEXT DEFAULT 'active',     -- active | paused | archived
   created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -415,7 +419,7 @@ CREATE TABLE report_utm.clientes (
 );
 ```
 
-`public_cliente_id` permite (opcionalmente) cruzar un cliente de tracking con uno del reporting principal.
+`public_cliente_id` enlaza el cliente de tracking con su cliente del reporting, del que es espejo: se crea, archiva y borra con él (`src/lib/clientes/ciclo-de-vida.ts`). Los que lo tienen en NULL son huérfanos de antes de esa regla.
 
 ### `report_utm.integrations` (migración 012)
 

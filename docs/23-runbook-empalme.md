@@ -84,14 +84,40 @@ llega a la campana y al grupo de WhatsApp del equipo una vez al día como mucho.
 
 ## «Borré un cliente y sigue apareciendo»
 
-Ya no debería pasar: borrar en Ajustes o en Report-UTM lo borra en los dos lados
-**con todos sus datos** (regla del 2026-09-14): métricas, leads, ventas, Hotmart,
-informes BI, notificaciones, mensajes de WhatsApp, canales del agente y logo. No se
-puede deshacer; para ocultar sin perder nada, **archiva**.
+Ya no debería pasar. Borrar en Ajustes o en Report-UTM lo borra en los dos lados
+**con todos sus datos** (regla del 2026-09-14), y el diálogo de confirmación dice
+antes qué se pierde: métricas, leads, ventas, Hotmart, bitácoras, informes BI,
+pestañas, integraciones, notificaciones, mensajes de WhatsApp y canales,
+conversaciones y propuestas pendientes del agente. No se puede deshacer; para
+ocultar sin perder nada, **archiva**.
 
-Lo hace `eliminarClienteCompleto` (`src/lib/clientes/ciclo-de-vida.ts`). La
-migración `080_borrado_en_cascada.sql` pasa las FK a `ON DELETE CASCADE` para que
-tampoco quede nada si alguien borra por SQL o desde el panel de Supabase.
+Lo hace `eliminarClienteCompleto` (`src/lib/clientes/ciclo-de-vida.ts`):
+
+- **Base de datos:** las FK en cascada (migraciones 080 y 081) borran todo lo que
+  cuelga del cliente, también si alguien lo borra por SQL o desde el panel de
+  Supabase. `npm run test:datos` lo vigila en el catálogo real
+  (`verify-borrado-cascada.ts`).
+- **Lo que ninguna FK alcanza** lo borra el código: las propuestas pendientes y
+  las conversaciones de sus grupos del agente, su id en el alcance de los
+  contactos del agente, y las imágenes de sus bitácoras y sus logos en Storage.
+- **Se desconecta solo:** la suscripción de sus Páginas de Meta al webhook de
+  leads y sus grupos de WhatsApp (salvo que otro cliente use la misma Página o el
+  mismo grupo).
+- **Hay que hacerlo a mano** (el diálogo lo lista según lo que tenga conectado):
+  desactivar los workflows de GoHighLevel, quitar el webhook de Hotmart, retirar
+  el píxel o el plugin de WordPress de su sitio y sacar el bot de sus grupos de
+  WhatsApp. Si no, siguen enviando y reciben error.
+- **Se conserva a propósito:** el registro de auditoría del agente
+  (`agent_audit_log`, quién hizo qué) y los accesos de Meta, Google y Hotmart en
+  el proveedor, que son de la agencia y los comparten otros clientes.
+
+Si al borrar sale un aviso (Storage o Meta no respondieron), el cliente ya está
+borrado. Lo que quedó en Storage se limpia con:
+
+```bash
+npx tsx scripts/limpiar-storage-huerfano.ts            # lista, no borra
+npx tsx scripts/limpiar-storage-huerfano.ts --apply
+```
 
 Si ves clientes «Sin enlace» (huérfanos de antes de la regla):
 
@@ -101,6 +127,13 @@ npx tsx scripts/borrar-clientes-huerfanos.ts --ids=<uuid>,<uuid> --apply
 ```
 
 O uno a uno con «Eliminar» en `/report-utm/clientes`.
+
+## «No me deja eliminar un usuario»
+
+Si es dueño de clientes, no: borrar un usuario nunca borra clientes (migración
+081; antes se los llevaba con todos sus datos). En `/admin/users` aparece la lista
+de sus clientes y un selector para pasarlos a otro usuario; al confirmar, se
+pasan y el usuario se elimina.
 
 ---
 

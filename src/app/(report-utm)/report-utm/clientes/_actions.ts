@@ -4,18 +4,24 @@ import { revalidatePath } from 'next/cache';
 import { reportUtmClient } from '@/lib/report-utm/client';
 import { createAdminClient } from '@/utils/supabase/server';
 import { checkWriteRole, getUserRole } from '@/lib/report-utm/auth';
-import { asegurarEspejoUtm, eliminarClienteUtm } from '@/lib/clientes/ciclo-de-vida';
+import {
+  asegurarEspejoUtm,
+  eliminarClienteUtm,
+  resumenBorradoUtm,
+} from '@/lib/clientes/ciclo-de-vida';
 
 // Los clientes se CREAN en el reporting (/admin/settings), que crea aquí su
 // espejo enlazado. El alta manual que había en esta pantalla solo producía
 // huérfanos —clientes sin gasto con el que cruzar— y se retiró el 2026-09-12.
 
-const ROLES_BORRADO = new Set(['superadmin', 'admin']);
+/** Borrar clientes y crear espejos en bloque: solo administradores. */
+const ROLES_ADMIN = new Set(['superadmin', 'admin']);
 
 function revalidar(id?: string) {
   revalidatePath('/report-utm/clientes');
   revalidatePath('/report-utm');
   revalidatePath('/admin/settings');
+  revalidatePath('/dashboard');
   if (id) revalidatePath(`/report-utm/clientes/${id}`);
 }
 
@@ -74,6 +80,17 @@ export async function updateClienteBrandingAction(
   return { ok: true };
 }
 
+/** Lo que se perdería al borrar, para el diálogo de confirmación. */
+export async function resumenBorradoClienteAction(id: string) {
+  const role = await getUserRole();
+  if (!role || !ROLES_ADMIN.has(role)) {
+    return { ok: false, error: 'Solo un administrador puede eliminar clientes.' };
+  }
+  const resumen = await resumenBorradoUtm(await createAdminClient(), id);
+  if (!resumen) return { ok: false, error: 'El cliente no existe.' };
+  return { ok: true, resumen };
+}
+
 /**
  * Elimina un cliente. Si está enlazado al reporting, se elimina en LOS DOS lados
  * —es el mismo cliente—; si es un huérfano, solo aquí.
@@ -83,7 +100,7 @@ export async function updateClienteBrandingAction(
  */
 export async function deleteClienteAction(id: string) {
   const role = await getUserRole();
-  if (!role || !ROLES_BORRADO.has(role)) {
+  if (!role || !ROLES_ADMIN.has(role)) {
     return { ok: false, error: 'Solo un administrador puede eliminar clientes.' };
   }
 
@@ -92,7 +109,7 @@ export async function deleteClienteAction(id: string) {
   if (!r.ok) return { ok: false, error: r.error };
 
   revalidar();
-  return { ok: true };
+  return { ok: true, avisos: r.avisos };
 }
 
 /**
@@ -136,10 +153,13 @@ export async function enlazarClienteAction(id: string, publicClienteId: string) 
  * Crea el espejo de los clientes del reporting que aún no lo tienen. Ya NO se
  * ejecuta al abrir la página —así fue como resucitaban los clientes borrados—:
  * es un botón explícito, y el alta en el reporting ya crea el espejo sola.
+ * Crea clientes en bloque, así que es solo para administradores.
  */
 export async function syncPlatformClientesAction() {
-  const { ok } = await checkWriteRole();
-  if (!ok) return { ok: false, created: 0, error: 'Sin permisos.' };
+  const role = await getUserRole();
+  if (!role || !ROLES_ADMIN.has(role)) {
+    return { ok: false, created: 0, error: 'Solo un administrador puede sincronizar clientes.' };
+  }
 
   const admin = await createAdminClient();
   const { data: publicClientes } = await admin

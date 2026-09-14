@@ -9,8 +9,9 @@ import 'server-only';
  *   · `report_utm.clientes` — el del módulo de atribución, enlazado al anterior
  *     por `public_cliente_id`.
  *
- * Por eso `create_client` acepta `scope: 'ambos'`, que crea los dos Y LOS
- * ENLAZA. Es lo que casi siempre se quiere y lo que a mano se olvida.
+ * Por eso `create_client` los crea SIEMPRE los dos, enlazados, con la misma
+ * función que el panel (`crearCliente`, `lib/clientes/ciclo-de-vida.ts`). Hasta
+ * el 2026-09-14 aceptaba `scope: 'utm'`, que creaba huérfanos por construcción.
  *
  * Lo que NO hay aquí, a propósito: crear usuarios y cambiar roles. Un agente
  * que pueda concederse permisos puede escalar privilegios, así que ese camino
@@ -19,35 +20,21 @@ import 'server-only';
 
 import { z } from 'zod';
 import { ApiError } from '@/lib/error-handler';
+import { crearCliente } from '@/lib/clientes/ciclo-de-vida';
 import type { AnyAgentTool } from '../types';
 import { exigirCliente, idsVisibles } from '../registry';
-
-/** Mismo criterio que `report-utm/clientes/_actions.ts`. */
-function slugify(input: string): string {
-  return input
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 60);
-}
 
 const createClient: AnyAgentTool = {
   name: 'create_client',
   domain: 'administracion',
   description:
-    'Da de alta un cliente. Con `scope: "ambos"` (lo habitual) lo crea tanto en el dashboard de ' +
-    'publicidad como en el módulo de atribución y los enlaza entre sí. ' +
+    'Da de alta un cliente: lo crea en el dashboard de publicidad y en el módulo de atribución, ' +
+    'enlazados entre sí. ' +
     'NO conecta credenciales: Meta, Google y Hotmart se conectan por OAuth desde el panel, y la ' +
     'herramienta devuelve el enlace para hacerlo. ' +
     'Es una acción de riesgo alto: requiere aprobación de un administrador.',
   input: z.object({
     nombre: z.string().min(2).describe('Nombre del cliente.'),
-    scope: z
-      .enum(['ads', 'utm', 'ambos'])
-      .optional()
-      .describe('Dónde crearlo. Por defecto "ambos", que es lo normal.'),
     descripcion: z.string().optional(),
     color: z.string().optional().describe('Color de la ficha en el módulo de atribución.'),
   }),
@@ -55,76 +42,25 @@ const createClient: AnyAgentTool = {
   minLevel: 'admin',
   mutation: {
     risk: 'high',
-    summarize: (i: { nombre: string; scope?: string }) =>
-      `Crear el cliente "${i.nombre}" en ${i.scope ?? 'ambos'} sistema(s)`,
+    summarize: (i: { nombre: string }) =>
+      `Crear el cliente "${i.nombre}" (dashboard y atribución, enlazados)`,
   },
-  handler: async (
-    input: {
-      nombre: string;
-      scope?: 'ads' | 'utm' | 'ambos';
-      descripcion?: string;
-      color?: string;
-    },
-    ctx
-  ) => {
-    const scope = input.scope ?? 'ambos';
-    const nombre = input.nombre.trim();
-    const resultado: Record<string, unknown> = { scope };
-
-    let publicId: string | null = null;
-
-    if (scope === 'ads' || scope === 'ambos') {
-      const { data, error } = await ctx.db
-        .from('clientes')
-        .insert({ nombre, config_api: {} })
-        .select('id, nombre')
-        .single();
-
-      if (error) {
-        throw new ApiError('DATABASE_ERROR', `No se pudo crear el cliente: ${error.message}`, 500);
-      }
-      publicId = (data as { id: string }).id;
-      resultado.ads = data;
-    }
-
-    if (scope === 'utm' || scope === 'ambos') {
-      const slug = slugify(nombre);
-      if (!slug) {
-        throw new ApiError('VALIDATION_ERROR', 'El nombre no produce un slug válido.', 400);
-      }
-
-      const { data, error } = await ctx.db
-        .schema('report_utm')
-        .from('clientes')
-        .insert({
-          nombre,
-          slug,
-          descripcion: input.descripcion ?? null,
-          color: input.color ?? 'emerald',
-          // El enlace entre los dos sistemas: sin él, el módulo de atribución
-          // no encuentra el gasto del cliente y todo sale a cero.
-          public_cliente_id: publicId,
-        })
-        .select('id, nombre, slug, public_cliente_id')
-        .single();
-
-      if (error) {
-        throw new ApiError(
-          'DATABASE_ERROR',
-          `El cliente se creó en el dashboard pero falló en el módulo de atribución: ${error.message}`,
-          500
-        );
-      }
-      resultado.utm = data;
+  handler: async (input: { nombre: string; descripcion?: string; color?: string }, ctx) => {
+    const r = await crearCliente(ctx.db, input.nombre, {
+      descripcion: input.descripcion ?? null,
+      color: input.color,
+    });
+    if (!r.ok) {
+      throw new ApiError('DATABASE_ERROR', `No se pudo crear el cliente: ${r.error}`, 500);
     }
 
     const base = process.env.NEXT_PUBLIC_APP_URL ?? '';
     return {
-      ...resultado,
-      enlazados: scope === 'ambos',
-      siguiente_paso: publicId
-        ? `Conecta las credenciales en ${base}/admin/settings/${publicId}`
-        : 'Conecta las credenciales desde el panel de administración.',
+      ads: { id: r.cliente.id, nombre: r.cliente.nombre },
+      utm_id: r.espejoId,
+      enlazados: r.espejoId !== null,
+      ...(r.aviso ? { aviso: r.aviso } : {}),
+      siguiente_paso: `Conecta las credenciales en ${base}/admin/settings/${r.cliente.id}`,
     };
   },
 };

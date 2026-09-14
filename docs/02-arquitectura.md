@@ -21,8 +21,9 @@ El servidor de desarrollo corre en el **puerto 3000** (`next dev -p 3000`). Requ
 
 > **Una sola casa (2026-09-12).** `public.clientes` es la fuente de verdad del
 > cliente; su espejo en `report_utm.clientes` se crea, archiva y borra con él
-> (`src/lib/clientes/ciclo-de-vida.ts`). Todas las conexiones de un cliente se
-> configuran en `/admin/settings/[id]`. Las migraciones van por la **079**
+> (`src/lib/clientes/ciclo-de-vida.ts`), y borrarlo borra todos sus datos (ver
+> [doc 23](./23-runbook-empalme.md)). Todas las conexiones de un cliente se
+> configuran en `/admin/settings/[id]`. Las migraciones van por la **081**
 > (`migrations/`, se aplican con `scripts/sql-remoto.ts`); ojo, hay números
 > repetidos (007, 009, 021, 030, 035, 069, 078) y no existe un registro de cuáles
 > están aplicadas.

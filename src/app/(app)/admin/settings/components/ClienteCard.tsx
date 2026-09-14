@@ -2,31 +2,24 @@
 
 import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
+import { toast } from 'sonner';
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
-import { Settings, Layers, Archive, ArchiveRestore, Trash2, Loader2, X } from 'lucide-react';
+import { Settings, Layers, Archive, ArchiveRestore, Trash2, Loader2 } from 'lucide-react';
 import Link from 'next/link';
+import { ConfirmarBorradoCliente } from '@/components/clientes/ConfirmarBorradoCliente';
+import type { ResumenBorrado } from '@/lib/clientes/ciclo-de-vida';
 import { deleteCliente, resumenBorradoCliente, setClienteArchivado } from '../_actions';
 
 interface ClienteCardProps {
   cliente: any;
 }
 
-type Resumen = {
-  nombre: string;
-  diasMetricas: number;
-  ventasHotmart: number;
-  leadsAprox: number;
-  ventas: number;
-  informesBi: number;
-  espejos: number;
-};
-
 export function ClienteCard({ cliente }: ClienteCardProps) {
   const router = useRouter();
   const [pendiente, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
-  const [resumen, setResumen] = useState<Resumen | null>(null);
-  const [confirmacion, setConfirmacion] = useState('');
+  const [errorBorrado, setErrorBorrado] = useState<string | null>(null);
+  const [resumen, setResumen] = useState<ResumenBorrado | null>(null);
   const archivado = cliente.archivado === true;
 
   function archivar(e: React.MouseEvent) {
@@ -42,6 +35,7 @@ export function ClienteCard({ cliente }: ClienteCardProps) {
   function pedirBorrado(e: React.MouseEvent) {
     e.stopPropagation();
     setError(null);
+    setErrorBorrado(null);
     startTransition(async () => {
       const r = await resumenBorradoCliente(cliente.id);
       if (r.error || !r.resumen) setError(r.error ?? 'No se pudo preparar el borrado.');
@@ -52,11 +46,13 @@ export function ClienteCard({ cliente }: ClienteCardProps) {
   function borrar() {
     startTransition(async () => {
       const r = await deleteCliente(cliente.id);
-      if (r.error) setError(r.error);
-      else {
-        setResumen(null);
-        router.refresh();
+      if (r.error) {
+        setErrorBorrado(r.error);
+        return;
       }
+      setResumen(null);
+      for (const aviso of r.avisos ?? []) toast.warning(aviso);
+      router.refresh();
     });
   }
 
@@ -136,70 +132,13 @@ export function ClienteCard({ cliente }: ClienteCardProps) {
       </div>
 
       {resumen && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-          role="dialog"
-          aria-modal="true"
-          onClick={() => !pendiente && setResumen(null)}
-        >
-          <div
-            className="w-full max-w-md rounded-2xl border border-border bg-card p-6 space-y-4 shadow-xl"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-start justify-between gap-4">
-              <h3 className="text-base font-semibold text-foreground">
-                Eliminar «{resumen.nombre}»
-              </h3>
-              <button
-                type="button"
-                onClick={() => setResumen(null)}
-                className="text-muted-foreground hover:text-foreground"
-                aria-label="Cerrar"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-            <p className="text-sm text-muted-foreground">
-              Se elimina en el reporting <strong>y</strong> en Report-UTM. No se puede deshacer. Si
-              solo quieres que deje de aparecer, archívalo.
-            </p>
-            <ul className="text-sm text-foreground space-y-1">
-              <li>· {resumen.diasMetricas.toLocaleString()} días de métricas</li>
-              <li>· ~{resumen.leadsAprox.toLocaleString()} leads</li>
-              <li>· {resumen.ventasHotmart.toLocaleString()} ventas de Hotmart</li>
-              <li>· {resumen.ventas.toLocaleString()} ventas de webhook</li>
-              <li>· {resumen.informesBi.toLocaleString()} informes BI</li>
-              <li>· Sus notificaciones, mensajes y canales del agente</li>
-            </ul>
-            <label className="block text-xs text-muted-foreground">
-              Escribe el nombre del cliente para confirmar
-              <input
-                value={confirmacion}
-                onChange={(e) => setConfirmacion(e.target.value)}
-                className="mt-1 w-full px-3 py-2 text-sm rounded-lg bg-muted border border-border text-foreground"
-                autoFocus
-              />
-            </label>
-            <div className="flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setResumen(null)}
-                className="px-3 py-1.5 rounded-lg text-sm border border-border hover:bg-accent"
-              >
-                Cancelar
-              </button>
-              <button
-                type="button"
-                onClick={borrar}
-                disabled={pendiente || confirmacion.trim() !== resumen.nombre.trim()}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium text-white bg-red-600 hover:bg-red-700 disabled:opacity-40"
-              >
-                {pendiente && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                Eliminar definitivamente
-              </button>
-            </div>
-          </div>
-        </div>
+        <ConfirmarBorradoCliente
+          resumen={resumen}
+          pendiente={pendiente}
+          error={errorBorrado}
+          onCancelar={() => setResumen(null)}
+          onConfirmar={borrar}
+        />
       )}
     </>
   );

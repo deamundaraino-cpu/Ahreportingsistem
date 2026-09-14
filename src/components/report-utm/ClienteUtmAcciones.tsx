@@ -2,18 +2,21 @@
 
 import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
+import { toast } from 'sonner';
 import { Archive, ArchiveRestore, Trash2, Link2, Loader2, RefreshCw } from 'lucide-react';
+import { ConfirmarBorradoCliente } from '@/components/clientes/ConfirmarBorradoCliente';
+import type { ResumenBorrado } from '@/lib/clientes/ciclo-de-vida';
 import {
   updateClienteStatusAction,
   deleteClienteAction,
   enlazarClienteAction,
+  resumenBorradoClienteAction,
   syncPlatformClientesAction,
 } from '@/app/(report-utm)/report-utm/clientes/_actions';
 
 /** Archivar, eliminar y (si es huérfano) enlazar, en la fila del listado. */
 export function ClienteUtmAcciones({
   id,
-  nombre,
   status,
   enlazado,
   opcionesEnlace,
@@ -27,6 +30,8 @@ export function ClienteUtmAcciones({
   const router = useRouter();
   const [pendiente, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  const [errorBorrado, setErrorBorrado] = useState<string | null>(null);
+  const [resumen, setResumen] = useState<ResumenBorrado | null>(null);
   const [destino, setDestino] = useState('');
   const archivado = status === 'archived';
 
@@ -39,17 +44,29 @@ export function ClienteUtmAcciones({
     });
   };
 
-  function eliminar() {
-    const aviso = enlazado
-      ? `«${nombre}» está enlazado al reporting: se eliminará en LOS DOS lados con TODOS sus datos (métricas, leads, ventas, informes, notificaciones y canales del agente). No se puede deshacer. Escribe el nombre para confirmar.`
-      : `Se eliminará «${nombre}» con TODOS sus datos (leads, ventas, integraciones e informes). No se puede deshacer. Escribe el nombre para confirmar.`;
-    const escrito = window.prompt(aviso);
-    if (escrito === null) return;
-    if (escrito.trim() !== nombre.trim()) {
-      setError('El nombre no coincide; no se eliminó nada.');
-      return;
-    }
-    correr(() => deleteClienteAction(id));
+  // La misma confirmación que en Ajustes: con lo que se pierde y lo que queda
+  // por desconectar a mano.
+  function pedirBorrado() {
+    setError(null);
+    setErrorBorrado(null);
+    start(async () => {
+      const r = await resumenBorradoClienteAction(id);
+      if (!r.ok || !r.resumen) setError(r.error ?? 'No se pudo preparar el borrado.');
+      else setResumen(r.resumen);
+    });
+  }
+
+  function borrar() {
+    start(async () => {
+      const r = await deleteClienteAction(id);
+      if (!r.ok) {
+        setErrorBorrado(r.error ?? 'Error');
+        return;
+      }
+      setResumen(null);
+      for (const aviso of r.avisos ?? []) toast.warning(aviso);
+      router.refresh();
+    });
   }
 
   return (
@@ -93,13 +110,27 @@ export function ClienteUtmAcciones({
       <button
         type="button"
         disabled={pendiente}
-        onClick={eliminar}
+        onClick={pedirBorrado}
         className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium border border-border text-red-600 hover:bg-red-50 dark:hover:bg-red-500/10 disabled:opacity-40"
       >
-        {pendiente ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
+        {pendiente && !resumen ? (
+          <Loader2 className="h-3 w-3 animate-spin" />
+        ) : (
+          <Trash2 className="h-3 w-3" />
+        )}
         Eliminar
       </button>
       {error && <span className="w-full text-right text-[11px] text-red-500">{error}</span>}
+
+      {resumen && (
+        <ConfirmarBorradoCliente
+          resumen={resumen}
+          pendiente={pendiente}
+          error={errorBorrado}
+          onCancelar={() => setResumen(null)}
+          onConfirmar={borrar}
+        />
+      )}
     </div>
   );
 }

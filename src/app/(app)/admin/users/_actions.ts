@@ -129,17 +129,70 @@ export async function deleteUser(userId: string) {
     return { error: 'No puedes eliminar a un admin o superadmin' };
   }
 
-  const { error: profileError } = await adminSupabase
-    .from('user_profiles')
-    .delete()
-    .eq('id', userId);
+  // Borrar un usuario nunca borra clientes. `clientes.user_id` era ON DELETE
+  // CASCADE: eliminar al dueño se llevaba sus clientes con todos sus datos, sin
+  // confirmación. La migración 081 lo pasa a RESTRICT; aquí se avisa antes, con
+  // los nombres, para poder pasarlos a otro usuario (`reasignarDuenoClientes`).
+  const { data: propios, error: propiosError } = await adminSupabase
+    .from('clientes')
+    .select('id, nombre')
+    .eq('user_id', userId)
+    .order('nombre');
+  if (propiosError) return { error: propiosError.message };
+  if (propios && propios.length > 0) {
+    const clientesPropios = propios as Array<{ id: string; nombre: string }>;
+    return {
+      error:
+        `Es dueño de ${clientesPropios.length} cliente(s): ` +
+        `${clientesPropios.map((c) => String(c.nombre).trim()).join(', ')}. ` +
+        'Pásalos a otro usuario antes de eliminarlo.',
+      clientesPropios,
+    };
+  }
 
-  if (profileError) return { error: profileError.message };
-
-  await adminSupabase.auth.admin.deleteUser(userId);
+  // Primero el usuario: si falla, no queda un usuario sin perfil. El perfil cae
+  // con él (FK en cascada); el borrado explícito solo cubre una base sin ella.
+  const { error: authError } = await adminSupabase.auth.admin.deleteUser(userId);
+  if (authError) return { error: authError.message };
+  await adminSupabase.from('user_profiles').delete().eq('id', userId);
 
   revalidatePath('/admin/users');
   return { success: true };
+}
+
+/**
+ * Pasa los clientes de los que un usuario es dueño (`clientes.user_id`) a otro,
+ * para poder eliminarlo. Mismas reglas que eliminar: un admin no toca a otro
+ * admin ni a un superadmin.
+ */
+export async function reasignarDuenoClientes(deUserId: string, aUserId: string) {
+  const current = await getCurrentUserRole();
+  if (!current || !['superadmin', 'admin'].includes(current.role)) {
+    return { error: 'Sin permisos para reasignar clientes' };
+  }
+  if (!aUserId || aUserId === deUserId) return { error: 'Elige otro usuario.' };
+
+  const adminSupabase = await createAdminClient();
+  const [{ data: origen }, { data: destino }] = await Promise.all([
+    adminSupabase.from('user_profiles').select('role').eq('id', deUserId).maybeSingle(),
+    adminSupabase.from('user_profiles').select('id').eq('id', aUserId).maybeSingle(),
+  ]);
+  const origenRole = (origen?.role ?? 'viewer') as Role;
+  if (current.role === 'admin' && ROLE_HIERARCHY[origenRole] >= ROLE_HIERARCHY['admin']) {
+    return { error: 'No puedes reasignar los clientes de un admin o superadmin' };
+  }
+  if (!destino) return { error: 'El usuario de destino no existe.' };
+
+  const { data, error } = await adminSupabase
+    .from('clientes')
+    .update({ user_id: aUserId })
+    .eq('user_id', deUserId)
+    .select('id');
+  if (error) return { error: error.message };
+
+  revalidatePath('/admin/users');
+  revalidatePath('/admin/settings');
+  return { success: true, reasignados: data?.length ?? 0 };
 }
 
 export async function getClientAssignments(targetUserId: string) {
