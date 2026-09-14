@@ -92,6 +92,9 @@
     }
   }
 
+  // Parámetros de ID que se propagan tal cual (ver src/lib/report-utm/lead-ids.ts).
+  var ID_PARAMS = ['utm_id', 'campaign_id', 'adset_id', 'ad_id'];
+
   function captureFirstTouch() {
     var existing = readCookie('rutm_ft');
     if (existing) return;
@@ -110,6 +113,12 @@
       ts: new Date().toISOString(),
       referrer: document.referrer || null,
     };
+    // IDs de la entidad ({{campaign.id}}, {{adset.id}}, {{ad.id}}): se guardan
+    // en el touch para que viajen al checkout aunque la página ya no los lleve.
+    for (var p = 0; p < ID_PARAMS.length; p++) {
+      var idv = getQueryParam(ID_PARAMS[p]);
+      if (idv) touch[ID_PARAMS[p]] = idv;
+    }
 
     var hasSignal = touch.source || touch.campaign || touch.click_id || touch.medium;
     if (hasSignal) {
@@ -150,7 +159,9 @@
 
   function buildUTMsForPropagation() {
     var utms = {};
-    var params = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term'];
+    var params = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term'].concat(
+      ID_PARAMS
+    );
     var hasPageUtms = false;
     for (var i = 0; i < params.length; i++) {
       var v = getQueryParam(params[i]);
@@ -170,6 +181,9 @@
           if (touch.campaign) utms['utm_campaign'] = touch.campaign;
           if (touch.content) utms['utm_content'] = touch.content;
           if (touch.term) utms['utm_term'] = touch.term;
+          for (var j = 0; j < ID_PARAMS.length; j++) {
+            if (touch[ID_PARAMS[j]]) utms[ID_PARAMS[j]] = touch[ID_PARAMS[j]];
+          }
         }
       } catch {}
     }

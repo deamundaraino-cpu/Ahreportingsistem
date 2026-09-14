@@ -1,6 +1,12 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { dedupTouches } from './attribution-resolver';
 import { aplicarExclusion, cargarReglaExclusion, type ReglaExclusion } from './lead-exclusion';
+import {
+  adaptarIds,
+  columnasIdDisponibles,
+  idsPublicitarios,
+  type IdsPublicitarios,
+} from './lead-ids';
 import { leerSecreto } from '@/lib/secretos';
 import {
   fetchContactById,
@@ -228,6 +234,18 @@ export function deriveUtms(contact: GhlContact): UtmsDerivadas {
   return click_id ? { ...SIN_UTMS, click_id, attribution_method: 'click_id' } : { ...SIN_UTMS };
 }
 
+/**
+ * IDs del anuncio, conjunto y campaña de Meta que GHL guarda en la atribución
+ * de un Click-to-WhatsApp. Antes de la migración 082 solo sobrevivía uno, dentro
+ * de `utm_id`; el resto se quedaba en `custom_data`.
+ */
+export function idsDeContacto(contact: GhlContact): IdsPublicitarios {
+  const a = (contact.attributionSource ?? {}) as GhlAtribucion;
+  const b = (contact.lastAttributionSource ?? {}) as GhlAtribucion;
+  const g = (k: keyof GhlAtribucion): string | null => pick(a[k] as string, b[k] as string);
+  return idsPublicitarios(g('campaignId'), g('adGroupId'), g('adId'));
+}
+
 /** Valor de un campo personalizado, sea cual sea la forma en que GHL lo devuelva. */
 export function valorDeCampo(cf: GhlCustomFieldValue): string {
   const v = cf.value ?? cf.fieldValue ?? cf.fieldValueString;
@@ -393,6 +411,7 @@ export function buildLeadRow(
     utm_content: utm.utm_content,
     utm_term: utm.utm_term,
     utm_id: utm.utm_id,
+    ...idsDeContacto(contact),
     click_id: utm.click_id,
     // País ISO-2: alimenta la dimensión "País" de los informes sin trabajo extra.
     ip_country: txt(contact.country),
@@ -439,7 +458,10 @@ export async function ingestGhlContact(
   regla?: ReglaExclusion
 ): Promise<{ inserted: boolean; error?: string }> {
   const r = regla ?? (await cargarReglaExclusion(db, clienteId));
-  const row = aplicarExclusion(buildLeadRow(clienteId, contact, defs, formNameFallback), r);
+  const row = adaptarIds(
+    aplicarExclusion(buildLeadRow(clienteId, contact, defs, formNameFallback), r),
+    await columnasIdDisponibles(db)
+  );
   const { error } = await db.from('lead_events').insert(row);
   if (error) {
     // 23505 = unique_violation → el polling ya lo metió. No es un error.
@@ -467,13 +489,14 @@ export async function ingestGhlContactsBatch(
 
   // Una lectura de la regla por lote, no por contacto.
   const r = regla ?? (await cargarReglaExclusion(db, clienteId));
+  const conIds = await columnasIdDisponibles(db);
   const ahora = new Date().toISOString();
   const byId = new Map<string, Record<string, unknown>>();
   for (const c of contactos) {
     if (!c?.id) continue;
     byId.set(
       `${GHL_EXTERNAL_PREFIX}${c.id}`,
-      aplicarExclusion(buildLeadRow(clienteId, c, defs), r, ahora)
+      adaptarIds(aplicarExclusion(buildLeadRow(clienteId, c, defs), r, ahora), conIds)
     );
   }
   const rows = Array.from(byId.values());

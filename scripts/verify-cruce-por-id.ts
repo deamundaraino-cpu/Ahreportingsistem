@@ -6,19 +6,28 @@
  * Con el ID, el conjunto y el anuncio salían en el informe como `120212…` y no
  * había forma de corregirlos.
  *
- * Todo es puro: el índice se construye a mano, sin Postgres.
+ * Y lo que encontró la auditoría del 2026-09-14 (docs/22): IDs dedicados en el
+ * lead (migración 082), nombres de anuncio repetidos entre campañas, campañas
+ * renombradas y UTMs que llegan URL-encoded.
+ *
+ * Todo es puro: el índice se construye a mano o con `construirIndice`, sin Postgres.
  *
  *   npx tsx --conditions=react-server scripts/verify-cruce-por-id.ts
  */
 
 import {
   buildResolver,
+  construirIndice,
   esIdMeta,
   matchToCampaign,
   type CampaignIndex,
   type Override,
 } from '../src/lib/report-utm/campaign-resolver';
 import { normLabel } from '../src/lib/report-utm/bi-metadata';
+import { adaptarIds, idsPublicitarios } from '../src/lib/report-utm/lead-ids';
+import { utmDeFilaSheet } from '../src/lib/sheets/atribucion';
+import { buildLeadRow as buildLeadRowGhl, idsDeContacto } from '../src/lib/report-utm/ghl-leads';
+import type { GhlContact } from '../src/lib/report-utm/ghl-client';
 
 let fallos = 0;
 function check(nombre: string, cond: boolean, detalle?: string) {
@@ -65,10 +74,10 @@ function indice(): CampaignIndex {
     ]),
     byName: new Map([[normLabel(CAMP), KEY]]),
     byAdName: new Map([
-      [normLabel(AD), KEY],
-      [normLabel(AD2), KEY],
+      [normLabel(AD), new Set([KEY])],
+      [normLabel(AD2), new Set([KEY])],
     ]),
-    byAdsetName: new Map([[normLabel(ADSET), KEY]]),
+    byAdsetName: new Map([[normLabel(ADSET), new Set([KEY])]]),
     adCanonicalByName: new Map([
       [normLabel(AD), AD],
       [normLabel(AD2), AD2],
@@ -120,6 +129,10 @@ check(
 );
 check('nombre de anuncio → su nombre real', r.adOf({ utm_content: 'reel_4_agosto' }).label === AD);
 check('nombre de conjunto → su nombre real', r.adsetOf({ utm_term: ADSET }).label === ADSET);
+check(
+  'un nombre de anuncio único sigue cruzando a su campaña',
+  matchToCampaign({ utm_content: AD }, idx, []).method === 'content_ad'
+);
 
 // ── 3. El caso de la reunión: el ID llega en el campo del nombre ──────
 console.log('\n3. ID en el campo del nombre');
@@ -225,6 +238,207 @@ check(
 check(
   'un override de campaña NO titula anuncios (no se confunden los niveles)',
   !rm.adOf({ utm_campaign: 'promo_vieja' }).matched
+);
+
+// ── Índice construido desde metricas_diarias (construirIndice) ────────
+// Dos campañas que comparten el nombre de un anuncio y de un conjunto (el
+// creativo duplicado de Eduversio) y una de ellas renombrada a mitad de rango.
+const CA = '120250000000000001';
+const CB = '120250000000000002';
+const CA_VIEJO = 'V5[D][2|08][BIODESCODIFICACION][CHILE][C LEADS]';
+const CA_NUEVO = 'V5[D][2|09][BIODESCODIFICACION][CHILE][C LEADS]';
+const CB_NOMBRE = '[V1][13|08][SISTEMAS DE GESTION][MEXICO][C LEADS]';
+const AD_REPETIDO = 'IMAGEN 1 - IA 100%';
+const AD_A = '120250000000000101';
+const AD_B = '120250000000000201';
+const SET_A = '120250000000000011';
+const SET_B = '120250000000000021';
+const SET_A2 = '120250000000000012';
+const SET_B2 = '120250000000000022';
+const KA = `meta:${CA}`;
+const KB = `meta:${CB}`;
+
+const anuncioDe = (ad_id: string, adset_id: string, adset_name: string, campaign_id: string) => ({
+  ad_id,
+  ad_name: AD_REPETIDO,
+  adset_id,
+  adset_name,
+  campaign_id,
+  spend: 1,
+});
+
+// Desordenadas a propósito: `construirIndice` las recorre por fecha.
+const filas = [
+  {
+    fecha: '2026-09-05',
+    meta_campaigns: [
+      { campaign_id: CA, name: CA_NUEVO, spend: 10 },
+      { campaign_id: CB, name: CB_NOMBRE, spend: 5 },
+    ],
+    meta_ads: [anuncioDe(AD_A, SET_A, 'ADV CHILE', CA), anuncioDe(AD_B, SET_B, 'ADV MEXICO', CB)],
+    meta_adsets: [
+      { adset_id: SET_A, adset_name: 'ADV CHILE', campaign_id: CA, spend: 1 },
+      { adset_id: SET_B, adset_name: 'ADV MEXICO', campaign_id: CB, spend: 1 },
+      { adset_id: SET_A2, adset_name: 'ABIERTO', campaign_id: CA, spend: 1 },
+      { adset_id: SET_B2, adset_name: 'ABIERTO', campaign_id: CB, spend: 1 },
+    ],
+  },
+  {
+    fecha: '2026-09-01',
+    meta_campaigns: [{ campaign_id: CA, name: CA_VIEJO, spend: 3 }],
+    meta_ads: [],
+    meta_adsets: [],
+  },
+];
+const idx2 = construirIndice(filas, '2026-09-01');
+const r2 = buildResolver(idx2, []);
+
+// ── 6. IDs dedicados del lead (migración 082) ─────────────────────────
+console.log('\n6. IDs dedicados del lead');
+const mAdId = matchToCampaign({ ad_id: AD_B, utm_content: AD_REPETIDO }, idx2, []);
+check(
+  'ad_id cruza exacto aunque el nombre sea ambiguo',
+  mAdId.key === KB && mAdId.method === 'ad_id'
+);
+check(
+  'adset_id cruza a su campaña',
+  matchToCampaign({ adset_id: SET_A2 }, idx2, []).key === KA &&
+    matchToCampaign({ adset_id: SET_A2 }, idx2, []).method === 'adset_id'
+);
+check(
+  'campaign_id cruza a su campaña',
+  matchToCampaign({ campaign_id: CB }, idx2, []).method === 'campaign_id'
+);
+check(
+  'el ID de anuncio manda sobre un utm_campaign de otra campaña',
+  matchToCampaign({ ad_id: AD_A, utm_campaign: CB_NOMBRE }, idx2, []).key === KA
+);
+check(
+  'un ID dedicado que el índice no conoce cae a la cascada de siempre',
+  matchToCampaign({ campaign_id: '999999999999999', utm_campaign: CB_NOMBRE }, idx2, []).method ===
+    'name'
+);
+check(
+  'una macro sin rellenar en ad_id no cuenta como ID',
+  matchToCampaign({ ad_id: '{{ad.id}}', utm_campaign: CB_NOMBRE }, idx2, []).method === 'name'
+);
+check(
+  'el anuncio se titula por su ID dedicado',
+  r2.adOf({ ad_id: AD_B }).label === AD_REPETIDO && r2.adOf({ ad_id: AD_B }).matched
+);
+check(
+  'el conjunto se titula por el ID del anuncio',
+  r2.adsetOf({ ad_id: AD_B }).label === 'ADV MEXICO'
+);
+check(
+  'el conjunto se titula por su propio ID',
+  r2.adsetOf({ adset_id: SET_A }).label === 'ADV CHILE'
+);
+const mUtmSet = matchToCampaign({ utm_id: SET_B }, idx2, []);
+check(
+  'utm_id con el ID de un CONJUNTO cruza a su campaña (utm_id_adset)',
+  mUtmSet.key === KB && mUtmSet.method === 'utm_id_adset'
+);
+
+// ── 7. Nombres repetidos entre campañas ───────────────────────────────
+console.log('\n7. Nombres ambiguos');
+const amb = matchToCampaign({ utm_content: AD_REPETIDO }, idx2, []);
+check(
+  'un nombre de anuncio en dos campañas NO se asigna a una cualquiera',
+  amb.key === null && amb.method === 'ambiguous'
+);
+check(
+  'y dice entre qué campañas duda y por qué campo',
+  (amb.candidates ?? []).length === 2 && amb.campo === 'utm_content'
+);
+check('el lead ambiguo sale como no cruzado', !r2.campaignOf({ utm_content: AD_REPETIDO }).matched);
+const desamb = matchToCampaign({ utm_content: AD_REPETIDO, utm_term: 'ADV MEXICO' }, idx2, []);
+check('el conjunto desambigua el anuncio', desamb.key === KB && desamb.method === 'content_ad');
+const ambSet = matchToCampaign({ utm_term: 'ABIERTO' }, idx2, []);
+check(
+  'un nombre de conjunto repetido también queda ambiguo',
+  ambSet.method === 'ambiguous' && ambSet.campo === 'utm_term'
+);
+check(
+  'un conjunto repetido con un anuncio repetido sigue ambiguo si no se estrechan',
+  matchToCampaign({ utm_content: AD_REPETIDO, utm_term: 'ABIERTO' }, idx2, []).method ===
+    'ambiguous'
+);
+check(
+  'un nombre de campaña exacto sigue ganando al anuncio repetido',
+  matchToCampaign({ utm_campaign: CB_NOMBRE, utm_content: AD_REPETIDO }, idx2, []).key === KB
+);
+
+// ── 8. Campañas renombradas ───────────────────────────────────────────
+console.log('\n8. Renombrados');
+check(
+  'el nombre VIEJO sigue cruzando',
+  matchToCampaign({ utm_campaign: CA_VIEJO }, idx2, []).key === KA
+);
+check(
+  'el nombre NUEVO cruza igual',
+  matchToCampaign({ utm_campaign: CA_NUEVO }, idx2, []).key === KA
+);
+check(
+  'la fila se titula con el nombre más reciente',
+  r2.campaignOf({ utm_campaign: CA_VIEJO }).label === CA_NUEVO
+);
+check(
+  'el gasto de los dos nombres es de la misma campaña',
+  idx2.campaigns.get(KA)?.spend === 13,
+  `spend=${idx2.campaigns.get(KA)?.spend}`
+);
+
+// ── 9. UTMs URL-encoded ───────────────────────────────────────────────
+console.log('\n9. URL-encoded');
+check(
+  'el percent-encoding se deshace al normalizar',
+  normLabel('%5BV1%5D%5B13%7C08%5D%5BSISTEMAS+DE+GESTION%5D') ===
+    normLabel('[V1][13|08][SISTEMAS DE GESTION]')
+);
+check(
+  'un utm_campaign URL-encoded cruza con su campaña',
+  matchToCampaign({ utm_campaign: encodeURIComponent(CB_NOMBRE) }, idx2, []).key === KB
+);
+check('un «%» suelto no se toca', normLabel('20% dto') === '20% dto');
+check('un «+» sin encoding no se toca', normLabel('C+LEADS') === 'c+leads');
+check('una secuencia rota no rompe', normLabel('%E0%A4%A') === '%e0%a4%a');
+
+// ── 10. Ingesta: los IDs llegan al lead ───────────────────────────────
+console.log('\n10. Ingesta de IDs');
+const ids = idsPublicitarios('{{campaign.id}}', ` ${SET_A} `, null);
+check(
+  'solo se guardan IDs de verdad, limpios',
+  ids.campaign_id === null && ids.adset_id === SET_A && ids.ad_id === null
+);
+const filaSinCols: Record<string, unknown> = adaptarIds(
+  { a: 1, campaign_id: CA, adset_id: null, ad_id: AD_A },
+  false
+);
+check(
+  'sin la 082 las columnas de ID no se escriben',
+  !('ad_id' in filaSinCols) && !('campaign_id' in filaSinCols) && filaSinCols.a === 1
+);
+check('con la 082 se escriben tal cual', adaptarIds({ a: 1, ad_id: AD_A }, true).ad_id === AD_A);
+const sheet = utmDeFilaSheet({ ad_id: `ad:${AD_A}`, adset_id: SET_A, campaign_id: `c:${CA}` });
+check(
+  'el Sheet entrega los tres IDs por separado y limpios',
+  sheet.ad_id === AD_A && sheet.adset_id === SET_A && sheet.campaign_id === CA
+);
+check('y el más específico sigue en utm_id', sheet.utm_id === AD_A);
+const contacto = {
+  id: 'c1',
+  attributionSource: { adId: AD_A, adGroupId: SET_A, campaignId: CA, adName: AD_REPETIDO },
+} as unknown as GhlContact;
+const idsGhl = idsDeContacto(contacto);
+check(
+  'GHL: los IDs de la atribución salen del contacto',
+  idsGhl.ad_id === AD_A && idsGhl.adset_id === SET_A && idsGhl.campaign_id === CA
+);
+const filaGhl = buildLeadRowGhl('cliente', contacto, new Map());
+check(
+  'GHL: y entran en la fila del lead',
+  filaGhl.ad_id === AD_A && filaGhl.adset_id === SET_A && filaGhl.campaign_id === CA
 );
 
 console.log(

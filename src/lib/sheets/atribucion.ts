@@ -151,6 +151,9 @@ export function utmDeFilaSheet(valores: Record<string, unknown> | null | undefin
   utm_content: string | null;
   utm_term: string | null;
   utm_source: string | null;
+  campaign_id: string | null;
+  adset_id: string | null;
+  ad_id: string | null;
 } {
   const a = atribucionDeFila(valores);
   return {
@@ -159,6 +162,11 @@ export function utmDeFilaSheet(valores: Record<string, unknown> | null | undefin
     utm_content: a.ad_name || null,
     utm_term: a.adset_name || null,
     utm_source: a.platform || null,
+    // Los tres IDs también por separado, como los de un lead desde la 082: así
+    // el conjunto se titula por su propio ID aunque la fila traiga el del anuncio.
+    campaign_id: a.campaign_id || null,
+    adset_id: a.adset_id || null,
+    ad_id: a.ad_id || null,
   };
 }
 

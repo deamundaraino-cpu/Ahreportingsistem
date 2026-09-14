@@ -63,6 +63,11 @@ Los pasos 3b–3d son los nuevos. El conjunto y el anuncio se titulan con el mis
 criterio: primero la corrección manual, luego el ID (venga en `utm_id` o en su
 propio campo), luego el nombre.
 
+> **Actualización 2026-09-14.** La cascada ganó IDs propios del lead (campaña,
+> conjunto y anuncio, migración 082), `utm_id` = ID de conjunto, y dejó de adivinar
+> con nombres repetidos entre campañas. Detalle y cifras en
+> [doc 22](./22-auditoria-cruce-por-id.md).
+
 Para GoHighLevel en concreto, `ghl-leads.ts` construye los UTM así:
 
 - Si el contacto trae UTMs reales (formulario con querystring) → tal cual.

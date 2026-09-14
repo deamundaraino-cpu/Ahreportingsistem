@@ -82,7 +82,8 @@ async function main() {
     }
 
     const leadsTotal = d.coverage.total;
-    const leadsSin = d.coverage.methods.none ?? 0;
+    // Un lead ambiguo (nombre repetido en varias campañas) tampoco cruzó.
+    const leadsSin = (d.coverage.methods.none ?? 0) + (d.coverage.methods.ambiguous ?? 0);
     const leadsPct = leadsTotal > 0 ? ((leadsTotal - leadsSin) / leadsTotal) * 100 : null;
     const s = d.spend;
 

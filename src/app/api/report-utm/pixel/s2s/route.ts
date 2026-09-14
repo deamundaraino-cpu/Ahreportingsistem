@@ -3,6 +3,7 @@ import { createAdminClient } from '@/utils/supabase/server';
 import { verifyS2SSignature } from '@/lib/report-utm/s2s-auth';
 import { resolveAttribution, dedupTouches } from '@/lib/report-utm/attribution-resolver';
 import { aplicarExclusion, cargarReglaExclusion } from '@/lib/report-utm/lead-exclusion';
+import { adaptarIds, columnasIdDisponibles, idsPublicitarios } from '@/lib/report-utm/lead-ids';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -35,6 +36,10 @@ type S2SPayload = {
   utm_content?: string;
   utm_term?: string;
   utm_id?: string;
+  /** IDs de la entidad (`{{campaign.id}}`, `{{adset.id}}`, `{{ad.id}}`). Ver lead-ids.ts. */
+  campaign_id?: string;
+  adset_id?: string;
+  ad_id?: string;
   click_id?: string;
   custom_data?: Record<string, unknown>;
   // Campos específicos de leads (formularios)
@@ -65,6 +70,9 @@ function parseUtmsFromUrl(url: string | null | undefined) {
       utm_content: qs.get('utm_content'),
       utm_term: qs.get('utm_term'),
       utm_id: qs.get('utm_id'),
+      campaign_id: qs.get('campaign_id'),
+      adset_id: qs.get('adset_id'),
+      ad_id: qs.get('ad_id'),
       click_id: qs.get('fbclid') ?? qs.get('gclid') ?? qs.get('ttclid') ?? null,
     };
   } catch {
@@ -149,6 +157,13 @@ export async function POST(req: NextRequest) {
     utm_id: body.utm_id ?? urlUtms.utm_id ?? null,
     click_id: body.click_id ?? urlUtms.click_id ?? null,
   };
+  // Solo se guardan si son IDs de verdad: una macro sin rellenar (`{{ad.id}}`)
+  // no es un ID y cruzaría con nada.
+  const ids = idsPublicitarios(
+    body.campaign_id ?? urlUtms.campaign_id,
+    body.adset_id ?? urlUtms.adset_id,
+    body.ad_id ?? urlUtms.ad_id
+  );
 
   // Normalizar event_type: 'lead' se almacena como 'custom' con event_name
   const storedEventType = eventType === 'lead' ? 'custom' : eventType;
@@ -188,37 +203,42 @@ export async function POST(req: NextRequest) {
     // Regla de exclusión del cliente: el lead se guarda igual, marcado, si no
     // cuenta (ver lead-exclusion.ts). Misma regla que GHL y Meta Lead Ads.
     const regla = await cargarReglaExclusion(db, cliente.id);
+    const conIds = await columnasIdDisponibles(db);
     const { data: insertedLead, error: leadError } = await db
       .from('lead_events')
       .insert(
-        aplicarExclusion(
-          {
-            cliente_id: cliente.id,
-            form_name: body.form_name ?? null,
-            form_id: body.form_id ?? null,
-            form_plugin: body.form_plugin ?? null,
-            lead_name: body.lead_name ?? null,
-            lead_email: body.lead_email ?? null,
-            lead_phone: body.lead_phone ?? null,
-            utm_source: utm.utm_source,
-            utm_medium: utm.utm_medium,
-            utm_campaign: utm.utm_campaign,
-            utm_content: utm.utm_content,
-            utm_term: utm.utm_term,
-            utm_id: utm.utm_id,
-            click_id: utm.click_id,
-            visitor_id: body.visitor_id ?? null,
-            session_id: body.session_id ?? null,
-            page_url: body.page_url ?? null,
-            referrer: body.referrer ?? null,
-            ip_address: ip,
-            ip_country: ipCountry,
-            user_agent: userAgent,
-            custom_data: body.custom_data ?? null,
-            raw_fields: body.raw_fields ?? null,
-            source: 's2s',
-          },
-          regla
+        adaptarIds(
+          aplicarExclusion(
+            {
+              cliente_id: cliente.id,
+              form_name: body.form_name ?? null,
+              form_id: body.form_id ?? null,
+              form_plugin: body.form_plugin ?? null,
+              lead_name: body.lead_name ?? null,
+              lead_email: body.lead_email ?? null,
+              lead_phone: body.lead_phone ?? null,
+              utm_source: utm.utm_source,
+              utm_medium: utm.utm_medium,
+              utm_campaign: utm.utm_campaign,
+              utm_content: utm.utm_content,
+              utm_term: utm.utm_term,
+              utm_id: utm.utm_id,
+              click_id: utm.click_id,
+              visitor_id: body.visitor_id ?? null,
+              session_id: body.session_id ?? null,
+              page_url: body.page_url ?? null,
+              referrer: body.referrer ?? null,
+              ip_address: ip,
+              ip_country: ipCountry,
+              user_agent: userAgent,
+              custom_data: body.custom_data ?? null,
+              raw_fields: body.raw_fields ?? null,
+              source: 's2s',
+              ...ids,
+            },
+            regla
+          ),
+          conIds
         )
       )
       .select('id')

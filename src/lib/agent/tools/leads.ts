@@ -19,6 +19,7 @@ import { createAdminClient } from '@/utils/supabase/server';
 import { resolveRtmClienteId, loadResolver } from '@/lib/report-utm/campaign-resolver';
 import { getCrossDiagnostics } from '@/lib/report-utm/campaign-data';
 import { columnaExcluidoDisponible } from '@/lib/report-utm/lead-exclusion';
+import { COLUMNAS_ID, columnasIdDisponibles } from '@/lib/report-utm/lead-ids';
 import { colombiaRangeBounds, colombiaDateOf } from '@/lib/colombia-date';
 import { fetchAllRows } from '@/lib/supabase-paginate';
 import { resolverPeriodo, PRESETS } from '@/lib/date-presets';
@@ -87,13 +88,14 @@ const getLeads: AnyAgentTool = {
     const rtm = db.schema('report_utm');
     const bounds = colombiaRangeBounds(periodo.from, periodo.to);
     const conExclusion = await columnaExcluidoDisponible(db);
+    const conIds = await columnasIdDisponibles(db);
 
     const filas = (await fetchAllRows(
       () => {
         const q = rtm
           .from('lead_events')
           .select(
-            `id,created_at,utm_id,utm_campaign,utm_content,utm_term,source${conExclusion ? ',excluido' : ''}`
+            `id,created_at,utm_id,utm_campaign,utm_content,utm_term,source${conIds ? `,${COLUMNAS_ID.join(',')}` : ''}${conExclusion ? ',excluido' : ''}`
           )
           .eq('cliente_id', rtmId)
           .gte('created_at', bounds.gte)

@@ -17,33 +17,55 @@
 
 import { createAdminClient } from '@/utils/supabase/server';
 import { AD_JSONB_METRICS, normLabel } from './bi-metadata';
+import { esIdPublicitario, idPublicitario } from './lead-ids';
 
 // ============================================================
 // Cruce leads/ventas ↔ campañas (gasto).
 // Estrategia en cascada porque los UTMs son inconsistentes.
 // Prioridad (todos los matches de aquí son EXACTOS = automáticos):
 //   1. overrides manuales (report_utm.utm_campaign_map) → el trafficker manda
+//   1b. IDs dedicados del lead (migración 082, Sheets): ad_id → adset_id → campaign_id
 //   2. utm_id === campaign_id (Meta dinámico)
-//   3. utm_id === ad_id (sube a su campaña)
-//   4. utm_campaign normalizado === nombre de campaña
+//   3. utm_id === ad_id / adset_id (sube a su campaña)
+//   3b-3d. el ID llegó en el campo del nombre (utm_campaign / utm_content / utm_term)
+//   4. utm_campaign normalizado === nombre de campaña (cualquiera que haya tenido)
 //   5. utm_content normalizado === nombre de ad (o de campaña)
 //   6. utm_term normalizado === nombre de adset
 //   7. sin match → sin campaña
+// Los pasos 5 y 6 solo cruzan si el nombre lleva a UNA campaña, sola o cruzando
+// anuncio con conjunto. Un nombre repetido en varias campañas se queda sin
+// cruzar (`ambiguous`) en vez de caer en una cualquiera: la auditoría del
+// 2026-09-14 vio 651 leads de Eduversio atribuidos así, al azar.
 // Lo que no cruza exacto se ofrece como SUGERENCIA por similitud
 // (ver campaign-data.ts) para que el trafficker confirme — nunca se aplica solo.
 // ============================================================
 
 export type MatchMethod =
   | 'override'
+  | 'ad_id'
+  | 'adset_id'
+  | 'campaign_id'
   | 'utm_id_campaign'
   | 'utm_id_ad'
+  | 'utm_id_adset'
   | 'campaign_id_field'
   | 'content_ad_id'
   | 'term_adset_id'
   | 'name'
   | 'content_ad'
   | 'term_adset'
+  | 'ambiguous'
   | 'none';
+
+/** Resultado del cruce de un registro. */
+export interface MatchResult {
+  key: string | null;
+  method: MatchMethod;
+  /** Solo con `ambiguous`: claves de las campañas entre las que no se pudo elegir. */
+  candidates?: string[];
+  /** Solo con `ambiguous`: el campo cuyo nombre se repite. */
+  campo?: 'utm_content' | 'utm_term';
+}
 
 /** Nivel de una entidad publicitaria. Es también el `nivel` de un override. */
 export type NivelEntidad = 'campaign' | 'adset' | 'ad';
@@ -57,10 +79,10 @@ export type NivelEntidad = 'campaign' | 'adset' | 'ad';
  *
  * Solo dígitos y al menos 10: los IDs de Meta tienen 15-18. El umbral evita que
  * un anuncio llamado `2026` o `11` se trate como ID y deje de cruzar por nombre.
+ * La regla vive en `lead-ids.ts`, que la comparte con la ingesta.
  */
 export function esIdMeta(v: unknown): boolean {
-  if (v === null || v === undefined) return false;
-  return /^\d{10,}$/.test(String(v).trim());
+  return esIdPublicitario(v);
 }
 
 // Margen extra (días) para el índice de campañas respecto al rango de leads:
@@ -102,9 +124,12 @@ export interface CampaignIndex {
   campaigns: Map<string, CampaignAgg>; // key → agg
   byCampaignId: Map<string, string>; // campaign_id → key
   byAdId: Map<string, string>; // ad_id → key (de la campaña)
-  byName: Map<string, string>; // nombre de campaña normalizado → key
-  byAdName: Map<string, string>; // nombre de ad normalizado → key (campaña)
-  byAdsetName: Map<string, string>; // nombre de adset normalizado → key (campaña)
+  byName: Map<string, string>; // nombre de campaña normalizado (actual o anterior) → key
+  // Nombre de anuncio/conjunto → TODAS las campañas donde existe. Un Set y no una
+  // clave: el mismo creativo se duplica entre campañas (en Eduversio 83 de 91
+  // nombres de anuncio), y quedarse con la última escrita atribuía al azar.
+  byAdName: Map<string, Set<string>>; // nombre de ad normalizado → keys (campañas)
+  byAdsetName: Map<string, Set<string>>; // nombre de adset normalizado → keys (campañas)
   // ── Canónicos: normalizado → nombre REAL tal como lo escribió el anunciante ──
   // Son los que permiten que la fila del informe se titule "Promo Verano" (el
   // nombre del anuncio) y no "promo_verano" (lo que venía en el UTM), y que esa
@@ -220,15 +245,36 @@ export async function loadCampaignIndex(
         .eq('cliente_id', publicClienteId)
         .gte('fecha', t.from)
         .lte('fecha', t.to)
+        // Cronológico: la última escritura de cada nombre es la más reciente,
+        // que es con la que se titula una entidad renombrada.
+        .order('fecha', { ascending: true })
     )
   );
 
-  const idx = emptyIndex();
   // Un tramo fallido daría un índice PARCIAL, que es peor que no tener índice:
   // parte de los leads cruzaría y parte no, sin forma de notarlo. Se aborta para
   // degradar de forma consistente (el motor cae a los UTM crudos).
   if (respuestas.some((r) => r.error)) return null;
-  const data = respuestas.flatMap((r) => r.data ?? []);
+  return construirIndice(
+    respuestas.flatMap((r) => r.data ?? []) as Record<string, unknown>[],
+    dateFrom
+  );
+}
+
+/**
+ * (Puro) Índice a partir de filas de `metricas_diarias`.
+ *
+ * Separado de la lectura para poder comprobarlo sin Postgres: los renombrados y
+ * los nombres repetidos entre campañas dependen de CÓMO se recorren las filas, y
+ * eso es justo lo que hay que fijar con casos (scripts/verify-cruce-por-id.ts).
+ * Las filas se recorren por fecha: la última escritura de cada nombre es la
+ * vigente.
+ */
+export function construirIndice(filas: Record<string, unknown>[], dateFrom: string): CampaignIndex {
+  const idx = emptyIndex();
+  const data = [...filas].sort((a, b) =>
+    String(a.fecha ?? '').localeCompare(String(b.fecha ?? ''))
+  );
 
   function upsert(
     platform: 'meta' | 'tiktok',
@@ -253,7 +299,15 @@ export async function loadCampaignIndex(
       };
       idx.campaigns.set(key, agg);
       if (campId) idx.byCampaignId.set(campId, key);
-      if (name) idx.byName.set(normLabel(name), key);
+    }
+    if (name) {
+      // Una campaña renombrada sigue cruzando por CADA nombre que tuvo: un lead
+      // guarda el nombre del día en que entró. Antes solo se indexaba el primero
+      // y los leads con el nombre nuevo se quedaban sin cruzar (Eduversio,
+      // `V5[D][2|08]…` → `V5[D][2|09]…`). La fila se titula con el último,
+      // porque las filas llegan en orden de fecha.
+      idx.byName.set(normLabel(name), key);
+      agg.name = name;
     }
     if (addSpend) {
       agg.spend += m.spend;
@@ -321,8 +375,8 @@ export async function loadCampaignIndex(
       }
       if (!campKey) continue;
       if (adId) idx.byAdId.set(adId, campKey);
-      if (adName) idx.byAdName.set(normLabel(adName), campKey);
-      if (adsetName) idx.byAdsetName.set(normLabel(adsetName), campKey);
+      if (adName) agregarCandidato(idx.byAdName, normLabel(adName), campKey);
+      if (adsetName) agregarCandidato(idx.byAdsetName, normLabel(adsetName), campKey);
       if (adsetId) idx.byAdsetId.set(adsetId, campKey);
     }
     const metaAdsets = (row.meta_adsets as Record<string, unknown>[] | null) ?? [];
@@ -349,7 +403,7 @@ export async function loadCampaignIndex(
         });
       }
       if (!campKey) continue;
-      if (adsetName) idx.byAdsetName.set(normLabel(adsetName), campKey);
+      if (adsetName) agregarCandidato(idx.byAdsetName, normLabel(adsetName), campKey);
       if (adsetId) idx.byAdsetId.set(adsetId, campKey);
     }
     const ttCamps = (row.tiktok_campaigns as Record<string, unknown>[] | null) ?? [];
@@ -384,25 +438,69 @@ export async function loadCampaignIndex(
   return idx;
 }
 
+/** Añade una campaña candidata a un nombre de anuncio o conjunto. */
+function agregarCandidato(m: Map<string, Set<string>>, nombre: string, campKey: string): void {
+  let s = m.get(nombre);
+  if (!s) {
+    s = new Set();
+    m.set(nombre, s);
+  }
+  s.add(campKey);
+}
+
+/**
+ * La única campaña de `candidatos`, directa o cruzándola con `otros`.
+ *
+ * Un nombre de anuncio repetido en tres campañas no dice cuál; pero si el
+ * conjunto del lead solo existe en una de esas tres, sí. Si ni así queda una,
+ * no se elige: devolverla sería inventar la atribución.
+ */
+function campanaUnica(
+  candidatos: Set<string>,
+  otros: Set<string> | null | undefined
+): string | null {
+  if (candidatos.size === 1) return candidatos.values().next().value ?? null;
+  if (!otros || otros.size === 0) return null;
+  let unica: string | null = null;
+  for (const k of candidatos) {
+    if (!otros.has(k)) continue;
+    if (unica !== null) return null;
+    unica = k;
+  }
+  return unica;
+}
+
 /** Cascada de matching de un registro (lead/venta) a una campaña. */
 export function matchToCampaign(
-  rec: {
-    utm_id?: string | null;
-    utm_campaign?: string | null;
-    utm_content?: string | null;
-    utm_term?: string | null;
-    utm_source?: string | null;
-  },
+  rec: UtmRecord,
   idx: CampaignIndex,
   overrides: Override[]
-): { key: string | null; method: MatchMethod } {
+): MatchResult {
   // 1. overrides manuales → máxima prioridad (el trafficker corrige el motor).
   //    Todos los niveles cuentan aquí: una corrección de anuncio o de conjunto
   //    también dice a qué campaña pertenece el lead, que es lo que ata el gasto.
   for (const ov of overrides) {
-    if (!coincideOverride(rec, ov)) continue;
+    if (!coincideOverride(rec as Record<string, unknown>, ov)) continue;
     const key = claveCampanaDeOverride(ov, idx);
     if (key) return { key, method: 'override' };
+  }
+  // 1b. IDs dedicados (migración 082 en leads, columnas propias en Sheets y
+  //     ventas). Del nivel más específico al más general: si el anuncio ya no
+  //     está en el índice, su conjunto o su campaña todavía pueden estarlo.
+  const adId = idPublicitario(rec.ad_id);
+  if (adId) {
+    const k = idx.byAdId.get(adId);
+    if (k) return { key: k, method: 'ad_id' };
+  }
+  const adsetId = idPublicitario(rec.adset_id);
+  if (adsetId) {
+    const k = idx.byAdsetId.get(adsetId);
+    if (k) return { key: k, method: 'adset_id' };
+  }
+  const campaignId = idPublicitario(rec.campaign_id);
+  if (campaignId) {
+    const k = idx.byCampaignId.get(campaignId);
+    if (k) return { key: k, method: 'campaign_id' };
   }
   // 2. utm_id === campaign_id
   if (rec.utm_id && idx.byCampaignId.has(rec.utm_id)) {
@@ -411,6 +509,11 @@ export function matchToCampaign(
   // 3. utm_id === ad_id → su campaña
   if (rec.utm_id && idx.byAdId.has(rec.utm_id)) {
     return { key: idx.byAdId.get(rec.utm_id)!, method: 'utm_id_ad' };
+  }
+  // 3a. utm_id === adset_id → su campaña. Un enlace con `utm_id={{adset.id}}`
+  //     no cruzaba: `adsetOf` ya lo leía, pero el paso que ata el gasto no.
+  if (rec.utm_id && idx.byAdsetId.has(rec.utm_id)) {
+    return { key: idx.byAdsetId.get(rec.utm_id)!, method: 'utm_id_adset' };
   }
   // 3b-3d. El ID de la entidad llegó en el campo del NOMBRE. Es lo que manda GHL
   //    cuando el enlace usa `{{campaign.id}}` / `{{ad.id}}` / `{{adset.id}}`.
@@ -432,16 +535,37 @@ export function matchToCampaign(
     const k = idx.byName.get(normLabel(rec.utm_campaign));
     if (k) return { key: k, method: 'name' };
   }
-  // 5. utm_content === nombre de ad (o de campaña) → su campaña
+  // 5-6. utm_content === nombre de ad (o de campaña) / utm_term === nombre de
+  //      adset → su campaña, pero solo si el nombre lleva a UNA. Cada campo
+  //      desambigua al otro (ver `campanaUnica`).
+  let porAnuncio: Set<string> | null = null;
   if (rec.utm_content) {
     const n = normLabel(rec.utm_content);
-    const k = idx.byAdName.get(n) ?? idx.byName.get(n);
+    porAnuncio = idx.byAdName.get(n) ?? null;
+    if (!porAnuncio) {
+      const k = idx.byName.get(n);
+      if (k) porAnuncio = new Set([k]);
+    }
+  }
+  const porConjunto = rec.utm_term ? (idx.byAdsetName.get(normLabel(rec.utm_term)) ?? null) : null;
+  if (porAnuncio && porAnuncio.size > 0) {
+    const k = campanaUnica(porAnuncio, porConjunto);
     if (k) return { key: k, method: 'content_ad' };
   }
-  // 6. utm_term === nombre de adset → su campaña
-  if (rec.utm_term) {
-    const k = idx.byAdsetName.get(normLabel(rec.utm_term));
+  if (porConjunto && porConjunto.size > 0) {
+    const k = campanaUnica(porConjunto, porAnuncio);
     if (k) return { key: k, method: 'term_adset' };
+  }
+  if (porAnuncio?.size) {
+    return {
+      key: null,
+      method: 'ambiguous',
+      candidates: [...porAnuncio],
+      campo: 'utm_content',
+    };
+  }
+  if (porConjunto?.size) {
+    return { key: null, method: 'ambiguous', candidates: [...porConjunto], campo: 'utm_term' };
   }
   return { key: null, method: 'none' };
 }
@@ -581,6 +705,14 @@ export interface UtmRecord {
   utm_term?: string | null;
   utm_source?: string | null;
   utm_medium?: string | null;
+  /**
+   * IDs dedicados de la entidad (ver `lead-ids.ts`). Llegan de las columnas de
+   * la migración 082, de las de `sales_events` (vía alias) o del Sheet. Mandan
+   * sobre los UTM porque son exactos en su propio nivel.
+   */
+  campaign_id?: string | null;
+  adset_id?: string | null;
+  ad_id?: string | null;
 }
 
 /** Etiqueta resuelta + si cruzó con una entidad real del reporting. */
@@ -641,6 +773,12 @@ export function buildResolver(idx: CampaignIndex, overrides: Override[]): Campai
       // 1. Corrección manual de nivel anuncio: el trafficker manda.
       const ov = overrideDeNivel(rec as Record<string, unknown>, overrides, 'ad');
       if (ov?.target_name) return { label: ov.target_name, matched: true };
+      // 1b. El ID dedicado del anuncio: exacto, y a salvo de renombrados.
+      const adId = idPublicitario(rec.ad_id);
+      if (adId) {
+        const real = idx.adByAdId.get(adId);
+        if (real) return { label: real, matched: true };
+      }
       // 2. `utm_id` es el ID del anuncio (GHL y Meta Lead Ads lo llenan así).
       if (rec.utm_id) {
         const real = idx.adByAdId.get(rec.utm_id);
@@ -669,6 +807,17 @@ export function buildResolver(idx: CampaignIndex, overrides: Override[]): Campai
       const ovAd = overrideDeNivel(r, overrides, 'ad');
       if (ovAd?.target_id) {
         const real = idx.adsetByAdId.get(ovAd.target_id);
+        if (real) return { label: real, matched: true };
+      }
+      // 1c. IDs dedicados: el del conjunto, o el del anuncio, que sabe su conjunto.
+      const adsetId = idPublicitario(rec.adset_id);
+      if (adsetId) {
+        const real = idx.adsetByAdsetId.get(adsetId);
+        if (real) return { label: real, matched: true };
+      }
+      const adId = idPublicitario(rec.ad_id);
+      if (adId) {
+        const real = idx.adsetByAdId.get(adId);
         if (real) return { label: real, matched: true };
       }
       // 2. `utm_id` es el ID del anuncio → su conjunto; o directamente el del conjunto.

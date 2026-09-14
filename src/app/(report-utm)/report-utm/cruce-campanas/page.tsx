@@ -64,14 +64,33 @@ interface Coverage {
   total: number;
   methods: Record<string, number>;
 }
+interface AmbiguoRow {
+  field: 'utm_content' | 'utm_term';
+  value: string;
+  count: number;
+  candidates: { name: string; platform: 'meta' | 'tiktok'; spend: number }[];
+}
+interface CoberturaIds {
+  /** Migración 082 aplicada. */
+  columnas: boolean;
+  total: number;
+  campaign: number;
+  adset: number;
+  ad: number;
+}
 
 // Confianza mínima para incluir una sugerencia en el "Confirmar todas".
 const BULK_CONFIDENCE = 80;
 
 // Etiqueta corta por método de match (para badges en la tabla).
 const METHOD_LABEL: Record<string, string> = {
+  ad_id: 'ID de anuncio',
+  adset_id: 'ID de conjunto',
+  campaign_id: 'ID de campaña',
   utm_id_campaign: 'ID campaña',
   utm_id_ad: 'ID anuncio',
+  utm_id_adset: 'ID conjunto',
+  ambiguous: 'Ambiguo',
   campaign_id_field: 'ID en campaña',
   content_ad_id: 'ID en contenido',
   term_adset_id: 'ID en conjunto',
@@ -119,6 +138,8 @@ export default function CruceCampanasPage() {
     ad: [],
   });
   const [excluidos, setExcluidos] = useState<number | null>(null);
+  const [ambiguos, setAmbiguos] = useState<AmbiguoRow[]>([]);
+  const [ids, setIds] = useState<CoberturaIds | null>(null);
   const [mapeoPorNivel, setMapeoPorNivel] = useState(false);
   const [loading, setLoading] = useState(false);
   const [bulkBusy, setBulkBusy] = useState(false);
@@ -156,6 +177,8 @@ export default function CruceCampanasPage() {
         setNiveles(j.niveles ?? NIVELES_VACIOS);
         setEntidades(j.entidades ?? { adset: [], ad: [] });
         setExcluidos(typeof j.excluidos === 'number' ? j.excluidos : null);
+        setAmbiguos(j.ambiguos ?? []);
+        setIds(j.ids ?? null);
         setMapeoPorNivel(j.mapeo_por_nivel === true);
         // Pre-selecciona la sugerencia en cada fila no cruzada
         setPicks(
@@ -278,9 +301,11 @@ export default function CruceCampanasPage() {
       ).length,
     [breakdown]
   );
+  // Un lead ambiguo no cruzó: su nombre existe en varias campañas.
+  const sinCruzar = coverage ? (coverage.methods.none ?? 0) + (coverage.methods.ambiguous ?? 0) : 0;
   const autoPct =
     coverage && coverage.total > 0
-      ? Math.round(((coverage.total - (coverage.methods.none ?? 0)) / coverage.total) * 100)
+      ? Math.round(((coverage.total - sinCruzar) / coverage.total) * 100)
       : null;
 
   const filtered = useMemo(() => {
@@ -415,6 +440,7 @@ export default function CruceCampanasPage() {
                 </span>
               </div>
               <CoverageBar coverage={coverage} />
+              {ids && <IdsLinea ids={ids} />}
             </div>
           )}
 
@@ -590,6 +616,9 @@ export default function CruceCampanasPage() {
             )}
           </div>
 
+          {/* Nombres de anuncio/conjunto repetidos en varias campañas */}
+          {ambiguos.length > 0 && <AmbiguosPanel rows={ambiguos} />}
+
           {/* Conjunto y anuncio: IDs → nombres y corrección por nivel */}
           <NivelCrucePanel
             niveles={niveles}
@@ -662,8 +691,12 @@ export default function CruceCampanasPage() {
 
 // Segmentos de cobertura (orden de "mejor" a "peor")
 const METHOD_LABELS: { key: string; label: string; color: string }[] = [
+  { key: 'ad_id', label: 'ID de anuncio', color: 'bg-emerald-600' },
+  { key: 'adset_id', label: 'ID de conjunto', color: 'bg-emerald-600' },
+  { key: 'campaign_id', label: 'ID de campaña', color: 'bg-emerald-600' },
   { key: 'utm_id_campaign', label: 'ID campaña', color: 'bg-emerald-500' },
   { key: 'utm_id_ad', label: 'ID anuncio', color: 'bg-emerald-400' },
+  { key: 'utm_id_adset', label: 'ID conjunto', color: 'bg-emerald-400' },
   { key: 'campaign_id_field', label: 'ID en campaña', color: 'bg-emerald-300' },
   { key: 'content_ad_id', label: 'ID en contenido', color: 'bg-green-400' },
   { key: 'term_adset_id', label: 'ID en conjunto', color: 'bg-lime-400' },
@@ -671,8 +704,90 @@ const METHOD_LABELS: { key: string; label: string; color: string }[] = [
   { key: 'content_ad', label: 'Contenido', color: 'bg-cyan-400' },
   { key: 'term_adset', label: 'Adset', color: 'bg-sky-400' },
   { key: 'override', label: 'Manual', color: 'bg-indigo-400' },
+  { key: 'ambiguous', label: 'Nombre ambiguo', color: 'bg-amber-400' },
   { key: 'none', label: 'Sin cruzar', color: 'bg-muted-foreground/40' },
 ];
+
+/** Cuántos leads traen su propio ID de anuncio, conjunto y campaña (migración 082). */
+function IdsLinea({ ids }: { ids: CoberturaIds }) {
+  if (!ids.columnas) {
+    return (
+      <p className="mt-3 text-[11px] text-muted-foreground">
+        Los IDs propios de campaña, conjunto y anuncio se guardarán con cada lead en cuanto se
+        aplique la migración 082. Mientras tanto el cruce sigue usando los UTM.
+      </p>
+    );
+  }
+  const pct = (n: number) => (ids.total > 0 ? Math.round((n / ids.total) * 100) : 0);
+  return (
+    <p className="mt-3 text-[11px] text-muted-foreground">
+      Leads con ID propio: <span className="font-mono text-foreground">{pct(ids.ad)}%</span> anuncio
+      · <span className="font-mono text-foreground">{pct(ids.adset)}%</span> conjunto ·{' '}
+      <span className="font-mono text-foreground">{pct(ids.campaign)}%</span> campaña. Para subirlo,
+      añade <code className="font-mono px-1 rounded bg-muted">{'ad_id={{ad.id}}'}</code> y{' '}
+      <code className="font-mono px-1 rounded bg-muted">{'adset_id={{adset.id}}'}</code> a los
+      parámetros de URL del anuncio.
+    </p>
+  );
+}
+
+/** Leads que solo traen un nombre de anuncio/conjunto repetido en varias campañas. */
+function AmbiguosPanel({ rows }: { rows: AmbiguoRow[] }) {
+  const total = rows.reduce((s, r) => s + r.count, 0);
+  return (
+    <div className="rounded-2xl border border-border bg-card overflow-hidden">
+      <div className="px-6 py-4 border-b border-border flex items-center gap-2">
+        <AlertTriangle className="h-4 w-4 text-amber-500" />
+        <h2 className="text-sm font-semibold text-foreground">
+          Nombres repetidos en varias campañas
+        </h2>
+        <span className="text-[10px] text-muted-foreground font-mono ml-auto">
+          {total.toLocaleString()} leads sin atribuir
+        </span>
+      </div>
+      <p className="px-6 pt-3 text-[11px] text-muted-foreground">
+        Estos leads solo traen el nombre del anuncio o del conjunto, y ese nombre existe en más de
+        una campaña. Para no inventar la atribución se quedan sin cruzar. Corrígelos por nivel más
+        abajo o, para que no vuelva a pasar, añade{' '}
+        <code className="font-mono px-1 rounded bg-muted">{'ad_id={{ad.id}}'}</code> a los enlaces.
+      </p>
+      <div className="overflow-x-auto">
+        <table className="w-full mt-2">
+          <thead className="bg-muted/60">
+            <tr className="text-left text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+              <th className="px-6 py-3">Valor UTM</th>
+              <th className="px-6 py-3 text-right">Leads</th>
+              <th className="px-6 py-3">Existe en</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border">
+            {rows.map((r) => (
+              <tr key={`${r.field}|${r.value}`} className="hover:bg-accent align-top">
+                <td className="px-6 py-3 text-xs font-mono text-foreground max-w-[320px]">
+                  <span className="mr-2 px-1.5 py-0.5 rounded-md text-[10px] text-muted-foreground bg-muted">
+                    {r.field === 'utm_content' ? 'anuncio' : 'conjunto'}
+                  </span>
+                  <span className="break-all">{r.value}</span>
+                </td>
+                <td className="px-6 py-3 text-right text-xs font-mono tabular-nums text-foreground">
+                  {r.count}
+                </td>
+                <td className="px-6 py-3 text-[11px] text-muted-foreground">
+                  {r.candidates.slice(0, 4).map((c) => (
+                    <div key={`${c.platform}|${c.name}`} className="truncate max-w-[420px]">
+                      [{c.platform}] {c.name}
+                    </div>
+                  ))}
+                  {r.candidates.length > 4 && <div>… y {r.candidates.length - 4} más</div>}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
 
 function CoverageBar({ coverage }: { coverage: Coverage }) {
   const total = coverage.total || 1;

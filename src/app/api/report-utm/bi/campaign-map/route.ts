@@ -51,6 +51,8 @@ export async function GET(req: NextRequest) {
     excluidos: diag.excluidos,
     niveles: diag.niveles,
     entidades: diag.entidades,
+    ambiguos: diag.ambiguos,
+    ids: diag.ids,
     mapeo_por_nivel: porNivel,
   });
 }

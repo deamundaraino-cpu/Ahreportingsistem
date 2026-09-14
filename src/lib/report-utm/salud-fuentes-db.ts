@@ -21,6 +21,7 @@ import type {
 } from './salud-fuentes';
 import { atribucionDeFila } from '@/lib/sheets/atribucion';
 import { soloLeadsQueCuentan } from './lead-exclusion';
+import { columnasCruceLead } from './lead-ids';
 
 /** Días hacia atrás sobre los que se mide el cruce UTM ↔ campaña. */
 const VENTANA_CRUCE_DIAS = 30;
@@ -274,10 +275,11 @@ async function medirCruce(
 
   // Sobre los leads que cuentan: medir el cruce con los excluidos dentro daría
   // un porcentaje que baja por leads que ya nadie cuenta.
+  const cols = await columnasCruceLead(db, ['utm_id', 'utm_campaign', 'utm_content', 'utm_term']);
   let q = db
     .schema('report_utm')
     .from('lead_events')
-    .select('utm_id,utm_campaign,utm_content,utm_term')
+    .select(cols.join(','))
     .eq('cliente_id', clienteId)
     .gte('created_at', `${desde}T00:00:00Z`);
   q = await soloLeadsQueCuentan(db, q);

@@ -78,24 +78,34 @@ Leads y gasto viven en tablas distintas y el gasto no tiene UTM. El puente es la
 
 1. Corrección manual del trafficker (`/report-utm/cruce-campanas`), a nivel
    campaña, conjunto o anuncio
-2. `utm_id` = id de campaña
-3. `utm_id` = id de anuncio → sube a su campaña
-4. El ID llegó en el campo del NOMBRE (desde 2026-09-12): `utm_campaign` = id de
+2. **IDs propios del lead** (desde 2026-09-14, migración 082): `ad_id` → `adset_id`
+   → `campaign_id`. Los traen Meta Lead Ads, la atribución de GoHighLevel, los
+   Sheets con columnas de ID y los enlaces con `ad_id={{ad.id}}`
+3. `utm_id` = id de campaña
+4. `utm_id` = id de anuncio o de conjunto → sube a su campaña
+5. El ID llegó en el campo del NOMBRE (desde 2026-09-12): `utm_campaign` = id de
    campaña, `utm_content` = id de anuncio, `utm_term` = id de conjunto
-5. `utm_campaign` = nombre de campaña (normalizado)
-6. `utm_content` = nombre de anuncio
-7. `utm_term` = nombre de conjunto
+6. `utm_campaign` = nombre de campaña (normalizado; también los nombres
+   anteriores de una campaña renombrada, y los UTM que llegan URL-encoded)
+7. `utm_content` = nombre de anuncio · `utm_term` = nombre de conjunto — **solo si
+   ese nombre lleva a UNA campaña**, solo o cruzando anuncio con conjunto
 
-**Los pasos 2 a 4 son los que sostienen el sistema.** Hoy entre el 67 % y el
+**Los pasos 2 a 5 son los que sostienen el sistema.** Hoy entre el 67 % y el
 100 % de los leads cruzan, y en dos clientes el cruce por nombre daría
 prácticamente cero — sus campañas llevan emojis y corchetes que no coinciden con
-el UTM. Cruzan porque el ID los rescata. El paso 4 existe porque GoHighLevel y
+el UTM. Cruzan porque el ID los rescata. El paso 5 existe porque GoHighLevel y
 algunos enlaces mandan `{{ad.id}}` / `{{adset.id}}` donde se esperaba el nombre:
 en Eduversio es el 18 % de los leads ([doc 21](./21-auditoria-utms-ghl.md)).
 
+**Un nombre repetido no se adivina.** El mismo creativo se duplica entre campañas
+(en Eduversio 83 de 91 nombres de anuncio). Si un lead solo trae ese nombre, se
+queda sin cruzar como «ambiguo» y aparece en `/report-utm/cruce-campanas` →
+«Nombres repetidos en varias campañas», en vez de caer en una campaña cualquiera.
+La cura es poner los IDs en el enlace ([doc 22](./22-auditoria-cruce-por-id.md)).
+
 El conjunto y el anuncio se titulan con la misma lógica: corrección manual → ID
-(en `utm_id` o en su propio campo) → nombre. Un ID que la cuenta no conoce se
-queda como su propia fila, marcada como no resuelta, y se corrige en
+propio → ID en `utm_id` o en su propio campo → nombre. Un ID que la cuenta no
+conoce se queda como su propia fila, marcada como no resuelta, y se corrige en
 `/report-utm/cruce-campanas` → «Conjunto y anuncio».
 
 ### Leads que no cuentan

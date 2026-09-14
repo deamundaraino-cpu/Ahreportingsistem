@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { aplicarExclusion, cargarReglaExclusion } from './lead-exclusion';
+import { adaptarIds, columnasIdDisponibles, idsPublicitarios } from './lead-ids';
 
 /**
  * Núcleo compartido para ingerir leads de **Meta Lead Ads** (formularios
@@ -549,6 +550,10 @@ function buildLeadRow(
     utm_content: utm.utm_content,
     utm_term: utm.utm_term,
     utm_id: utm.utm_id,
+    // Los tres IDs que Meta manda con cada lead. Hasta la 082 solo se guardaba
+    // el de campaña (en `utm_id`) y el anuncio y el conjunto cruzaban por un
+    // nombre que puede repetirse entre campañas o cambiar.
+    ...idsPublicitarios(lead.campaign_id, lead.adset_id, lead.ad_id),
     click_id: utm.click_id,
     raw_fields,
     source: 'meta_lead_ads',
@@ -575,7 +580,10 @@ export async function ingestMetaLead(
   // Un lead de Meta casi siempre trae `utm_id`, pero la regla del cliente puede
   // excluir por fuente o formulario: se evalúa igual que en GHL y S2S.
   const regla = await cargarReglaExclusion(db, clienteId);
-  const row = aplicarExclusion(buildLeadRow(clienteId, lead, formName), regla);
+  const row = adaptarIds(
+    aplicarExclusion(buildLeadRow(clienteId, lead, formName), regla),
+    await columnasIdDisponibles(db)
+  );
   const { error } = await db.from('lead_events').insert(row);
   if (error) {
     // 23505 = unique_violation → ya existía (webhook/poll lo metió antes). No es error.
@@ -603,12 +611,16 @@ export async function ingestMetaLeadsBatch(
 
   // Una lectura de la regla por lote, no por lead.
   const regla = await cargarReglaExclusion(db, clienteId);
+  const conIds = await columnasIdDisponibles(db);
   const ahora = new Date().toISOString();
   // Dedup dentro del propio lote por external_id.
   const byId = new Map<string, Record<string, unknown>>();
   for (const lead of leads) {
     if (!lead.id) continue;
-    byId.set(lead.id, aplicarExclusion(buildLeadRow(clienteId, lead, formName), regla, ahora));
+    byId.set(
+      lead.id,
+      adaptarIds(aplicarExclusion(buildLeadRow(clienteId, lead, formName), regla, ahora), conIds)
+    );
   }
   const rows = Array.from(byId.values());
   if (rows.length === 0) return 0;

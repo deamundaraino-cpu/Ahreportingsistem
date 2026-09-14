@@ -35,6 +35,7 @@ import type {
 } from './campaign-resolver';
 import { colombiaRangeBounds } from '@/lib/colombia-date';
 import { columnaExcluidoDisponible } from './lead-exclusion';
+import { COLUMNAS_ID, columnasIdDisponibles, idPublicitario } from './lead-ids';
 
 export type { MatchMethod } from './campaign-resolver';
 
@@ -133,7 +134,19 @@ interface CrossContext {
   leads: Record<string, unknown>[];
   /** Leads del rango marcados como excluidos. `null` sin la migración 079. */
   excluidos: number | null;
+  /** ¿Están las columnas de ID de la migración 082? */
+  conIds: boolean;
 }
+
+/** Lo que el diagnóstico lee de cada lead: los UTM de la cascada y su fuente. */
+const COLUMNAS_LEAD_CRUCE = [
+  'id',
+  'utm_id',
+  'utm_campaign',
+  'utm_content',
+  'utm_term',
+  'utm_source',
+];
 
 /** Resuelve cliente público, carga índice+overrides y los leads del rango. */
 async function loadCrossContext(params: CampaignCrossParams): Promise<CrossContext | null> {
@@ -157,12 +170,14 @@ async function loadCrossContext(params: CampaignCrossParams): Promise<CrossConte
   // leads que CUENTAN. Si se midiera sobre todos, excluir los que no cruzan
   // haría subir el porcentaje sin que nada hubiera mejorado.
   const filtrarExcluidos = await columnaExcluidoDisponible(supabase);
+  const conIds = await columnasIdDisponibles(supabase);
+  const cols = conIds ? [...COLUMNAS_LEAD_CRUCE, ...COLUMNAS_ID] : COLUMNAS_LEAD_CRUCE;
   const bounds = colombiaRangeBounds(dateFrom, dateTo);
   const leads = (await fetchAllRows(() => {
     let q = supabase
       .schema('report_utm')
       .from('lead_events')
-      .select('id,utm_id,utm_campaign,utm_content,utm_term,utm_source')
+      .select(cols.join(','))
       .gte('created_at', bounds.gte)
       .lt('created_at', bounds.lt)
       .eq('cliente_id', params.cliente_id);
@@ -183,7 +198,7 @@ async function loadCrossContext(params: CampaignCrossParams): Promise<CrossConte
     excluidos = count ?? 0;
   }
 
-  return { idx, overrides, leads, excluidos };
+  return { idx, overrides, leads, excluidos, conIds };
 }
 
 export interface CampaignSuggestion {
@@ -279,14 +294,19 @@ export interface UtmCampaignRow {
 
 const ZERO_METHODS = (): Record<MatchMethod, number> => ({
   override: 0,
+  ad_id: 0,
+  adset_id: 0,
+  campaign_id: 0,
   utm_id_campaign: 0,
   utm_id_ad: 0,
+  utm_id_adset: 0,
   campaign_id_field: 0,
   content_ad_id: 0,
   term_adset_id: 0,
   name: 0,
   content_ad: 0,
   term_adset: 0,
+  ambiguous: 0,
   none: 0,
 });
 
@@ -327,10 +347,12 @@ function computeUtmBreakdown(ctx: CrossContext): UtmCampaignRow[] {
   }
   return Array.from(groups.entries())
     .map(([value, g]) => {
-      const crossed = g.count - g.methods.none;
+      // Un lead ambiguo no cruzó: no se sabe a qué campaña pertenece.
+      const crossed = g.count - g.methods.none - g.methods.ambiguous;
       const matched_campaign = crossed > 0 ? topEntry(g.campaigns) : null;
-      // Método dominante; si cruzó, excluye 'none' para no mostrar un badge contradictorio.
-      const methodPool = crossed > 0 ? { ...g.methods, none: 0 } : g.methods;
+      // Método dominante; si cruzó, excluye los que no cruzan para no mostrar un
+      // badge contradictorio.
+      const methodPool = crossed > 0 ? { ...g.methods, none: 0, ambiguous: 0 } : g.methods;
       const method = (topEntry(methodPool) ?? 'none') as MatchMethod;
       const invalid_reason = crossed === 0 ? classifyInvalidUtm(value) : null;
       const suggestion = crossed === 0 && !invalid_reason ? bestSuggestion(value, idx) : null;
@@ -571,6 +593,85 @@ function computeNivel(
   return { cobertura, rows };
 }
 
+// ── Nombres ambiguos ──────────────────────────────────────────────────
+//
+// Un nombre de anuncio o conjunto que existe en varias campañas no dice a cuál
+// pertenece el lead. El resolver ya no elige una al azar (`ambiguous`); aquí se
+// listan para que el trafficker los resuelva con la corrección por nivel, o
+// —mejor— añadiendo `ad_id={{ad.id}}` a los enlaces para que no vuelva a pasar.
+
+export interface AmbiguoRow {
+  field: 'utm_content' | 'utm_term';
+  value: string;
+  count: number;
+  /** Campañas donde existe ese nombre, de más a menos gasto. */
+  candidates: { name: string; platform: 'meta' | 'tiktok'; spend: number }[];
+}
+
+/** (Puro) valores que cruzarían por nombre si el nombre no se repitiera. */
+function computeAmbiguos(ctx: CrossContext): AmbiguoRow[] {
+  type G = { field: AmbiguoRow['field']; value: string; count: number; keys: Set<string> };
+  const grupos = new Map<string, G>();
+  for (const l of ctx.leads) {
+    const m = matchToCampaign(l, ctx.idx, ctx.overrides);
+    if (m.method !== 'ambiguous') continue;
+    const field = m.campo ?? 'utm_content';
+    const value = String(l[field] ?? '').trim();
+    const k = `${field}||${value}`;
+    let g = grupos.get(k);
+    if (!g) {
+      g = { field, value, count: 0, keys: new Set() };
+      grupos.set(k, g);
+    }
+    g.count++;
+    for (const c of m.candidates ?? []) g.keys.add(c);
+  }
+  return Array.from(grupos.values())
+    .map((g) => ({
+      field: g.field,
+      value: g.value,
+      count: g.count,
+      candidates: Array.from(g.keys)
+        .map((k) => ctx.idx.campaigns.get(k))
+        .filter((c): c is NonNullable<typeof c> => Boolean(c))
+        .map((c) => ({ name: c.name, platform: c.platform, spend: round2(c.spend) }))
+        .sort((a, b) => b.spend - a.spend),
+    }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 100);
+}
+
+/**
+ * Cuántos leads traen IDs dedicados (migración 082). Es el número que dice si
+ * los enlaces ya llevan `{{ad.id}}` / `{{adset.id}}` y si el cruce por ID está
+ * sosteniendo el informe o todavía se apoya en nombres.
+ */
+export interface CoberturaIds {
+  /** La migración 082 está aplicada. Sin ella, los contadores valen 0. */
+  columnas: boolean;
+  total: number;
+  campaign: number;
+  adset: number;
+  ad: number;
+}
+
+function computeIds(ctx: CrossContext): CoberturaIds {
+  const c: CoberturaIds = {
+    columnas: ctx.conIds,
+    total: ctx.leads.length,
+    campaign: 0,
+    adset: 0,
+    ad: 0,
+  };
+  if (!ctx.conIds) return c;
+  for (const l of ctx.leads) {
+    if (idPublicitario(l.campaign_id)) c.campaign++;
+    if (idPublicitario(l.adset_id)) c.adset++;
+    if (idPublicitario(l.ad_id)) c.ad++;
+  }
+  return c;
+}
+
 export interface CrossDiagnostics {
   campaigns: {
     campaign_id: string | null;
@@ -590,6 +691,10 @@ export interface CrossDiagnostics {
   niveles: Record<NivelDiagnostico, { cobertura: NivelCobertura; rows: NivelRow[] }>;
   /** Entidades reales para corregir a mano por nivel. */
   entidades: Record<NivelDiagnostico, EntidadOpcion[]>;
+  /** Nombres de anuncio/conjunto repetidos en varias campañas. */
+  ambiguos: AmbiguoRow[];
+  /** Leads con IDs dedicados. */
+  ids: CoberturaIds;
 }
 
 const NIVEL_VACIO = (): { cobertura: NivelCobertura; rows: NivelRow[] } => ({
@@ -618,6 +723,8 @@ export async function getCrossDiagnostics(params: CampaignCrossParams): Promise<
       excluidos: null,
       niveles: { adset: NIVEL_VACIO(), ad: NIVEL_VACIO() },
       entidades: { adset: [], ad: [] },
+      ambiguos: [],
+      ids: { columnas: false, total: 0, campaign: 0, adset: 0, ad: 0 },
     };
   }
   const { suggestions, invalid } = computeUnmatched(ctx);
@@ -641,5 +748,7 @@ export async function getCrossDiagnostics(params: CampaignCrossParams): Promise<
       ad: computeNivel(ctx, resolver, 'ad', entidades.ad),
     },
     entidades,
+    ambiguos: computeAmbiguos(ctx),
+    ids: computeIds(ctx),
   };
 }

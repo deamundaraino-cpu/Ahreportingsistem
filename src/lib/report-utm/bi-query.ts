@@ -1,6 +1,7 @@
 import { createAdminClient } from '@/utils/supabase/server';
 import { fetchAllRows } from '@/lib/supabase-paginate';
 import { columnaExcluidoDisponible } from './lead-exclusion';
+import { COLUMNAS_ID, SELECT_IDS_VENTA, columnasIdDisponibles } from './lead-ids';
 import {
   cargarConversor,
   clavesDeRango,
@@ -1008,18 +1009,17 @@ async function queryLeadsDirect(
   }
 
   // Agrupado / métricas de campo / filtro avanzado: traer filas (paginado) y agrupar.
+  // Con la migración 082 aplicada, los IDs dedicados del lead entran al resolver
+  // junto a los UTM; sin ella no se piden, que es exactamente lo de antes.
+  const resuelve = unified !== null || plan.inMemory;
+  const idCols = resuelve && (await columnasIdDisponibles(supabase)) ? [...COLUMNAS_ID] : [];
   let rows = await fetchAllRows(() =>
     applyBase(
       supabase
         .schema('report_utm')
         .from('lead_events')
         .select(
-          buildLeadSelect(
-            params.dimension,
-            needsRawFields,
-            advCols.cols,
-            unified !== null || plan.inMemory
-          )
+          buildLeadSelect(params.dimension, needsRawFields, [...advCols.cols, ...idCols], resuelve)
         )
     )
   );
@@ -1164,7 +1164,12 @@ async function querySalesDirect(
   ) {
     selectCols.add(params.dimension === 'utm_campaign_raw' ? 'utm_campaign' : params.dimension);
   }
-  if (unified || plan.inMemory) for (const c of UTM_RESOLVE_COLS) selectCols.add(c);
+  // Las ventas traen sus IDs desde la migración 012, con otro nombre: el alias
+  // los entrega como los lee el resolver.
+  if (unified || plan.inMemory) {
+    for (const c of UTM_RESOLVE_COLS) selectCols.add(c);
+    for (const c of SELECT_IDS_VENTA) selectCols.add(c);
+  }
   for (const c of advCols.cols) selectCols.add(c);
 
   const applyBase = (q: any) => {
@@ -2853,7 +2858,15 @@ export async function runPivotQuery(
     !unifiedTarget(dim2)
   )
     cols.add(axisCol(dim2));
-  if (pivotNeedsResolver) for (const c of UTM_RESOLVE_COLS) cols.add(c);
+  if (pivotNeedsResolver) {
+    for (const c of UTM_RESOLVE_COLS) cols.add(c);
+    const ids = isSales
+      ? SELECT_IDS_VENTA
+      : (await columnasIdDisponibles(supabase))
+        ? COLUMNAS_ID
+        : [];
+    for (const c of ids) cols.add(c);
+  }
   // Ventas no tienen raw_fields → una dimensión de campo sobre ventas cae en
   // "(sin valor)"; solo lead_events puede desglosar por campo de formulario.
   if (!isSales && (esDimDeCampo(dim1) || esDimDeCampo(dim2))) cols.add('raw_fields');

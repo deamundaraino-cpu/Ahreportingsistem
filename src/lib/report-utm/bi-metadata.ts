@@ -27,15 +27,35 @@ export type { LeadSegmentoMeta };
  * cruce UTM↔campaña se compara igual en los dos lados: el motor al agrupar y la
  * UI al avisar de que un filtro no coincide con ninguna campaña. Con dos
  * normalizaciones distintas la UI avisaba en falso de lo que el motor sí cruzaba.
+ *
+ * Decodifica antes el percent-encoding: algunos formularios guardan el UTM tal
+ * cual viaja en la URL (`%5BV1%5D%5B13%7C08%5D…+LEADS`), y la auditoría del
+ * 2026-09-14 encontró 73 leads de Eduversio que no cruzaban solo por eso.
  */
 export function normLabel(s: string): string {
-  return (s ?? '')
+  return decodificarUrl(s ?? '')
     .toLowerCase()
     .normalize('NFD')
     .replace(/[̀-ͯ]/g, '') // quita acentos (marcas combinantes)
     .replace(/[_-]+/g, ' ') // _ y - → espacio
     .trim()
     .replace(/\s+/g, ' ');
+}
+
+/**
+ * Deshace el percent-encoding de un valor que llegó tal cual viaja en la URL.
+ *
+ * Solo actúa si hay al menos una secuencia `%XX` válida: un nombre con un `+` o
+ * un `%` suelto («20% dto») se deja intacto. En ese caso el `+` es el espacio
+ * del query string. Una secuencia mal formada devuelve el valor original.
+ */
+function decodificarUrl(s: string): string {
+  if (!/%[0-9a-f]{2}/i.test(s)) return s;
+  try {
+    return decodeURIComponent(s.replace(/\+/g, ' '));
+  } catch {
+    return s;
+  }
 }
 
 /** Redondeo a 2 decimales. Único en el módulo: el motor y el diagnóstico deben

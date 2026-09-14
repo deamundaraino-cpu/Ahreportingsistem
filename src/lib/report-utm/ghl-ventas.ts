@@ -3,6 +3,7 @@ import { fetchContactById } from './ghl-client';
 import {
   credencialesDe,
   deriveUtms,
+  idsDeContacto,
   normalizeContactFields,
   type GhlIntegrationRow,
 } from './ghl-leads';
@@ -155,6 +156,7 @@ export async function registrarVentaGhl(
       const contacto = await fetchContactById(venta.contactId, cred).catch(() => null);
       if (contacto) {
         const u = deriveUtms(contacto);
+        const ids = idsDeContacto(contacto);
         utms = {
           utm_source: u.utm_source,
           utm_medium: u.utm_medium,
@@ -162,6 +164,11 @@ export async function registrarVentaGhl(
           utm_content: u.utm_content,
           utm_term: u.utm_term,
           utm_id: u.utm_id,
+          // Columnas de la migración 012 que nadie escribía: con ellas la venta
+          // cruza por ID con el mismo anuncio que trajo al lead.
+          ad_campaign_id: ids.campaign_id,
+          ad_set_id: ids.adset_id,
+          ad_id: ids.ad_id,
           click_id: u.click_id,
           attribution_method: u.attribution_method,
           attribution_resolved_at: new Date().toISOString(),
