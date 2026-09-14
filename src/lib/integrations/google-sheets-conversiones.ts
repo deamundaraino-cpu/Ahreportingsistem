@@ -222,7 +222,17 @@ export interface DetectedColumn {
 export interface TabSyncQuality {
   tab_name: string;
   rows_ok: number;
+  /** Filas con algo escrito en la columna de fecha que no se pudo leer. */
   fecha_invalida: number;
+  /**
+   * Filas con contenido pero la celda de fecha vacía: plantillas con columnas
+   * prellenadas o registros a medio escribir. Van aparte de `fecha_invalida`
+   * porque no son un formato roto: mezcladas, 400 filas de plantilla tapaban
+   * que un mes entero se estaba descartando por escribir "01/09/26".
+   */
+  fecha_vacia?: number;
+  /** Hasta 3 valores de fecha rechazados, tal cual, para que el aviso sea accionable. */
+  ejemplos_fecha_invalida?: string[];
   cantidad_invalida: number;
   /**
    * Filas que no entran como conversión (cantidad <= 0) pero sí se guardan en
@@ -331,29 +341,35 @@ function fechaExiste(iso: string): boolean {
  * reventaba con `date/time field value out of range`. Como se inserta por lotes de
  * 500, esa única celda tumbaba el sheet completo y el cliente se quedaba sin
  * conversiones. Mejor descartar la fila que perderlas todas.
+ *
+ * El año de dos dígitos tampoco es teórico: desde el 1-sep-2026 la hoja
+ * GESTION LEADS de Somos rentable escribe "01/09/26" en vez de "01/09/2026", y
+ * como solo se aceptaban cuatro cifras el mes entero se descartaba —con el sync
+ * en verde—. Lo mismo le pasaba desde siempre a sus filas de sep–nov 2025. Dos
+ * cifras se leen como 20yy: no hay hojas con fechas del siglo pasado.
  */
-function parseDate(raw: string): string {
+export function parseDate(raw: string): string {
   if (!raw) return '';
   const t = raw.trim();
   // Acepta fecha sola, ISO con T y "YYYY-MM-DD HH:MM:SS" (separador espacio, el
   // que usan los exports de formularios de Meta). Antes solo se cortaba por la
   // T, así que la variante con espacio se descartaba como fecha inválida.
+  //
+  // El `(?!\d)` cierra el año: sin él "01/09/20261" pasaba como 2026-09-01.
   let iso = '';
-  if (/^\d{4}-\d{2}-\d{2}/.test(t)) {
+  if (/^\d{4}-\d{2}-\d{2}(?!\d)/.test(t)) {
     iso = t.slice(0, 10);
   } else {
-    const dmy = t.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})/);
+    const dmy = t.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4}|\d{2})(?!\d)/);
     if (dmy) {
-      iso = `${dmy[3]}-${dmy[2].padStart(2, '0')}-${dmy[1].padStart(2, '0')}`;
+      const anio = dmy[3].length === 2 ? `20${dmy[3]}` : dmy[3];
+      iso = `${anio}-${dmy[2].padStart(2, '0')}-${dmy[1].padStart(2, '0')}`;
       // Con día ≤ 12 la fecha es ambigua (dd/mm vs mm/dd). Si leerla como dd/mm no
       // da un día real, se prueba mm/dd antes de descartarla.
       if (!fechaExiste(iso)) {
-        const alt = `${dmy[3]}-${dmy[1].padStart(2, '0')}-${dmy[2].padStart(2, '0')}`;
+        const alt = `${anio}-${dmy[1].padStart(2, '0')}-${dmy[2].padStart(2, '0')}`;
         iso = fechaExiste(alt) ? alt : iso;
       }
-    } else {
-      const mdy = t.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
-      if (mdy) iso = `${mdy[3]}-${mdy[1].padStart(2, '0')}-${mdy[2].padStart(2, '0')}`;
     }
   }
 
@@ -549,21 +565,35 @@ export function parseTabPayload(
     tab_name: tabTitle,
     rows_ok: 0,
     fecha_invalida: 0,
+    fecha_vacia: 0,
     cantidad_invalida: 0,
     solo_crudas: 0,
     columnas_crudas: 0,
     warnings: [],
   };
 
-  const { colTipo, colCantidad, colValor, colFuente, colNotas } = standardColNames(tab);
-  const { col: colFecha, auto: fechaAdivinada } = resolveColFecha(tab, headers);
+  const std = standardColNames(tab);
+  const { col: fechaConfig, auto: fechaAdivinada } = resolveColFecha(tab, headers);
 
   const headersLower = headers.map((h) => h.toLowerCase().trim());
-  if (!headersLower.includes(colFecha.toLowerCase().trim())) {
+  if (!headersLower.includes(fechaConfig.toLowerCase().trim())) {
     throw new Error(
-      `Columna de fecha "${colFecha}" no encontrada. Disponibles: ${headers.join(', ')}`
+      `Columna de fecha "${fechaConfig}" no encontrada. Disponibles: ${headers.join(', ')}`
     );
   }
+
+  // Las comprobaciones de cabecera ignoran mayúsculas y espacios, pero `row.get`
+  // pide el nombre EXACTO: una "Fecha " con espacio pasaba la comprobación y
+  // después cada fila se leía vacía. Se resuelve una vez a la cabecera real.
+  const resolverCabecera = (nombre: string) =>
+    headers.find((h) => h.toLowerCase().trim() === nombre.toLowerCase().trim()) ?? nombre;
+  const colFecha = resolverCabecera(fechaConfig);
+  const colTipo = resolverCabecera(std.colTipo);
+  const colCantidad = resolverCabecera(std.colCantidad);
+  const colValor = resolverCabecera(std.colValor);
+  const colFuente = resolverCabecera(std.colFuente);
+  const colNotas = resolverCabecera(std.colNotas);
+
   if (fechaAdivinada) {
     quality.warnings.push(
       `Sin columna de fecha configurada: se está usando "${colFecha}". ` +
@@ -573,14 +603,20 @@ export function parseTabPayload(
   // Un nombre de columna mal escrito se leía como vacío sin aviso: ahora queda
   // registrado en el reporte de calidad del sync. Las columnas resueltas por
   // configuración (cantidad con `count_rows`, tipo con `tipo_fijo`) no se avisan.
-  const opcionales: Record<string, string> = {
-    valor: colValor,
-    fuente: colFuente,
-    notas: colNotas,
+  //
+  // Valor, fuente y notas son opcionales de verdad: solo se avisa si alguien las
+  // configuró con un nombre que no existe. Avisar de sus nombres por defecto en
+  // cada hoja de leads —que no los tiene— dejaba TODOS los sync en `partial`, y
+  // un estado que siempre está en ámbar no avisa de nada.
+  const opcionales: Record<string, string | undefined> = {
+    valor: tab.col_valor,
+    fuente: tab.col_fuente,
+    notas: tab.col_notas,
   };
-  if (!tab.count_rows) opcionales.cantidad = colCantidad;
-  if (!tab.tipo_fijo) opcionales.tipo = colTipo;
+  if (!tab.count_rows) opcionales.cantidad = std.colCantidad;
+  if (!tab.tipo_fijo) opcionales.tipo = std.colTipo;
   for (const [label, col] of Object.entries(opcionales)) {
+    if (!col?.trim()) continue;
     if (!headersLower.includes(col.toLowerCase().trim())) {
       quality.warnings.push(`Columna de ${label} "${col}" no existe en la pestaña`);
     }
@@ -624,13 +660,23 @@ export function parseTabPayload(
   const conversiones: ConversionRow[] = [];
   const crudas: SheetRawRow[] = [];
 
+  const ejemplos: string[] = [];
+
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i];
-    const fecha = parseDate((row.get(colFecha) || '').toString());
-    if (!fecha || fecha.length !== 10) {
-      // Fila totalmente vacía (relleno del Sheet): no es un error de datos.
-      const isBlank = headers.every((h) => !(row.get(h) || '').toString().trim());
-      if (!isBlank) quality.fecha_invalida++;
+    const celdaFecha = (row.get(colFecha) ?? '').toString().trim();
+    const fecha = parseDate(celdaFecha);
+    if (!fecha) {
+      if (celdaFecha) {
+        quality.fecha_invalida++;
+        if (ejemplos.length < 3 && !ejemplos.includes(celdaFecha)) ejemplos.push(celdaFecha);
+      } else {
+        // Sin fecha. Una fila totalmente vacía es relleno del Sheet y no cuenta;
+        // una con contenido (plantilla prellenada, registro a medias) va aparte
+        // de las fechas ilegibles, porque no es un formato roto.
+        const isBlank = headers.every((h) => !(row.get(h) || '').toString().trim());
+        if (!isBlank) quality.fecha_vacia!++;
+      }
       continue;
     }
 
@@ -691,8 +737,16 @@ export function parseTabPayload(
   quality.rows_ok = conversiones.length;
   // Los descartes se explican con la columna concreta: un "0 filas importadas"
   // sin motivo obliga a adivinar si falla la fecha, la cantidad o el mapeo.
+  //
+  // El aviso cita valores reales rechazados: «677 filas sin fecha válida» no
+  // decía que el problema era "01/09/26", y había que abrir el Sheet a adivinar.
   if (quality.fecha_invalida > 0) {
-    quality.warnings.push(`${quality.fecha_invalida} filas sin fecha válida en "${colFecha}"`);
+    quality.ejemplos_fecha_invalida = ejemplos;
+    quality.warnings.push(
+      `${quality.fecha_invalida} filas con una fecha que no se entiende en "${colFecha}"` +
+        ` (p. ej. ${ejemplos.map((e) => `"${e}"`).join(', ')})` +
+        ' — escríbela como DD/MM/AAAA o AAAA-MM-DD'
+    );
   }
   if (quality.cantidad_invalida > 0) {
     quality.warnings.push(
@@ -963,6 +1017,20 @@ async function upsertTramos(
   return escritas;
 }
 
+/**
+ * ¿La lectura de hoy deja una pestaña con muchas menos conversiones de las que
+ * guarda la base? Vaciarla del todo siempre es sospechoso; perder más de la
+ * mitad, solo con un histórico que merezca el nombre (con 10 filas, borrar 7 a
+ * mano es normal).
+ *
+ * Pura para poder comprobarla sin base (scripts/verify-conversiones-multitab.ts).
+ */
+export function caidaSospechosa(existentes: number, nuevas: number): boolean {
+  if (existentes <= 0) return false;
+  if (nuevas === 0) return true;
+  return existentes >= 50 && nuevas < existentes * 0.5;
+}
+
 /** Poda una pestaña dejando vivas solo las filas cuyo número sigue en el Sheet. */
 async function podarTab(
   supabase: any,
@@ -1031,6 +1099,29 @@ export async function insertarLoteSheet(
       ...crudas.map((r) => r.tab_name),
     ]),
   ];
+
+  // ── Guarda de poda ────────────────────────────────────────────
+  // La poda de abajo borra toda fila de la pestaña que no venga en esta
+  // lectura. Si un cambio de formato (fecha, separadores, una columna
+  // renombrada) deja la pestaña sin filas válidas, se llevaría el histórico
+  // entero con el sync en `partial`, que no avisa a nadie. Ante una caída así
+  // se para el sheet con error y los datos anteriores se quedan donde están.
+  for (const tab of tabs) {
+    const nuevas = rows.filter((r) => r.tab_name === tab).length;
+    const { count, error } = await supabase
+      .from('conversiones_offline')
+      .select('id', { count: 'exact', head: true })
+      .eq('cliente_id', clienteId)
+      .eq('sheet_id', sheetId)
+      .eq('tab_name', tab);
+    if (error) throw new Error(`No se pudo comprobar el histórico de "${tab}": ${error.message}`);
+    if (caidaSospechosa(count ?? 0, nuevas)) {
+      throw new Error(
+        `La pestaña "${tab}" pasaría de ${count} a ${nuevas} conversiones: no se sincroniza para no borrar su histórico. ` +
+          'Revisa el formato de la fecha y las columnas del Sheet; si la vaciaste a propósito, desactiva la pestaña en Ajustes.'
+      );
+    }
+  }
 
   // ── Conversiones ──────────────────────────────────────────────
   await upsertTramos(

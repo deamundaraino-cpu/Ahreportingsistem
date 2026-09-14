@@ -1,13 +1,11 @@
 /**
- * Retira de las tablas de Sheets las filas que ya no pertenecen a ninguna
- * configuración viva, en dos pasadas:
+ * Retira de las tablas de Sheets las filas HUÉRFANAS: su `sheet_id` no está en
+ * la config del cliente (documento retirado, o entrada recreada con otro id), o
+ * es NULL (anterior a la trazabilidad por sheet).
  *
- *   1. HUÉRFANAS — su `sheet_id` no está en la config del cliente (documento
- *      retirado, o entrada recreada con otro id), o es NULL (anterior a la
- *      trazabilidad por sheet).
- *   2. LOTES VIEJOS — dentro de un sheet vigente, los `sync_batch_id` que no son
- *      el que quedó activo en `conversiones_offline`. Aparecen cuando un sync
- *      muere después de insertar y antes de retirar el lote anterior.
+ * Hubo una segunda pasada que borraba los «lotes viejos» de un sheet vigente.
+ * Se retiró el 2026-09-14: desde la migración 069 varios `sync_batch_id` vivos
+ * por sheet son lo normal, y aquella pasada borraba filas buenas.
  *
  *   npx tsx scripts/limpiar-sheets-huerfanos.ts                 → informe, no toca nada
  *   npx tsx scripts/limpiar-sheets-huerfanos.ts --apply         → borra
@@ -91,7 +89,6 @@ async function main() {
   );
 
   let huerfanas = 0;
-  let lotesViejos = 0;
 
   for (const cliente of (clientes ?? []) as { id: string; nombre: string; config_api: any }[]) {
     // Vigentes = TODOS los sheets configurados, habilitados o no.
@@ -146,52 +143,14 @@ async function main() {
       }
     }
 
-    // ── Pasada 2: lotes anteriores dentro de un sheet vigente ────────────
-    const lotesPorSheet = new Map<string, Map<string, number>>();
-    for (const f of filas) {
-      if (!f.sheet_id || !configurados.has(f.sheet_id)) continue;
-      if (!lotesPorSheet.has(f.sheet_id)) lotesPorSheet.set(f.sheet_id, new Map());
-      const m = lotesPorSheet.get(f.sheet_id)!;
-      m.set(f.sync_batch_id, (m.get(f.sync_batch_id) ?? 0) + 1);
-    }
-    const vigentePorSheet = new Map<string, Set<string>>();
-    for (const c of conv) {
-      if (!c.sheet_id || !configurados.has(c.sheet_id)) continue;
-      if (!vigentePorSheet.has(c.sheet_id)) vigentePorSheet.set(c.sheet_id, new Set());
-      vigentePorSheet.get(c.sheet_id)!.add(c.sync_batch_id);
-    }
-
-    for (const [sheetId, lotes] of lotesPorSheet) {
-      if (lotes.size <= 1) continue;
-      const vig = [...(vigentePorSheet.get(sheetId) ?? [])];
-      console.log(`\n${cliente.nombre} · sheet ${sheetId} — ${lotes.size} lotes en sheet_filas`);
-      for (const [id, n] of [...lotes.entries()].sort((a, b) => b[1] - a[1])) {
-        console.log(`     ${vig.includes(id) ? '✓ vigente' : '✗ sobra  '} ${id}: ${n}`);
-      }
-      if (vig.length !== 1 || !lotes.has(vig[0])) {
-        console.log(
-          `     ⚠ no hay un único lote vigente en conversiones_offline: lo dejo, hace falta un sync completo.`
-        );
-        continue;
-      }
-      for (const [batchId, n] of lotes) {
-        if (batchId === vig[0]) continue;
-        lotesViejos += n;
-        if (!APLICAR) {
-          console.log(`     → borraría ${n} filas del lote ${batchId}`);
-          continue;
-        }
-        const borradas = await borrarPorPaginas('sheet_filas', (qq: any) =>
-          qq.eq('cliente_id', cliente.id).eq('sheet_id', sheetId).eq('sync_batch_id', batchId)
-        );
-        console.log(`\r     lote ${batchId}: ${borradas} borradas ✓            `);
-      }
-    }
+    // La antigua «pasada 2» (lotes viejos dentro de un sheet vigente) se retiró
+    // el 2026-09-14: suponía un único `sync_batch_id` vivo por sheet, y desde la
+    // migración 069 las filas que no cambian conservan A PROPÓSITO el lote en que
+    // se escribieron. Con varios lotes legítimos, borraba filas buenas de
+    // `sheet_filas`. La poda por número de fila del propio sync ya cubre ese caso.
   }
 
-  console.log(
-    `\n\n${APLICAR ? 'Retiradas' : 'Sobran'}: ${huerfanas} filas huérfanas + ${lotesViejos} de lotes viejos = ${huerfanas + lotesViejos}`
-  );
+  console.log(`\n\n${APLICAR ? 'Retiradas' : 'Sobran'}: ${huerfanas} filas huérfanas`);
   if (!APLICAR) console.log('Vuelve a lanzarlo con --apply para borrarlas.');
 }
 

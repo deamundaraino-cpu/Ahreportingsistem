@@ -17,6 +17,7 @@ import type {
   SenalIntegracion,
   EstadoFuente,
   SenalGa4,
+  SenalSheetSync,
 } from './salud-fuentes';
 import { atribucionDeFila } from '@/lib/sheets/atribucion';
 import { soloLeadsQueCuentan } from './lead-exclusion';
@@ -248,6 +249,7 @@ export async function recogerSenales(cliente: {
     pctLeadsCruzados: await medirCruce(db, cliente.id, pid, hoy),
     sheetFilasAjenas: pid ? await medirSheetAjeno(db, pid) : null,
     ga4: pid ? await medirGa4(db, pid, config) : null,
+    sheetsSync: pid ? await medirSyncSheets(db, pid, config) : null,
   };
 }
 
@@ -364,6 +366,67 @@ async function medirGa4(
     pestanasConPago: activas.filter((t) => String(t.hotmart_funnel?.payment_page_url ?? '').trim())
       .length,
   };
+}
+
+/**
+ * Último sync de cada Sheet habilitado del cliente.
+ *
+ * Lee `conversiones_offline_sync_log` (retiene 20 registros por sheet, así que
+ * con `20 × sheets` filas se ve seguro el último de cada uno). Un sheet que
+ * nunca sincronizó no aparece: eso ya lo dice la fuente vacía.
+ */
+async function medirSyncSheets(
+  db: Db,
+  pid: string,
+  config: Record<string, unknown>
+): Promise<SenalSheetSync[] | null> {
+  const { normalizeSheetConfigs } = await import('@/lib/integrations/google-sheets-conversiones');
+  const sheets = normalizeSheetConfigs(config.google_sheets_conversiones).filter(
+    (s) => s.enabled && s.sheet_url
+  );
+  if (sheets.length === 0) return null;
+
+  const { data, error } = await db
+    .from('conversiones_offline_sync_log')
+    .select('sheet_id, run_at, status, rows_ok, detalle')
+    .eq('cliente_id', pid)
+    .in(
+      'sheet_id',
+      sheets.map((s) => s.id!)
+    )
+    .order('run_at', { ascending: false })
+    .limit(20 * sheets.length);
+  if (error) return null;
+
+  type Fila = {
+    sheet_id: string;
+    run_at: string;
+    status: SenalSheetSync['status'];
+    rows_ok: number | null;
+    detalle: {
+      error?: string;
+      por_pestana?: Array<{ fecha_invalida?: number; ejemplos_fecha_invalida?: string[] }>;
+    } | null;
+  };
+  const ultimo = new Map<string, Fila>();
+  for (const f of (data ?? []) as Fila[]) if (!ultimo.has(f.sheet_id)) ultimo.set(f.sheet_id, f);
+
+  return sheets.flatMap((s) => {
+    const f = ultimo.get(s.id!);
+    if (!f) return [];
+    const pestanas = f.detalle?.por_pestana ?? [];
+    return [
+      {
+        nombre: s.name || 'Sheet',
+        status: f.status,
+        runAt: f.run_at,
+        filasOk: f.rows_ok ?? 0,
+        fechasInvalidas: pestanas.reduce((n, q) => n + (Number(q.fecha_invalida) || 0), 0),
+        ejemplos: pestanas.flatMap((q) => q.ejemplos_fecha_invalida ?? []).slice(0, 3),
+        error: f.detalle?.error ?? null,
+      },
+    ];
+  });
 }
 
 /** Salud de todos los clientes del reporting, lo peor primero. */

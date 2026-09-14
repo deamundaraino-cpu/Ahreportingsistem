@@ -2324,7 +2324,7 @@ export function ClientConfigForm({
                                           field: 'col_fecha',
                                           label: 'Fecha',
                                           placeholder: 'fecha',
-                                          hint: 'DD/MM/YYYY o YYYY-MM-DD',
+                                          hint: 'DD/MM/AAAA, DD/MM/AA o AAAA-MM-DD',
                                         },
                                         {
                                           field: 'col_tipo',
@@ -2453,32 +2453,71 @@ export function ClientConfigForm({
                             )}
                             Validar configuración
                           </Button>
-                          {lastSync && (
-                            <span
-                              className={`text-xs flex items-center gap-1 ${lastSync.status === 'error' ? 'text-red-500' : 'text-muted-foreground'}`}
-                              title={
-                                (lastSync.detalle?.por_pestana ?? [])
-                                  .map(
-                                    (q) =>
-                                      `${q.tab_name}: ${q.rows_ok} filas${q.warnings.length ? ` — ${q.warnings.join('; ')}` : ''}`
-                                  )
-                                  .join('\n') ||
-                                lastSync.detalle?.error ||
-                                ''
-                              }
-                            >
-                              {lastSync.status === 'error' ? (
-                                <AlertCircle className="w-3 h-3" />
-                              ) : (
-                                <CheckCircle2 className="w-3 h-3" />
-                              )}
-                              Último sync: {lastSync.rows_ok} filas
-                              {lastSync.rows_descartadas > 0 &&
-                                ` · ${lastSync.rows_descartadas} descartadas`}
-                              {' · '}
-                              {new Date(lastSync.run_at).toLocaleString('es-CO')}
-                            </span>
-                          )}
+                          {lastSync &&
+                            (() => {
+                              const pestanas = lastSync.detalle?.por_pestana ?? [];
+                              const sinFecha = pestanas.reduce(
+                                (n, q) => n + (q.fecha_vacia ?? 0),
+                                0
+                              );
+                              const avisos = pestanas.flatMap((q) =>
+                                q.warnings.map((w) =>
+                                  pestanas.length > 1 ? `${q.tab_name}: ${w}` : w
+                                )
+                              );
+                              // `partial` iba con el mismo check verde que `ok` y
+                              // el motivo solo vivía en un tooltip: así pasó un
+                              // mes entero descartándose sin que nadie lo viera.
+                              const color =
+                                lastSync.status === 'error'
+                                  ? 'text-red-500'
+                                  : lastSync.status === 'partial'
+                                    ? 'text-amber-600 dark:text-amber-500'
+                                    : 'text-muted-foreground';
+                              return (
+                                <>
+                                  <span
+                                    className={`text-xs flex items-center gap-1 ${color}`}
+                                    title={
+                                      pestanas
+                                        .map(
+                                          (q) =>
+                                            `${q.tab_name}: ${q.rows_ok} filas${q.warnings.length ? ` — ${q.warnings.join('; ')}` : ''}`
+                                        )
+                                        .join('\n') ||
+                                      lastSync.detalle?.error ||
+                                      ''
+                                    }
+                                  >
+                                    {lastSync.status === 'ok' ? (
+                                      <CheckCircle2 className="w-3 h-3" />
+                                    ) : (
+                                      <AlertCircle className="w-3 h-3" />
+                                    )}
+                                    Último sync: {lastSync.rows_ok} filas
+                                    {lastSync.rows_descartadas > 0 &&
+                                      ` · ${lastSync.rows_descartadas} descartadas`}
+                                    {sinFecha > 0 && ` · ${sinFecha} sin fecha`}
+                                    {' · '}
+                                    {new Date(lastSync.run_at).toLocaleString('es-CO')}
+                                  </span>
+                                  {lastSync.status !== 'ok' &&
+                                    (avisos.length > 0 || lastSync.detalle?.error) && (
+                                      <ul className={`basis-full text-xs space-y-0.5 ${color}`}>
+                                        {lastSync.detalle?.error && (
+                                          <li>{lastSync.detalle.error}</li>
+                                        )}
+                                        {avisos.slice(0, 3).map((w) => (
+                                          <li key={w}>· {w}</li>
+                                        ))}
+                                        {avisos.length > 3 && (
+                                          <li>· y {avisos.length - 3} aviso(s) más</li>
+                                        )}
+                                      </ul>
+                                    )}
+                                </>
+                              );
+                            })()}
                         </div>
 
                         {validation?.results && validation.results.length > 0 && (

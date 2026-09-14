@@ -16,7 +16,11 @@ import {
   TOLERANCIA_DIAS,
   UMBRAL_CRUCE,
 } from '../src/lib/report-utm/salud-fuentes';
-import type { SenalesCliente, SenalFuente } from '../src/lib/report-utm/salud-fuentes';
+import type {
+  SenalesCliente,
+  SenalFuente,
+  SenalSheetSync,
+} from '../src/lib/report-utm/salud-fuentes';
 
 let fallos = 0;
 function check(nombre: string, cond: boolean, detalle?: string) {
@@ -331,6 +335,69 @@ seccion('GA4 vigilado por sí mismo (Cris Tributario, 2026-09-12)');
     !evaluarCliente(
       senales({ tienePuente: false, ga4: { ultimaSesion: null, pestanas: 1, pestanasConPago: 0 } })
     ).hallazgos.some((h) => h.ambito === 'Integración · GA4')
+  );
+}
+
+seccion('Sync de Sheets: fallos, parones y fechas ilegibles (Somos rentable, 2026-09-14)');
+{
+  // El caso real: la cola en verde, la fuente «al día» con los datos de agosto
+  // y el mes de septiembre descartándose entero por escribir "01/09/26".
+  const sync = (p: Partial<SenalSheetSync> = {}): SenalSheetSync => ({
+    nombre: 'Leads',
+    status: 'ok',
+    runAt: `${HOY}T10:00:00Z`,
+    filasOk: 1107,
+    fechasInvalidas: 0,
+    ejemplos: [],
+    error: null,
+    ...p,
+  });
+  check(
+    'un sync sano no genera nada',
+    evaluarCliente(senales({ sheetsSync: [sync()] })).hallazgos.length === 0
+  );
+  const fechas = evaluarCliente(
+    senales({
+      sheetsSync: [sync({ status: 'partial', fechasInvalidas: 276, ejemplos: ['01/09/26'] })],
+    })
+  );
+  check(
+    'fechas ilegibles en masa → aviso',
+    fechas.gravedad === 'aviso',
+    titulos(senales({ sheetsSync: [sync({ fechasInvalidas: 276 })] }))
+  );
+  check(
+    'el aviso cita el valor rechazado',
+    fechas.hallazgos[0]?.titulo.includes('"01/09/26"'),
+    fechas.hallazgos[0]?.titulo
+  );
+  check(
+    'unas pocas erratas no avisan',
+    evaluarCliente(senales({ sheetsSync: [sync({ fechasInvalidas: 3 })] })).hallazgos.length === 0
+  );
+  const err = evaluarCliente(
+    senales({ sheetsSync: [sync({ status: 'error', error: 'Pestaña "X" no encontrada' })] })
+  );
+  check(
+    'sync en error → crítico con el motivo',
+    err.gravedad === 'critico' && err.hallazgos[0].titulo.includes('no encontrada'),
+    err.hallazgos[0]?.titulo
+  );
+  const parado = evaluarCliente(senales({ sheetsSync: [sync({ runAt: '2026-08-05T10:00:00Z' })] }));
+  check(
+    'sin sync desde hace días → aviso',
+    parado.gravedad === 'aviso' && parado.hallazgos[0].titulo.includes('6 día(s)'),
+    parado.hallazgos[0]?.titulo
+  );
+  check(
+    'sin enlace no se repite por cada Sheet',
+    !evaluarCliente(
+      senales({ tienePuente: false, sheetsSync: [sync({ status: 'error', error: 'x' })] })
+    ).hallazgos.some((h) => h.ambito.startsWith('Sync de Sheet'))
+  );
+  check(
+    'todos los hallazgos de sync traen acción',
+    [...fechas.hallazgos, ...err.hallazgos, ...parado.hallazgos].every((h) => Boolean(h.accion))
   );
 }
 

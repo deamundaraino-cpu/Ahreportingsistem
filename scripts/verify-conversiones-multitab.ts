@@ -20,6 +20,8 @@ import {
   computeConversionesAggregates,
   sanitizeColName,
   esColumnaSensible,
+  parseDate,
+  caidaSospechosa,
 } from '../src/lib/integrations/google-sheets-conversiones';
 import type {
   ConversionesConfig,
@@ -220,6 +222,7 @@ sec('parseRowsForTab — filas válidas y descartadas');
     col_tipo: 'Clase',
     col_cantidad: 'Cant',
     col_valor: 'Ticket',
+    col_fuente: 'Origen',
     custom_columns: {
       inexistente: { col_name: 'No Existe', type: 'count', label: 'X', include: true },
     },
@@ -227,8 +230,14 @@ sec('parseRowsForTab — filas válidas y descartadas');
   const { rows: parsed, quality } = parseRowsForTab(headers, rows, tab, 'sheet-b', 'Otra');
   check('usa el mapeo propio de la pestaña', parsed.length === 1 && parsed[0].tipo === 'venta');
   check(
-    'avisa de columnas estándar ausentes',
-    quality.warnings.some((w) => w.includes('fuente')),
+    'avisa de una columna estándar configurada que no existe',
+    quality.warnings.some((w) => w.includes('"Origen"')),
+    quality.warnings.join(' | ')
+  );
+  // Notas no está configurada: su nombre por defecto no existe, y no es un error.
+  check(
+    'no avisa de columnas opcionales que nadie configuró',
+    !quality.warnings.some((w) => w.includes('notas')),
     quality.warnings.join(' | ')
   );
   check(
@@ -408,6 +417,131 @@ sec('parseDate — descarta fechas imposibles');
   );
   // Ninguna de las dos lecturas existe: se descarta.
   check('02/31 no existe ni como dd/mm ni como mm/dd', parse('02/31/2026').length === 0);
+}
+
+// ─── Año de dos cifras y fechas vacías (GESTION LEADS, sep-2026) ────────────
+// Desde el 1-sep la hoja de Somos rentable escribe "01/09/26". El parser solo
+// aceptaba cuatro cifras y el mes entero se descartaba con el sync en verde; el
+// aviso lo tapaban 400 filas de plantilla sin fecha contadas como «inválidas».
+sec('parseDate — año de dos cifras; fecha vacía frente a ilegible');
+{
+  check('01/09/26 → 2026-09-01', parseDate('01/09/26') === '2026-09-01', parseDate('01/09/26'));
+  check('22/09/25 → 2025-09-22', parseDate('22/09/25') === '2025-09-22', parseDate('22/09/25'));
+  check(
+    'dd-mm-yy con hora',
+    parseDate('03-09-26 10:30') === '2026-09-03',
+    parseDate('03-09-26 10:30')
+  );
+  check('cuatro cifras siguen igual', parseDate('31/08/2026') === '2026-08-31');
+  check('un año de cinco cifras se rechaza', parseDate('01/09/20261') === '');
+  check('un año de tres cifras se rechaza', parseDate('01/09/026') === '');
+  check('un ISO pegado a más dígitos se rechaza', parseDate('2026-09-011') === '');
+  check(
+    'ambigua con dos cifras: 05/13/26 → mm/dd',
+    parseDate('05/13/26') === '2026-05-13',
+    parseDate('05/13/26')
+  );
+
+  const headers = ['FECHA DE AGENDA', 'NOMBRE', 'CANAL'];
+  const tab: SheetTabConfig = {
+    id: 't',
+    sheet_name: 'GESTION LEADS',
+    enabled: true,
+    col_fecha: 'FECHA DE AGENDA',
+    count_rows: true,
+    tipo_fijo: 'lead',
+  };
+  const r = parseTabPayload(
+    headers,
+    fakeRows(headers, [
+      ['31/08/2026', 'Daniela', 'AGENDAMIENTO DIRECTO'],
+      ['01/09/26', 'Gino', 'AGENDAMIENTO DIRECTO'],
+      ['', 'Cristina', 'AGENDAMIENTO DIRECTO'], // lead sin fecha
+      ['', '', 'AGENDAMIENTO DIRECTO'], // fila de plantilla
+      ['pendiente', 'Luis', 'VSL'], // fecha ilegible
+      ['', '', ''], // relleno
+    ]),
+    tab,
+    's',
+    'GESTION LEADS'
+  );
+  check(
+    'entran agosto y septiembre',
+    r.conversiones.map((c) => c.fecha).join(',') === '2026-08-31,2026-09-01',
+    r.conversiones.map((c) => c.fecha).join(',')
+  );
+  check(
+    'las fechas vacías se cuentan aparte',
+    r.quality.fecha_vacia === 2,
+    String(r.quality.fecha_vacia)
+  );
+  check(
+    'solo la ilegible cuenta como inválida',
+    r.quality.fecha_invalida === 1,
+    String(r.quality.fecha_invalida)
+  );
+  check(
+    'el aviso cita el valor rechazado',
+    r.quality.warnings.some((w) => w.includes('"pendiente"')),
+    r.quality.warnings.join(' | ')
+  );
+  check(
+    'guarda el ejemplo para salud de fuentes',
+    r.quality.ejemplos_fecha_invalida?.[0] === 'pendiente',
+    JSON.stringify(r.quality.ejemplos_fecha_invalida)
+  );
+  check(
+    'una hoja de leads sin valor/fuente/notas no avisa de columnas',
+    !r.quality.warnings.some((w) => w.includes('no existe')),
+    r.quality.warnings.join(' | ')
+  );
+
+  const limpia = parseTabPayload(
+    headers,
+    fakeRows(headers, [
+      ['01/09/26', 'Gino', 'AGENDAMIENTO DIRECTO'],
+      ['', '', 'AGENDAMIENTO DIRECTO'],
+    ]),
+    tab,
+    's',
+    'GESTION LEADS'
+  );
+  check(
+    'filas de plantilla sin fecha no generan avisos (el sync queda en ok)',
+    limpia.quality.warnings.length === 0,
+    limpia.quality.warnings.join(' | ')
+  );
+}
+
+{
+  // `row.get` pide la cabecera exacta: una "Fecha " con espacio pasaba la
+  // comprobación de columnas y después cada fila se leía vacía.
+  const headers = ['Fecha ', 'Cantidad'];
+  const r = parseTabPayload(
+    headers,
+    fakeRows(headers, [['2026-09-01', '2']]),
+    { id: 't', sheet_name: 'X', enabled: true, col_fecha: 'fecha', col_cantidad: 'cantidad' },
+    's',
+    'X'
+  );
+  check(
+    'resuelve la cabecera sin distinguir mayúsculas ni espacios',
+    r.conversiones.length === 1 && r.conversiones[0].cantidad === 2,
+    JSON.stringify(r.conversiones)
+  );
+}
+
+// ─── Guarda de poda ─────────────────────────────────────────────────────────
+// Un cambio de formato que deje una pestaña sin filas válidas no puede borrar
+// su histórico: la poda por número de fila se lo llevaría entero.
+sec('caidaSospechosa — cuándo no se poda una pestaña');
+{
+  check('sin histórico nunca bloquea', caidaSospechosa(0, 0) === false);
+  check('vaciar una pestaña con histórico bloquea', caidaSospechosa(1107, 0) === true);
+  check('perder más de la mitad bloquea', caidaSospechosa(1107, 400) === true);
+  check('crecer no bloquea', caidaSospechosa(1107, 1383) === false);
+  check('una caída pequeña no bloquea', caidaSospechosa(1107, 1100) === false);
+  check('con pocas filas solo bloquea el vaciado', caidaSospechosa(10, 3) === false);
 }
 
 // ─── Agregación diaria ──────────────────────────────────────────────────────

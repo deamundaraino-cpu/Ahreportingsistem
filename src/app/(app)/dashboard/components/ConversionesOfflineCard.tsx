@@ -16,16 +16,22 @@ import {
 } from 'recharts';
 import { AlertCircle, TrendingUp, RefreshCw, CheckCircle2 } from 'lucide-react';
 
-interface ConversionDiaria {
+/**
+ * Una fila de `conversiones_offline` (una por fila del Sheet), que es lo que
+ * carga el dashboard. La tarjeta sumaba `total_cantidad` / `total_valor`
+ * —columnas de `conversiones_offline_diarias`, que aquí no existen— y todos
+ * los totales salían NaN.
+ */
+interface ConversionOffline {
   fecha: string;
   tipo: string;
   fuente: string;
-  total_cantidad: number;
-  total_valor: number;
+  cantidad: number;
+  valor: number | null;
 }
 
 interface Props {
-  dailyData: ConversionDiaria[];
+  dailyData: ConversionOffline[];
   error: string | null;
   clientId?: string;
   canSync?: boolean;
@@ -143,20 +149,17 @@ export function ConversionesOfflineCard({ dailyData, error, clientId, canSync }:
   // ── Agregaciones globales ──────────────────────────────────────────────────
   const last30 = dailyData.filter((d) => new Date(d.fecha) >= new Date(corte30d));
 
-  const totalLeads = last30
-    .filter((d) => d.tipo === 'lead')
-    .reduce((s, d) => s + d.total_cantidad, 0);
-  const totalVentas = last30
-    .filter((d) => d.tipo === 'venta')
-    .reduce((s, d) => s + d.total_cantidad, 0);
-  const totalRevenue = last30.reduce((s, d) => s + d.total_valor, 0);
+  const cantidad = (d: ConversionOffline) => Number(d.cantidad) || 0;
+  const totalLeads = last30.filter((d) => d.tipo === 'lead').reduce((s, d) => s + cantidad(d), 0);
+  const totalVentas = last30.filter((d) => d.tipo === 'venta').reduce((s, d) => s + cantidad(d), 0);
+  const totalRevenue = last30.reduce((s, d) => s + (Number(d.valor) || 0), 0);
   const closeRate = totalLeads > 0 ? (totalVentas / totalLeads) * 100 : null;
 
   // ── Datos para el gráfico: agrupar por fecha sumando por tipo ─────────────
   const byFecha = new Map<string, Record<string, number>>();
   for (const row of last30) {
     const entry = byFecha.get(row.fecha) || {};
-    entry[row.tipo] = (entry[row.tipo] || 0) + row.total_cantidad;
+    entry[row.tipo] = (entry[row.tipo] || 0) + cantidad(row);
     byFecha.set(row.fecha, entry);
   }
   const chartData = Array.from(byFecha.entries())

@@ -48,6 +48,14 @@ export interface SenalesCliente {
    * configurada, una página de pago mapeada y cero sesiones en toda su historia.
    */
   ga4?: SenalGa4 | null;
+  /**
+   * Último sync de cada Sheet habilitado. La fuente «Conversiones offline» solo
+   * mira la última fecha con datos, y eso no ve un sync que corre en verde
+   * descartando filas: del 1 al 14 de septiembre de 2026 la hoja de Somos
+   * rentable perdió el mes entero por escribir "01/09/26", con la cola sana y
+   * la fuente al día gracias a los datos de agosto.
+   */
+  sheetsSync?: SenalSheetSync[] | null;
 }
 
 export interface SenalGa4 {
@@ -56,6 +64,21 @@ export interface SenalGa4 {
   /** Pestañas activas del cliente y cuántas tienen página de pago mapeada. */
   pestanas: number;
   pestanasConPago: number;
+}
+
+/** Último registro de `conversiones_offline_sync_log` de un Sheet. */
+export interface SenalSheetSync {
+  /** Nombre visible del sheet en la configuración del cliente. */
+  nombre: string;
+  status: 'ok' | 'partial' | 'error';
+  /** Cuándo corrió (ISO). */
+  runAt: string;
+  filasOk: number;
+  /** Filas con algo escrito en la fecha que no se pudo leer. */
+  fechasInvalidas: number;
+  /** Valores rechazados tal cual, para que el aviso diga qué corregir. */
+  ejemplos: string[];
+  error: string | null;
 }
 
 /**
@@ -137,6 +160,15 @@ export const UMBRAL_CRUCE = 50;
 
 /** Proporción de filas de Sheet sin cruce que delata un Sheet equivocado. */
 const UMBRAL_SHEET_AJENO = 0.9;
+
+/**
+ * Filas con fecha ilegible a partir de las cuales se avisa. Unas pocas son
+ * erratas de quien llena el Sheet; decenas son un formato que cambió.
+ */
+export const UMBRAL_FECHAS_INVALIDAS = 10;
+
+/** Días sin un sync de Sheet antes de avisar: el planificador lo encola dos veces al día. */
+export const DIAS_SIN_SYNC_SHEET = 2;
 
 export function evaluarCliente(s: SenalesCliente): SaludCliente {
   const hallazgos: Hallazgo[] = [];
@@ -278,6 +310,45 @@ export function evaluarCliente(s: SenalesCliente): SaludCliente {
       titulo: `${sh.sinCruce} de ${sh.total} filas no cruzan con ninguna campaña de este cliente: el Sheet podría ser de otro.`,
       accion: 'Comprobar qué documento está conectado en la configuración del cliente.',
     });
+  }
+
+  // ── Sync de los Sheets ───────────────────────────────────────────
+  // La fuente «Conversiones offline» mira la última fecha con datos; esto mira
+  // el sync en sí: si falla, si dejó de correr o si está descartando filas.
+  if (s.tienePuente) {
+    for (const sy of s.sheetsSync ?? []) {
+      const ambito = `Sync de Sheet · ${sy.nombre}`;
+      if (sy.status === 'error') {
+        hallazgos.push({
+          gravedad: 'critico',
+          ambito,
+          titulo: `El último sync falló: ${sy.error ?? 'sin detalle'}`,
+          accion:
+            'Revisar el documento y sus pestañas en Ajustes del cliente → Google Sheets y lanzar «Sincronizar».',
+        });
+      }
+      const dias = diasEntre(sy.runAt.slice(0, 10), s.hoy);
+      if (dias > DIAS_SIN_SYNC_SHEET) {
+        hallazgos.push({
+          gravedad: 'aviso',
+          ambito,
+          titulo: `No se sincroniza desde hace ${dias} día(s).`,
+          accion:
+            'Comprobar la cola en /admin/sync: el planificador encola los Sheets dos veces al día.',
+        });
+      }
+      if (sy.fechasInvalidas >= UMBRAL_FECHAS_INVALIDAS) {
+        const ej =
+          sy.ejemplos.length > 0 ? ` (p. ej. ${sy.ejemplos.map((e) => `"${e}"`).join(', ')})` : '';
+        hallazgos.push({
+          gravedad: 'aviso',
+          ambito,
+          titulo: `${sy.fechasInvalidas} filas descartadas por una fecha que no se entiende${ej}.`,
+          accion:
+            'Corregir la columna de fecha en el Sheet (DD/MM/AAAA o AAAA-MM-DD) o revisar qué columna está configurada como fecha.',
+        });
+      }
+    }
   }
 
   const gravedad: Gravedad = hallazgos.some((h) => h.gravedad === 'critico')

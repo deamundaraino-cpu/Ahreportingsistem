@@ -11,6 +11,7 @@
 // para cuando la fuente empiece a alimentarse).
 
 import { createAdminClient } from '@/utils/supabase/server';
+import { fetchAllRows } from '@/lib/supabase-paginate';
 import {
   METRIC_META,
   AD_JSONB_METRICS,
@@ -137,12 +138,18 @@ export async function getMetricAvailability(
     .lt('created_at', colombiaRangeBounds(dateFrom, dateTo).lt)
     .eq('status', 'approved')
     .limit(1000);
-  let offlineQ = db
-    .from('conversiones_offline_diarias')
-    .select('tipo, total_cantidad, total_valor, custom_fields')
-    .gte('fecha', dateFrom)
-    .lte('fecha', dateTo)
-    .limit(1000);
+  // Paginado: con `.limit(1000)` un cliente con años de agregados podía marcar
+  // columnas de Sheet como «sin datos» si sus filas caían fuera de la primera
+  // página. `id` va en el select porque `fetchAllRows` pagina por él.
+  const offlineQ = () => {
+    let q = db
+      .from('conversiones_offline_diarias')
+      .select('id, tipo, total_cantidad, total_valor, custom_fields')
+      .gte('fecha', dateFrom)
+      .lte('fecha', dateTo);
+    if (publicClienteId) q = q.eq('cliente_id', publicClienteId);
+    return q;
+  };
   let subsQ = db
     .from('hotmart_subscriptions_snapshot')
     .select('active_count, delayed_count, canceled_count, total_count, active_recurring_value')
@@ -164,7 +171,6 @@ export async function getMetricAvailability(
     salesQ.eq('cliente_id', params.cliente_id);
   }
   if (publicClienteId) {
-    offlineQ = offlineQ.eq('cliente_id', publicClienteId);
     subsQ = subsQ.eq('cliente_id', publicClienteId);
     hotmartQ = hotmartQ.eq('cliente_id', publicClienteId);
   }
@@ -172,7 +178,7 @@ export async function getMetricAvailability(
   const [leadsRes, salesRes, offlineRes, subsRes, hotmartRes] = await Promise.all([
     leadsQ,
     salesQ,
-    offlineQ,
+    fetchAllRows(offlineQ).then((data) => ({ data })),
     subsQ,
     publicClienteId ? hotmartQ : Promise.resolve({ data: [] }),
   ]);
@@ -216,12 +222,16 @@ export async function getMetricAvailability(
   if (publicClienteId) {
     const { campos, vistas } = await loadCamposCliente(db, publicClienteId, { soloActivos: true });
     if (campos.length > 0) {
-      const { data: desglose } = await db
-        .from('sheet_campo_valores_diarios')
-        .select('campo_id, valor, filas, suma')
-        .eq('cliente_id', publicClienteId)
-        .gte('fecha', dateFrom)
-        .lte('fecha', dateTo);
+      // Paginado por el mismo motivo que el offline de arriba: un solo campo ya
+      // pasa de 1000 filas diarias en rangos largos.
+      const desglose = await fetchAllRows(() =>
+        db
+          .from('sheet_campo_valores_diarios')
+          .select('id, campo_id, valor, filas, suma')
+          .eq('cliente_id', publicClienteId)
+          .gte('fecha', dateFrom)
+          .lte('fecha', dateTo)
+      );
 
       const filasPorCampo = new Map<string, number>();
       const valoresPorCampo = new Map<string, Set<string>>();

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient, createAdminClient } from '@/utils/supabase/server';
 import { loadCamposCliente } from '@/lib/sheets/campos-db';
+import { fetchAllRows } from '@/lib/supabase-paginate';
 import type { SheetFieldMeta, SheetViewMeta } from '@/lib/report-utm/bi-metadata';
 
 export const dynamic = 'force-dynamic';
@@ -49,10 +50,14 @@ export async function GET(req: NextRequest) {
 
     // Los valores salen del desglose, no de la config: son los que de verdad
     // existen en los datos del rango completo.
-    const { data: desglose } = await admin
-      .from('sheet_campo_valores_diarios')
-      .select('campo_id, valor')
-      .eq('cliente_id', publicId);
+    // Paginado: un solo campo de un cliente ya pasa de 1000 filas diarias y
+    // PostgREST cortaba ahí, dejando valores fuera del selector de filtros.
+    const desglose = await fetchAllRows(() =>
+      admin
+        .from('sheet_campo_valores_diarios')
+        .select('id, campo_id, valor')
+        .eq('cliente_id', publicId)
+    );
 
     const valoresPorCampo = new Map<string, Set<string>>();
     for (const r of (desglose ?? []) as unknown as Record<string, unknown>[]) {

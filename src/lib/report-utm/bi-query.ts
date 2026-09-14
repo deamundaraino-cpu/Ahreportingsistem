@@ -1867,24 +1867,28 @@ async function queryOfflineDirect(
 ): Promise<OfflineRow[]> {
   const db = await createAdminClient();
   const needsFields = offlineFields.length > 0;
-  let q = db
-    .from('conversiones_offline_diarias')
-    .select(
-      needsFields
-        ? 'fecha,tipo,total_cantidad,total_valor,custom_fields'
-        : 'fecha,tipo,total_cantidad,total_valor'
-    )
-    .gte('fecha', dateFrom)
-    .lte('fecha', dateTo);
 
+  let publicId: string | null = null;
   if (params.cliente_id) {
-    const publicId = await resolvePublicClienteId(params.cliente_id);
+    publicId = await resolvePublicClienteId(params.cliente_id);
     if (!publicId) return [];
-    q = q.eq('cliente_id', publicId);
   }
 
-  const { data, error } = await q;
-  if (error || !data) return [];
+  // Paginado: sin él PostgREST corta en 1000 filas y un rango amplio perdía días
+  // en silencio. `id` va en el select porque `fetchAllRows` pagina por él.
+  const data = await fetchAllRows(() => {
+    let q = db
+      .from('conversiones_offline_diarias')
+      .select(
+        needsFields
+          ? 'id,fecha,tipo,total_cantidad,total_valor,custom_fields'
+          : 'id,fecha,tipo,total_cantidad,total_valor'
+      )
+      .gte('fecha', dateFrom)
+      .lte('fecha', dateTo);
+    if (publicId) q = q.eq('cliente_id', publicId);
+    return q;
+  });
 
   const grouping = params.date_grouping ?? 'day';
   const map = new Map<string, OfflineRow>();
@@ -2005,14 +2009,17 @@ async function querySheetFieldsDirect(
   if (dimCampo) campoIds.add(dimCampo.id);
   if (campoIds.size === 0) return [];
 
-  const { data, error } = await db
-    .from('sheet_campo_valores_diarios')
-    .select('campo_id,fecha,valor,filas,suma,n_num,minimo,maximo')
-    .eq('cliente_id', publicId)
-    .in('campo_id', Array.from(campoIds))
-    .gte('fecha', dateFrom)
-    .lte('fecha', dateTo);
-  if (error || !data) return [];
+  // Paginado: un solo campo de Somos rentable ya pasa de 1000 filas diarias, y
+  // con un rango amplio PostgREST cortaba ahí sin error. `id` para el keyset.
+  const data = await fetchAllRows(() =>
+    db
+      .from('sheet_campo_valores_diarios')
+      .select('id,campo_id,fecha,valor,filas,suma,n_num,minimo,maximo')
+      .eq('cliente_id', publicId)
+      .in('campo_id', Array.from(campoIds))
+      .gte('fecha', dateFrom)
+      .lte('fecha', dateTo)
+  );
 
   const grouping = params.date_grouping ?? 'day';
 

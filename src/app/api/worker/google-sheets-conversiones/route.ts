@@ -115,7 +115,9 @@ export async function GET(request: NextRequest) {
       ok: !todosFallaron,
       processed: conSheets,
       fallidos,
-      parcial: fallidos > 0 && !todosFallaron,
+      // `partial`, no `parcial`: es la clave que lee el runner para anotar la
+      // corrida en `sync_runs.stats`. Con el nombre en castellano se perdía.
+      partial: fallidos > 0 && !todosFallaron,
       results,
       ...(errores.length > 0 ? { errores: errores.slice(0, 20) } : {}),
       timestamp: new Date().toISOString(),
