@@ -296,11 +296,15 @@ check(
 );
 
 // El caso concreto que se leía como "se perdió todo lo invertido".
+// `cuenta.ventas_downsell` va en los fixtures porque la facturación de Hotmart
+// lo suma desde el 2026-09-12 (igual que `total_facturacion_neta` del dashboard
+// clásico) y el lector de la cuenta lo inicializa a 0 como al resto.
 const roasSinHotmart = calcular(['cuenta.hotmart_roas', 'cuenta.hotmart_roi'], {
   'ads.spend': 5000,
   'cuenta.ventas_principal': 0,
   'cuenta.ventas_bump': 0,
   'cuenta.ventas_upsell': 0,
+  'cuenta.ventas_downsell': 0,
 });
 check('ROAS Hotmart sin facturación → null, NO 0', roasSinHotmart['cuenta.hotmart_roas'] === null);
 check(
@@ -313,11 +317,24 @@ const roasConHotmart = calcular(['cuenta.hotmart_roas'], {
   'cuenta.ventas_principal': 800,
   'cuenta.ventas_bump': 300,
   'cuenta.ventas_upsell': 200,
+  'cuenta.ventas_downsell': 0,
 });
 check(
   'ROAS Hotmart con datos = 1.3',
   roasConHotmart['cuenta.hotmart_roas'] === 1.3,
   String(roasConHotmart['cuenta.hotmart_roas'])
+);
+const roasConDownsell = calcular(['cuenta.hotmart_roas'], {
+  'ads.spend': 1000,
+  'cuenta.ventas_principal': 800,
+  'cuenta.ventas_bump': 300,
+  'cuenta.ventas_upsell': 200,
+  'cuenta.ventas_downsell': 100,
+});
+check(
+  'el downsell suma en la facturación (ROAS = 1.4)',
+  roasConDownsell['cuenta.hotmart_roas'] === 1.4,
+  String(roasConDownsell['cuenta.hotmart_roas'])
 );
 check(
   'la intermedia también queda en la fila',

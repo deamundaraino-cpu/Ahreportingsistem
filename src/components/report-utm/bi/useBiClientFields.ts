@@ -2,7 +2,8 @@
 
 // Campos dinámicos de un cliente: los que no están en el catálogo fijo del BI
 // sino que dependen de cómo esté configurado cada cliente (preguntas de sus
-// formularios, campos de lead y sus segmentos, columnas de sus Sheets).
+// formularios, campos de lead y sus segmentos, columnas de sus Sheets y sus
+// conversiones personalizadas de Meta).
 //
 // Existe porque los consumían DOS editores con dos implementaciones: el editor de
 // widgets hacía los cuatro fetch, y el de campos calculados solo uno. Resultado:
@@ -18,6 +19,7 @@ import type {
   SheetViewMeta,
   LeadFieldMeta,
   LeadSegmentoMeta,
+  MetaCustomConvMeta,
 } from '@/lib/report-utm/bi-metadata';
 
 export interface BiClientFields {
@@ -27,6 +29,8 @@ export interface BiClientFields {
   offlineFields: OfflineFieldMeta[];
   sheetFields: SheetFieldMeta[];
   sheetViews: SheetViewMeta[];
+  /** Conversiones personalizadas de Meta del cliente (token `metacc:<clave>`). */
+  customConversions: MetaCustomConvMeta[];
 }
 
 /**
@@ -122,6 +126,14 @@ export function useBiClientFields(
     { fields: SIN_CAMPOS, views: SIN_CAMPOS }
   );
 
+  // Conversiones personalizadas de Meta (catálogo del worker).
+  const customConversions = useCampoRemoto<MetaCustomConvMeta[]>(
+    clienteId,
+    (id) => `/api/report-utm/bi/custom-conversions?cliente_id=${encodeURIComponent(id)}`,
+    (json) => json.data ?? [],
+    SIN_CAMPOS
+  );
+
   return {
     formFields,
     leadFields: lead.campos,
@@ -129,5 +141,6 @@ export function useBiClientFields(
     offlineFields,
     sheetFields: sheet.fields,
     sheetViews: sheet.views,
+    customConversions,
   };
 }

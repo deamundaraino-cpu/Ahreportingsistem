@@ -925,8 +925,26 @@ async function cargarMetricasEnriquecidas(
     ),
   ]);
 
+  // Moneda de reporte (reunión del 2026-09-08): las columnas de dinero de
+  // Hotmart están en USD y el gasto en la moneda de la cuenta. Se convierten aquí,
+  // fila a fila con la tasa de su día, porque este es el ÚNICO camino de carga
+  // —dashboard, espejo público, archivo y periodo anterior— y así todos dan el
+  // mismo ROAS. Con moneda USD no se toca nada.
+  const { cargarConversor, convertirFilasMetricas, monedaDeClientePublico } =
+    await import('@/lib/moneda-reporte');
+  const moneda = await monedaDeClientePublico(supabase, clienteId);
+  const conv = await cargarConversor(supabase, moneda, startStr, endStr);
+
+  // Ventas cerradas en el CRM de GoHighLevel (webhook de venta): `crm_ventas`
+  // y `crm_revenue` en cada día. Se inyectan ANTES del merge para que viajen
+  // con la fila del día como cualquier columna de `metricas_diarias`.
+  const { cargarVentasCrmPorDia, inyectarVentasCrm } = await import('@/lib/dashboard/ventas-crm');
+  const ventasCrm = await cargarVentasCrmPorDia(supabase, clienteId, startStr, endStr).catch(
+    () => new Map()
+  );
+
   const metrics = mergeMetricasDelRango({
-    metricas,
+    metricas: inyectarVentasCrm(convertirFilasMetricas(metricas, conv), ventasCrm),
     leads,
     offlinePorFecha: agruparOfflinePorFecha(offline),
     sheetPorFecha: sheetData.porFecha,

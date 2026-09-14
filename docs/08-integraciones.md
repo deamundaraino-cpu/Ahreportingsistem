@@ -93,7 +93,48 @@ Se consolidan en:
 - Totales: `ventas_principal/bump/upsell` (neto), `*_bruto`, `*_count`, `hotmart_pagos_iniciados`.
 - JSONB: `hotmart_funnel_data` (desglose `by_tab` + `extras`).
 
-> Hotmart aparece **dos veces** en el sistema: (1) aquí como fuente de ventas agregadas en el reporting principal, y (2) en el módulo Report-UTM como webhook de eventos de venta con atribución. Son flujos independientes.
+> Hotmart aparece **dos veces** en el sistema: (1) aquí como fuente de ventas agregadas en el reporting principal, y (2) en el módulo Report-UTM como webhook de eventos de venta con atribución. Son flujos independientes. Desde el 2026-09-12 los dos se configuran en la misma pantalla: `/admin/settings/[id]`, sección «Captación y atribución».
+
+### Moneda de reporte
+
+Hotmart se guarda en USD y el gasto de Meta en la moneda de la cuenta. Cada cliente
+tiene una **moneda de reporte** (ficha del cliente, `report_utm.clientes.config.moneda_reporte`)
+y las ventas se convierten a ella al leer, con la tasa de `fx_rates` del día de
+cada venta. Esa tasa no se reescribe una vez guardada, así que queda congelada;
+solo el día en curso puede moverse. El sync diario de Hotmart deja cacheada la tasa
+del día de todas las monedas de reporte. Para rellenar días pasados:
+`scripts/backfill-fx-historico.ts`. Código: `src/lib/moneda-reporte.ts`.
+
+### Métricas en el reporting clásico
+
+Todo lo de Hotmart se etiqueta «Hotmart:» en los selectores, con unidades `(#)` e
+importes `($)` separados. `hotmart_pagos_iniciados` se etiqueta «GA4: Pagos
+iniciados»: son las vistas de la página de pago medidas por GA4, no un dato de
+Hotmart. El downsell y los reembolsos se suman igual en el BI y en el dashboard.
+
+---
+
+## Meta · estado de la cuenta publicitaria
+
+En cada corrida que toca hoy o ayer, el worker pregunta a Meta el `account_status`
+de cada cuenta del cliente (`src/lib/meta/alerta-cuenta.ts`). Si alguna no puede
+publicar (pago rechazado, saldo pendiente, inhabilitada), lo guarda en
+`config_api.meta_estado_cuentas`, lo muestra en `/report-utm/salud` y avisa en la
+campana y en el grupo de WhatsApp del equipo, una vez cada 24 h por cliente. Al
+elegir cuentas en Ajustes también se ve su estado y su moneda.
+
+## Meta · conversiones personalizadas en Report-UTM
+
+Las conversiones personalizadas que el worker guarda por campaña se ofrecen en el
+editor de informes como «Conversiones personalizadas de Meta» (token
+`metacc:<clave>`, nombre real del catálogo `meta_conversiones_catalogo`). Se
+reparten por fecha y por campaña.
+
+## Shopify y CartPanda (RETIRADAS, 2026-09-12)
+
+La agencia no trabaja e-commerce y ningún cliente las tenía activas. Se borraron
+sus webhooks, parsers, tarjetas y acciones. `sales_events` sigue recibiendo
+Hotmart y las ventas del CRM de GoHighLevel.
 
 ---
 

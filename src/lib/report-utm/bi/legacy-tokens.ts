@@ -93,6 +93,13 @@ export const LEGACY_MEASURE_IDS: Readonly<Record<string, string>> = {
   ventas_principal_bruto: 'cuenta.ventas_principal_bruto',
   ventas_bump_bruto: 'cuenta.ventas_bump_bruto',
   ventas_upsell_bruto: 'cuenta.ventas_upsell_bruto',
+  // Downsell y reembolsos (2026-09-12): columnas de la migración 067 que el BI
+  // no ofrecía y que `hotmart_revenue` ahora suma.
+  ventas_downsell: 'cuenta.ventas_downsell',
+  ventas_downsell_count: 'cuenta.ventas_downsell_count',
+  ventas_downsell_bruto: 'cuenta.ventas_downsell_bruto',
+  ventas_reembolsado: 'cuenta.ventas_reembolsado',
+  ventas_reembolsado_count: 'cuenta.ventas_reembolsado_count',
   // Columna real que el worker NUNCA escribe: el valor vive en el JSONB
   // `metricas_manuales`. Leerla de la columna daba 0 en todos los informes.
   ventas_cerradas: 'cuenta.ventas_cerradas',

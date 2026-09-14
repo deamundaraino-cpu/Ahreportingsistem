@@ -4,6 +4,7 @@ import { fetchAllRows } from '@/lib/report-utm/bi-query';
 import { parseFieldNumber } from '@/lib/report-utm/bi-metadata';
 import type { FormFieldMeta } from '@/lib/report-utm/bi-metadata';
 import { colombiaRangeBounds } from '@/lib/colombia-date';
+import { columnaExcluidoDisponible } from '@/lib/report-utm/lead-exclusion';
 
 export const dynamic = 'force-dynamic';
 
@@ -37,6 +38,7 @@ export async function GET(req: NextRequest) {
 
   try {
     const admin = await createAdminClient();
+    const filtrarExcluidos = await columnaExcluidoDisponible(admin);
     const rows = await fetchAllRows(
       () => {
         let q = admin
@@ -47,6 +49,7 @@ export async function GET(req: NextRequest) {
           .lt('created_at', colombiaRangeBounds(dateFrom, dateTo).lt)
           .not('raw_fields', 'is', null);
         if (cliente_id) q = q.eq('cliente_id', cliente_id);
+        if (filtrarExcluidos) q = q.eq('excluido', false);
         return q;
       },
       1000,

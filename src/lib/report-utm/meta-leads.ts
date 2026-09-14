@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { aplicarExclusion, cargarReglaExclusion } from './lead-exclusion';
 
 /**
  * Núcleo compartido para ingerir leads de **Meta Lead Ads** (formularios
@@ -571,7 +572,10 @@ export async function ingestMetaLead(
   lead: MetaLeadRecord,
   formName?: string | null
 ): Promise<{ inserted: boolean; error?: string }> {
-  const row = buildLeadRow(clienteId, lead, formName);
+  // Un lead de Meta casi siempre trae `utm_id`, pero la regla del cliente puede
+  // excluir por fuente o formulario: se evalúa igual que en GHL y S2S.
+  const regla = await cargarReglaExclusion(db, clienteId);
+  const row = aplicarExclusion(buildLeadRow(clienteId, lead, formName), regla);
   const { error } = await db.from('lead_events').insert(row);
   if (error) {
     // 23505 = unique_violation → ya existía (webhook/poll lo metió antes). No es error.
@@ -597,11 +601,14 @@ export async function ingestMetaLeadsBatch(
 ): Promise<number> {
   if (leads.length === 0) return 0;
 
+  // Una lectura de la regla por lote, no por lead.
+  const regla = await cargarReglaExclusion(db, clienteId);
+  const ahora = new Date().toISOString();
   // Dedup dentro del propio lote por external_id.
   const byId = new Map<string, Record<string, unknown>>();
   for (const lead of leads) {
     if (!lead.id) continue;
-    byId.set(lead.id, buildLeadRow(clienteId, lead, formName));
+    byId.set(lead.id, aplicarExclusion(buildLeadRow(clienteId, lead, formName), regla, ahora));
   }
   const rows = Array.from(byId.values());
   if (rows.length === 0) return 0;

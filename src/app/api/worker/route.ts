@@ -364,6 +364,26 @@ export async function GET(request: Request) {
       const config = cliente.config_api as any;
       if (!config) return;
 
+      // ¿Alguna cuenta de Meta del cliente está parada (pago rechazado,
+      // inhabilitada)? Solo en las corridas que tocan hoy o ayer: un backfill
+      // de meses atrás no es momento de alertar. Nunca tumba el sync.
+      const hoyCol = colombiaToday();
+      if (allDatesToSync.includes(hoyCol) || allDatesToSync.includes(colombiaYesterday())) {
+        try {
+          const { revisarEstadoCuentasMeta } = await import('@/lib/meta/alerta-cuenta');
+          const r = await revisarEstadoCuentasMeta(adminSupabase, cliente);
+          if (r.bloqueadas > 0) {
+            log(
+              `[Meta] ${cliente.nombre}: ${r.bloqueadas} cuenta(s) sin poder publicar${r.avisado ? ' — alerta enviada' : ' — ya avisado en las últimas 24 h'}.`
+            );
+          }
+        } catch (e: any) {
+          log(
+            `[Meta] No se pudo revisar el estado de las cuentas de ${cliente.nombre}: ${e?.message}`
+          );
+        }
+      }
+
       const datesToSync = allDatesToSync.filter(
         (d) => !periodosCerrados.has(`${cliente.id}|${d.slice(0, 7)}`)
       );

@@ -10,6 +10,7 @@ import {
 } from '@/lib/report-utm/lead-campos';
 import type { LeadFieldMeta, LeadSegmentoMeta } from '@/lib/report-utm/bi-metadata';
 import { colombiaRangeBounds } from '@/lib/colombia-date';
+import { columnaExcluidoDisponible } from '@/lib/report-utm/lead-exclusion';
 
 export const dynamic = 'force-dynamic';
 
@@ -54,15 +55,21 @@ export async function GET(req: NextRequest) {
     // sigue funcionando sin tocarlo.
     const segmentos = await loadLeadSegmentos(rtm, clienteId, campos, { soloActivos: true });
 
+    // La cobertura de cada campo se mide sobre los leads que cuentan, igual que
+    // el informe: si no, un campo parecería tener respuestas que luego no suman.
+    const filtrarExcluidos = await columnaExcluidoDisponible(rtm);
     const rows = await fetchAllRows(
-      () =>
-        rtm
+      () => {
+        let q = rtm
           .from('lead_events')
           .select('id,raw_fields')
           .eq('cliente_id', clienteId)
           .gte('created_at', colombiaRangeBounds(dateFrom, dateTo).gte)
           .lt('created_at', colombiaRangeBounds(dateFrom, dateTo).lt)
-          .not('raw_fields', 'is', null),
+          .not('raw_fields', 'is', null);
+        if (filtrarExcluidos) q = q.eq('excluido', false);
+        return q;
+      },
       1000,
       MAX_LEADS
     );

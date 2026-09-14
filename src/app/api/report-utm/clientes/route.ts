@@ -12,9 +12,12 @@ export async function GET() {
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const db = await reportUtmAdminClient();
+  // Los archivados no se ofrecen en selectores: archivar es justamente dejar de
+  // verlos sin perder su historia.
   const { data, error } = await db
     .from('clientes')
     .select('id,nombre,slug')
+    .neq('status', 'archived')
     .order('nombre')
     .limit(200);
 

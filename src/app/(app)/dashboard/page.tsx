@@ -17,11 +17,14 @@ import {
 } from 'lucide-react';
 
 export default async function DashboardHomePage() {
-  const [clientes, activeAlerts, soporteResult] = await Promise.all([
+  const [todosLosClientes, activeAlerts, soporteResult] = await Promise.all([
     getClientes(),
     getActiveAlerts(),
     getAllSoporteTickets(),
   ]);
+  // Archivar un cliente es dejar de verlo en el día a día sin perder su
+  // historia: sigue en Ajustes, pero no en la grilla ni en los contadores.
+  const clientes = (todosLosClientes ?? []).filter((c: any) => !c.archivado);
 
   const totalClientes = clientes?.length ?? 0;
   const totalIntegrations = (clientes ?? []).reduce((acc: number, c: any) => {

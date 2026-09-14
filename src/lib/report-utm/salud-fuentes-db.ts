@@ -16,8 +16,10 @@ import type {
   SenalFuente,
   SenalIntegracion,
   EstadoFuente,
+  SenalGa4,
 } from './salud-fuentes';
 import { atribucionDeFila } from '@/lib/sheets/atribucion';
+import { soloLeadsQueCuentan } from './lead-exclusion';
 
 /** Días hacia atrás sobre los que se mide el cruce UTM ↔ campaña. */
 const VENTANA_CRUCE_DIAS = 30;
@@ -137,6 +139,24 @@ export async function recogerSenales(cliente: {
     })
   );
 
+  // Cuentas de Meta que no pueden publicar (pago rechazado, inhabilitada…). Las
+  // anota el worker en `config_api.meta_estado_cuentas` al sincronizar; aquí se
+  // presentan como una integración en error para que salgan en el panel con la
+  // misma regla que el resto (ver `lib/meta/alerta-cuenta.ts`).
+  const estados = (config.meta_estado_cuentas ?? {}) as Record<
+    string,
+    { bloqueada?: boolean; texto?: string; nombre?: string | null; revisada_at?: string }
+  >;
+  for (const [cuenta, e] of Object.entries(estados)) {
+    if (!e?.bloqueada) continue;
+    integraciones.push({
+      tipo: 'meta_cuenta',
+      status: 'error',
+      ultimoError: `Cuenta de Meta ${e.nombre ?? cuenta}: ${e.texto ?? 'no puede publicar'}`,
+      ultimoSync: e.revisada_at ?? null,
+    });
+  }
+
   const fuentes: SenalFuente[] = [
     {
       id: 'leads',
@@ -154,7 +174,10 @@ export async function recogerSenales(cliente: {
       ...sales,
       toleranciaDias: TOLERANCIA_DIAS.sales,
       // Solo se espera venta si hay una pasarela dada de alta.
-      configurada: integraciones.some((i) => ['hotmart', 'cartpanda', 'shopify'].includes(i.tipo)),
+      // Hotmart por webhook o GoHighLevel (la venta del CRM entra por su webhook
+      // de oportunidad ganada). Shopify y CartPanda se retiraron el 2026-09-12:
+      // la agencia no trabaja e-commerce.
+      configurada: integraciones.some((i) => ['hotmart', 'gohighlevel'].includes(i.tipo)),
       requierePuente: false,
     },
     {
@@ -224,6 +247,7 @@ export async function recogerSenales(cliente: {
     integraciones,
     pctLeadsCruzados: await medirCruce(db, cliente.id, pid, hoy),
     sheetFilasAjenas: pid ? await medirSheetAjeno(db, pid) : null,
+    ga4: pid ? await medirGa4(db, pid, config) : null,
   };
 }
 
@@ -246,13 +270,16 @@ async function medirCruce(
     .toISOString()
     .slice(0, 10);
 
-  const { data } = await db
+  // Sobre los leads que cuentan: medir el cruce con los excluidos dentro daría
+  // un porcentaje que baja por leads que ya nadie cuenta.
+  let q = db
     .schema('report_utm')
     .from('lead_events')
     .select('utm_id,utm_campaign,utm_content,utm_term')
     .eq('cliente_id', clienteId)
-    .gte('created_at', `${desde}T00:00:00Z`)
-    .limit(MUESTRA_LEADS);
+    .gte('created_at', `${desde}T00:00:00Z`);
+  q = await soloLeadsQueCuentan(db, q);
+  const { data } = await q.limit(MUESTRA_LEADS);
 
   const leads = (data ?? []) as Array<Record<string, string | null>>;
   if (leads.length === 0) return null;
@@ -302,6 +329,40 @@ async function medirSheetAjeno(
   return {
     total: conId.length,
     sinCruce: conId.filter((id) => !conocidas.has(id)).length,
+  };
+}
+
+/**
+ * Señal de GA4: última sesión registrada y cuántas pestañas tienen página de
+ * pago mapeada. `null` si el cliente no tiene GA4 configurado (no aplica).
+ */
+async function medirGa4(
+  db: Db,
+  pid: string,
+  config: Record<string, unknown>
+): Promise<SenalGa4 | null> {
+  if (!config.ga_property_id) return null;
+  const [{ data: sesion }, { data: tabs }] = await Promise.all([
+    db
+      .from('metricas_diarias')
+      .select('fecha')
+      .eq('cliente_id', pid)
+      .gt('ga_sessions', 0)
+      .order('fecha', { ascending: false })
+      .limit(1),
+    db.from('cliente_tabs').select('hotmart_funnel, archived').eq('cliente_id', pid),
+  ]);
+  const activas = (
+    (tabs ?? []) as Array<{
+      hotmart_funnel: Record<string, unknown> | null;
+      archived: boolean | null;
+    }>
+  ).filter((t) => !t.archived);
+  return {
+    ultimaSesion: (sesion?.[0]?.fecha as string | undefined) ?? null,
+    pestanas: activas.length,
+    pestanasConPago: activas.filter((t) => String(t.hotmart_funnel?.payment_page_url ?? '').trim())
+      .length,
   };
 }
 

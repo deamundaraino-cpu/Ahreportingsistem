@@ -1,29 +1,38 @@
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
-import { headers } from 'next/headers';
 import { reportUtmClient } from '@/lib/report-utm/client';
-import type {
-  ReportUtmCliente,
-  ReportUtmIntegration,
-  ReportUtmSalesEvent,
-} from '@/lib/report-utm/types';
-import { HotmartIntegrationCard } from '@/components/report-utm/HotmartIntegrationCard';
-import { CartPandaIntegrationCard } from '@/components/report-utm/CartPandaIntegrationCard';
-import { ShopifyIntegrationCard } from '@/components/report-utm/ShopifyIntegrationCard';
-import { GoogleAdsCard } from '@/components/report-utm/GoogleAdsCard';
-import { MetaCAPICard } from '@/components/report-utm/MetaCAPICard';
-import { MetaLeadsCard } from '@/components/report-utm/MetaLeadsCard';
-import { GhlLeadsCard } from '@/components/report-utm/GhlLeadsCard';
-import { S2SIntegrationCard } from '@/components/report-utm/S2SIntegrationCard';
-import { OutboundWebhooksCard } from '@/components/report-utm/OutboundWebhooksCard';
+import type { ReportUtmCliente, ReportUtmSalesEvent } from '@/lib/report-utm/types';
 import { BiClienteBrandingCard } from '@/components/report-utm/BiClienteBrandingCard';
 import { BiClienteGoalsCard } from '@/components/report-utm/BiClienteGoalsCard';
 import { LeadCamposCard } from '@/components/report-utm/LeadCamposCard';
+import { FiltroAtribucionCard } from '@/components/report-utm/FiltroAtribucionCard';
+import { ConexionesCliente } from '@/components/report-utm/ConexionesCliente';
+import { MonedaReporteCard } from '@/components/report-utm/MonedaReporteCard';
+import { leerMonedaReporte } from '@/lib/moneda-reporte';
+import { columnaExcluidoDisponible, leerRegla } from '@/lib/report-utm/lead-exclusion';
 import type { ClienteGoals } from '@/lib/report-utm/bi-metadata';
-import { createClient } from '@/utils/supabase/server';
-import { ArrowLeft, ShoppingBag, DollarSign, TrendingUp, ExternalLink } from 'lucide-react';
+import {
+  ArrowLeft,
+  ShoppingBag,
+  DollarSign,
+  TrendingUp,
+  ExternalLink,
+  PlugZap,
+  CircleCheck,
+  CircleAlert,
+  CirclePause,
+} from 'lucide-react';
 
 export const dynamic = 'force-dynamic';
+
+const NOMBRE_INTEGRACION: Record<string, string> = {
+  hotmart: 'Hotmart (webhook)',
+  meta: 'Meta CAPI',
+  google: 'Google Ads',
+  s2s: 'Formulario web (S2S)',
+  meta_lead_ads: 'Meta Lead Ads',
+  gohighlevel: 'GoHighLevel',
+};
 
 export default async function ClienteDetailPage({
   params,
@@ -35,94 +44,17 @@ export default async function ClienteDetailPage({
 
   const [
     { data: cliente },
-    { data: hotmart },
-    { data: cartpanda },
-    { data: shopify },
-    { data: metaIntegration },
-    { data: googleIntegration },
-    { data: s2s },
-    { data: metaLeads },
-    { data: ghl },
+    { data: integraciones },
     { data: ventas },
     { count: totalCount },
     { data: aggregate },
-    { data: outbound },
   ] = await Promise.all([
     supabase.from('clientes').select('*').eq('id', clienteId).single<ReportUtmCliente>(),
     supabase
       .from('integrations')
-      .select('*')
+      .select('tipo, status, last_error, last_sync_at')
       .eq('cliente_id', clienteId)
-      .eq('tipo', 'hotmart')
-      .maybeSingle<ReportUtmIntegration>(),
-    supabase
-      .from('integrations')
-      .select('id, cliente_id, webhook_secret, status, last_sync_at, last_error')
-      .eq('cliente_id', clienteId)
-      .eq('tipo', 'cartpanda')
-      .maybeSingle<
-        Pick<
-          ReportUtmIntegration,
-          'id' | 'cliente_id' | 'webhook_secret' | 'status' | 'last_sync_at' | 'last_error'
-        >
-      >(),
-    supabase
-      .from('integrations')
-      .select('id, cliente_id, webhook_secret, config, status, last_sync_at, last_error')
-      .eq('cliente_id', clienteId)
-      .eq('tipo', 'shopify')
-      .maybeSingle<
-        Pick<
-          ReportUtmIntegration,
-          | 'id'
-          | 'cliente_id'
-          | 'webhook_secret'
-          | 'config'
-          | 'status'
-          | 'last_sync_at'
-          | 'last_error'
-        >
-      >(),
-    supabase
-      .from('integrations')
-      .select('id, status, config, last_sync_at, last_error')
-      .eq('cliente_id', clienteId)
-      .eq('tipo', 'meta')
-      .maybeSingle<
-        Pick<ReportUtmIntegration, 'id' | 'status' | 'config' | 'last_sync_at' | 'last_error'>
-      >(),
-    supabase
-      .from('integrations')
-      .select('id, status, config, last_sync_at, last_error')
-      .eq('cliente_id', clienteId)
-      .eq('tipo', 'google')
-      .maybeSingle<
-        Pick<ReportUtmIntegration, 'id' | 'status' | 'config' | 'last_sync_at' | 'last_error'>
-      >(),
-    supabase
-      .from('integrations')
-      .select('id, cliente_id, status, last_sync_at, last_error')
-      .eq('cliente_id', clienteId)
-      .eq('tipo', 's2s')
-      .maybeSingle<
-        Pick<ReportUtmIntegration, 'id' | 'cliente_id' | 'status' | 'last_sync_at' | 'last_error'>
-      >(),
-    supabase
-      .from('integrations')
-      .select('id, status, config, last_sync_at, last_error')
-      .eq('cliente_id', clienteId)
-      .eq('tipo', 'meta_lead_ads')
-      .maybeSingle<
-        Pick<ReportUtmIntegration, 'id' | 'status' | 'config' | 'last_sync_at' | 'last_error'>
-      >(),
-    supabase
-      .from('integrations')
-      .select('id, status, config, last_sync_at, last_error')
-      .eq('cliente_id', clienteId)
-      .eq('tipo', 'gohighlevel')
-      .maybeSingle<
-        Pick<ReportUtmIntegration, 'id' | 'status' | 'config' | 'last_sync_at' | 'last_error'>
-      >(),
+      .order('tipo'),
     supabase
       .from('sales_events')
       .select(
@@ -140,36 +72,9 @@ export default async function ClienteDetailPage({
       .select('amount, status')
       .eq('cliente_id', clienteId)
       .eq('status', 'approved'),
-    supabase
-      .from('outbound_webhooks')
-      .select(
-        'id, nombre, url, event_types, enabled, last_fired_at, last_status, last_error, success_count, failure_count'
-      )
-      .eq('cliente_id', clienteId)
-      .order('created_at', { ascending: false }),
   ]);
 
   if (!cliente) notFound();
-
-  // ¿El cliente tiene Meta conectado? (token + cuenta en public.clientes.config_api)
-  let metaConnected = false;
-  if (cliente.public_cliente_id) {
-    const base = await createClient();
-    const { data: pub } = await base
-      .from('clientes')
-      .select('config_api')
-      .eq('id', cliente.public_cliente_id)
-      .maybeSingle();
-    const cfg = (pub?.config_api ?? {}) as Record<string, unknown>;
-    const metaAccounts = cfg.meta_accounts;
-    const hasAccounts =
-      Array.isArray(metaAccounts) &&
-      (metaAccounts as Array<Record<string, unknown>>).some(
-        (a) => a?.account_id && (a.token || cfg.meta_token)
-      );
-    const hasLegacy = Boolean(cfg.meta_token && cfg.meta_account_id);
-    metaConnected = hasAccounts || hasLegacy;
-  }
 
   const totalRevenue = (aggregate ?? []).reduce(
     (sum, r) => sum + Number((r as { amount: number }).amount ?? 0),
@@ -177,12 +82,6 @@ export default async function ClienteDetailPage({
   );
   const approvedCount = (aggregate ?? []).length;
   const aov = approvedCount > 0 ? totalRevenue / approvedCount : 0;
-
-  // Origin para construir URL del webhook (server-side)
-  const hdrs = await headers();
-  const proto = hdrs.get('x-forwarded-proto') ?? 'http';
-  const host = hdrs.get('x-forwarded-host') ?? hdrs.get('host') ?? 'localhost:3000';
-  const webhookOrigin = `${proto}://${host}`;
 
   const ventasList = (ventas ?? []) as Array<
     Pick<
@@ -201,6 +100,13 @@ export default async function ClienteDetailPage({
       | 'platform_sale_id'
     >
   >;
+
+  const integs = (integraciones ?? []) as Array<{
+    tipo: string;
+    status: string;
+    last_error: string | null;
+    last_sync_at: string | null;
+  }>;
 
   return (
     <div className="space-y-8">
@@ -239,6 +145,88 @@ export default async function ClienteDetailPage({
         <Stat label="Ticket promedio" value={`${aov.toFixed(2)}`} icon={TrendingUp} />
       </div>
 
+      {/* Conexiones: un solo lugar. Con el cliente enlazado al reporting, se
+          configuran en su ficha de Ajustes (junto a Meta, GA4, Hotmart y TikTok);
+          aquí queda el estado. Un cliente sin enlace no tiene esa ficha, así que
+          sus conexiones siguen aquí para no dejarlo sin forma de gestionarlas. */}
+      {cliente.public_cliente_id ? (
+        <div className="rounded-2xl border border-border bg-card p-6 space-y-4">
+          <div className="flex items-start justify-between gap-4 flex-wrap">
+            <div>
+              <div className="flex items-center gap-2">
+                <PlugZap className="h-4 w-4 text-emerald-500" />
+                <h2 className="text-sm font-semibold text-foreground">Conexiones</h2>
+              </div>
+              <p className="text-xs text-muted-foreground mt-1 max-w-xl">
+                Todas las conexiones de este cliente —Meta, formularios instantáneos, GoHighLevel,
+                Hotmart, GA4, TikTok y Sheets— se configuran en un solo lugar: su ficha de ajustes.
+              </p>
+            </div>
+            <Link
+              href={`/admin/settings/${cliente.public_cliente_id}#conexiones`}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-white nav-active-emerald"
+            >
+              Configurar conexiones <ExternalLink className="h-3 w-3" />
+            </Link>
+          </div>
+          {integs.length > 0 ? (
+            <ul className="grid grid-cols-1 md:grid-cols-2 gap-2">
+              {integs.map((i) => (
+                <li
+                  key={i.tipo}
+                  className="flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-xs"
+                >
+                  {i.last_error ? (
+                    <CircleAlert className="h-3.5 w-3.5 text-amber-500 shrink-0" />
+                  ) : i.status === 'active' ? (
+                    <CircleCheck className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
+                  ) : (
+                    <CirclePause className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                  )}
+                  <span className="font-medium text-foreground">
+                    {NOMBRE_INTEGRACION[i.tipo] ?? i.tipo}
+                  </span>
+                  <span className="text-muted-foreground">
+                    · {i.status === 'active' ? 'activa' : 'pausada'}
+                  </span>
+                  {i.last_error && (
+                    <span
+                      className="ml-auto truncate text-amber-600 dark:text-amber-400"
+                      title={i.last_error}
+                    >
+                      {i.last_error}
+                    </span>
+                  )}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-xs text-muted-foreground">Sin conexiones de captación todavía.</p>
+          )}
+        </div>
+      ) : (
+        <ConexionesCliente rtmClienteId={cliente.id} publicClienteId={null} />
+      )}
+
+      {/* Moneda de reporte: Hotmart en la moneda del cliente (reunión del 2026-09-08) */}
+      <MonedaReporteCard rtmClienteId={cliente.id} inicial={leerMonedaReporte(cliente.config)} />
+
+      {/* Qué leads cuentan: regla de exclusión (reunión del 2026-09-08) */}
+      <FiltroAtribucionCard
+        clienteId={cliente.id}
+        inicial={leerRegla(cliente.config)}
+        migracionAplicada={await columnaExcluidoDisponible(supabase)}
+      />
+
+      {/* Campos de formulario convertidos en dimensiones de los informes */}
+      <LeadCamposCard clienteId={cliente.id} />
+
+      {/* Metas del cliente (semáforos de los scorecards en los informes) */}
+      <BiClienteGoalsCard
+        clienteId={cliente.id}
+        initialGoals={(cliente.config?.goals ?? {}) as ClienteGoals}
+      />
+
       {/* Branding de informes (logo + color para la vista pública del cliente) */}
       <BiClienteBrandingCard
         clienteId={cliente.id}
@@ -248,58 +236,6 @@ export default async function ClienteDetailPage({
         initialAccent={
           typeof cliente.config?.accent === 'string' ? cliente.config.accent : undefined
         }
-      />
-
-      {/* Metas del cliente (semáforos de los scorecards en los informes) */}
-      <BiClienteGoalsCard
-        clienteId={cliente.id}
-        initialGoals={(cliente.config?.goals ?? {}) as ClienteGoals}
-      />
-
-      {/* Campos de formulario convertidos en dimensiones de los informes */}
-      <LeadCamposCard clienteId={cliente.id} />
-
-      {/* Integrations */}
-      <HotmartIntegrationCard
-        clienteId={cliente.id}
-        integration={hotmart}
-        webhookOrigin={webhookOrigin}
-      />
-
-      <CartPandaIntegrationCard
-        clienteId={cliente.id}
-        integration={cartpanda ?? null}
-        webhookOrigin={webhookOrigin}
-      />
-
-      <ShopifyIntegrationCard
-        clienteId={cliente.id}
-        integration={shopify ?? null}
-        webhookOrigin={webhookOrigin}
-      />
-
-      <MetaCAPICard clienteId={cliente.id} integration={metaIntegration ?? null} />
-
-      <MetaLeadsCard
-        clienteId={cliente.id}
-        integration={metaLeads ?? null}
-        metaConnected={metaConnected}
-      />
-
-      <GhlLeadsCard
-        clienteId={cliente.id}
-        integration={ghl ?? null}
-        webhookOrigin={webhookOrigin}
-      />
-
-      <GoogleAdsCard clienteId={cliente.id} integration={googleIntegration ?? null} />
-
-      <S2SIntegrationCard clienteId={cliente.id} integration={s2s ?? null} />
-
-      {/* Outbound webhooks */}
-      <OutboundWebhooksCard
-        clienteId={cliente.id}
-        webhooks={(outbound ?? []) as Parameters<typeof OutboundWebhooksCard>[0]['webhooks']}
       />
 
       {/* Recent sales */}
@@ -364,8 +300,8 @@ export default async function ClienteDetailPage({
           </div>
         ) : (
           <div className="px-6 py-12 text-center text-sm text-muted-foreground">
-            Sin ventas recibidas todavía. Configurá el webhook arriba para empezar a recibir
-            eventos.
+            Sin ventas recibidas todavía. Llegan por el webhook de Hotmart o por el de venta de
+            GoHighLevel.
           </div>
         )}
       </div>

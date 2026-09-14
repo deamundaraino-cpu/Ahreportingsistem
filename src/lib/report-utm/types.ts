@@ -14,15 +14,7 @@ export type ReportUtmCliente = {
 export type ReportUtmIntegration = {
   id: string;
   cliente_id: string;
-  tipo:
-    | 'hotmart'
-    | 'meta'
-    | 'google'
-    | 'cartpanda'
-    | 'shopify'
-    | 's2s'
-    | 'meta_lead_ads'
-    | 'gohighlevel';
+  tipo: 'hotmart' | 'meta' | 'google' | 's2s' | 'meta_lead_ads' | 'gohighlevel';
   webhook_secret: string | null;
   s2s_token: string | null;
   access_token_encrypted: string | null;
@@ -101,6 +93,9 @@ export type ReportUtmLeadEvent = {
   raw_fields: Record<string, unknown> | null;
   source: string;
   created_at: string;
+  /** Migración 079. Ausentes hasta que se aplique. */
+  excluido?: boolean;
+  excluido_motivo?: string | null;
 };
 
 export type ReportUtmTrackingLink = {

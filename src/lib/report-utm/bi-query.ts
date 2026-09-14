@@ -1,5 +1,7 @@
 import { createAdminClient } from '@/utils/supabase/server';
 import { fetchAllRows } from '@/lib/supabase-paginate';
+import { columnaExcluidoDisponible } from './lead-exclusion';
+import { cargarConversor, COLUMNAS_USD_METRICAS, monedaDeClienteUtm } from '@/lib/moneda-reporte';
 import type {
   BiMetric,
   BiDimension,
@@ -467,7 +469,7 @@ export async function runBiQuery(params: BiQueryParams): Promise<BiQueryRow[]> {
   }
 
   // ── Merge results ─────────────────────────────────────────────────
-  return mergeResults(
+  const fusionado = mergeResults(
     params,
     leadsData,
     salesData,
@@ -483,6 +485,30 @@ export async function runBiQuery(params: BiQueryParams): Promise<BiQueryRow[]> {
     hotmartData,
     leadSegs
   );
+
+  // ── Conversiones personalizadas de Meta (`metacc:<clave>`) ─────────
+  // Se suman al resultado fusionado desde su propio lector: total, fecha y
+  // campaña real. Cualquier otra dimensión no las puede repartir y quedan en 0.
+  const ccTokens = params.metrics.filter((m) => typeof m === 'string' && m.startsWith('metacc:'));
+  if (ccTokens.length === 0) return fusionado;
+  const { queryMetaCustomConv, aplicarMetaCustomConv } = await import('./bi/meta-custom-conv');
+  const unifiedCc = unifiedTarget(params.dimension);
+  const grouping = params.date_grouping ?? 'day';
+  const ccData = await queryMetaCustomConv(
+    params.cliente_id,
+    dateFrom,
+    dateTo,
+    ccTokens,
+    (fecha, campana) =>
+      params.dimension === 'none'
+        ? 'total'
+        : params.dimension === 'date'
+          ? truncateDate(fecha, grouping)
+          : unifiedCc === 'campaign'
+            ? campana
+            : null
+  );
+  return aplicarMetaCustomConv(fusionado, ccData, ccTokens);
 }
 
 /** ¿Hay filtro por nombre de campaña, anuncio o conjunto? */
@@ -884,6 +910,10 @@ async function queryLeadsDirect(
     ? (k: string) => leadFilterKey(k) && !ENTITY_FILTER_FIELDS.has(k)
     : leadFilterKey;
 
+  // Leads excluidos por la regla del cliente (migración 079): se guardan, pero no
+  // cuentan en ninguna métrica. Sin la columna, se lee como siempre.
+  const filtrarExcluidos = await columnaExcluidoDisponible(supabase);
+
   const applyBase = (q: any) => {
     // Día calendario Colombia: el literal sin zona equivalía a UTC, así que
 
@@ -895,6 +925,7 @@ async function queryLeadsDirect(
 
     q = rangoColombia(q, dateFrom, dateTo);
     if (params.cliente_id) q = q.eq('cliente_id', params.cliente_id);
+    if (filtrarExcluidos) q = q.eq('excluido', false);
     return applyDimFilters(q, params.filters, filterKey);
   };
 
@@ -1179,6 +1210,14 @@ async function queryHotmartDirect(
     .lte('fecha_venta', dateTo);
   if (publicId) q = q.eq('cliente_id', publicId);
 
+  // Moneda de reporte del cliente: Hotmart está en USD y el gasto en la moneda
+  // de la cuenta. Cada venta se convierte con la tasa de SU fecha (congelada en
+  // `fx_rates`), así el ROAS divide dos cifras en la misma moneda.
+  const moneda = params.cliente_id
+    ? await monedaDeClienteUtm(supabase, params.cliente_id)
+    : ('USD' as const);
+  const conv = await cargarConversor(supabase, moneda, dateFrom, dateTo);
+
   const data = await fetchAllRows(() => q);
 
   const map = new Map<string, HotmartRow>();
@@ -1204,8 +1243,11 @@ async function queryHotmartDirect(
       neto_reembolsado: 0,
     };
     const estado = String(r.estado ?? '');
-    const neto = Number(r.neto_productor_usd ?? 0) || 0;
-    const bruto = Number(r.bruto_usd ?? 0) || 0;
+    // USD → moneda de reporte con la tasa del día de ESTA venta (identidad si
+    // el cliente reporta en USD).
+    const fechaVenta = String(r.fecha_venta ?? '');
+    const neto = conv.convertir(Number(r.neto_productor_usd ?? 0) || 0, fechaVenta);
+    const bruto = conv.convertir(Number(r.bruto_usd ?? 0) || 0, fechaVenta);
 
     if (estado === 'reembolsada' || estado === 'chargeback') {
       entry.reembolsos += 1;
@@ -1603,6 +1645,14 @@ async function queryAdsScalar(
   const { data, error } = await q;
   if (error || !data) return [];
 
+  // Moneda de reporte: las columnas de dinero de Hotmart de esta tabla están en
+  // USD. El gasto ya viene en la moneda de la cuenta y no se toca.
+  const monedaAds = params.cliente_id
+    ? await monedaDeClienteUtm(db, params.cliente_id)
+    : ('USD' as const);
+  const convAds = await cargarConversor(db, monedaAds, dateFrom, dateTo);
+  const USD_COLS = new Set<string>(COLUMNAS_USD_METRICAS);
+
   const grouping = params.date_grouping ?? 'day';
   const map = new Map<string, Record<string, number>>();
 
@@ -1636,7 +1686,13 @@ async function queryAdsScalar(
     // de una plataforma: con un recorte por plataforma no son atribuibles y se
     // dejan en 0, igual que se hace bajo un filtro de campaña.
     if (!platform) {
-      for (const k of AD_SCALAR_METRICS) entry[k] += Number(r[k] ?? 0);
+      // Las columnas de dinero de Hotmart se guardan en USD: pasan a la moneda
+      // de reporte con la tasa de su día. Conteos y GA4 no se tocan.
+      const fechaFila = String(r.fecha ?? '');
+      for (const k of AD_SCALAR_METRICS) {
+        const v = Number(r[k] ?? 0);
+        entry[k] += USD_COLS.has(k) ? convAds.convertir(v, fechaFila) : v;
+      }
       const manuales = (r.metricas_manuales ?? {}) as Record<string, unknown>;
       for (const { metric, jsonKey } of MANUAL_JSONB_METRICS) {
         entry[metric] += Number(manuales[jsonKey] ?? 0) || 0;
@@ -2341,15 +2397,20 @@ function mergeResults(
       gaSessions > 0 ? round2((Number(ad?._ga_bounce_wsum ?? 0) / gaSessions) * 100) : null;
     const gaAvgDuration =
       gaSessions > 0 ? round2(Number(ad?._ga_dur_wsum ?? 0) / gaSessions) : null;
+    // Con downsell, igual que `total_facturacion_neta` del dashboard clásico y
+    // que `cuenta.hotmart_revenue_calc`: antes el BI lo dejaba fuera y los dos
+    // sistemas daban facturaciones distintas para el mismo cliente.
     const hotmartRevenue = round2(
       Number(ad?.ventas_principal ?? 0) +
         Number(ad?.ventas_bump ?? 0) +
-        Number(ad?.ventas_upsell ?? 0)
+        Number(ad?.ventas_upsell ?? 0) +
+        Number(ad?.ventas_downsell ?? 0)
     );
     const hotmartSales =
       Number(ad?.ventas_principal_count ?? 0) +
       Number(ad?.ventas_bump_count ?? 0) +
-      Number(ad?.ventas_upsell_count ?? 0);
+      Number(ad?.ventas_upsell_count ?? 0) +
+      Number(ad?.ventas_downsell_count ?? 0);
 
     const row: BiQueryRow = { dimension_value: key === 'total' ? null : key };
 
@@ -2735,6 +2796,9 @@ export async function runPivotQuery(
   for (const c of advCols.cols) cols.add(c);
   if (advCols.needsRawFields) cols.add('raw_fields');
 
+  // Solo los leads tienen marca de exclusión; las ventas cuentan todas.
+  const filtrarExcluidos = !isSales && (await columnaExcluidoDisponible(supabase));
+
   const applyBase = (q: any) => {
     // Día calendario Colombia: el literal sin zona equivalía a UTC, así que
 
@@ -2746,6 +2810,7 @@ export async function runPivotQuery(
 
     q = rangoColombia(q, dateFrom, dateTo);
     if (isSales) q = q.eq('status', 'approved');
+    if (filtrarExcluidos) q = q.eq('excluido', false);
     if (params.cliente_id) q = q.eq('cliente_id', params.cliente_id);
     return applyDimFilters(q, params.filters, isSales ? salesFilterKey : leadFilterKey);
   };

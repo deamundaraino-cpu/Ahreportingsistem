@@ -145,50 +145,61 @@ export const AVAILABLE_METRICS: MetricOption[] = [
   { id: 'meta_cost_per_result', label: 'Meta: Costo por Resultado' },
 
   // ── Hotmart ───────────────────────────────────────────────────────────────
+  // Todo lo que sale de Hotmart se etiqueta «Hotmart:». Antes la mitad decía
+  // «Ventas:» y en la reunión del 2026-09-08 no había forma de saber que eran de
+  // Hotmart. Los ids NO cambian: los layouts guardados siguen igual.
+  //
+  // Unidades e importe van separados y dicho en la etiqueta: «me da el valor,
+  // no la unidad» fue la queja concreta. `(#)` = cantidad, `($)` = dinero en la
+  // moneda de reporte del cliente.
+  //
   // `hotmart_clics_link` se retiró: estaba aquí y en el motor de fórmulas, pero
   // nunca tuvo columna ni escritor. Solo podía mostrar 0.
-  { id: 'hotmart_pagos_iniciados', label: 'Hotmart: Pagos Iniciados' },
+  //
+  // `hotmart_pagos_iniciados` NO viene de Hotmart: son las vistas de la página
+  // de pago medidas por GA4 (ver `worker/route.ts`). La etiqueta lo dice.
+  { id: 'hotmart_pagos_iniciados', label: 'GA4: Pagos Iniciados (vistas pág. de pago)' },
 
-  // ── Ventas · Totales globales ─────────────────────────────────────────────
-  { id: 'ventas_principal', label: 'Ventas: Neto Principal' },
-  { id: 'ventas_bump', label: 'Ventas: Neto Bump' },
-  { id: 'ventas_upsell', label: 'Ventas: Neto Upsell' },
-  { id: 'ventas_downsell', label: 'Ventas: Neto Downsell' },
-  { id: 'ventas_principal_bruto', label: 'Ventas: Bruto Principal' },
-  { id: 'ventas_bump_bruto', label: 'Ventas: Bruto Bump' },
-  { id: 'ventas_upsell_bruto', label: 'Ventas: Bruto Upsell' },
-  { id: 'ventas_downsell_bruto', label: 'Ventas: Bruto Downsell' },
-  { id: 'ventas_principal_count', label: 'Ventas: # Compras Principal' },
-  { id: 'ventas_bump_count', label: 'Ventas: # Compras Bump' },
-  { id: 'ventas_upsell_count', label: 'Ventas: # Compras Upsell' },
-  { id: 'ventas_downsell_count', label: 'Ventas: # Compras Downsell' },
-  { id: 'ventas_reembolsado', label: 'Ventas: Reembolsado' },
-  { id: 'ventas_reembolsado_count', label: 'Ventas: # Reembolsos' },
-  { id: 'total_facturacion_bruta', label: 'Ventas: Facturación Bruta Total' },
-  { id: 'total_facturacion_neta', label: 'Ventas: Facturación Neta Total' },
-  { id: 'total_facturacion_neta_real', label: 'Ventas: Facturación Neta Real (tras reembolsos)' },
-  { id: 'total_tasa_reembolso', label: 'Ventas: Tasa de Reembolso', format: 'percent' },
-  { id: 'total_spend', label: 'Ventas: Inversión Total (Meta + TikTok)' },
-  { id: 'total_roas', label: 'Ventas: ROAS Total (Meta + TikTok)' },
-  { id: 'total_roi', label: 'Ventas: ROI Total' },
-  { id: 'total_dinero_bolsa', label: 'Ventas: Dinero en Bolsa Total' },
-  { id: 'total_costo_compra', label: 'Ventas: Costo/Compra Total' },
+  // ── Hotmart · Ventas y facturación ────────────────────────────────────────
+  { id: 'ventas_principal_count', label: 'Hotmart: Ventas principal (#)' },
+  { id: 'ventas_bump_count', label: 'Hotmart: Order bumps (#)' },
+  { id: 'ventas_upsell_count', label: 'Hotmart: Upsells (#)' },
+  { id: 'ventas_downsell_count', label: 'Hotmart: Downsells (#)' },
+  { id: 'ventas_reembolsado_count', label: 'Hotmart: Reembolsos (#)' },
+  { id: 'ventas_principal', label: 'Hotmart: Neto principal ($)' },
+  { id: 'ventas_bump', label: 'Hotmart: Neto order bump ($)' },
+  { id: 'ventas_upsell', label: 'Hotmart: Neto upsell ($)' },
+  { id: 'ventas_downsell', label: 'Hotmart: Neto downsell ($)' },
+  { id: 'ventas_principal_bruto', label: 'Hotmart: Bruto principal ($)' },
+  { id: 'ventas_bump_bruto', label: 'Hotmart: Bruto order bump ($)' },
+  { id: 'ventas_upsell_bruto', label: 'Hotmart: Bruto upsell ($)' },
+  { id: 'ventas_downsell_bruto', label: 'Hotmart: Bruto downsell ($)' },
+  { id: 'ventas_reembolsado', label: 'Hotmart: Reembolsado ($)' },
+  { id: 'total_facturacion_bruta', label: 'Hotmart: Facturación bruta total ($)' },
+  { id: 'total_facturacion_neta', label: 'Hotmart: Facturación neta total ($)' },
+  {
+    id: 'total_facturacion_neta_real',
+    label: 'Hotmart: Facturación neta real, tras reembolsos ($)',
+  },
+  { id: 'total_tasa_reembolso', label: 'Hotmart: Tasa de reembolso', format: 'percent' },
+  { id: 'total_spend', label: 'Inversión total (Meta + TikTok)' },
+  { id: 'total_roas', label: 'Hotmart: ROAS total (Meta + TikTok)' },
+  { id: 'total_roi', label: 'Hotmart: ROI total' },
+  { id: 'total_dinero_bolsa', label: 'Hotmart: Dinero en bolsa total ($)' },
+  { id: 'total_costo_compra', label: 'Hotmart: Costo por compra total ($)' },
 
   // ── Funnel Hotmart · Métricas por pestaña ─────────────────────────────────
+  // Se retiraron del selector las que ningún layout, pestaña, informe ni regla
+  // usaba (`scripts/inventario-metricas-usadas.ts`, 2026-09-12): neto/bruto/
+  // precio del principal, bruto de bump y upsell, y el bloque de downsell. El
+  // motor de fórmulas las sigue resolviendo: un layout que las tuviera seguiría
+  // funcionando, solo no se ofrecen para añadir.
   { id: 'funnel_principal_count', label: 'Funnel: # Compras Principal' },
-  { id: 'funnel_principal_neto', label: 'Funnel: Neto Principal' },
-  { id: 'funnel_principal_bruto', label: 'Funnel: Bruto Principal (API)' },
-  { id: 'funnel_principal_price', label: 'Funnel: Precio Público Principal' },
   { id: 'funnel_bump_count', label: 'Funnel: # Order Bumps' },
   { id: 'funnel_bump_neto', label: 'Funnel: Neto Order Bump' },
-  { id: 'funnel_bump_bruto', label: 'Funnel: Bruto Order Bump' },
   { id: 'funnel_upsell_count', label: 'Funnel: # Upsells' },
   { id: 'funnel_upsell_neto', label: 'Funnel: Neto Upsell' },
-  { id: 'funnel_upsell_bruto', label: 'Funnel: Bruto Upsell' },
-  { id: 'funnel_upsell_visits', label: 'Funnel: Visitas Pág. Upsell' },
-  { id: 'funnel_downsell_count', label: 'Funnel: # Downsells' },
-  { id: 'funnel_downsell_neto', label: 'Funnel: Neto Downsell' },
-  { id: 'funnel_downsell_bruto', label: 'Funnel: Bruto Downsell' },
+  { id: 'funnel_upsell_visits', label: 'Funnel: Visitas Pág. Upsell (GA4)' },
   { id: 'funnel_pagos_iniciados', label: 'Funnel: Pagos Iniciados (GA4)' },
   { id: 'funnel_facturacion_bruta', label: 'Funnel: Facturación Bruta' },
   { id: 'funnel_facturacion_neta', label: 'Funnel: Facturación Neta' },
@@ -235,6 +246,13 @@ export const AVAILABLE_METRICS: MetricOption[] = [
   // que reporta el píxel. NO se suma con `meta_leads`: miden lo mismo desde
   // fuentes distintas y un lead puede estar en las dos.
   { id: 'utm_leads', label: 'UTM Report: Leads (contactos)' },
+
+  // ── CRM (GoHighLevel) ─────────────────────────────────────────────────────
+  // Ventas que el cliente cierra en su embudo de GHL, recibidas por el webhook
+  // de oportunidad ganada. Sustituyen a cargarlas a mano en «Ventas cerradas».
+  // Importe en la moneda que el cliente escribe en su CRM.
+  { id: 'crm_ventas', label: 'CRM GoHighLevel: Ventas cerradas (#)' },
+  { id: 'crm_revenue', label: 'CRM GoHighLevel: Facturación ($)' },
 ];
 
 /** Build dynamic metric list merging static + catalog custom conversions */
@@ -286,14 +304,12 @@ export function buildAvailableMetrics(
     label: `Meta: ${c.label}`,
   }));
 
+  // Las siete `offline_*` (leads, ventas, revenue, total, CPA, close rate, ROAS)
+  // se retiraron del selector el 2026-09-12: ningún layout, pestaña, informe ni
+  // regla las usaba (`scripts/inventario-metricas-usadas.ts`) y en la reunión
+  // se pidió quitarlas. Los Sheets se trabajan hoy con CAMPOS DE SHEET, que sí
+  // cruzan por campaña. El motor de fórmulas las sigue resolviendo.
   const offlineMetrics = [
-    { id: 'offline_leads', label: 'Offline: Leads' },
-    { id: 'offline_ventas', label: 'Offline: Ventas' },
-    { id: 'offline_revenue', label: 'Offline: Revenue' },
-    { id: 'offline_total', label: 'Offline: Total' },
-    { id: 'offline_cpa', label: 'Offline: CPA Real' },
-    { id: 'offline_close_rate', label: 'Offline: Close Rate (%)' },
-    { id: 'offline_roas', label: 'Offline: ROAS Real' },
     { id: 'total_leads', label: 'Offline: Leads Totales' },
     { id: 'total_cpl', label: 'Offline: CPL Real' },
   ].filter((m) => hayVentasOffline || !METRICAS_OFFLINE_POR_VENTA.has(m.id));

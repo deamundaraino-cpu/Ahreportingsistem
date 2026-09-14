@@ -14,6 +14,8 @@ import {
 import { LeadsView } from '@/components/report-utm/LeadsView';
 import { PLUGIN_LABELS, dec } from '@/lib/report-utm/leads-display';
 import { colombiaRangeBounds } from '@/lib/colombia-date';
+import { columnaExcluidoDisponible } from '@/lib/report-utm/lead-exclusion';
+import { LeadsExclusionBar, type EstadoLeads } from '@/components/report-utm/LeadsExclusionBar';
 
 export const dynamic = 'force-dynamic';
 
@@ -29,7 +31,14 @@ type SearchParams = {
   from?: string;
   to?: string;
   page?: string;
+  /** incluidos (defecto) | excluidos | todos — migración 079. */
+  estado?: string;
 };
+
+const COLUMNAS_LEAD =
+  // Sin `first_touch`/`last_touch`: LeadsView no los pinta y son las dos
+  // columnas más pesadas de la tabla (~836 B por fila).
+  'id, cliente_id, form_name, form_id, form_plugin, lead_name, lead_email, lead_phone, utm_source, utm_medium, utm_campaign, utm_content, utm_term, utm_id, click_id, visitor_id, page_url, ip_country, attribution_method, raw_fields, source, created_at';
 
 export default async function LeadsPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
   const sp = await searchParams;
@@ -38,51 +47,68 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
   const page = Math.max(1, parseInt(sp.page ?? '1', 10) || 1);
   const offset = (page - 1) * PAGE_SIZE;
 
+  // Sin la migración 079 no hay marca que filtrar: la página se comporta como
+  // antes y no ofrece pestañas ni acciones de exclusión.
+  const conExclusion = await columnaExcluidoDisponible(supabase);
+  const estado: EstadoLeads =
+    sp.estado === 'excluidos' || sp.estado === 'todos' ? sp.estado : 'incluidos';
+
   // Clientes para el selector
   const { data: clientes } = await supabase
     .from('clientes')
     .select('id, nombre, slug')
     .order('nombre');
 
-  // Página actual de leads
-  let leadsQuery = supabase.from('lead_events').select(
-    // Sin `first_touch`/`last_touch`: LeadsView no los pinta y son las dos
-    // columnas más pesadas de la tabla (~836 B por fila).
-    'id, cliente_id, form_name, form_id, form_plugin, lead_name, lead_email, lead_phone, utm_source, utm_medium, utm_campaign, utm_content, utm_term, utm_id, click_id, visitor_id, page_url, ip_country, attribution_method, raw_fields, source, created_at',
-    { count: 'exact' }
-  );
-  if (sp.clienteId) leadsQuery = leadsQuery.eq('cliente_id', sp.clienteId);
-  if (sp.form_plugin) leadsQuery = leadsQuery.eq('form_plugin', sp.form_plugin);
-  if (sp.utm_source) leadsQuery = leadsQuery.ilike('utm_source', `%${sp.utm_source}%`);
-  if (sp.utm_campaign) leadsQuery = leadsQuery.ilike('utm_campaign', `%${sp.utm_campaign}%`);
-  if (sp.utm_content) leadsQuery = leadsQuery.ilike('utm_content', `%${sp.utm_content}%`);
-  // Día calendario Colombia, igual que el motor del BI: si esta página usara
-  // otra ventana, su total y el del informe no cuadrarían y parecería un bug.
-  if (sp.from)
-    leadsQuery = leadsQuery.gte('created_at', colombiaRangeBounds(sp.from, sp.to ?? sp.from).gte);
-  if (sp.to)
-    leadsQuery = leadsQuery.lt('created_at', colombiaRangeBounds(sp.from ?? sp.to, sp.to).lt);
+  /** Los mismos filtros para la página, las tarjetas y el conteo de excluidos. */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const aplicarFiltros = (q: any, conEstado: boolean) => {
+    if (sp.clienteId) q = q.eq('cliente_id', sp.clienteId);
+    if (sp.form_plugin) q = q.eq('form_plugin', sp.form_plugin);
+    if (sp.utm_source) q = q.ilike('utm_source', `%${sp.utm_source}%`);
+    if (sp.utm_campaign) q = q.ilike('utm_campaign', `%${sp.utm_campaign}%`);
+    if (sp.utm_content) q = q.ilike('utm_content', `%${sp.utm_content}%`);
+    // Día calendario Colombia, igual que el motor del BI: si esta página usara
+    // otra ventana, su total y el del informe no cuadrarían y parecería un bug.
+    if (sp.from) q = q.gte('created_at', colombiaRangeBounds(sp.from, sp.to ?? sp.from).gte);
+    if (sp.to) q = q.lt('created_at', colombiaRangeBounds(sp.from ?? sp.to, sp.to).lt);
+    // Por defecto se ve lo que CUENTA: así el total de esta página y el del
+    // informe coinciden.
+    if (conExclusion && conEstado) {
+      if (estado === 'incluidos') q = q.eq('excluido', false);
+      if (estado === 'excluidos') q = q.eq('excluido', true);
+    }
+    return q;
+  };
 
-  const { data: leads, count } = await leadsQuery
+  // Página actual de leads
+  const { data: leads, count } = await aplicarFiltros(
+    supabase
+      .from('lead_events')
+      .select(conExclusion ? `${COLUMNAS_LEAD}, excluido, excluido_motivo` : COLUMNAS_LEAD, {
+        count: 'exact',
+      }),
+    true
+  )
     .order('created_at', { ascending: false })
     .range(offset, offset + PAGE_SIZE - 1);
 
   // Agregados para las tarjetas resumen (sobre todo el set filtrado, con tope)
-  let statsQuery = supabase.from('lead_events').select('utm_source, utm_campaign, utm_content');
-  if (sp.clienteId) statsQuery = statsQuery.eq('cliente_id', sp.clienteId);
-  if (sp.form_plugin) statsQuery = statsQuery.eq('form_plugin', sp.form_plugin);
-  if (sp.utm_source) statsQuery = statsQuery.ilike('utm_source', `%${sp.utm_source}%`);
-  if (sp.utm_campaign) statsQuery = statsQuery.ilike('utm_campaign', `%${sp.utm_campaign}%`);
-  if (sp.utm_content) statsQuery = statsQuery.ilike('utm_content', `%${sp.utm_content}%`);
-  // Día calendario Colombia, igual que el motor del BI: si esta página usara
-  // otra ventana, su total y el del informe no cuadrarían y parecería un bug.
-  if (sp.from)
-    statsQuery = statsQuery.gte('created_at', colombiaRangeBounds(sp.from, sp.to ?? sp.from).gte);
-  if (sp.to)
-    statsQuery = statsQuery.lt('created_at', colombiaRangeBounds(sp.from ?? sp.to, sp.to).lt);
-
-  const { data: statsRows } = await statsQuery.limit(STATS_CAP);
+  const { data: statsRows } = await aplicarFiltros(
+    supabase.from('lead_events').select('utm_source, utm_campaign, utm_content'),
+    true
+  ).limit(STATS_CAP);
   const stats = computeStats((statsRows as StatsRow[]) ?? []);
+
+  // Excluidos con los mismos filtros, para la pestaña. Usa el índice parcial
+  // de la 079, así que es barato aunque el cliente tenga decenas de miles.
+  let excluidos: number | null = null;
+  if (conExclusion) {
+    const { count: n } = await aplicarFiltros(
+      supabase.from('lead_events').select('id', { count: 'exact', head: true }),
+      false
+    ).eq('excluido', true);
+    excluidos = n ?? 0;
+  }
 
   const total = count ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
@@ -100,6 +126,7 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
     if (sp.form_plugin) base.form_plugin = sp.form_plugin;
     if (sp.from) base.from = sp.from;
     if (sp.to) base.to = sp.to;
+    if (estado !== 'incluidos') base.estado = estado;
     const merged = { ...base, ...params };
     const qs = Object.entries(merged)
       .filter(([, v]) => v !== undefined && v !== '')
@@ -151,12 +178,18 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
         )}
       </div>
 
+      <LeadsExclusionBar
+        estado={estado}
+        excluidos={excluidos}
+        hrefDe={(e) => buildUrl({ estado: e === 'incluidos' ? undefined : e, page: undefined })}
+      />
+
       {/* Tarjetas resumen */}
       {total > 0 && (
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
           <StatCard
             icon={<UserCheck className="h-4 w-4" />}
-            label="Total leads"
+            label={estado === 'excluidos' ? 'Leads excluidos' : 'Total leads'}
             value={total.toLocaleString()}
             hint={
               statsRows && statsRows.length >= STATS_CAP ? `Resumen sobre ${STATS_CAP}` : undefined
@@ -193,6 +226,7 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
 
       {/* Filtros */}
       <form method="get" className="flex flex-wrap gap-3 items-end">
+        {estado !== 'incluidos' && <input type="hidden" name="estado" value={estado} />}
         <FilterSelect name="clienteId" label="Cliente" defaultValue={sp.clienteId ?? ''}>
           <option value="">Todos</option>
           {(clientes ?? []).map((c) => (
@@ -249,16 +283,24 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
 
       {/* Lista de leads: tabla o tarjetas (selector del usuario) */}
       {(leads ?? []).length > 0 ? (
-        <LeadsView leads={leads as ReportUtmLeadEvent[]} clienteMap={clienteMap} />
+        <LeadsView
+          leads={leads as ReportUtmLeadEvent[]}
+          clienteMap={clienteMap}
+          puedeExcluir={conExclusion}
+        />
       ) : (
         <div className="rounded-2xl border border-border bg-card overflow-hidden">
           <div className="px-6 py-16 text-center">
             <UserCheck className="h-8 w-8 text-muted-foreground/40 mx-auto mb-3" />
-            <p className="text-sm font-medium text-foreground">Sin leads todavía</p>
+            <p className="text-sm font-medium text-foreground">
+              {estado === 'excluidos' ? 'Ningún lead excluido' : 'Sin leads todavía'}
+            </p>
             <p className="text-xs text-muted-foreground mt-1">
-              {hasFilters
-                ? 'No hay leads que coincidan con los filtros.'
-                : 'Configurá el plugin WordPress con el S2S Token para capturar envíos de formularios.'}
+              {estado === 'excluidos'
+                ? 'Con estos filtros no hay leads fuera del conteo.'
+                : hasFilters
+                  ? 'No hay leads que coincidan con los filtros.'
+                  : 'Configurá el plugin WordPress con el S2S Token para capturar envíos de formularios.'}
             </p>
           </div>
         </div>

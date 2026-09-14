@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/utils/supabase/server';
 import { verifyS2SSignature } from '@/lib/report-utm/s2s-auth';
 import { resolveAttribution, dedupTouches } from '@/lib/report-utm/attribution-resolver';
+import { aplicarExclusion, cargarReglaExclusion } from '@/lib/report-utm/lead-exclusion';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -184,34 +185,42 @@ export async function POST(req: NextRequest) {
 
   // Para leads: insertar adicionalmente en lead_events con datos de contacto y atribución
   if (eventType === 'lead') {
+    // Regla de exclusión del cliente: el lead se guarda igual, marcado, si no
+    // cuenta (ver lead-exclusion.ts). Misma regla que GHL y Meta Lead Ads.
+    const regla = await cargarReglaExclusion(db, cliente.id);
     const { data: insertedLead, error: leadError } = await db
       .from('lead_events')
-      .insert({
-        cliente_id: cliente.id,
-        form_name: body.form_name ?? null,
-        form_id: body.form_id ?? null,
-        form_plugin: body.form_plugin ?? null,
-        lead_name: body.lead_name ?? null,
-        lead_email: body.lead_email ?? null,
-        lead_phone: body.lead_phone ?? null,
-        utm_source: utm.utm_source,
-        utm_medium: utm.utm_medium,
-        utm_campaign: utm.utm_campaign,
-        utm_content: utm.utm_content,
-        utm_term: utm.utm_term,
-        utm_id: utm.utm_id,
-        click_id: utm.click_id,
-        visitor_id: body.visitor_id ?? null,
-        session_id: body.session_id ?? null,
-        page_url: body.page_url ?? null,
-        referrer: body.referrer ?? null,
-        ip_address: ip,
-        ip_country: ipCountry,
-        user_agent: userAgent,
-        custom_data: body.custom_data ?? null,
-        raw_fields: body.raw_fields ?? null,
-        source: 's2s',
-      })
+      .insert(
+        aplicarExclusion(
+          {
+            cliente_id: cliente.id,
+            form_name: body.form_name ?? null,
+            form_id: body.form_id ?? null,
+            form_plugin: body.form_plugin ?? null,
+            lead_name: body.lead_name ?? null,
+            lead_email: body.lead_email ?? null,
+            lead_phone: body.lead_phone ?? null,
+            utm_source: utm.utm_source,
+            utm_medium: utm.utm_medium,
+            utm_campaign: utm.utm_campaign,
+            utm_content: utm.utm_content,
+            utm_term: utm.utm_term,
+            utm_id: utm.utm_id,
+            click_id: utm.click_id,
+            visitor_id: body.visitor_id ?? null,
+            session_id: body.session_id ?? null,
+            page_url: body.page_url ?? null,
+            referrer: body.referrer ?? null,
+            ip_address: ip,
+            ip_country: ipCountry,
+            user_agent: userAgent,
+            custom_data: body.custom_data ?? null,
+            raw_fields: body.raw_fields ?? null,
+            source: 's2s',
+          },
+          regla
+        )
+      )
       .select('id')
       .single();
 

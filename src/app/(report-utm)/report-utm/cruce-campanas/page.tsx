@@ -14,7 +14,15 @@ import {
   Bug,
   Search,
   ListChecks,
+  EyeOff,
 } from 'lucide-react';
+import {
+  NivelCrucePanel,
+  type EntidadOpcionUI,
+  type NivelCruce,
+  type NivelesUI,
+  type NivelRowUI,
+} from '@/components/report-utm/NivelCrucePanel';
 
 interface Cliente {
   id: string;
@@ -33,6 +41,9 @@ interface Override {
   platform: string;
   campaign_id: string | null;
   campaign_name: string | null;
+  /** Migración 079. Ausente = corrección de campaña. */
+  nivel?: 'campaign' | 'adset' | 'ad';
+  target_name?: string | null;
 }
 interface Suggestion {
   campaign_id: string | null;
@@ -61,11 +72,25 @@ const BULK_CONFIDENCE = 80;
 const METHOD_LABEL: Record<string, string> = {
   utm_id_campaign: 'ID campaña',
   utm_id_ad: 'ID anuncio',
+  campaign_id_field: 'ID en campaña',
+  content_ad_id: 'ID en contenido',
+  term_adset_id: 'ID en conjunto',
   name: 'Nombre',
   content_ad: 'Contenido',
   term_adset: 'Adset',
   override: 'Manual',
   none: 'Sin cruzar',
+};
+
+const NIVEL_LABEL: Record<string, string> = {
+  campaign: 'Campaña',
+  adset: 'Conjunto',
+  ad: 'Anuncio',
+};
+
+const NIVELES_VACIOS: NivelesUI = {
+  adset: { cobertura: { total: 0, resueltos: 0, conId: 0, manual: 0 }, rows: [] },
+  ad: { cobertura: { total: 0, resueltos: 0, conId: 0, manual: 0 }, rows: [] },
 };
 
 function daysAgo(n: number) {
@@ -88,8 +113,16 @@ export default function CruceCampanasPage() {
   const [overrides, setOverrides] = useState<Override[]>([]);
   const [breakdown, setBreakdown] = useState<BreakdownRow[]>([]);
   const [coverage, setCoverage] = useState<Coverage | null>(null);
+  const [niveles, setNiveles] = useState<NivelesUI>(NIVELES_VACIOS);
+  const [entidades, setEntidades] = useState<Record<NivelCruce, EntidadOpcionUI[]>>({
+    adset: [],
+    ad: [],
+  });
+  const [excluidos, setExcluidos] = useState<number | null>(null);
+  const [mapeoPorNivel, setMapeoPorNivel] = useState(false);
   const [loading, setLoading] = useState(false);
   const [bulkBusy, setBulkBusy] = useState(false);
+  const [errorMapeo, setErrorMapeo] = useState<string | null>(null);
 
   // Filtros de la tabla
   const [search, setSearch] = useState('');
@@ -120,6 +153,10 @@ export default function CruceCampanasPage() {
         const rows: BreakdownRow[] = j.breakdown ?? [];
         setBreakdown(rows);
         setCoverage(j.coverage ?? null);
+        setNiveles(j.niveles ?? NIVELES_VACIOS);
+        setEntidades(j.entidades ?? { adset: [], ad: [] });
+        setExcluidos(typeof j.excluidos === 'number' ? j.excluidos : null);
+        setMapeoPorNivel(j.mapeo_por_nivel === true);
         // Pre-selecciona la sugerencia en cada fila no cruzada
         setPicks(
           Object.fromEntries(
@@ -160,6 +197,31 @@ export default function CruceCampanasPage() {
         campaign_name: camp.name,
       }),
     });
+  }
+
+  /** Corrección de conjunto o anuncio: el valor UTM apunta a la entidad real. */
+  async function mapearNivel(nivel: NivelCruce, row: NivelRowUI, entidad: EntidadOpcionUI) {
+    setErrorMapeo(null);
+    const res = await fetch('/api/report-utm/bi/campaign-map', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        cliente_id: clienteId,
+        nivel,
+        match_field: row.field,
+        match_value: row.value,
+        platform: 'meta',
+        target_id: entidad.id,
+        target_name: entidad.name,
+        campaign_name: entidad.campaign_name ?? undefined,
+      }),
+    });
+    if (!res.ok) {
+      const j = await res.json().catch(() => ({}));
+      setErrorMapeo(j.error ?? 'No se pudo guardar la corrección.');
+      return;
+    }
+    load();
   }
 
   async function saveRow(row: BreakdownRow) {
@@ -246,8 +308,8 @@ export default function CruceCampanasPage() {
           Cruce Leads × Campañas
         </h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Cada <code className="font-mono px-1 py-0.5 rounded bg-muted">utm_campaign</code> de tus
-          leads y a qué campaña real de Meta/TikTok cruzó. Lo que no cruce automáticamente, mapéalo
+          Cada UTM de tus leads y a qué campaña, conjunto y anuncio real de Meta/TikTok cruzó —
+          tanto si llegó como nombre como si llegó como ID. Lo que no cruce automáticamente, mapéalo
           aquí.
         </p>
       </div>
@@ -305,7 +367,9 @@ export default function CruceCampanasPage() {
       ) : (
         <>
           {/* Resumen */}
-          <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+          <div
+            className={`grid grid-cols-1 sm:grid-cols-2 gap-4 ${excluidos !== null ? 'lg:grid-cols-5' : 'lg:grid-cols-4'}`}
+          >
             <Stat
               label="Campañas detectadas"
               value={String(campaigns.length)}
@@ -330,6 +394,14 @@ export default function CruceCampanasPage() {
               icon={Link2}
               tone="emerald"
             />
+            {excluidos !== null && (
+              <Stat
+                label="Leads excluidos (no cuentan)"
+                value={excluidos.toLocaleString()}
+                icon={EyeOff}
+                tone={excluidos > 0 ? 'amber' : 'emerald'}
+              />
+            )}
           </div>
 
           {/* Desglose de cobertura por método */}
@@ -339,7 +411,7 @@ export default function CruceCampanasPage() {
                 <Sparkles className="h-4 w-4 text-emerald-500" />
                 <h2 className="text-sm font-semibold text-foreground">Cómo cruzaron los leads</h2>
                 <span className="text-[10px] text-muted-foreground font-mono ml-auto">
-                  {coverage.total} leads
+                  {coverage.total} leads que cuentan
                 </span>
               </div>
               <CoverageBar coverage={coverage} />
@@ -498,7 +570,7 @@ export default function CruceCampanasPage() {
                               <span className="text-[11px] text-muted-foreground">
                                 {row.invalid_reason === 'macro_no_renderizado'
                                   ? 'Revisa los parámetros de URL en Meta/TikTok (clic orgánico/compartido o macro mal configurado).'
-                                  : 'El lead llegó sin UTM. Propaga los parámetros en landings/formularios o usa Meta Lead Ads.'}
+                                  : 'El lead llegó sin UTM. Si no es captación pagada, exclúyelo con la regla «Qué leads cuentan» de la ficha del cliente.'}
                               </span>
                             ) : (
                               <span className="text-[11px] text-muted-foreground">—</span>
@@ -518,6 +590,15 @@ export default function CruceCampanasPage() {
             )}
           </div>
 
+          {/* Conjunto y anuncio: IDs → nombres y corrección por nivel */}
+          <NivelCrucePanel
+            niveles={niveles}
+            entidades={entidades}
+            habilitado={mapeoPorNivel}
+            onMapear={mapearNivel}
+          />
+          {errorMapeo && <p className="text-xs text-red-500">{errorMapeo}</p>}
+
           {/* Mapeos existentes */}
           {overrides.length > 0 && (
             <div className="rounded-2xl border border-border bg-card overflow-hidden">
@@ -528,15 +609,19 @@ export default function CruceCampanasPage() {
               <table className="w-full">
                 <thead className="bg-muted/60">
                   <tr className="text-left text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    <th className="px-6 py-3">Nivel</th>
                     <th className="px-6 py-3">Campo</th>
                     <th className="px-6 py-3">Valor UTM</th>
-                    <th className="px-6 py-3">Campaña</th>
+                    <th className="px-6 py-3">Entidad real</th>
                     <th className="px-6 py-3"></th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
                   {overrides.map((o) => (
                     <tr key={o.id} className="hover:bg-accent">
+                      <td className="px-6 py-3 text-[11px] text-muted-foreground">
+                        {NIVEL_LABEL[o.nivel ?? 'campaign']}
+                      </td>
                       <td className="px-6 py-3 text-[11px] font-mono text-muted-foreground">
                         {o.match_field}
                       </td>
@@ -544,7 +629,8 @@ export default function CruceCampanasPage() {
                         {o.match_value}
                       </td>
                       <td className="px-6 py-3 text-xs text-foreground">
-                        [{o.platform}] {o.campaign_name}
+                        [{o.platform}]{' '}
+                        {o.nivel && o.nivel !== 'campaign' ? o.target_name : o.campaign_name}
                       </td>
                       <td className="px-6 py-3">
                         <button
@@ -562,9 +648,11 @@ export default function CruceCampanasPage() {
           )}
 
           <p className="text-xs text-muted-foreground">
-            Tras mapear, usa la dimensión{' '}
-            <code className="font-mono px-1 py-0.5 rounded bg-muted">Campaña (cruzada)</code> en
-            cualquier tabla o gráfica del BI para ver gasto, leads, CPL y ROAS por campaña real.
+            Tras mapear, usa las dimensiones{' '}
+            <code className="font-mono px-1 py-0.5 rounded bg-muted">Campaña</code>,{' '}
+            <code className="font-mono px-1 py-0.5 rounded bg-muted">Conjunto</code> o{' '}
+            <code className="font-mono px-1 py-0.5 rounded bg-muted">Anuncio</code> en cualquier
+            tabla o gráfica del BI para ver gasto, leads, CPL y ROAS por entidad real.
           </p>
         </>
       )}
@@ -576,6 +664,9 @@ export default function CruceCampanasPage() {
 const METHOD_LABELS: { key: string; label: string; color: string }[] = [
   { key: 'utm_id_campaign', label: 'ID campaña', color: 'bg-emerald-500' },
   { key: 'utm_id_ad', label: 'ID anuncio', color: 'bg-emerald-400' },
+  { key: 'campaign_id_field', label: 'ID en campaña', color: 'bg-emerald-300' },
+  { key: 'content_ad_id', label: 'ID en contenido', color: 'bg-green-400' },
+  { key: 'term_adset_id', label: 'ID en conjunto', color: 'bg-lime-400' },
   { key: 'name', label: 'Nombre', color: 'bg-teal-400' },
   { key: 'content_ad', label: 'Contenido', color: 'bg-cyan-400' },
   { key: 'term_adset', label: 'Adset', color: 'bg-sky-400' },

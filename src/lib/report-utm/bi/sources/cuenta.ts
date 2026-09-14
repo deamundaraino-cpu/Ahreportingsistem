@@ -61,8 +61,8 @@ export const CUENTA_SOURCE: DataSource = {
     measure(
       S,
       'hotmart_pagos_iniciados',
-      'Pagos iniciados (Hotmart)',
-      'Veces que alguien llegó a la página de pago. Se mide con Google Analytics, no con Hotmart, y es del sitio entero: no se reparte por campaña.',
+      'Pagos iniciados (GA4 · pág. de pago)',
+      'Veces que alguien llegó a la página de pago. Se mide con Google Analytics, no con Hotmart, y es del sitio entero: no se reparte por campaña. Se configura en cada pestaña del cliente con la URL o el título de la página de pago.',
       'hotmart'
     ),
 
@@ -129,6 +129,47 @@ export const CUENTA_SOURCE: DataSource = {
       'Facturación de los upsell antes de comisiones.',
       'hotmart'
     ),
+    // Downsell y reembolsos: columnas de la migración 067 que el worker ya
+    // escribía y que el BI no ofrecía. Sin ellas, `hotmart_revenue_calc` daba un
+    // total distinto del dashboard clásico (`total_facturacion_neta` sí suma el
+    // downsell desde julio).
+    money(
+      S,
+      'ventas_downsell',
+      'Ventas downsell (neto)',
+      'Facturación neta de los downsells (oferta a quien rechazó el upsell).',
+      'hotmart'
+    ),
+    measure(
+      S,
+      'ventas_downsell_count',
+      'Ventas downsell (#)',
+      'Cantidad de ventas de downsell.',
+      'hotmart'
+    ),
+    money(
+      S,
+      'ventas_downsell_bruto',
+      'Ventas downsell (bruto)',
+      'Facturación de los downsells antes de comisiones.',
+      'hotmart'
+    ),
+    money(
+      S,
+      'ventas_reembolsado',
+      'Reembolsado (neto)',
+      'Neto de las ventas que acabaron devueltas, imputado a la fecha de la venta original.',
+      'hotmart',
+      { direction: 'down' }
+    ),
+    measure(
+      S,
+      'ventas_reembolsado_count',
+      'Reembolsos (#)',
+      'Cantidad de ventas devueltas o en contracargo.',
+      'hotmart',
+      { direction: 'down' }
+    ),
 
     // `ventas_cerradas` TIENE columna propia en la tabla, pero el worker
     // nunca la escribe: el número real que carga el equipo vive dentro del
@@ -155,17 +196,24 @@ export const CUENTA_SOURCE: DataSource = {
       'Facturación Hotmart (neto)',
       'Dinero facturado en Hotmart en el período (neto de comisiones).',
       'hotmart',
-      { formula: 'cuenta.ventas_principal + cuenta.ventas_bump + cuenta.ventas_upsell', agg: 'sum' }
+      // Con downsell: es lo que ya suma el dashboard clásico
+      // (`total_facturacion_neta`). Sin él, los dos sistemas daban cifras
+      // distintas para la misma facturación.
+      {
+        formula:
+          'cuenta.ventas_principal + cuenta.ventas_bump + cuenta.ventas_upsell + cuenta.ventas_downsell',
+        agg: 'sum',
+      }
     ),
     measure(
       S,
       'hotmart_sales_calc',
       'Ventas Hotmart (total)',
-      'Cantidad de ventas de Hotmart en el período (principal + bump + upsell).',
+      'Cantidad de ventas de Hotmart en el período (principal + bump + upsell + downsell).',
       'hotmart',
       {
         formula:
-          'cuenta.ventas_principal_count + cuenta.ventas_bump_count + cuenta.ventas_upsell_count',
+          'cuenta.ventas_principal_count + cuenta.ventas_bump_count + cuenta.ventas_upsell_count + cuenta.ventas_downsell_count',
         agg: 'sum',
       }
     ),

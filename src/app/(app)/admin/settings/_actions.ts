@@ -19,6 +19,32 @@ import type { FuenteColumnas } from '@/lib/sheets/campos-db';
 import { loadCamposCliente as loadCamposClienteServer } from '@/lib/sheets/campos-db';
 import { leerJsonRespuesta, esTimeoutDeFetch } from '@/lib/fetch-json';
 import { internalFetch } from '@/lib/internal-fetch';
+import {
+  archivarCliente,
+  asegurarEspejoUtm,
+  eliminarClienteCompleto,
+  mapaArchivados,
+  resumenBorrado,
+} from '@/lib/clientes/ciclo-de-vida';
+import { interpretarEstadoCuenta } from '@/lib/meta/estado-cuenta';
+
+/**
+ * Marca `archivado` en cada cliente. El estado vive en su espejo de
+ * Report-UTM (ver `lib/clientes/ciclo-de-vida.ts`); un error al leerlo no
+ * esconde a nadie: sin dato, el cliente se muestra como activo.
+ */
+async function anotarArchivados<T extends { id: string }>(
+  admin: Awaited<ReturnType<typeof createAdminClient>>,
+  clientes: T[]
+): Promise<Array<T & { archivado: boolean }>> {
+  let archivados = new Set<string>();
+  try {
+    archivados = await mapaArchivados(admin);
+  } catch {
+    /* sin Report-UTM: todos activos */
+  }
+  return clientes.map((c) => ({ ...c, archivado: archivados.has(c.id) }));
+}
 
 export async function getClientes() {
   const supabase = await createClient();
@@ -55,7 +81,7 @@ export async function getClientes() {
         .order('created_at', { ascending: false });
 
       if (error) return [];
-      return (clientes ?? []).map(sanearClienteParaListado);
+      return anotarArchivados(adminSupabase, (clientes ?? []).map(sanearClienteParaListado));
     }
   }
 
@@ -71,7 +97,7 @@ export async function getClientes() {
 
   // Este listado llega a /dashboard y /soporte, que ve cualquier rol: nunca
   // debe cargar credenciales. El editor usa getCliente(), que sí las necesita.
-  return (clientes ?? []).map(sanearClienteParaListado);
+  return anotarArchivados(adminSupabase, (clientes ?? []).map(sanearClienteParaListado));
 }
 
 export async function getCliente(id: string) {
@@ -104,8 +130,63 @@ export async function createCliente(data: { nombre: string }) {
     return { error: error.message };
   }
 
+  // Una sola casa: el cliente nace también en Report-UTM, ya enlazado. Antes
+  // aparecía allí solo cuando alguien visitaba su listado, y un cliente creado
+  // desde Report-UTM nacía huérfano, sin gasto con el que cruzar.
+  const espejo = await asegurarEspejoUtm(supabase, newClient.id, data.nombre);
+  if (!espejo.id) console.error('[createCliente] sin espejo en Report-UTM:', espejo.error);
+
   revalidatePath('/admin/settings');
+  revalidatePath('/report-utm/clientes');
   return { success: true, data: newClient };
+}
+
+async function rolActual(): Promise<string | null> {
+  const supabaseStore = await createClient();
+  const {
+    data: { user },
+  } = await supabaseStore.auth.getUser();
+  if (!user) return null;
+  const { data: profile } = await supabaseStore
+    .from('user_profiles')
+    .select('role')
+    .eq('id', user.id)
+    .single();
+  return profile?.role ?? 'viewer';
+}
+
+const ROLES_BORRADO = new Set(['superadmin', 'admin']);
+
+/** Lo que se perdería al borrar, para el diálogo de confirmación. */
+export async function resumenBorradoCliente(id: string) {
+  const rol = await rolActual();
+  if (!rol || !ROLES_BORRADO.has(rol))
+    return { error: 'Solo un administrador puede borrar clientes.' };
+  const resumen = await resumenBorrado(await createAdminClient(), id);
+  if (!resumen) return { error: 'El cliente no existe.' };
+  return { success: true, resumen };
+}
+
+/** Archiva o reactiva el cliente en los dos lados a la vez. */
+export async function setClienteArchivado(id: string, archivado: boolean) {
+  const rol = await rolActual();
+  if (!rol || !ROLES_BORRADO.has(rol)) return { error: 'Solo un administrador puede archivar.' };
+
+  const admin = await createAdminClient();
+  const { data: cliente } = await admin
+    .from('clientes')
+    .select('nombre')
+    .eq('id', id)
+    .maybeSingle();
+  if (!cliente) return { error: 'El cliente no existe.' };
+
+  const r = await archivarCliente(admin, id, String(cliente.nombre ?? ''), archivado);
+  if (!r.ok) return { error: r.error };
+
+  revalidatePath('/admin/settings');
+  revalidatePath('/dashboard');
+  revalidatePath('/report-utm/clientes');
+  return { success: true };
 }
 
 export async function updateClienteConfig(id: string, config_api: any) {
@@ -151,27 +232,29 @@ export async function assignLayoutToCliente(clienteId: string, layoutId: string 
   return { success: true };
 }
 
+/**
+ * Borra el cliente en el reporting Y en Report-UTM.
+ *
+ * Hasta el 2026-09-12 el control de rol estaba comentado como TODO: cualquier
+ * usuario autenticado podía borrar cualquier cliente y, por cascada, todas sus
+ * métricas. Y solo borraba este lado, dejando el cliente UTM huérfano.
+ */
 export async function deleteCliente(id: string) {
-  const supabaseStore = await createClient();
-  const {
-    data: { user },
-  } = await supabaseStore.auth.getUser();
+  const rol = await rolActual();
+  if (!rol) return { error: 'No autorizado' };
+  if (!ROLES_BORRADO.has(rol)) {
+    return { error: 'Solo los administradores pueden borrar clientes' };
+  }
 
-  if (!user) return { error: 'No autorizado' };
-
-  // TODO: Implement role-based access control
-  // const { data: profile } = await supabaseStore.from('user_profiles').select('role').eq('id', user.id).single()
-  // if (profile?.role !== 'admin') return { error: 'Solo los administradores pueden borrar clientes' }
-
-  const supabase = await createAdminClient();
-  const { error } = await supabase.from('clientes').delete().eq('id', id);
-
-  if (error) {
-    console.error('Error deleting client:', error);
-    return { error: error.message };
+  const r = await eliminarClienteCompleto(await createAdminClient(), id);
+  if (!r.ok) {
+    console.error('Error deleting client:', r.error);
+    return { error: r.error };
   }
 
   revalidatePath('/admin/settings');
+  revalidatePath('/dashboard');
+  revalidatePath('/report-utm/clientes');
   return { success: true };
 }
 
@@ -353,7 +436,10 @@ export async function fetchMetaAdAccounts(token: string) {
   if (!token) return { error: 'Falta el token de Meta' };
 
   try {
-    const url = `https://graph.facebook.com/v19.0/me/adaccounts?fields=account_id,name&limit=200&access_token=${token}`;
+    // `account_status` y `disable_reason`: al elegir la cuenta ya se ve si Meta
+    // la tiene parada por pago. `currency`: la moneda en la que gasta, que tiene
+    // que coincidir con la moneda de reporte del cliente para que el ROAS valga.
+    const url = `https://graph.facebook.com/v19.0/me/adaccounts?fields=account_id,name,account_status,disable_reason,currency&limit=200&access_token=${token}`;
     const res = await fetch(url);
     const data = await res.json();
 
@@ -365,7 +451,14 @@ export async function fetchMetaAdAccounts(token: string) {
       const actId = String(a.account_id || '').startsWith('act_')
         ? String(a.account_id)
         : `act_${a.account_id}`;
-      return { account_id: actId, name: a.name || actId };
+      const estado = interpretarEstadoCuenta(a);
+      return {
+        account_id: actId,
+        name: a.name || actId,
+        currency: estado.moneda,
+        bloqueada: estado.bloqueada,
+        estado: estado.texto,
+      };
     });
     return { success: true, accounts };
   } catch (err: any) {
@@ -780,41 +873,61 @@ export async function getActiveAlerts(): Promise<ActiveAlert[]> {
     }
   }
 
-  let query = adminSupabase
-    .from('cliente_tabs')
-    .select(
-      // La FK va nombrada a propósito. `clientes(nombre)` a secas devuelve un 300
-      // (PGRST201): desde la migración 040 existe `notification_rule_cooldowns`,
-      // que apunta a la vez a `cliente_tabs` y a `clientes`, así que PostgREST ve
-      // dos caminos —el directo y ese muchos-a-muchos— y se niega a elegir. Como
-      // abajo el error se traga con `return []`, la campana se quedaba sin
-      // alertas de presupuesto en silencio.
-      'id, nombre, cliente_id, presupuesto_objetivo, alert_sent_at_90, alert_sent_at_100, clientes!cliente_tabs_cliente_id_fkey(nombre)'
-    )
-    .eq('archived', false)
-    .not('presupuesto_objetivo', 'is', null)
-    .or('alert_sent_at_90.not.is.null,alert_sent_at_100.not.is.null');
+  // Antes se leía `cliente_tabs.alert_sent_at_90/100`, que NADA en el repo
+  // escribe (el comprobador de presupuesto externo que las llenaba ya no
+  // existe): el KPI de alertas del dashboard estaba congelado. Ahora sale de lo
+  // que el motor de reglas SÍ escribe al disparar una alerta — el cooldown por
+  // (regla, cliente, pestaña) de `notification_rule_cooldowns` — en los últimos
+  // 7 días. Consultas separadas y unión en memoria: embebidas, esas tablas dan
+  // un PGRST201 por la doble FK entre pestañas y clientes.
+  const desde = new Date(Date.now() - 7 * 86400_000).toISOString();
+  let qCool = adminSupabase
+    .from('notification_rule_cooldowns')
+    .select('rule_id, cliente_id, tab_id, last_triggered_at')
+    .gte('last_triggered_at', desde)
+    .order('last_triggered_at', { ascending: false })
+    .limit(200);
+  if (allowedClientIds) qCool = qCool.in('cliente_id', allowedClientIds);
+  const { data: disparos, error } = await qCool;
+  if (error || !disparos || disparos.length === 0) return [];
 
-  if (allowedClientIds) {
-    query = query.in('cliente_id', allowedClientIds);
-  }
+  const ids = <K extends string>(k: K) =>
+    Array.from(new Set(disparos.map((d: any) => d[k]).filter(Boolean))) as string[];
+  const [{ data: reglas }, { data: tabs }, { data: clientes }] = await Promise.all([
+    adminSupabase
+      .from('notification_rules')
+      .select('id, nombre, metric, value')
+      .in('id', ids('rule_id')),
+    ids('tab_id').length
+      ? adminSupabase
+          .from('cliente_tabs')
+          .select('id, nombre, presupuesto_objetivo, archived')
+          .in('id', ids('tab_id'))
+      : Promise.resolve({ data: [] as any[] }),
+    adminSupabase.from('clientes').select('id, nombre').in('id', ids('cliente_id')),
+  ]);
+  const porId = <T extends { id: string }>(xs: T[] | null) =>
+    new Map((xs ?? []).map((x) => [x.id, x]));
+  const R = porId(reglas as any[]);
+  const T = porId(tabs as any[]);
+  const C = porId(clientes as any[]);
 
-  const { data, error } = await query.order('alert_sent_at_100', {
-    ascending: false,
-    nullsFirst: false,
-  });
-
-  if (error || !data) return [];
-
-  return data.map((row: any) => ({
-    tabId: row.id,
-    tabNombre: row.nombre,
-    clienteId: row.cliente_id,
-    clienteNombre: (row.clientes as any)?.nombre ?? row.cliente_id,
-    presupuestoObjetivo: row.presupuesto_objetivo,
-    level: row.alert_sent_at_100 ? 100 : 90,
-    sentAt: row.alert_sent_at_100 ?? row.alert_sent_at_90,
-  }));
+  return disparos
+    .filter((d: any) => !T.get(d.tab_id)?.archived)
+    .map((d: any) => {
+      const regla: any = R.get(d.rule_id);
+      const tab: any = T.get(d.tab_id);
+      const esPresupuesto = regla?.metric === 'budget_percentage';
+      return {
+        tabId: d.tab_id ?? '',
+        tabNombre: tab?.nombre ?? regla?.nombre ?? 'Regla de alerta',
+        clienteId: d.cliente_id,
+        clienteNombre: (C.get(d.cliente_id) as any)?.nombre ?? d.cliente_id,
+        presupuestoObjetivo: Number(tab?.presupuesto_objetivo ?? 0),
+        level: (esPresupuesto && Number(regla?.value ?? 0) >= 100 ? 100 : 90) as 90 | 100,
+        sentAt: d.last_triggered_at,
+      };
+    });
 }
 
 // ─── Google OAuth (conexión a nivel agencia) ─────────────────────────────────

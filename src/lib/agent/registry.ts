@@ -21,6 +21,7 @@ import { toolsCampanas } from './tools/campanas';
 import { toolsInformes } from './tools/informes';
 import { toolsOperaciones } from './tools/operaciones';
 import { toolsAdministracion } from './tools/administracion';
+import { toolsLeads } from './tools/leads';
 
 /**
  * Todas las herramientas, en orden estable.
@@ -38,6 +39,7 @@ export const ALL_TOOLS: AnyAgentTool[] = [
   ...toolsInformes,
   ...toolsOperaciones,
   ...toolsAdministracion,
+  ...toolsLeads,
 ].sort((a, b) => a.name.localeCompare(b.name));
 
 const PORNOMBRE = new Map<string, AnyAgentTool>(ALL_TOOLS.map((t) => [t.name, t]));

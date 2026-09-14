@@ -28,6 +28,7 @@ import {
 import type { BiMetric } from './bi-metadata';
 import { loadCamposCliente } from '@/lib/sheets/campos-db';
 import { colombiaRangeBounds } from '@/lib/colombia-date';
+import { columnaExcluidoDisponible } from './lead-exclusion';
 
 export interface AvailabilityParams {
   cliente_id?: string;
@@ -126,6 +127,9 @@ export async function getMetricAvailability(
     .select('id', { count: 'exact', head: true })
     .gte('created_at', colombiaRangeBounds(dateFrom, dateTo).gte)
     .lt('created_at', colombiaRangeBounds(dateFrom, dateTo).lt);
+  // Un cliente cuyos leads están todos excluidos no «tiene leads»: el selector no
+  // debe ofrecer una métrica que en el informe saldría en cero.
+  if (await columnaExcluidoDisponible(db)) leadsQ.eq('excluido', false);
   const salesQ = rtm
     .from('sales_events')
     .select('amount')

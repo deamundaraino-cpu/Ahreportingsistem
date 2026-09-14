@@ -76,17 +76,37 @@ división no significa nada. El editor lo avisa antes de que lo pidas.
 Leads y gasto viven en tablas distintas y el gasto no tiene UTM. El puente es la
 **identidad de la campaña**, y se resuelve en cascada:
 
-1. Corrección manual del trafficker (`/report-utm/cruce-campanas`)
+1. Corrección manual del trafficker (`/report-utm/cruce-campanas`), a nivel
+   campaña, conjunto o anuncio
 2. `utm_id` = id de campaña
 3. `utm_id` = id de anuncio → sube a su campaña
-4. `utm_campaign` = nombre de campaña (normalizado)
-5. `utm_content` = nombre de anuncio
-6. `utm_term` = nombre de conjunto
+4. El ID llegó en el campo del NOMBRE (desde 2026-09-12): `utm_campaign` = id de
+   campaña, `utm_content` = id de anuncio, `utm_term` = id de conjunto
+5. `utm_campaign` = nombre de campaña (normalizado)
+6. `utm_content` = nombre de anuncio
+7. `utm_term` = nombre de conjunto
 
-**Los pasos 2 y 3 son los que sostienen el sistema.** Hoy entre el 67 % y el
+**Los pasos 2 a 4 son los que sostienen el sistema.** Hoy entre el 67 % y el
 100 % de los leads cruzan, y en dos clientes el cruce por nombre daría
 prácticamente cero — sus campañas llevan emojis y corchetes que no coinciden con
-el UTM. Cruzan porque el `utm_id` los rescata.
+el UTM. Cruzan porque el ID los rescata. El paso 4 existe porque GoHighLevel y
+algunos enlaces mandan `{{ad.id}}` / `{{adset.id}}` donde se esperaba el nombre:
+en Eduversio es el 18 % de los leads ([doc 21](./21-auditoria-utms-ghl.md)).
+
+El conjunto y el anuncio se titulan con la misma lógica: corrección manual → ID
+(en `utm_id` o en su propio campo) → nombre. Un ID que la cuenta no conoce se
+queda como su propia fila, marcada como no resuelta, y se corrige en
+`/report-utm/cruce-campanas` → «Conjunto y anuncio».
+
+### Leads que no cuentan
+
+Cada cliente puede tener una regla «Qué leads cuentan» (ficha del cliente): exigir
+atribución publicitaria, excluir fuentes o formularios. Los leads que la regla deja
+fuera **se guardan igual** con `excluido = true` y su motivo, pero no suman en
+`leads_count`, en el CPL, en las respuestas ni en el % de cruce. Se ven y se pueden
+re-incluir en `/report-utm/leads` → pestaña «Excluidos». La regla vive en
+`src/lib/report-utm/lead-exclusion.ts` y la aplican las tres vías de ingesta.
+Requiere la migración 079.
 
 Un lead que no cruza **no se funde en un cubo común**: se queda como su propia
 fila con gasto 0 y la UI la marca. Es deliberado — fundirlas escondía justo el

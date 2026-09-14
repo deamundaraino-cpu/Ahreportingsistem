@@ -34,7 +34,34 @@ import { AD_JSONB_METRICS, normLabel } from './bi-metadata';
 // ============================================================
 
 export type MatchMethod =
-  'override' | 'utm_id_campaign' | 'utm_id_ad' | 'name' | 'content_ad' | 'term_adset' | 'none';
+  | 'override'
+  | 'utm_id_campaign'
+  | 'utm_id_ad'
+  | 'campaign_id_field'
+  | 'content_ad_id'
+  | 'term_adset_id'
+  | 'name'
+  | 'content_ad'
+  | 'term_adset'
+  | 'none';
+
+/** Nivel de una entidad publicitaria. Es también el `nivel` de un override. */
+export type NivelEntidad = 'campaign' | 'adset' | 'ad';
+
+/**
+ * ¿El valor es un ID numérico de Meta y no un nombre?
+ *
+ * GoHighLevel manda a veces el NOMBRE de la entidad en los UTM y a veces su ID
+ * (`{{ad.id}}`, `{{adset.id}}`): la reunión del 2026-09-08 lo vio en Cris
+ * Tributario, donde conjunto y anuncio salían como `120212…` en el informe.
+ *
+ * Solo dígitos y al menos 10: los IDs de Meta tienen 15-18. El umbral evita que
+ * un anuncio llamado `2026` o `11` se trate como ID y deje de cruzar por nombre.
+ */
+export function esIdMeta(v: unknown): boolean {
+  if (v === null || v === undefined) return false;
+  return /^\d{10,}$/.test(String(v).trim());
+}
 
 // Margen extra (días) para el índice de campañas respecto al rango de leads:
 // registra campañas cuyo gasto cayó justo fuera del rango exacto, sin sumar su
@@ -93,6 +120,27 @@ export interface CampaignIndex {
   // fantasma que dejaban el widget vacío. Estos conjuntos son los que sí.
   adsActivos: Set<string>; // ad_name con gasto en el rango
   adsetsActivos: Set<string>; // adset_name con gasto en el rango
+  // ── Por ID de conjunto ──
+  // GHL manda a veces el ID del conjunto en `utm_term`. Sin estos dos mapas ese
+  // lead no cruzaba ni se podía titular: el informe mostraba `120212…`.
+  adsetByAdsetId: Map<string, string>; // adset_id → adset_name
+  byAdsetId: Map<string, string>; // adset_id → key (de la campaña)
+  // ── Catálogo para corregir a mano por nivel (/report-utm/cruce-campanas) ──
+  adCatalog: Map<string, EntidadCatalogo>; // ad_id → anuncio
+  adsetCatalog: Map<string, EntidadCatalogo>; // adset_id → conjunto
+}
+
+/** Un anuncio o conjunto real, tal como se ofrece para mapear a mano. */
+export interface EntidadCatalogo {
+  id: string;
+  name: string;
+  /** Clave de la campaña a la que pertenece, si el índice la conoce. */
+  campaignKey: string | null;
+  /** Conjunto padre (solo anuncios). */
+  adsetId: string | null;
+  adsetName: string | null;
+  /** Gastó dentro del rango exacto (no solo en el margen de indexación). */
+  activo: boolean;
 }
 
 export interface Override {
@@ -101,6 +149,15 @@ export interface Override {
   campaign_id: string | null;
   campaign_name: string | null;
   platform: string;
+  /**
+   * Nivel de la corrección (migración 079). Ausente o `campaign` en las filas
+   * anteriores y mientras la migración no esté aplicada: se comportan igual que
+   * siempre.
+   */
+  nivel?: NivelEntidad | null;
+  /** Entidad real de nivel conjunto o anuncio a la que apunta el valor. */
+  target_id?: string | null;
+  target_name?: string | null;
 }
 
 function emptyIndex(): CampaignIndex {
@@ -117,6 +174,10 @@ function emptyIndex(): CampaignIndex {
     adsetByAdId: new Map(),
     adsActivos: new Set(),
     adsetsActivos: new Set(),
+    adsetByAdsetId: new Map(),
+    byAdsetId: new Map(),
+    adCatalog: new Map(),
+    adsetCatalog: new Map(),
   };
 }
 
@@ -234,6 +295,7 @@ export async function loadCampaignIndex(
       // Los canónicos NO dependen de que la campaña esté indexada: sirven para
       // titular la fila aunque el ad venga de una campaña fuera del rango.
       const activo = inRange && num(a.spend) > 0;
+      const adsetId = a.adset_id ? String(a.adset_id) : null;
       if (adName) {
         idx.adCanonicalByName.set(normLabel(adName), adName);
         if (adId) idx.adByAdId.set(adId, adName);
@@ -242,25 +304,53 @@ export async function loadCampaignIndex(
       if (adsetName) {
         idx.adsetCanonicalByName.set(normLabel(adsetName), adsetName);
         if (adId) idx.adsetByAdId.set(adId, adsetName);
+        if (adsetId) idx.adsetByAdsetId.set(adsetId, adsetName);
       }
       const campId = a.campaign_id as string | null;
       const campKey = campId ? idx.byCampaignId.get(campId) : undefined;
+      if (adId && adName) {
+        const previo = idx.adCatalog.get(adId);
+        idx.adCatalog.set(adId, {
+          id: adId,
+          name: adName,
+          campaignKey: campKey ?? previo?.campaignKey ?? null,
+          adsetId: adsetId ?? previo?.adsetId ?? null,
+          adsetName: adsetName ?? previo?.adsetName ?? null,
+          activo: activo || previo?.activo === true,
+        });
+      }
       if (!campKey) continue;
       if (adId) idx.byAdId.set(adId, campKey);
       if (adName) idx.byAdName.set(normLabel(adName), campKey);
       if (adsetName) idx.byAdsetName.set(normLabel(adsetName), campKey);
+      if (adsetId) idx.byAdsetId.set(adsetId, campKey);
     }
     const metaAdsets = (row.meta_adsets as Record<string, unknown>[] | null) ?? [];
     for (const a of metaAdsets) {
       const adsetName = a.adset_name as string | null;
+      const adsetId = a.adset_id ? String(a.adset_id) : null;
+      const activo = inRange && num(a.spend) > 0;
       if (adsetName) {
         idx.adsetCanonicalByName.set(normLabel(adsetName), adsetName);
-        if (inRange && num(a.spend) > 0) idx.adsetsActivos.add(adsetName);
+        if (activo) idx.adsetsActivos.add(adsetName);
+        if (adsetId) idx.adsetByAdsetId.set(adsetId, adsetName);
       }
       const campId = a.campaign_id as string | null;
       const campKey = campId ? idx.byCampaignId.get(campId) : undefined;
+      if (adsetId && adsetName) {
+        const previo = idx.adsetCatalog.get(adsetId);
+        idx.adsetCatalog.set(adsetId, {
+          id: adsetId,
+          name: adsetName,
+          campaignKey: campKey ?? previo?.campaignKey ?? null,
+          adsetId: null,
+          adsetName: null,
+          activo: activo || previo?.activo === true,
+        });
+      }
       if (!campKey) continue;
       if (adsetName) idx.byAdsetName.set(normLabel(adsetName), campKey);
+      if (adsetId) idx.byAdsetId.set(adsetId, campKey);
     }
     const ttCamps = (row.tiktok_campaigns as Record<string, unknown>[] | null) ?? [];
     for (const c of ttCamps) {
@@ -306,17 +396,13 @@ export function matchToCampaign(
   idx: CampaignIndex,
   overrides: Override[]
 ): { key: string | null; method: MatchMethod } {
-  // 1. overrides manuales → máxima prioridad (el trafficker corrige el motor)
+  // 1. overrides manuales → máxima prioridad (el trafficker corrige el motor).
+  //    Todos los niveles cuentan aquí: una corrección de anuncio o de conjunto
+  //    también dice a qué campaña pertenece el lead, que es lo que ata el gasto.
   for (const ov of overrides) {
-    const val = (rec as Record<string, unknown>)[ov.match_field] as string | undefined;
-    if (val && normLabel(val) === normLabel(ov.match_value)) {
-      const key = ov.campaign_id
-        ? `${ov.platform}:${ov.campaign_id}`
-        : ov.campaign_name
-          ? `${ov.platform}:${normLabel(ov.campaign_name)}`
-          : null;
-      if (key) return { key, method: 'override' };
-    }
+    if (!coincideOverride(rec, ov)) continue;
+    const key = claveCampanaDeOverride(ov, idx);
+    if (key) return { key, method: 'override' };
   }
   // 2. utm_id === campaign_id
   if (rec.utm_id && idx.byCampaignId.has(rec.utm_id)) {
@@ -325,6 +411,21 @@ export function matchToCampaign(
   // 3. utm_id === ad_id → su campaña
   if (rec.utm_id && idx.byAdId.has(rec.utm_id)) {
     return { key: idx.byAdId.get(rec.utm_id)!, method: 'utm_id_ad' };
+  }
+  // 3b-3d. El ID de la entidad llegó en el campo del NOMBRE. Es lo que manda GHL
+  //    cuando el enlace usa `{{campaign.id}}` / `{{ad.id}}` / `{{adset.id}}`.
+  //    Van antes que los nombres porque un ID es un cruce exacto.
+  if (esIdMeta(rec.utm_campaign)) {
+    const k = idx.byCampaignId.get(String(rec.utm_campaign).trim());
+    if (k) return { key: k, method: 'campaign_id_field' };
+  }
+  if (esIdMeta(rec.utm_content)) {
+    const k = idx.byAdId.get(String(rec.utm_content).trim());
+    if (k) return { key: k, method: 'content_ad_id' };
+  }
+  if (esIdMeta(rec.utm_term)) {
+    const k = idx.byAdsetId.get(String(rec.utm_term).trim());
+    if (k) return { key: k, method: 'term_adset_id' };
   }
   // 4. utm_campaign === nombre de campaña (normalizado)
   if (rec.utm_campaign) {
@@ -345,12 +446,57 @@ export function matchToCampaign(
   return { key: null, method: 'none' };
 }
 
+/** ¿El valor del registro en el campo del override es el que el override corrige? */
+function coincideOverride(rec: Record<string, unknown>, ov: Override): boolean {
+  const val = rec[ov.match_field];
+  if (val === null || val === undefined || val === '') return false;
+  return normLabel(String(val)) === normLabel(ov.match_value);
+}
+
+/**
+ * Campaña a la que apunta un override, sea del nivel que sea.
+ *
+ * Con `campaign_id` manda ese ID. Una corrección de conjunto o anuncio sin
+ * campaña explícita la hereda del índice a través de su propia entidad: el
+ * trafficker eligió un anuncio, y el anuncio sabe de qué campaña es.
+ */
+function claveCampanaDeOverride(ov: Override, idx: CampaignIndex): string | null {
+  if (ov.campaign_id) return `${ov.platform}:${ov.campaign_id}`;
+  const nivel = ov.nivel ?? 'campaign';
+  if (ov.target_id && nivel === 'ad') {
+    const k = idx.byAdId.get(ov.target_id);
+    if (k) return k;
+  }
+  if (ov.target_id && nivel === 'adset') {
+    const k = idx.byAdsetId.get(ov.target_id);
+    if (k) return k;
+  }
+  return ov.campaign_name ? `${ov.platform}:${normLabel(ov.campaign_name)}` : null;
+}
+
+/** Primer override del NIVEL pedido que corrige este registro. */
+function overrideDeNivel(
+  rec: Record<string, unknown>,
+  overrides: Override[],
+  nivel: NivelEntidad
+): Override | null {
+  for (const ov of overrides) {
+    if ((ov.nivel ?? 'campaign') !== nivel) continue;
+    if (coincideOverride(rec, ov)) return ov;
+  }
+  return null;
+}
+
 export async function loadOverrides(clienteId: string): Promise<Override[]> {
   const supabase = await createAdminClient();
+  // `*` y no una lista: así las columnas de nivel (migración 079) llegan si
+  // existen y, si la migración aún no está aplicada, la consulta no falla por
+  // pedir una columna que no hay. Sin ellas, todo override es de campaña, que es
+  // exactamente como funcionaba antes.
   const { data } = await supabase
     .schema('report_utm')
     .from('utm_campaign_map')
-    .select('match_field,match_value,campaign_id,campaign_name,platform')
+    .select('*')
     .eq('cliente_id', clienteId)
     .limit(2000);
   return (data as Override[] | null) ?? [];
@@ -466,7 +612,7 @@ export interface CampaignResolver {
   index: CampaignIndex;
 }
 
-function buildResolver(idx: CampaignIndex, overrides: Override[]): CampaignResolver {
+export function buildResolver(idx: CampaignIndex, overrides: Override[]): CampaignResolver {
   return {
     campaignOf(rec) {
       const m = matchToCampaign(rec, idx, overrides);
@@ -492,12 +638,22 @@ function buildResolver(idx: CampaignIndex, overrides: Override[]): CampaignResol
     },
 
     adOf(rec) {
+      // 1. Corrección manual de nivel anuncio: el trafficker manda.
+      const ov = overrideDeNivel(rec as Record<string, unknown>, overrides, 'ad');
+      if (ov?.target_name) return { label: ov.target_name, matched: true };
+      // 2. `utm_id` es el ID del anuncio (GHL y Meta Lead Ads lo llenan así).
       if (rec.utm_id) {
         const real = idx.adByAdId.get(rec.utm_id);
         if (real) return { label: real, matched: true };
       }
       const raw = (rec.utm_content ?? '').trim();
       if (raw) {
+        // 3. El ID del anuncio llegó en `utm_content` en vez del nombre.
+        if (esIdMeta(raw)) {
+          const real = idx.adByAdId.get(raw);
+          if (real) return { label: real, matched: true };
+        }
+        // 4. Nombre, en cualquiera de sus escrituras.
         const real = idx.adCanonicalByName.get(normLabel(raw));
         if (real) return { label: real, matched: true };
       }
@@ -505,13 +661,35 @@ function buildResolver(idx: CampaignIndex, overrides: Override[]): CampaignResol
     },
 
     adsetOf(rec) {
+      const r = rec as Record<string, unknown>;
+      // 1. Corrección manual de nivel conjunto.
+      const ov = overrideDeNivel(r, overrides, 'adset');
+      if (ov?.target_name) return { label: ov.target_name, matched: true };
+      // 1b. Una corrección de ANUNCIO también dice su conjunto.
+      const ovAd = overrideDeNivel(r, overrides, 'ad');
+      if (ovAd?.target_id) {
+        const real = idx.adsetByAdId.get(ovAd.target_id);
+        if (real) return { label: real, matched: true };
+      }
+      // 2. `utm_id` es el ID del anuncio → su conjunto; o directamente el del conjunto.
       if (rec.utm_id) {
-        const real = idx.adsetByAdId.get(rec.utm_id);
+        const real = idx.adsetByAdId.get(rec.utm_id) ?? idx.adsetByAdsetId.get(rec.utm_id);
         if (real) return { label: real, matched: true };
       }
       const raw = (rec.utm_term ?? '').trim();
       if (raw) {
+        // 3. El ID del conjunto llegó en `utm_term`.
+        if (esIdMeta(raw)) {
+          const real = idx.adsetByAdsetId.get(raw);
+          if (real) return { label: real, matched: true };
+        }
+        // 4. Nombre.
         const real = idx.adsetCanonicalByName.get(normLabel(raw));
+        if (real) return { label: real, matched: true };
+      }
+      // 5. Sin conjunto propio, pero el ID del anuncio en `utm_content` lo delata.
+      if (esIdMeta(rec.utm_content)) {
+        const real = idx.adsetByAdId.get(String(rec.utm_content).trim());
         if (real) return { label: real, matched: true };
       }
       return { label: raw || SIN_CONJUNTO, matched: false };

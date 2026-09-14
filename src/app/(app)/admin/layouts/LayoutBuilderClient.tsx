@@ -180,65 +180,72 @@ const METRIC_CATALOG = [
       { id: 'meta_cost_per_result', label: 'Costo por resultado', desc: 'Calculado' },
     ],
   },
+  // Todo lo que viene de Hotmart vive en una categoría «Hotmart», con unidades
+  // (#) e importe ($) separados en la etiqueta (reunión del 2026-09-08). Los ids
+  // no cambian: los layouts guardados siguen igual.
+  //
+  // `hotmart_clics_link` se retiró: nunca tuvo columna ni escritor y solo podía
+  // mostrar 0 (el selector del dashboard ya lo había quitado).
   {
-    category: 'Hotmart',
+    category: 'Hotmart · Ventas y facturación',
     color: 'red',
     metrics: [
       {
-        id: 'hotmart_pagos_iniciados',
-        label: 'Checkouts iniciados',
-        desc: 'Pagos iniciados en Hotmart',
+        id: 'ventas_principal_count',
+        label: 'Ventas principal (#)',
+        desc: 'Cantidad de ventas del producto principal',
       },
-      { id: 'hotmart_clics_link', label: 'Clics en enlace', desc: 'Clics a página de ventas' },
-    ],
-  },
-  {
-    category: 'Ventas · Totales',
-    color: 'emerald',
-    metrics: [
+      { id: 'ventas_bump_count', label: 'Order bumps (#)', desc: 'Cantidad de order bumps' },
+      { id: 'ventas_upsell_count', label: 'Upsells (#)', desc: 'Cantidad de upsells' },
+      { id: 'ventas_downsell_count', label: 'Downsells (#)', desc: 'Cantidad de downsells' },
+      { id: 'ventas_reembolsado_count', label: 'Reembolsos (#)', desc: 'Ventas devueltas' },
       {
         id: 'ventas_principal',
-        label: 'Neto Principal',
-        desc: 'Ingresos netos del producto principal',
+        label: 'Neto principal ($)',
+        desc: 'Ingresos netos del producto principal, en la moneda de reporte del cliente',
       },
-      { id: 'ventas_bump', label: 'Neto Bump', desc: 'Ingresos netos de order bump' },
-      { id: 'ventas_upsell', label: 'Neto Upsell', desc: 'Ingresos netos de upsell' },
-      {
-        id: 'ventas_cerradas',
-        label: 'Ventas Cerradas',
-        desc: 'Entrada manual de ventas (asesorías, etc)',
-      },
+      { id: 'ventas_bump', label: 'Neto order bump ($)', desc: 'Ingresos netos de order bump' },
+      { id: 'ventas_upsell', label: 'Neto upsell ($)', desc: 'Ingresos netos de upsell' },
+      { id: 'ventas_downsell', label: 'Neto downsell ($)', desc: 'Ingresos netos de downsell' },
       {
         id: 'ventas_principal_bruto',
-        label: 'Bruto Principal',
+        label: 'Bruto principal ($)',
         desc: 'Precio de venta × compras del principal',
       },
-      { id: 'ventas_bump_bruto', label: 'Bruto Bump', desc: 'Precio de venta × compras del bump' },
+      {
+        id: 'ventas_bump_bruto',
+        label: 'Bruto order bump ($)',
+        desc: 'Precio de venta × compras del bump',
+      },
       {
         id: 'ventas_upsell_bruto',
-        label: 'Bruto Upsell',
+        label: 'Bruto upsell ($)',
         desc: 'Precio de venta × compras del upsell',
       },
       {
-        id: 'ventas_principal_count',
-        label: '# Compras Principal',
-        desc: 'Cantidad de ventas del principal',
-      },
-      { id: 'ventas_bump_count', label: '# Compras Bump', desc: 'Cantidad de ventas del bump' },
-      {
-        id: 'ventas_upsell_count',
-        label: '# Compras Upsell',
-        desc: 'Cantidad de ventas del upsell',
+        id: 'ventas_reembolsado',
+        label: 'Reembolsado ($)',
+        desc: 'Neto de las ventas devueltas, imputado a la fecha de la venta',
       },
       {
         id: 'total_facturacion_bruta',
-        label: 'Facturación Bruta Total',
-        desc: 'Bruto principal + bump + upsell',
+        label: 'Facturación bruta total ($)',
+        desc: 'Bruto principal + bump + upsell + downsell',
       },
       {
         id: 'total_facturacion_neta',
-        label: 'Facturación Neta Total',
-        desc: 'Neto principal + bump + upsell',
+        label: 'Facturación neta total ($)',
+        desc: 'Neto principal + bump + upsell + downsell',
+      },
+      {
+        id: 'hotmart_pagos_iniciados',
+        label: 'Pagos iniciados (GA4)',
+        desc: 'Vistas de la página de pago medidas por Google Analytics, no por Hotmart',
+      },
+      {
+        id: 'ventas_cerradas',
+        label: 'Ventas cerradas (manual)',
+        desc: 'Entrada manual de ventas (asesorías, etc.)',
       },
       { id: 'total_spend', label: 'Inversión Total', desc: 'Gasto de Meta + TikTok' },
       {
@@ -272,39 +279,17 @@ const METRIC_CATALOG = [
         label: '# Compras Principal',
         desc: 'Ventas del producto principal de este funnel',
       },
-      {
-        id: 'funnel_principal_neto',
-        label: 'Neto Principal',
-        desc: 'Ingresos netos del principal (comisión productora)',
-      },
-      {
-        id: 'funnel_principal_bruto',
-        label: 'Bruto Principal (API)',
-        desc: 'Gross del producto principal según Hotmart (varía con coupons/moneda)',
-      },
-      {
-        id: 'funnel_principal_price',
-        label: 'Precio Público Principal',
-        desc: 'Precio configurado en el tab (para calcular bruta fija = precio × ventas)',
-      },
+      // Neto/bruto/precio del principal y bruto de bump y upsell se retiraron
+      // del selector: ningún layout los usaba (inventario del 2026-09-12). El
+      // motor los sigue resolviendo.
       {
         id: 'funnel_bump_count',
         label: '# Order Bumps',
         desc: 'Ventas del order bump de este funnel',
       },
       { id: 'funnel_bump_neto', label: 'Neto Order Bump', desc: 'Ingresos netos del bump' },
-      {
-        id: 'funnel_bump_bruto',
-        label: 'Bruto Order Bump',
-        desc: 'Precio de venta × compras del bump',
-      },
       { id: 'funnel_upsell_count', label: '# Upsells', desc: 'Ventas del upsell de este funnel' },
       { id: 'funnel_upsell_neto', label: 'Neto Upsell', desc: 'Ingresos netos del upsell' },
-      {
-        id: 'funnel_upsell_bruto',
-        label: 'Bruto Upsell',
-        desc: 'Precio de venta × compras del upsell',
-      },
       {
         id: 'funnel_upsell_visits',
         label: 'Visitas Pág. Upsell',

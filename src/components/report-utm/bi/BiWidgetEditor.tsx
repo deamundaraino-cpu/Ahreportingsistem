@@ -174,8 +174,15 @@ export function BiWidgetEditor({
   // formularios, campos de lead con sus segmentos, columnas de sus Sheets. El
   // hook es compartido con el modal de campos calculados para que las dos
   // pantallas ofrezcan exactamente la misma lista.
-  const { formFields, leadFields, leadSegments, offlineFields, sheetFields, sheetViews } =
-    useBiClientFields(clienteId, dateFrom, dateTo);
+  const {
+    formFields,
+    leadFields,
+    leadSegments,
+    offlineFields,
+    sheetFields,
+    sheetViews,
+    customConversions,
+  } = useBiClientFields(clienteId, dateFrom, dateTo);
   const [grouping, setGrouping] = useState<'day' | 'week' | 'month'>(
     widget?.config?.date_grouping ?? 'day'
   );
@@ -422,12 +429,24 @@ export function BiWidgetEditor({
     label: `${f.label} (Sheet)`,
   }));
 
+  // Conversiones personalizadas de Meta → métricas "metacc:<clave>". Se reparten
+  // por fecha y por campaña (ver `metricCrossesDimension`).
+  const ccMetricOptions = customConversions.map((c) => ({
+    value: `metacc:${c.key}`,
+    label: `${c.label} (Meta · conversión)`,
+  }));
+  const ccLabel = (k: string) =>
+    k.startsWith('metacc:')
+      ? `${customConversions.find((c) => `metacc:${c.key}` === k)?.label ?? k.slice(7)} (Meta · conversión)`
+      : null;
+
   // Etiquetas que resuelven también tokens de campo. Encadenar aquí
   // `sheetFieldLabel` es lo que hace que el nombre que el analista le puso al
   // campo aparezca en el selector, en los títulos y en las columnas de tabla.
   const resolveMetricLabel = (k: string) =>
     METRIC_META[k as BiMetric]?.label ??
     fieldMetricLabel(k) ??
+    ccLabel(k) ??
     offlineFieldLabel(k, offlineFields) ??
     sheetFieldLabel(k, sheetFields, sheetViews) ??
     leadSegLabel(k, leadSegments) ??
@@ -499,6 +518,7 @@ export function BiWidgetEditor({
     { key: 'sheetviews', title: 'Vistas de Sheet', items: sheetViewOptions },
     { key: 'sheet', title: 'Campos de Sheet', items: sheetMetricOptions },
     { key: 'offline', title: 'Columnas de Sheet offline', items: offlineMetricOptions },
+    { key: 'metacc', title: 'Conversiones personalizadas de Meta', items: ccMetricOptions },
   ];
 
   // Sin "ver todas" ni búsqueda, del catálogo fijo solo se muestran las

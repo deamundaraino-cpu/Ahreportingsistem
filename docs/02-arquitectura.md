@@ -17,7 +17,15 @@
 | Lenguaje             | **TypeScript 5.9**                                                                              |
 | Deploy               | **Vercel** (con Vercel Cron) + GitHub Actions                                                   |
 
-El servidor de desarrollo corre en el **puerto 3001** (`next dev -p 3001`).
+El servidor de desarrollo corre en el **puerto 3000** (`next dev -p 3000`). Requiere **Node ≥ 22.12**.
+
+> **Una sola casa (2026-09-12).** `public.clientes` es la fuente de verdad del
+> cliente; su espejo en `report_utm.clientes` se crea, archiva y borra con él
+> (`src/lib/clientes/ciclo-de-vida.ts`). Todas las conexiones de un cliente se
+> configuran en `/admin/settings/[id]`. Las migraciones van por la **079**
+> (`migrations/`, se aplican con `scripts/sql-remoto.ts`); ojo, hay números
+> repetidos (007, 009, 021, 030, 035, 069, 078) y no existe un registro de cuáles
+> están aplicadas.
 
 ## Estructura de carpetas
 

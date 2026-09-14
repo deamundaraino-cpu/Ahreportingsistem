@@ -113,6 +113,13 @@ export type BiMetric =
   | 'ventas_principal_bruto'
   | 'ventas_bump_bruto'
   | 'ventas_upsell_bruto'
+  // Downsell y reembolsos (migración 067): el worker los escribía desde julio,
+  // pero el BI no los conocía y `hotmart_revenue` los dejaba fuera.
+  | 'ventas_downsell'
+  | 'ventas_downsell_count'
+  | 'ventas_downsell_bruto'
+  | 'ventas_reembolsado'
+  | 'ventas_reembolsado_count'
   // ── Ventas Hotmart por transacción (public.hotmart_ventas) ──
   // A diferencia de las `hotmart_*` de arriba, que leen el agregado diario de
   // `metricas_diarias` y por eso NO se pueden repartir por campaña, estas
@@ -193,6 +200,11 @@ export const AD_SCALAR_METRICS = [
   'ventas_principal_bruto',
   'ventas_bump_bruto',
   'ventas_upsell_bruto',
+  'ventas_downsell',
+  'ventas_downsell_count',
+  'ventas_downsell_bruto',
+  'ventas_reembolsado',
+  'ventas_reembolsado_count',
 ] as const;
 
 /**
@@ -678,7 +690,7 @@ export const METRIC_META: Record<BiMetric, MetricMetaEntry> = {
   // OJO: `hotmart_pagos_iniciados` se calcula desde GA4 (payment_page_views),
   // no desde la API de Hotmart. El nombre viene del dashboard clásico.
   hotmart_pagos_iniciados: {
-    label: 'Pagos iniciados (Hotmart)',
+    label: 'Pagos iniciados (GA4 · pág. de pago)',
     format: 'number',
     group: 'hotmart',
     breakdown: 'total',
@@ -764,6 +776,36 @@ export const METRIC_META: Record<BiMetric, MetricMetaEntry> = {
   ventas_upsell_bruto: {
     label: 'Ventas upsell (bruto)',
     format: 'currency',
+    group: 'hotmart',
+    breakdown: 'total',
+  },
+  ventas_downsell: {
+    label: 'Ventas downsell (neto)',
+    format: 'currency',
+    group: 'hotmart',
+    breakdown: 'total',
+  },
+  ventas_downsell_count: {
+    label: 'Ventas downsell (#)',
+    format: 'number',
+    group: 'hotmart',
+    breakdown: 'total',
+  },
+  ventas_downsell_bruto: {
+    label: 'Ventas downsell (bruto)',
+    format: 'currency',
+    group: 'hotmart',
+    breakdown: 'total',
+  },
+  ventas_reembolsado: {
+    label: 'Reembolsado (neto)',
+    format: 'currency',
+    group: 'hotmart',
+    breakdown: 'total',
+  },
+  ventas_reembolsado_count: {
+    label: 'Reembolsos (#)',
+    format: 'number',
     group: 'hotmart',
     breakdown: 'total',
   },
@@ -913,6 +955,10 @@ export function metricCrossesDimension(metric: string, dimension: string): boole
   // Las columnas extra de Sheet offline viven en conversiones_offline_diarias,
   // que es día×cliente: se comportan como 'total'.
   if (isOfflineFieldMetric(metric)) return dimension === 'date';
+  // Conversiones personalizadas de Meta: se leen del nivel campaña, así que se
+  // reparten por fecha y por campaña real, no por anuncio, conjunto ni lead.
+  if (isMetaCcMetric(metric))
+    return dimension === 'date' || unifiedTarget(dimension) === 'campaign';
   const meta = METRIC_META[metric as BiMetric];
   if (!meta) return true; // calculada, campo de formulario o de Sheet
   switch (meta.breakdown) {
@@ -1453,6 +1499,41 @@ export function offlineFieldFormat(token: string): 'number' | 'currency' | 'perc
     : parsed.type === 'percentage'
       ? 'percent'
       : 'number';
+}
+
+// ── Conversiones personalizadas de Meta ────────────────────────────────
+// El worker ya guardaba `custom_conversions` dentro de cada campaña y anuncio de
+// `metricas_diarias`, y el dashboard clásico las exponía como `meta_custom_<k>`.
+// El BI de Report-UTM no las conocía (reunión del 2026-09-08: «aún no aparecen
+// las conversiones personalizadas de campañas para usar en UTM»).
+//
+// Token: `metacc:<clave>`, la misma clave que usa el worker. La etiqueta sale de
+// `meta_conversiones_catalogo` (el nombre real de la conversión en Meta).
+
+export const META_CC_PREFIX = 'metacc:';
+
+export function makeMetaCcMetric(key: string): string {
+  return `${META_CC_PREFIX}${key}`;
+}
+export function isMetaCcMetric(token: string): boolean {
+  return typeof token === 'string' && token.startsWith(META_CC_PREFIX) && token.length > 7;
+}
+export function parseMetaCcMetric(token: string): string | null {
+  return isMetaCcMetric(token) ? token.slice(META_CC_PREFIX.length) : null;
+}
+
+/** Una conversión personalizada del cliente, tal como se ofrece en el BI. */
+export interface MetaCustomConvMeta {
+  key: string;
+  label: string;
+}
+
+/** Etiqueta legible de un token `metacc:`. null si no lo es. */
+export function metaCcLabel(token: string, convs: MetaCustomConvMeta[] = []): string | null {
+  const key = parseMetaCcMetric(token);
+  if (!key) return null;
+  const meta = convs.find((c) => c.key === key);
+  return `${meta?.label ?? humanizeFieldKey(key)} (Meta · conversión)`;
 }
 
 // ── Campos de Sheet (tablas sheet_campos / sheet_campo_valores_diarios) ──
@@ -2273,7 +2354,8 @@ export const METRIC_GLOSSARY: Record<string, string> = {
   ga_bounce_rate:
     'Porcentaje de visitas que se fueron sin interactuar con el sitio. Cuanto MÁS BAJO, mejor.',
   hotmart_revenue: 'Dinero facturado en Hotmart en el período (neto de comisiones).',
-  hotmart_sales: 'Cantidad de ventas de Hotmart en el período (principal + bump + upsell).',
+  hotmart_sales:
+    'Cantidad de ventas de Hotmart en el período (principal + bump + upsell + downsell).',
   hotmart_roas:
     'Retorno de la inversión usando la facturación de Hotmart: por cada $1 invertido en anuncios, cuántos $ se facturaron. Cuanto MÁS ALTO, mejor. Se calcula sobre el total del período, sin atribuir a una campaña concreta.',
   hotmart_cpa:
@@ -2326,7 +2408,7 @@ export const METRIC_GLOSSARY: Record<string, string> = {
   ga_avg_session_duration:
     'Cuánto dura, en promedio, una visita al sitio. Es un dato del sitio entero: no se puede repartir por campaña.',
   hotmart_pagos_iniciados:
-    'Veces que alguien llegó a la página de pago. Se mide con Google Analytics, no con Hotmart, y es del sitio entero: no se reparte por campaña.',
+    'Veces que alguien llegó a la página de pago. Se mide con Google Analytics, no con Hotmart, y es del sitio entero: no se reparte por campaña. Se configura en cada pestaña del cliente con la URL o el título de la página de pago.',
   offline_ventas: 'Ventas que el equipo carga a mano en el Google Sheet del cliente.',
   offline_revenue: 'Dinero de las ventas cargadas a mano en el Google Sheet del cliente.',
   offline_total: 'Todas las filas de conversión del Google Sheet, sin distinguir leads de ventas.',
@@ -2387,6 +2469,8 @@ export const LOWER_IS_BETTER = new Set([
   'hm_reembolsos',
   'hm_neto_reembolsado',
   'hm_tasa_reembolso',
+  'ventas_reembolsado',
+  'ventas_reembolsado_count',
 ]);
 
 /** ¿Para esta métrica, bajar es mejorar? */

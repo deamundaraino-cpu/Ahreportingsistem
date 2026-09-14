@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { reportUtmClient } from '@/lib/report-utm/client';
+import { columnaExcluidoDisponible } from '@/lib/report-utm/lead-exclusion';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -79,13 +80,21 @@ export async function GET(req: NextRequest) {
   // exportación por rango excluía casi todo el último día del rango.
   const toBound = to && /^\d{4}-\d{2}-\d{2}$/.test(to) ? `${to}T23:59:59` : to;
 
+  // Estado de exclusión: por defecto se exporta lo mismo que cuenta el informe.
+  // `estado=excluidos` o `estado=todos` para auditar lo que la regla dejó fuera.
+  const conExclusion = await columnaExcluidoDisponible(supabase);
+  const estado = sp.get('estado') ?? 'incluidos';
+
   // Aplica todos los filtros a una query nueva (se reconstruye por página).
   const applyFilters = () => {
     let q = supabase
       .from('lead_events')
       .select(
-        'created_at, lead_name, lead_email, lead_phone, form_name, form_plugin, utm_source, utm_medium, utm_campaign, utm_content, utm_term, utm_id, click_id, attribution_method, ip_country, page_url, raw_fields'
+        'created_at, lead_name, lead_email, lead_phone, form_name, form_plugin, utm_source, utm_medium, utm_campaign, utm_content, utm_term, utm_id, click_id, attribution_method, ip_country, page_url, raw_fields' +
+          (conExclusion ? ', excluido, excluido_motivo' : '')
       );
+    if (conExclusion && estado === 'incluidos') q = q.eq('excluido', false);
+    if (conExclusion && estado === 'excluidos') q = q.eq('excluido', true);
     if (clienteId) q = q.eq('cliente_id', clienteId);
     if (formPlugin) q = q.eq('form_plugin', formPlugin);
     if (utmSource) q = q.ilike('utm_source', `%${utmSource}%`);
@@ -108,7 +117,9 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    const batch = (data ?? []) as Record<string, unknown>[];
+    // `unknown` intermedio: con la lista de columnas armada en tiempo de
+    // ejecución, supabase-js no puede inferir la forma de la fila.
+    const batch = (data ?? []) as unknown as Record<string, unknown>[];
     rows.push(...batch);
     // Última página: vino incompleta (o vacía).
     if (batch.length < PAGE_SIZE) break;

@@ -41,6 +41,21 @@ export interface SenalesCliente {
   pctLeadsCruzados: number | null;
   /** Filas de Sheet cuyo id de campaña no cruza con ningún anuncio del cliente. */
   sheetFilasAjenas?: { total: number; sinCruce: number } | null;
+  /**
+   * GA4 por separado de la fuente «Cuenta». Esa fuente tiene datos en cuanto
+   * Meta sincroniza, así que un GA4 que NUNCA entregó una sesión pasaba por sano:
+   * es lo que se vio en Cris Tributario (2026-09-12), con la propiedad
+   * configurada, una página de pago mapeada y cero sesiones en toda su historia.
+   */
+  ga4?: SenalGa4 | null;
+}
+
+export interface SenalGa4 {
+  /** Última fecha con `ga_sessions > 0`, o null si nunca hubo. */
+  ultimaSesion: string | null;
+  /** Pestañas activas del cliente y cuántas tienen página de pago mapeada. */
+  pestanas: number;
+  pestanasConPago: number;
 }
 
 /**
@@ -151,7 +166,10 @@ export function evaluarCliente(s: SenalesCliente): SaludCliente {
         dias !== null && dias > 0
           ? `En error desde hace ${dias} día(s): ${i.ultimoError ?? 'sin detalle'}`
           : `En error: ${i.ultimoError ?? 'sin detalle'}`,
-      accion: 'Reconectar la integración desde /report-utm/integraciones.',
+      accion:
+        i.tipo === 'meta_cuenta'
+          ? 'Revisar el pago o el estado de la cuenta en el Administrador de anuncios de Meta.'
+          : 'Reconectar la integración desde la ficha del cliente (Ajustes → Conexiones).',
     });
   }
 
@@ -209,6 +227,43 @@ export function evaluarCliente(s: SenalesCliente): SaludCliente {
       titulo: `Solo el ${s.pctLeadsCruzados.toFixed(1)} % de los leads se ata a una campaña real.`,
       accion: 'Revisar /report-utm/cruce-campanas y añadir correcciones manuales donde falte.',
     });
+  }
+
+  // ── GA4 ──────────────────────────────────────────────────────────
+  // La fuente «Cuenta» no sirve para vigilarlo: tiene datos en cuanto Meta
+  // sincroniza. Aquí se mira GA4 por sí mismo — sesiones y página de pago.
+  const ga = s.ga4;
+  if (ga && s.tienePuente) {
+    if (!ga.ultimaSesion) {
+      hallazgos.push({
+        gravedad: 'critico',
+        ambito: 'Integración · GA4',
+        titulo:
+          'GA4 está configurado pero nunca ha entregado una sesión: visitas y pagos iniciados salen en 0.',
+        accion:
+          'Comprobar en Ajustes → cliente que la propiedad GA4 es la correcta y que la cuenta de Google de la agencia (o la cuenta de servicio) tiene acceso de lectura a ella.',
+      });
+    } else {
+      const dias = diasEntre(ga.ultimaSesion, s.hoy);
+      if (dias > TOLERANCIA_DIAS.cuenta) {
+        hallazgos.push({
+          gravedad: dias > TOLERANCIA_DIAS.cuenta * 3 ? 'critico' : 'aviso',
+          ambito: 'Integración · GA4',
+          titulo: `GA4 sin sesiones desde hace ${dias} día(s) (última: ${ga.ultimaSesion}).`,
+          accion: 'Revisar el acceso a la propiedad GA4 y el log de /admin/sync.',
+        });
+      }
+    }
+    if (ga.pestanas > 0 && ga.pestanasConPago === 0) {
+      hallazgos.push({
+        gravedad: 'aviso',
+        ambito: 'Integración · GA4',
+        titulo:
+          'Ninguna pestaña tiene la página de pago mapeada: los pagos iniciados (GA4) no se miden.',
+        accion:
+          'En el dashboard del cliente → configurar pestaña → embudo Hotmart: poner la URL o el título de la página de pago tal como aparece en GA4.',
+      });
+    }
   }
 
   // ── Sheet de otro cliente ────────────────────────────────────────

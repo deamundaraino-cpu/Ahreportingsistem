@@ -224,6 +224,36 @@ cruza" sino "¿cuánto de mi captación es orgánica?".
 
 ---
 
+## Paso 6 (opcional) · Ventas del CRM por webhook
+
+Para los clientes que cierran la venta en su embudo de GHL (asesorías), la venta
+entra sola y deja de haber que cargarla a mano.
+
+1. En GHL: **Automation → Workflows → Create Workflow**.
+2. **Trigger:** _Opportunity Status Changed_ con estado **Won** (o _Pipeline Stage
+   Changed_ a la etapa que el cliente usa como «venta»).
+3. **Acción:** _Webhook_, `POST` a
+   `https://reportes.adshouse.cloud/api/report-utm/webhooks/ghl/venta/{id-del-cliente}`
+   con el MISMO header `X-Rutm-Ghl-Token` del paso 3. En el cuerpo, incluye
+   `opportunity_id`, `contact_id`, `monetary_value` y `status`.
+4. **Publicá** el workflow.
+
+La venta queda en `report_utm.sales_events` con la atribución del contacto (así
+cruza con la campaña que trajo el lead), aparece en `/report-utm/ventas`, en los
+informes (ROAS, CPA, tasa de conversión) y en el dashboard como `crm_ventas` /
+`crm_revenue`. Una oportunidad es una venta aunque GHL reenvíe el webhook.
+
+## Qué contactos cuentan como lead
+
+Además del filtro por etiquetas de la integración, cada cliente tiene la regla
+**«Qué leads cuentan»** en su ficha. Con _Exigir atribución publicitaria_ activo,
+los contactos sin ninguna UTM, anuncio ni click id —WhatsApp directo, perfil de
+Instagram, contactos creados a mano— se guardan pero no suman. Es lo que se activó
+para Cris Tributario, donde eran el 89 % de lo que entraba
+([doc 21](./21-auditoria-utms-ghl.md)).
+
+---
+
 ## Detalle técnico
 
 Para quien tenga que tocar el código.

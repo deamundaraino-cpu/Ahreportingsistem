@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { dedupTouches } from './attribution-resolver';
+import { aplicarExclusion, cargarReglaExclusion, type ReglaExclusion } from './lead-exclusion';
 import { leerSecreto } from '@/lib/secretos';
 import {
   fetchContactById,
@@ -421,15 +422,24 @@ export function buildLeadRow(
 
 // ── Persistencia ──────────────────────────────────────────────────────
 
-/** Inserta UN contacto (dedup por external_id). Lo usa el webhook. */
+/**
+ * Inserta UN contacto (dedup por external_id). Lo usa el webhook.
+ *
+ * La regla de exclusión del cliente se aplica aquí y en el lote, no en
+ * `buildLeadRow`: esa función es pura y la comparten las comprobaciones, y la
+ * regla necesita leer la configuración del cliente. Un contacto excluido SE
+ * GUARDA igual, marcado (ver `lead-exclusion.ts`).
+ */
 export async function ingestGhlContact(
   db: ReportUtmDb,
   clienteId: string,
   contact: GhlContact,
   defs: Map<string, GhlCustomFieldDef>,
-  formNameFallback?: string | null
+  formNameFallback?: string | null,
+  regla?: ReglaExclusion
 ): Promise<{ inserted: boolean; error?: string }> {
-  const row = buildLeadRow(clienteId, contact, defs, formNameFallback);
+  const r = regla ?? (await cargarReglaExclusion(db, clienteId));
+  const row = aplicarExclusion(buildLeadRow(clienteId, contact, defs, formNameFallback), r);
   const { error } = await db.from('lead_events').insert(row);
   if (error) {
     // 23505 = unique_violation → el polling ya lo metió. No es un error.
@@ -450,14 +460,21 @@ export async function ingestGhlContactsBatch(
   db: ReportUtmDb,
   clienteId: string,
   contactos: GhlContact[],
-  defs: Map<string, GhlCustomFieldDef>
+  defs: Map<string, GhlCustomFieldDef>,
+  regla?: ReglaExclusion
 ): Promise<number> {
   if (contactos.length === 0) return 0;
 
+  // Una lectura de la regla por lote, no por contacto.
+  const r = regla ?? (await cargarReglaExclusion(db, clienteId));
+  const ahora = new Date().toISOString();
   const byId = new Map<string, Record<string, unknown>>();
   for (const c of contactos) {
     if (!c?.id) continue;
-    byId.set(`${GHL_EXTERNAL_PREFIX}${c.id}`, buildLeadRow(clienteId, c, defs));
+    byId.set(
+      `${GHL_EXTERNAL_PREFIX}${c.id}`,
+      aplicarExclusion(buildLeadRow(clienteId, c, defs), r, ahora)
+    );
   }
   const rows = Array.from(byId.values());
   if (rows.length === 0) return 0;

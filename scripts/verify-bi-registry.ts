@@ -168,7 +168,7 @@ seccion('Traducción de tokens legados');
 const legacyMetrics = Object.keys(METRIC_META) as BiMetric[];
 check(
   `METRIC_META tiene ${legacyMetrics.length} métricas`,
-  legacyMetrics.length === 81,
+  legacyMetrics.length === 86,
   String(legacyMetrics.length)
 );
 
@@ -410,8 +410,8 @@ check(
 
 const conGlosario = Object.keys(METRIC_GLOSSARY).length;
 check(
-  `el registro amplía el glosario de ${conGlosario} a las 81 métricas`,
-  REG.measures().length === 81 && sinHelp.length === 0
+  `el registro amplía el glosario de ${conGlosario} a las 86 métricas`,
+  REG.measures().length === 86 && sinHelp.length === 0
 );
 
 // ════════════════════════════════════════════════════════════

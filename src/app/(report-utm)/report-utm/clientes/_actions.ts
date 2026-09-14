@@ -3,60 +3,36 @@
 import { revalidatePath } from 'next/cache';
 import { reportUtmClient } from '@/lib/report-utm/client';
 import { createAdminClient } from '@/utils/supabase/server';
-import { checkWriteRole } from '@/lib/report-utm/auth';
+import { checkWriteRole, getUserRole } from '@/lib/report-utm/auth';
+import { asegurarEspejoUtm, eliminarClienteUtm } from '@/lib/clientes/ciclo-de-vida';
 
-function slugify(input: string): string {
-  return input
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 60);
-}
+// Los clientes se CREAN en el reporting (/admin/settings), que crea aquí su
+// espejo enlazado. El alta manual que había en esta pantalla solo producía
+// huérfanos —clientes sin gasto con el que cruzar— y se retiró el 2026-09-12.
 
-export async function createClienteAction(formData: FormData) {
-  const nombre = String(formData.get('nombre') ?? '').trim();
-  const descripcion = String(formData.get('descripcion') ?? '').trim() || null;
-  const color = String(formData.get('color') ?? 'emerald').trim();
-  const slugInput = String(formData.get('slug') ?? '').trim();
+const ROLES_BORRADO = new Set(['superadmin', 'admin']);
 
-  if (!nombre) {
-    return { ok: false, error: 'El nombre es obligatorio' };
-  }
-
-  const slug = slugify(slugInput || nombre);
-  if (!slug) {
-    return { ok: false, error: 'Slug inválido' };
-  }
-
-  const supabase = await reportUtmClient();
-  const { error } = await supabase.from('clientes').insert({
-    nombre,
-    slug,
-    descripcion,
-    color,
-  });
-
-  if (error) {
-    return { ok: false, error: error.message };
-  }
-
+function revalidar(id?: string) {
   revalidatePath('/report-utm/clientes');
   revalidatePath('/report-utm');
-  return { ok: true };
+  revalidatePath('/admin/settings');
+  if (id) revalidatePath(`/report-utm/clientes/${id}`);
 }
 
+/** Archivar oculta el cliente de listados y selectores en los dos lados. */
 export async function updateClienteStatusAction(
   id: string,
   status: 'active' | 'paused' | 'archived'
 ) {
+  const { ok } = await checkWriteRole();
+  if (!ok) return { ok: false, error: 'No tienes permisos para cambiar el estado.' };
+
   const supabase = await reportUtmClient();
   const { error } = await supabase.from('clientes').update({ status }).eq('id', id);
   if (error) return { ok: false, error: error.message };
 
-  revalidatePath('/report-utm/clientes');
-  revalidatePath(`/report-utm/clientes/${id}`);
+  revalidar(id);
+  revalidatePath('/dashboard');
   return { ok: true };
 }
 
@@ -98,52 +74,85 @@ export async function updateClienteBrandingAction(
   return { ok: true };
 }
 
+/**
+ * Elimina un cliente. Si está enlazado al reporting, se elimina en LOS DOS lados
+ * —es el mismo cliente—; si es un huérfano, solo aquí.
+ *
+ * Antes solo borraba esta fila y el listado lo recreaba en el siguiente render
+ * desde el reporting: el borrado era imposible desde este lado.
+ */
 export async function deleteClienteAction(id: string) {
-  const supabase = await reportUtmClient();
-  const { error } = await supabase.from('clientes').delete().eq('id', id);
-  if (error) return { ok: false, error: error.message };
+  const role = await getUserRole();
+  if (!role || !ROLES_BORRADO.has(role)) {
+    return { ok: false, error: 'Solo un administrador puede eliminar clientes.' };
+  }
 
-  revalidatePath('/report-utm/clientes');
-  revalidatePath('/report-utm');
+  // Con todos sus datos, y en los dos lados si está enlazado.
+  const r = await eliminarClienteUtm(await createAdminClient(), id);
+  if (!r.ok) return { ok: false, error: r.error };
+
+  revalidar();
   return { ok: true };
 }
 
-export async function syncPlatformClientesAction() {
+/**
+ * Enlaza un cliente huérfano con uno del reporting. Es lo que faltaba para
+ * rescatar un cliente que perdió el enlace: sin él, cinco de sus siete fuentes
+ * devuelven cero en silencio y no había ninguna UI para arreglarlo.
+ */
+export async function enlazarClienteAction(id: string, publicClienteId: string) {
+  const { ok } = await checkWriteRole();
+  if (!ok) return { ok: false, error: 'No tienes permisos para enlazar clientes.' };
+  if (!publicClienteId) return { ok: false, error: 'Elige un cliente del reporting.' };
+
   const admin = await createAdminClient();
-  const supabase = await reportUtmClient();
+  const rtm = admin.schema('report_utm');
+  // Un cliente del reporting tiene UN espejo: si ya lo tiene, enlazar otro
+  // duplicaría sus leads en los informes.
+  const { data: ocupado } = await rtm
+    .from('clientes')
+    .select('id, nombre')
+    .eq('public_cliente_id', publicClienteId)
+    .neq('id', id)
+    .limit(1);
+  if (ocupado && ocupado.length > 0) {
+    return {
+      ok: false,
+      error: `Ese cliente del reporting ya está enlazado con «${ocupado[0].nombre}».`,
+    };
+  }
 
-  const [{ data: publicClientes }, { data: linkedClientes }] = await Promise.all([
-    admin.from('clientes').select('id, nombre').order('created_at', { ascending: false }),
-    supabase.from('clientes').select('public_cliente_id').not('public_cliente_id', 'is', null),
-  ]);
+  const { error } = await rtm
+    .from('clientes')
+    .update({ public_cliente_id: publicClienteId })
+    .eq('id', id);
+  if (error) return { ok: false, error: error.message };
 
-  if (!publicClientes?.length) return { ok: true, created: 0 };
+  revalidar(id);
+  return { ok: true };
+}
 
-  const linkedIds = new Set(
-    (linkedClientes ?? []).map((r: { public_cliente_id: string }) => r.public_cliente_id)
-  );
-  const toCreate = publicClientes.filter((c: { id: string }) => !linkedIds.has(c.id));
+/**
+ * Crea el espejo de los clientes del reporting que aún no lo tienen. Ya NO se
+ * ejecuta al abrir la página —así fue como resucitaban los clientes borrados—:
+ * es un botón explícito, y el alta en el reporting ya crea el espejo sola.
+ */
+export async function syncPlatformClientesAction() {
+  const { ok } = await checkWriteRole();
+  if (!ok) return { ok: false, created: 0, error: 'Sin permisos.' };
 
-  if (!toCreate.length) return { ok: true, created: 0 };
+  const admin = await createAdminClient();
+  const { data: publicClientes } = await admin
+    .from('clientes')
+    .select('id, nombre')
+    .order('created_at', { ascending: false });
 
   let created = 0;
-  for (const pc of toCreate as { id: string; nombre: string }[]) {
-    const baseSlug = slugify(pc.nombre);
-    const slug = baseSlug || `cliente-${pc.id.slice(0, 8)}`;
-    const { error } = await supabase.from('clientes').insert({
-      nombre: pc.nombre,
-      slug,
-      public_cliente_id: pc.id,
-      color: 'emerald',
-      status: 'active',
-    });
-    if (!error) created++;
+  for (const pc of (publicClientes ?? []) as { id: string; nombre: string }[]) {
+    const r = await asegurarEspejoUtm(admin, pc.id, pc.nombre);
+    if (r.creado) created++;
   }
 
-  if (created > 0) {
-    revalidatePath('/report-utm/clientes');
-    revalidatePath('/report-utm');
-  }
-
+  if (created > 0) revalidar();
   return { ok: true, created };
 }

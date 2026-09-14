@@ -8,7 +8,6 @@ import {
   Users,
   ShoppingBag,
   BarChart2,
-  Settings,
   LogOut,
   Menu,
   X,
@@ -36,9 +35,9 @@ const NAV_ANALISIS = [
 ];
 
 const NAV_CONFIG = [
-  // Va junto a Integraciones porque casi todo lo que reporta se arregla ahí.
+  // Las integraciones ya no tienen pantalla propia aquí: se configuran en la
+  // ficha del cliente, junto al resto de sus conexiones (una sola casa).
   { name: 'Salud de fuentes', href: '/report-utm/salud', icon: Activity },
-  { name: 'Integraciones', href: '/report-utm/integraciones', icon: Settings },
 ];
 
 type NavItem = {

@@ -15,6 +15,7 @@ import { fetchAllRows } from '@/lib/supabase-paginate';
 import { normalizarClaveLead, normalizarValorCrudo, esClaveOfrecible } from './lead-campos';
 import type { LeadCampoDef, LeadSegmentoDef, ClaveDetectada, CampoValorCrudo } from './lead-campos';
 import { colombiaRangeBounds } from '@/lib/colombia-date';
+import { columnaExcluidoDisponible } from './lead-exclusion';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -292,9 +293,13 @@ export async function detectarCamposDeLeads(
 ): Promise<{ claves: ClaveDetectada[]; leads: number }> {
   if (!clienteId) return { claves: [], leads: 0 };
 
+  // Las preguntas se detectan sobre los leads que cuentan: un contacto de
+  // WhatsApp excluido que trae un campo suelto del chatbot no debe proponerse
+  // como pregunta del formulario.
+  const filtrarExcluidos = await columnaExcluidoDisponible(db);
   const rows = await fetchAllRows(
-    () =>
-      db
+    () => {
+      let q = db
         .from('lead_events')
         .select('id,raw_fields,form_name')
         .eq('cliente_id', clienteId)
@@ -302,7 +307,10 @@ export async function detectarCamposDeLeads(
         .lt('created_at', colombiaRangeBounds(opts.dateFrom, opts.dateTo).lt)
         // Sin `order` propio: fetchAllRows pagina por keyset sobre `id` y
         // añadir otro criterio rompería el cursor.
-        .not('raw_fields', 'is', null),
+        .not('raw_fields', 'is', null);
+      if (filtrarExcluidos) q = q.eq('excluido', false);
+      return q;
+    },
     1000,
     MAX_LEADS_ESCANEO
   );

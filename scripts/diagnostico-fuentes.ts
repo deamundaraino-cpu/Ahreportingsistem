@@ -80,7 +80,9 @@ async function main() {
     public_cliente_id: string | null;
   }>;
 
-  const PASARELAS = ['hotmart', 'cartpanda', 'shopify'];
+  // De dónde puede salir una venta: Hotmart por webhook o GoHighLevel por su
+  // webhook de oportunidad ganada. Shopify y CartPanda se retiraron.
+  const PASARELAS = ['hotmart', 'gohighlevel'];
 
   for (const c of clientes) {
     const { count: ventas } = await db

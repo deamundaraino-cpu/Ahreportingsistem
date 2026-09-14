@@ -294,5 +294,45 @@ seccion('Orden de presentación');
   );
 }
 
+seccion('GA4 vigilado por sí mismo (Cris Tributario, 2026-09-12)');
+{
+  const nunca = evaluarCliente(
+    senales({ ga4: { ultimaSesion: null, pestanas: 4, pestanasConPago: 1 } })
+  );
+  check(
+    'GA4 configurado que nunca entregó una sesión → crítico',
+    nunca.gravedad === 'critico' && nunca.hallazgos.some((h) => h.ambito === 'Integración · GA4')
+  );
+  const parado = evaluarCliente(
+    senales({ ga4: { ultimaSesion: '2026-08-01', pestanas: 1, pestanasConPago: 1 } })
+  );
+  check(
+    'GA4 con 10 días sin sesiones → crítico (más de 3× la tolerancia)',
+    parado.gravedad === 'critico'
+  );
+  const sinPago = evaluarCliente(
+    senales({ ga4: { ultimaSesion: HOY, pestanas: 3, pestanasConPago: 0 } })
+  );
+  check(
+    'sin página de pago mapeada → aviso',
+    sinPago.gravedad === 'aviso' && sinPago.hallazgos.length === 1
+  );
+  check(
+    'GA4 sano no produce hallazgos',
+    evaluarCliente(senales({ ga4: { ultimaSesion: HOY, pestanas: 2, pestanasConPago: 2 } }))
+      .hallazgos.length === 0
+  );
+  check(
+    'sin GA4 configurado (null) no aplica',
+    evaluarCliente(senales({ ga4: null })).hallazgos.length === 0
+  );
+  check(
+    'sin enlace no se repite el aviso por GA4',
+    !evaluarCliente(
+      senales({ tienePuente: false, ga4: { ultimaSesion: null, pestanas: 1, pestanasConPago: 0 } })
+    ).hallazgos.some((h) => h.ambito === 'Integración · GA4')
+  );
+}
+
 console.log(fallos === 0 ? '\n✓ TODO OK' : `\n✗ ${fallos} comprobación(es) fallida(s)`);
 process.exit(fallos === 0 ? 0 : 1);

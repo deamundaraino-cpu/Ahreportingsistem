@@ -19,13 +19,22 @@ import type { AdvancedFilter } from './bi-metadata';
 import { normLabel, round2 } from './bi-metadata';
 import { fetchAllRows } from './bi-query';
 import {
+  buildResolver,
+  esIdMeta,
   loadCampaignIndex,
   loadOverrides,
   matchToCampaign,
   resolvePublicClienteId,
 } from './campaign-resolver';
-import type { CampaignIndex, MatchMethod, Override } from './campaign-resolver';
+import type {
+  CampaignIndex,
+  CampaignResolver,
+  MatchMethod,
+  NivelEntidad,
+  Override,
+} from './campaign-resolver';
 import { colombiaRangeBounds } from '@/lib/colombia-date';
+import { columnaExcluidoDisponible } from './lead-exclusion';
 
 export type { MatchMethod } from './campaign-resolver';
 
@@ -122,6 +131,8 @@ interface CrossContext {
   idx: CampaignIndex;
   overrides: Override[];
   leads: Record<string, unknown>[];
+  /** Leads del rango marcados como excluidos. `null` sin la migración 079. */
+  excluidos: number | null;
 }
 
 /** Resuelve cliente público, carga índice+overrides y los leads del rango. */
@@ -142,17 +153,37 @@ async function loadCrossContext(params: CampaignCrossParams): Promise<CrossConte
   // justo lo que no se pudo leer. Mejor no mostrar nada.
   if (!idx) return null;
 
-  const leads = (await fetchAllRows(() =>
-    supabase
+  // Los excluidos no entran en el diagnóstico: el % de cruce se mide sobre los
+  // leads que CUENTAN. Si se midiera sobre todos, excluir los que no cruzan
+  // haría subir el porcentaje sin que nada hubiera mejorado.
+  const filtrarExcluidos = await columnaExcluidoDisponible(supabase);
+  const bounds = colombiaRangeBounds(dateFrom, dateTo);
+  const leads = (await fetchAllRows(() => {
+    let q = supabase
       .schema('report_utm')
       .from('lead_events')
       .select('id,utm_id,utm_campaign,utm_content,utm_term,utm_source')
-      .gte('created_at', colombiaRangeBounds(dateFrom, dateTo).gte)
-      .lt('created_at', colombiaRangeBounds(dateFrom, dateTo).lt)
-      .eq('cliente_id', params.cliente_id)
-  )) as Record<string, unknown>[];
+      .gte('created_at', bounds.gte)
+      .lt('created_at', bounds.lt)
+      .eq('cliente_id', params.cliente_id);
+    if (filtrarExcluidos) q = q.eq('excluido', false);
+    return q;
+  })) as Record<string, unknown>[];
 
-  return { idx, overrides, leads };
+  let excluidos: number | null = null;
+  if (filtrarExcluidos) {
+    const { count } = await supabase
+      .schema('report_utm')
+      .from('lead_events')
+      .select('id', { count: 'exact', head: true })
+      .eq('cliente_id', params.cliente_id)
+      .eq('excluido', true)
+      .gte('created_at', bounds.gte)
+      .lt('created_at', bounds.lt);
+    excluidos = count ?? 0;
+  }
+
+  return { idx, overrides, leads, excluidos };
 }
 
 export interface CampaignSuggestion {
@@ -250,6 +281,9 @@ const ZERO_METHODS = (): Record<MatchMethod, number> => ({
   override: 0,
   utm_id_campaign: 0,
   utm_id_ad: 0,
+  campaign_id_field: 0,
+  content_ad_id: 0,
+  term_adset_id: 0,
   name: 0,
   content_ad: 0,
   term_adset: 0,
@@ -396,6 +430,147 @@ function campaignsFromIndex(
     .sort((a, b) => b.spend - a.spend);
 }
 
+// ── Diagnóstico por NIVEL (conjunto y anuncio) ────────────────────────
+//
+// El desglose de arriba solo mira `utm_campaign`. La reunión del 2026-09-08 vio
+// que el problema de Cris Tributario estaba un nivel más abajo: el conjunto y el
+// anuncio llegaban como IDs (`120212…`) y no había dónde corregirlos. Esto es la
+// misma idea —cada valor, cuántos leads, a qué entidad real resolvió— para
+// `utm_term` (conjunto) y `utm_content` (anuncio).
+
+type NivelDiagnostico = Exclude<NivelEntidad, 'campaign'>;
+
+/** Campo UTM que identifica cada nivel. */
+const CAMPO_DE_NIVEL: Record<NivelDiagnostico, 'utm_term' | 'utm_content'> = {
+  adset: 'utm_term',
+  ad: 'utm_content',
+};
+
+export interface NivelRow {
+  field: 'utm_term' | 'utm_content';
+  value: string;
+  count: number;
+  /** Nombre real de la entidad, si resolvió. */
+  resolved: string | null;
+  /** Cómo resolvió: por la cascada automática o por una corrección manual. */
+  via: 'automatico' | 'manual' | null;
+  /** El valor es un ID de Meta y no un nombre. */
+  es_id: boolean;
+  /** Mejor entidad candidata por similitud (solo nombres sin resolver). */
+  suggestion: { id: string; name: string; confidence: number } | null;
+}
+
+export interface NivelCobertura {
+  /** Leads con algún valor en el campo del nivel. */
+  total: number;
+  /** De esos, cuántos resolvieron a una entidad real. */
+  resueltos: number;
+  /** Cuántos traían un ID en vez de un nombre. */
+  conId: number;
+  /** Cuántos resolvieron gracias a una corrección manual. */
+  manual: number;
+}
+
+export interface EntidadOpcion {
+  id: string;
+  name: string;
+  campaign_name: string | null;
+  adset_name: string | null;
+  activo: boolean;
+}
+
+function catalogoComoOpciones(idx: CampaignIndex, nivel: NivelDiagnostico): EntidadOpcion[] {
+  const cat = nivel === 'ad' ? idx.adCatalog : idx.adsetCatalog;
+  return Array.from(cat.values())
+    .map((e) => ({
+      id: e.id,
+      name: e.name,
+      campaign_name: e.campaignKey ? (idx.campaigns.get(e.campaignKey)?.name ?? null) : null,
+      adset_name: e.adsetName,
+      activo: e.activo,
+    }))
+    .sort((a, b) => Number(b.activo) - Number(a.activo) || a.name.localeCompare(b.name))
+    .slice(0, 800);
+}
+
+function mejorEntidad(value: string, opciones: EntidadOpcion[]): NivelRow['suggestion'] {
+  const v = normLabel(value);
+  if (!v) return null;
+  let best: NivelRow['suggestion'] = null;
+  let bestScore = 0;
+  for (const o of opciones) {
+    const score = diceCoefficient(v, normLabel(o.name));
+    if (score > bestScore) {
+      bestScore = score;
+      best = { id: o.id, name: o.name, confidence: Math.round(score * 100) };
+    }
+  }
+  return best && bestScore >= SUGGEST_THRESHOLD ? best : null;
+}
+
+/** (Puro) cobertura y desglose de un nivel. */
+function computeNivel(
+  ctx: CrossContext,
+  resolver: CampaignResolver,
+  nivel: NivelDiagnostico,
+  opciones: EntidadOpcion[]
+): { cobertura: NivelCobertura; rows: NivelRow[] } {
+  const field = CAMPO_DE_NIVEL[nivel];
+  const cobertura: NivelCobertura = { total: 0, resueltos: 0, conId: 0, manual: 0 };
+  type G = { count: number; resolved: Map<string, number>; manual: number };
+  const grupos = new Map<string, G>();
+
+  const esManual = (raw: string) =>
+    ctx.overrides.some(
+      (o) =>
+        (o.nivel ?? 'campaign') === nivel &&
+        o.match_field === field &&
+        normLabel(o.match_value) === normLabel(raw)
+    );
+
+  for (const l of ctx.leads) {
+    const raw = String(l[field] ?? '').trim();
+    if (!raw) continue;
+    cobertura.total++;
+    if (esIdMeta(raw)) cobertura.conId++;
+
+    const r = nivel === 'ad' ? resolver.adOf(l) : resolver.adsetOf(l);
+    const manual = r.matched && esManual(raw);
+    if (r.matched) cobertura.resueltos++;
+    if (manual) cobertura.manual++;
+
+    let g = grupos.get(raw);
+    if (!g) {
+      g = { count: 0, resolved: new Map(), manual: 0 };
+      grupos.set(raw, g);
+    }
+    g.count++;
+    if (r.matched) g.resolved.set(r.label, (g.resolved.get(r.label) ?? 0) + 1);
+    if (manual) g.manual++;
+  }
+
+  const rows: NivelRow[] = Array.from(grupos.entries())
+    .map(([value, g]) => {
+      const resolved = topEntry(g.resolved);
+      const es_id = esIdMeta(value);
+      return {
+        field,
+        value,
+        count: g.count,
+        resolved,
+        via: resolved ? (g.manual > 0 ? 'manual' : 'automatico') : null,
+        es_id,
+        // Un ID que no está en el índice no se parece a ningún nombre: sugerir
+        // por similitud de texto ahí sería inventar.
+        suggestion: !resolved && !es_id ? mejorEntidad(value, opciones) : null,
+      } satisfies NivelRow;
+    })
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 300);
+
+  return { cobertura, rows };
+}
+
 export interface CrossDiagnostics {
   campaigns: {
     campaign_id: string | null;
@@ -409,7 +584,18 @@ export interface CrossDiagnostics {
   coverage: MatchCoverage;
   /** Cobertura por el lado del gasto. `null` si no hay índice (sin enlace). */
   spend: SpendCoverage | null;
+  /** Leads del rango excluidos por la regla del cliente (fuera de todo lo de arriba). */
+  excluidos: number | null;
+  /** Diagnóstico de conjunto y anuncio. */
+  niveles: Record<NivelDiagnostico, { cobertura: NivelCobertura; rows: NivelRow[] }>;
+  /** Entidades reales para corregir a mano por nivel. */
+  entidades: Record<NivelDiagnostico, EntidadOpcion[]>;
 }
+
+const NIVEL_VACIO = (): { cobertura: NivelCobertura; rows: NivelRow[] } => ({
+  cobertura: { total: 0, resueltos: 0, conId: 0, manual: 0 },
+  rows: [],
+});
 
 /**
  * Diagnóstico combinado para la UI de cruce: campañas, desglose de TODOS los
@@ -429,9 +615,19 @@ export async function getCrossDiagnostics(params: CampaignCrossParams): Promise<
       breakdown: [],
       coverage: { total: 0, methods: ZERO_METHODS() },
       spend: null,
+      excluidos: null,
+      niveles: { adset: NIVEL_VACIO(), ad: NIVEL_VACIO() },
+      entidades: { adset: [], ad: [] },
     };
   }
   const { suggestions, invalid } = computeUnmatched(ctx);
+  // El mismo resolver que usa el motor del BI: si el diagnóstico resolviera
+  // distinto, esta pantalla diría «resuelto» y el informe mostraría el ID.
+  const resolver = buildResolver(ctx.idx, ctx.overrides);
+  const entidades = {
+    adset: catalogoComoOpciones(ctx.idx, 'adset'),
+    ad: catalogoComoOpciones(ctx.idx, 'ad'),
+  };
   return {
     campaigns: campaignsFromIndex(ctx.idx),
     suggestions,
@@ -439,5 +635,11 @@ export async function getCrossDiagnostics(params: CampaignCrossParams): Promise<
     breakdown: computeUtmBreakdown(ctx),
     coverage: computeCoverage(ctx),
     spend: computeSpendCoverage(ctx),
+    excluidos: ctx.excluidos,
+    niveles: {
+      adset: computeNivel(ctx, resolver, 'adset', entidades.adset),
+      ad: computeNivel(ctx, resolver, 'ad', entidades.ad),
+    },
+    entidades,
   };
 }

@@ -30,6 +30,9 @@ Plataforma multi-cliente para agencias de publicidad que **consolida métricas d
 | 18  | [Fuentes de datos y cruces](./18-fuentes-y-cruces.md)              | Qué cruza con qué y por qué, recetario de widgets y diagnóstico de informes vacíos                                            |
 | 19  | [Guía: segmentos de lead](./19-guia-segmentos-de-lead.md)          | Medir con las respuestas de los formularios: crear segmentos, usarlos en widgets y fórmulas, y el catálogo actual por cliente |
 | 20  | [Integración GoHighLevel](./20-integracion-gohighlevel.md)         | Guía paso a paso: conectar una location de GHL para que sus contactos entren como leads del UTM report                        |
+| 21  | [Auditoría de UTMs](./21-auditoria-utms-ghl.md)                    | Qué arrastra GoHighLevel, qué toma el UTM Report y cómo comprobar los campos ocultos del formulario                           |
+| 22  | [Plantilla de agente interno](./22-plantilla-agente-interno.md)    | Plantilla de prompt para dar de alta y probar un agente interno, y por qué el agente usa API y no una suscripción             |
+| 23  | [Runbook de empalme](./23-runbook-empalme.md)                      | Si algo falla, qué mirar: informes vacíos, leads excluidos, sync caída, cuenta de Meta parada, ventas del CRM                 |
 
 ---
 

@@ -841,11 +841,20 @@ export function ClientConfigForm({
   };
 
   async function handleDelete() {
-    if (confirm('¿Estás seguro de que deseas eliminar este cliente y todos sus datos?')) {
-      const { success } = await deleteCliente(cliente.id);
-      if (success) {
-        router.push('/admin/clientes');
-      }
+    const escrito = prompt(
+      `Se eliminará «${cliente.nombre}» en el reporting Y en Report-UTM, con sus métricas, leads y ventas. No se puede deshacer; si solo quieres ocultarlo, archívalo desde la lista de clientes.\n\nEscribe el nombre del cliente para confirmar:`
+    );
+    if (escrito === null) return;
+    if (escrito.trim() !== String(cliente.nombre).trim()) {
+      alert('El nombre no coincide: no se eliminó nada.');
+      return;
+    }
+    const { success, error } = await deleteCliente(cliente.id);
+    if (success) {
+      // `/admin/clientes` no existe: el listado de clientes es Ajustes.
+      router.push('/admin/settings');
+    } else if (error) {
+      alert(error);
     }
   }
 

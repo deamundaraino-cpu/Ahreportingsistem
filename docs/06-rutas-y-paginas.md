@@ -67,17 +67,21 @@ Componentes admin: `ClientConfigForm`, `NewClientDialog` (settings), `UserManage
 
 Wrapper: `src/app/(report-utm)/layout.tsx`. Requiere sesión **+** `NEXT_PUBLIC_REPORT_UTM_ENABLED=true` (si no, redirige a `/dashboard`). Solo admin/superadmin. Sidebar propio (`ReportUtmSidebar`). Detalle funcional en [doc 12](./12-modulo-report-utm.md).
 
-| Ruta                               | Archivo                             | Descripción                                                                |
-| ---------------------------------- | ----------------------------------- | -------------------------------------------------------------------------- |
-| `/report-utm`                      | `report-utm/page.tsx`               | Overview: nº clientes, ventas rastreadas, revenue 7 días, enlaces, roadmap |
-| `/report-utm/clientes`             | `report-utm/clientes/page.tsx`      | Crear y listar clientes del módulo                                         |
-| `/report-utm/clientes/[clienteId]` | `…/[clienteId]/page.tsx`            | Detalle del cliente: setup de webhook, edición                             |
-| `/report-utm/atribucion`           | `report-utm/atribucion/page.tsx`    | Analítica de atribución: top sources, matriz UTM, tendencias               |
-| `/report-utm/links`                | `report-utm/links/page.tsx`         | Crear y listar enlaces de tracking con UTMs                                |
-| `/report-utm/pixel`                | `report-utm/pixel/page.tsx`         | Snippet del pixel + stream de eventos recientes                            |
-| `/report-utm/ventas`               | `report-utm/ventas/page.tsx`        | Log de ventas (webhook Hotmart), con filtros y paginación                  |
-| `/report-utm/ventas/[saleId]`      | `…/[saleId]/page.tsx`               | Detalle de venta + payload crudo + atribución                              |
-| `/report-utm/integraciones`        | `report-utm/integraciones/page.tsx` | Setup de integraciones (stub / fases futuras)                              |
+> Actualizado el 2026-09-12. `/report-utm/atribucion`, `/links`, `/pixel` e
+> `/integraciones` ya no existen: las integraciones se configuran en la ficha del
+> cliente del reporting (`/admin/settings/[id]#conexiones`).
+
+| Ruta                               | Archivo                              | Descripción                                                                                              |
+| ---------------------------------- | ------------------------------------ | -------------------------------------------------------------------------------------------------------- |
+| `/report-utm`                      | `report-utm/page.tsx`                | Overview                                                                                                 |
+| `/report-utm/clientes`             | `report-utm/clientes/page.tsx`       | Los mismos clientes del reporting: archivar, eliminar (en los dos lados), enlazar huérfanos, sincronizar |
+| `/report-utm/clientes/[clienteId]` | `…/[clienteId]/page.tsx`             | Estado de conexiones, moneda de reporte, «qué leads cuentan», campos de lead, metas, branding, ventas    |
+| `/report-utm/leads`                | `report-utm/leads/page.tsx`          | Leads con pestañas Cuentan / Excluidos / Todos; excluir o re-incluir en lote; exportar CSV               |
+| `/report-utm/ventas`               | `report-utm/ventas/page.tsx`         | Ventas (webhook de Hotmart y del CRM de GoHighLevel)                                                     |
+| `/report-utm/ventas/[saleId]`      | `…/[saleId]/page.tsx`                | Detalle de venta + payload crudo + atribución                                                            |
+| `/report-utm/informes`             | `report-utm/informes/…`              | Informes BI: lista, nuevo desde plantilla, editor                                                        |
+| `/report-utm/cruce-campanas`       | `report-utm/cruce-campanas/page.tsx` | Cruce de leads con campaña, conjunto y anuncio (por ID o nombre) y corrección manual por nivel           |
+| `/report-utm/salud`                | `report-utm/salud/page.tsx`          | Fuentes paradas, integraciones en error, cuentas de Meta que no pueden publicar, cruce degradado         |
 
 ---
 

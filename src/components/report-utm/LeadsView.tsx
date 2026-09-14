@@ -1,11 +1,14 @@
 'use client';
 
-import { useSyncExternalStore } from 'react';
-import { Table as TableIcon, LayoutGrid } from 'lucide-react';
+import { useState, useSyncExternalStore, useTransition } from 'react';
+import { useRouter } from 'next/navigation';
+import { Table as TableIcon, LayoutGrid, EyeOff, Eye, Loader2 } from 'lucide-react';
 import type { ReportUtmLeadEvent } from '@/lib/report-utm/types';
 import { AttributionBadge } from '@/components/report-utm/AttributionBadge';
 import { formatDateTime } from '@/lib/report-utm/formatters';
 import { PLUGIN_LABELS, dec } from '@/lib/report-utm/leads-display';
+import { MOTIVOS_EXCLUSION } from '@/lib/report-utm/lead-exclusion';
+import { marcarLeadsAction } from '@/app/(report-utm)/report-utm/leads/_actions';
 
 type View = 'table' | 'cards';
 const STORAGE_KEY = 'report-utm:leads-view';
@@ -41,20 +44,84 @@ function subscribeView(cb: () => void) {
 export function LeadsView({
   leads,
   clienteMap,
+  puedeExcluir = false,
 }: {
   leads: ReportUtmLeadEvent[];
   clienteMap: Record<string, string>;
+  /** La migración 079 está aplicada: se puede seleccionar y excluir/re-incluir. */
+  puedeExcluir?: boolean;
 }) {
   const view = useSyncExternalStore(subscribeView, readView, () => 'table');
   const changeView = (v: View) => writeView(v);
+  const router = useRouter();
+  const [sel, setSel] = useState<Set<string>>(new Set());
+  const [pendiente, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
 
   const clienteNombre = (lead: ReportUtmLeadEvent) =>
     clienteMap[lead.cliente_id] ?? lead.cliente_id;
 
+  const toggle = (id: string) =>
+    setSel((s) => {
+      const n = new Set(s);
+      if (n.has(id)) n.delete(id);
+      else n.add(id);
+      return n;
+    });
+  const todosMarcados = leads.length > 0 && leads.every((l) => sel.has(l.id));
+  const toggleTodos = () => setSel(todosMarcados ? new Set() : new Set(leads.map((l) => l.id)));
+
+  function marcar(excluir: boolean) {
+    setError(null);
+    startTransition(async () => {
+      const r = await marcarLeadsAction(Array.from(sel), excluir);
+      if (!r.ok) {
+        setError(r.error ?? 'No se pudo actualizar.');
+        return;
+      }
+      setSel(new Set());
+      router.refresh();
+    });
+  }
+
   return (
     <div className="space-y-3">
-      {/* Toggle de vista */}
-      <div className="flex justify-end">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        {/* Acciones sobre la selección */}
+        {puedeExcluir && sel.size > 0 ? (
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-muted-foreground">
+              {sel.size} seleccionado{sel.size === 1 ? '' : 's'}
+            </span>
+            <button
+              type="button"
+              onClick={() => marcar(true)}
+              disabled={pendiente}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-medium border border-border text-foreground hover:bg-accent disabled:opacity-40"
+            >
+              {pendiente ? (
+                <Loader2 className="h-3 w-3 animate-spin" />
+              ) : (
+                <EyeOff className="h-3 w-3" />
+              )}
+              Excluir del conteo
+            </button>
+            <button
+              type="button"
+              onClick={() => marcar(false)}
+              disabled={pendiente}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-medium border border-border text-foreground hover:bg-accent disabled:opacity-40"
+            >
+              <Eye className="h-3 w-3" />
+              Volver a contar
+            </button>
+            {error && <span className="text-[11px] text-red-500">{error}</span>}
+          </div>
+        ) : (
+          <span />
+        )}
+
+        {/* Toggle de vista */}
         <div className="inline-flex items-center gap-1 rounded-lg border border-border bg-card p-0.5">
           <ViewButton
             active={view === 'table'}
@@ -77,6 +144,17 @@ export function LeadsView({
             <table className="w-full">
               <thead className="sticky top-0 z-10 bg-muted">
                 <tr className="text-left text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  {puedeExcluir && (
+                    <th className="pl-4 py-3 w-6">
+                      <input
+                        type="checkbox"
+                        aria-label="Seleccionar todos"
+                        checked={todosMarcados}
+                        onChange={toggleTodos}
+                        className="accent-emerald-500"
+                      />
+                    </th>
+                  )}
                   <th className="px-4 py-3">Fecha</th>
                   <th className="px-4 py-3">Lead</th>
                   <th className="px-4 py-3">Formulario</th>
@@ -92,7 +170,16 @@ export function LeadsView({
               </thead>
               <tbody className="divide-y divide-border">
                 {leads.map((lead) => (
-                  <LeadRow key={lead.id} lead={lead} clienteNombre={clienteNombre(lead)} />
+                  <LeadRow
+                    key={lead.id}
+                    lead={lead}
+                    clienteNombre={clienteNombre(lead)}
+                    seleccion={
+                      puedeExcluir
+                        ? { marcado: sel.has(lead.id), onToggle: () => toggle(lead.id) }
+                        : null
+                    }
+                  />
                 ))}
               </tbody>
             </table>
@@ -101,13 +188,22 @@ export function LeadsView({
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
           {leads.map((lead) => (
-            <LeadCard key={lead.id} lead={lead} clienteNombre={clienteNombre(lead)} />
+            <LeadCard
+              key={lead.id}
+              lead={lead}
+              clienteNombre={clienteNombre(lead)}
+              seleccion={
+                puedeExcluir ? { marcado: sel.has(lead.id), onToggle: () => toggle(lead.id) } : null
+              }
+            />
           ))}
         </div>
       )}
     </div>
   );
 }
+
+type Seleccion = { marcado: boolean; onToggle: () => void } | null;
 
 function ViewButton({
   active,
@@ -135,18 +231,58 @@ function ViewButton({
   );
 }
 
+/** Marca visible de un lead que no cuenta, con el motivo en el tooltip. */
+function ExcluidoBadge({ lead }: { lead: ReportUtmLeadEvent }) {
+  if (!lead.excluido) return null;
+  const motivo =
+    MOTIVOS_EXCLUSION[lead.excluido_motivo as keyof typeof MOTIVOS_EXCLUSION] ??
+    lead.excluido_motivo ??
+    'Excluido';
+  return (
+    <span
+      title={motivo}
+      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-medium text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-500/10"
+    >
+      <EyeOff className="h-3 w-3" /> No cuenta
+    </span>
+  );
+}
+
 // ─────────────────────────────────────────────────────────────
 // Vista tabla
 // ─────────────────────────────────────────────────────────────
 
-function LeadRow({ lead, clienteNombre }: { lead: ReportUtmLeadEvent; clienteNombre: string }) {
+function LeadRow({
+  lead,
+  clienteNombre,
+  seleccion,
+}: {
+  lead: ReportUtmLeadEvent;
+  clienteNombre: string;
+  seleccion: Seleccion;
+}) {
   const hasRawFields = lead.raw_fields && Object.keys(lead.raw_fields).length > 0;
+  const columnas = seleccion ? 12 : 11;
 
   return (
     <>
-      <tr className="hover:bg-accent/50 group">
+      <tr className={`hover:bg-accent/50 group ${lead.excluido ? 'opacity-60' : ''}`}>
+        {seleccion && (
+          <td className="pl-4 py-3 align-top">
+            <input
+              type="checkbox"
+              aria-label="Seleccionar lead"
+              checked={seleccion.marcado}
+              onChange={seleccion.onToggle}
+              className="accent-emerald-500"
+            />
+          </td>
+        )}
         <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap align-top">
           {formatDateTime(lead.created_at)}
+          <div className="mt-1">
+            <ExcluidoBadge lead={lead} />
+          </div>
         </td>
         <td className="px-4 py-3 align-top">
           <div className="space-y-0.5">
@@ -187,7 +323,7 @@ function LeadRow({ lead, clienteNombre }: { lead: ReportUtmLeadEvent; clienteNom
       </tr>
       {/* Detalle expandible: click_id, landing, país + campos del formulario */}
       <tr className="bg-muted/30">
-        <td colSpan={11} className="px-4 py-2">
+        <td colSpan={columnas} className="px-4 py-2">
           <details className="text-[11px]">
             <summary className="cursor-pointer text-muted-foreground hover:text-foreground select-none">
               Ver detalle
@@ -279,37 +415,61 @@ function DetailItem({
 // Vista tarjetas
 // ─────────────────────────────────────────────────────────────
 
-function LeadCard({ lead, clienteNombre }: { lead: ReportUtmLeadEvent; clienteNombre: string }) {
+function LeadCard({
+  lead,
+  clienteNombre,
+  seleccion,
+}: {
+  lead: ReportUtmLeadEvent;
+  clienteNombre: string;
+  seleccion: Seleccion;
+}) {
   const hasRawFields = lead.raw_fields && Object.keys(lead.raw_fields).length > 0;
   const hasContact = lead.lead_name || lead.lead_email || lead.lead_phone;
 
   return (
-    <div className="rounded-2xl border border-border bg-card p-4 flex flex-col gap-3">
+    <div
+      className={`rounded-2xl border border-border bg-card p-4 flex flex-col gap-3 ${lead.excluido ? 'opacity-60' : ''}`}
+    >
       {/* Cabecera: nombre + fecha */}
       <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          {lead.lead_name ? (
-            <p className="text-sm font-semibold text-foreground truncate">{lead.lead_name}</p>
-          ) : (
-            <p className="text-sm font-semibold text-muted-foreground italic">Sin nombre</p>
+        <div className="min-w-0 flex items-start gap-2">
+          {seleccion && (
+            <input
+              type="checkbox"
+              aria-label="Seleccionar lead"
+              checked={seleccion.marcado}
+              onChange={seleccion.onToggle}
+              className="accent-emerald-500 mt-1"
+            />
           )}
-          <div className="mt-0.5 space-y-0.5">
-            {lead.lead_email && (
-              <p className="text-[11px] text-muted-foreground font-mono break-all">
-                {lead.lead_email}
-              </p>
+          <div className="min-w-0">
+            {lead.lead_name ? (
+              <p className="text-sm font-semibold text-foreground truncate">{lead.lead_name}</p>
+            ) : (
+              <p className="text-sm font-semibold text-muted-foreground italic">Sin nombre</p>
             )}
-            {lead.lead_phone && (
-              <p className="text-[11px] text-muted-foreground">{lead.lead_phone}</p>
-            )}
-            {!hasContact && (
-              <p className="text-[11px] text-muted-foreground italic">Sin datos de contacto</p>
-            )}
+            <div className="mt-0.5 space-y-0.5">
+              {lead.lead_email && (
+                <p className="text-[11px] text-muted-foreground font-mono break-all">
+                  {lead.lead_email}
+                </p>
+              )}
+              {lead.lead_phone && (
+                <p className="text-[11px] text-muted-foreground">{lead.lead_phone}</p>
+              )}
+              {!hasContact && (
+                <p className="text-[11px] text-muted-foreground italic">Sin datos de contacto</p>
+              )}
+            </div>
           </div>
         </div>
-        <span className="shrink-0 text-[11px] text-muted-foreground whitespace-nowrap">
-          {formatDateTime(lead.created_at)}
-        </span>
+        <div className="shrink-0 text-right space-y-1">
+          <span className="block text-[11px] text-muted-foreground whitespace-nowrap">
+            {formatDateTime(lead.created_at)}
+          </span>
+          <ExcluidoBadge lead={lead} />
+        </div>
       </div>
 
       {/* Formulario + cliente */}
