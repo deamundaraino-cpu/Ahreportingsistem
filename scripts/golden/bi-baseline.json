@@ -1,5 +1,5 @@
 {
-  "generado": "2026-09-12T16:14:09.562Z",
+  "generado": "2026-09-14T20:07:48.243Z",
   "rango": {
     "desde": "2026-08-01",
     "hasta": "2026-08-31"
@@ -16,9 +16,9 @@
       "publicLink": true
     },
     {
-      "id": "50118457-9e39-4318-a1e0-e1755fdc7cc9",
-      "nombre": "CAMARADICTOS ",
-      "publicLink": false
+      "id": "ece4f094-7825-49b4-9f23-39a4a8db5685",
+      "nombre": "Expo Renta Corta",
+      "publicLink": true
     }
   ],
   "resultados": {
@@ -28,7 +28,7 @@
         "filas": [
           {
             "__dim": null,
-            "leads_count": 1178
+            "leads_count": 495
           }
         ]
       },
@@ -49,8 +49,8 @@
           {
             "__dim": null,
             "spend": 1612395,
-            "leads_count": 1178,
-            "cpl": 1368.76
+            "leads_count": 495,
+            "cpl": 3257.36
           }
         ]
       },
@@ -221,67 +221,67 @@
           },
           {
             "__dim": "2026-08-19",
-            "leads_count": 63,
+            "leads_count": 30,
             "spend": 84030
           },
           {
             "__dim": "2026-08-20",
-            "leads_count": 64,
+            "leads_count": 6,
             "spend": 96590
           },
           {
             "__dim": "2026-08-21",
-            "leads_count": 45,
+            "leads_count": 10,
             "spend": 86264
           },
           {
             "__dim": "2026-08-22",
-            "leads_count": 52,
+            "leads_count": 8,
             "spend": 76464
           },
           {
             "__dim": "2026-08-23",
-            "leads_count": 54,
+            "leads_count": 7,
             "spend": 73914
           },
           {
             "__dim": "2026-08-24",
-            "leads_count": 54,
+            "leads_count": 2,
             "spend": 53436
           },
           {
             "__dim": "2026-08-25",
-            "leads_count": 45,
+            "leads_count": 4,
             "spend": 33968
           },
           {
             "__dim": "2026-08-26",
-            "leads_count": 48,
+            "leads_count": 1,
             "spend": 27180
           },
           {
             "__dim": "2026-08-27",
-            "leads_count": 48,
+            "leads_count": 2,
             "spend": 32050
           },
           {
             "__dim": "2026-08-28",
-            "leads_count": 150,
+            "leads_count": 5,
             "spend": 25042
           },
           {
             "__dim": "2026-08-29",
-            "leads_count": 53,
+            "leads_count": 3,
             "spend": 20577
           },
           {
             "__dim": "2026-08-30",
-            "leads_count": 59,
+            "leads_count": 11,
             "spend": 34308
           },
           {
             "__dim": "2026-08-31",
-            "leads_count": 53,
+            "leads_count": 16,
             "spend": 22888
           }
         ]
@@ -303,15 +303,15 @@
           },
           {
             "__dim": "2026-08-17",
-            "leads_count": 412
+            "leads_count": 195
           },
           {
             "__dim": "2026-08-24",
-            "leads_count": 457
+            "leads_count": 28
           },
           {
             "__dim": "2026-08-31",
-            "leads_count": 53
+            "leads_count": 16
           }
         ]
       },
@@ -337,8 +337,8 @@
           {
             "__dim": "[30|07][CBO][REORGANIZACION][CAPTACION][ VENTAS][JULIO/AGOSTO]",
             "spend": 240136,
-            "leads_count": 0,
-            "cpl": null,
+            "leads_count": 39,
+            "cpl": 6157.33,
             "sales_count": 0
           },
           {
@@ -456,14 +456,7 @@
           {
             "__dim": "(sin campaña)",
             "spend": 0,
-            "leads_count": 997,
-            "cpl": null,
-            "sales_count": 0
-          },
-          {
-            "__dim": "[REORGANIZACION] [CAPTACION] [ VENTAS] [23 FEBRERO] - Copia 3",
-            "spend": 0,
-            "leads_count": 39,
+            "leads_count": 314,
             "cpl": null,
             "sales_count": 0
           }
@@ -474,7 +467,7 @@
         "filas": [
           {
             "__dim": "(sin valor)",
-            "leads_count": 997
+            "leads_count": 314
           },
           {
             "__dim": "[13|08][cbo][reorganizacion][captacion][ Ventas][agosto Tanda 9]",
@@ -647,7 +640,7 @@
         "filas": [
           {
             "__dim": "CL",
-            "leads_count": 1146,
+            "leads_count": 463,
             "spend": 0,
             "cpl": null
           },
@@ -670,7 +663,7 @@
         "filas": [
           {
             "__dim": "instagram",
-            "leads_count": 912,
+            "leads_count": 237,
             "sales_count": 0,
             "conversion_rate": 0
           },
@@ -699,12 +692,6 @@
             "conversion_rate": 0
           },
           {
-            "__dim": "facebook",
-            "leads_count": 23,
-            "sales_count": 0,
-            "conversion_rate": 0
-          },
-          {
             "__dim": "ig",
             "leads_count": 22,
             "sales_count": 0,
@@ -719,6 +706,12 @@
           {
             "__dim": "form",
             "leads_count": 17,
+            "sales_count": 0,
+            "conversion_rate": 0
+          },
+          {
+            "__dim": "facebook",
+            "leads_count": 15,
             "sales_count": 0,
             "conversion_rate": 0
           },
@@ -763,10 +756,6 @@
       {
         "caso": "por formulario",
         "filas": [
-          {
-            "__dim": "UTM - Report",
-            "leads_count": 683
-          },
           {
             "__dim": "(sin valor)",
             "leads_count": 254
@@ -822,14 +811,14 @@
         "filas": [
           {
             "__dim": "(sin campaña)",
-            "leads_count": 997
+            "leads_count": 314
           },
           {
             "__dim": "[13|08][CBO][REORGANIZACION][CAPTACION][ VENTAS][AGOSTO TANDA 9]",
             "leads_count": 73
           },
           {
-            "__dim": "[REORGANIZACION] [CAPTACION] [ VENTAS] [23 FEBRERO] - Copia 3",
+            "__dim": "[30|07][CBO][REORGANIZACION][CAPTACION][ VENTAS][JULIO/AGOSTO]",
             "leads_count": 39
           }
         ]
@@ -1269,8 +1258,8 @@
           {
             "__dim": "[V1][13|08][SISTEMAS DE GESTION][CHILE][C LEADS][CBO][25-45][ANDROMEDA]",
             "spend": 890177,
-            "leads_count": 1,
-            "cpl": 890177,
+            "leads_count": 141,
+            "cpl": 6313.31,
             "sales_count": 0
           },
           {
@@ -1668,7 +1657,7 @@
         ]
       }
     ],
-    "50118457-9e39-4318-a1e0-e1755fdc7cc9": [
+    "ece4f094-7825-49b4-9f23-39a4a8db5685": [
       {
         "caso": "leads total",
         "filas": [
@@ -1683,8 +1672,8 @@
         "filas": [
           {
             "__dim": null,
-            "spend": 0,
-            "meta_spend": 0,
+            "spend": 1543,
+            "meta_spend": 1543,
             "tiktok_spend": 0
           }
         ]
@@ -1694,7 +1683,7 @@
         "filas": [
           {
             "__dim": null,
-            "spend": 0,
+            "spend": 1543,
             "leads_count": 0,
             "cpl": null
           }
@@ -1707,7 +1696,7 @@
             "__dim": null,
             "sales_count": 0,
             "revenue": 0,
-            "roas": null,
+            "roas": 0,
             "cpa": null
           }
         ]
@@ -1717,13 +1706,13 @@
         "filas": [
           {
             "__dim": null,
-            "impressions": 0,
-            "clicks": 0,
-            "ctr": null,
-            "cpc": null,
-            "cpm": null,
-            "reach": 0,
-            "frequency": null
+            "impressions": 228,
+            "clicks": 5,
+            "ctr": 2.19,
+            "cpc": 308.6,
+            "cpm": 6767.54,
+            "reach": 227,
+            "frequency": 1
           }
         ]
       },
@@ -1774,7 +1763,163 @@
       },
       {
         "caso": "serie por día",
-        "filas": []
+        "filas": [
+          {
+            "__dim": "2026-08-01",
+            "leads_count": 0,
+            "spend": 1543
+          },
+          {
+            "__dim": "2026-08-02",
+            "leads_count": 0,
+            "spend": 0
+          },
+          {
+            "__dim": "2026-08-03",
+            "leads_count": 0,
+            "spend": 0
+          },
+          {
+            "__dim": "2026-08-04",
+            "leads_count": 0,
+            "spend": 0
+          },
+          {
+            "__dim": "2026-08-05",
+            "leads_count": 0,
+            "spend": 0
+          },
+          {
+            "__dim": "2026-08-06",
+            "leads_count": 0,
+            "spend": 0
+          },
+          {
+            "__dim": "2026-08-07",
+            "leads_count": 0,
+            "spend": 0
+          },
+          {
+            "__dim": "2026-08-08",
+            "leads_count": 0,
+            "spend": 0
+          },
+          {
+            "__dim": "2026-08-09",
+            "leads_count": 0,
+            "spend": 0
+          },
+          {
+            "__dim": "2026-08-10",
+            "leads_count": 0,
+            "spend": 0
+          },
+          {
+            "__dim": "2026-08-11",
+            "leads_count": 0,
+            "spend": 0
+          },
+          {
+            "__dim": "2026-08-12",
+            "leads_count": 0,
+            "spend": 0
+          },
+          {
+            "__dim": "2026-08-13",
+            "leads_count": 0,
+            "spend": 0
+          },
+          {
+            "__dim": "2026-08-14",
+            "leads_count": 0,
+            "spend": 0
+          },
+          {
+            "__dim": "2026-08-15",
+            "leads_count": 0,
+            "spend": 0
+          },
+          {
+            "__dim": "2026-08-16",
+            "leads_count": 0,
+            "spend": 0
+          },
+          {
+            "__dim": "2026-08-17",
+            "leads_count": 0,
+            "spend": 0
+          },
+          {
+            "__dim": "2026-08-18",
+            "leads_count": 0,
+            "spend": 0
+          },
+          {
+            "__dim": "2026-08-19",
+            "leads_count": 0,
+            "spend": 0
+          },
+          {
+            "__dim": "2026-08-20",
+            "leads_count": 0,
+            "spend": 0
+          },
+          {
+            "__dim": "2026-08-21",
+            "leads_count": 0,
+            "spend": 0
+          },
+          {
+            "__dim": "2026-08-22",
+            "leads_count": 0,
+            "spend": 0
+          },
+          {
+            "__dim": "2026-08-23",
+            "leads_count": 0,
+            "spend": 0
+          },
+          {
+            "__dim": "2026-08-24",
+            "leads_count": 0,
+            "spend": 0
+          },
+          {
+            "__dim": "2026-08-25",
+            "leads_count": 0,
+            "spend": 0
+          },
+          {
+            "__dim": "2026-08-26",
+            "leads_count": 0,
+            "spend": 0
+          },
+          {
+            "__dim": "2026-08-27",
+            "leads_count": 0,
+            "spend": 0
+          },
+          {
+            "__dim": "2026-08-28",
+            "leads_count": 0,
+            "spend": 0
+          },
+          {
+            "__dim": "2026-08-29",
+            "leads_count": 0,
+            "spend": 0
+          },
+          {
+            "__dim": "2026-08-30",
+            "leads_count": 0,
+            "spend": 0
+          },
+          {
+            "__dim": "2026-08-31",
+            "leads_count": 0,
+            "spend": 0
+          }
+        ]
       },
       {
         "caso": "serie por semana",
@@ -1782,11 +1927,66 @@
       },
       {
         "caso": "serie por mes",
-        "filas": []
+        "filas": [
+          {
+            "__dim": "2026-08",
+            "spend": 1543
+          }
+        ]
       },
       {
         "caso": "por campaña (cruzada)",
-        "filas": []
+        "filas": [
+          {
+            "__dim": "[EXPORENTACORTA][INSCRIPCIONES][GENERAL_FELIPE]",
+            "spend": 566,
+            "leads_count": 0,
+            "cpl": null,
+            "sales_count": 0
+          },
+          {
+            "__dim": "[EXPORENTACORTA][INSCRIPCIONES][TIPO_AWARNESS] - Copia",
+            "spend": 458,
+            "leads_count": 0,
+            "cpl": null,
+            "sales_count": 0
+          },
+          {
+            "__dim": "[CL][FORM-LAS CONDES][COMUNAS][CLIENTES POTENCIALES] [CBO] [CHILE]",
+            "spend": 262,
+            "leads_count": 0,
+            "cpl": null,
+            "sales_count": 0
+          },
+          {
+            "__dim": "[CL][FORM-SANTA VICTORIA][CYBER][CLIENTES POTENCIALES] [CBO] [CHILE]",
+            "spend": 94,
+            "leads_count": 0,
+            "cpl": null,
+            "sales_count": 0
+          },
+          {
+            "__dim": "[EXPORENTACORTA][INSCRIPCIONES][INMOBILIARIO]",
+            "spend": 70,
+            "leads_count": 0,
+            "cpl": null,
+            "sales_count": 0
+          },
+          {
+            "__dim": "[CL][FORM-DISTRITO BUSTAMANTE][PROYECTOS][CLIENTES POTENCIALES] [CBO] [CHILE] Julio",
+            "spend": 49,
+            "leads_count": 0,
+            "cpl": null,
+            "sales_count": 0
+          },
+          {
+            "__dim": "[CL][FORM-DISTRITO BUSTAMANTE][CYBER][CLIENTES POTENCIALES] [CBO] [CHILE]",
+            "spend": 44,
+            "leads_count": 0,
+            "cpl": null,
+            "sales_count": 0
+          }
+        ]
       },
       {
         "caso": "por campaña CRUDA",
@@ -1794,15 +1994,90 @@
       },
       {
         "caso": "por anuncio",
-        "filas": []
+        "filas": [
+          {
+            "__dim": "03 - VIDEO FELIPE LUGAR",
+            "spend": 338,
+            "impressions": 46
+          },
+          {
+            "__dim": "03 - VIDEO FRANCISCO- AWARNESS 2",
+            "spend": 287,
+            "impressions": 44
+          },
+          {
+            "__dim": "[1][VIDEO]",
+            "spend": 262,
+            "impressions": 9
+          },
+          {
+            "__dim": "05 - VIDEO FELIPE ERROR",
+            "spend": 228,
+            "impressions": 29
+          },
+          {
+            "__dim": "02 - VIDEO FRANCISCO- AWARNESS 1",
+            "spend": 171,
+            "impressions": 32
+          },
+          {
+            "__dim": "[4][IMG][GLORIA]",
+            "spend": 94,
+            "impressions": 35
+          },
+          {
+            "__dim": "[ESTÁTICA 1]",
+            "spend": 49,
+            "impressions": 4
+          },
+          {
+            "__dim": "[1][VIDEO][SILVI - MISMO METRO, MISMO HOSPITAL]",
+            "spend": 44,
+            "impressions": 5
+          },
+          {
+            "__dim": "INV03 - IMG - FRANCISCO",
+            "spend": 38,
+            "impressions": 11
+          },
+          {
+            "__dim": "INV04 - IMG - FELIPE",
+            "spend": 32,
+            "impressions": 13
+          }
+        ]
       },
       {
         "caso": "por conjunto",
-        "filas": []
+        "filas": [
+          {
+            "__dim": "ERC2026 | GENERAL | Chile |",
+            "spend": 566
+          },
+          {
+            "__dim": "ERC2026 | GENERAL | Chile",
+            "spend": 458
+          },
+          {
+            "__dim": "[ADVANTAGE][28-55][CHILE][HM]",
+            "spend": 449
+          },
+          {
+            "__dim": "ERC2026 | INMOBILIARIO | Chile |",
+            "spend": 70
+          }
+        ]
       },
       {
         "caso": "por país (gasto no cruza)",
-        "filas": []
+        "filas": [
+          {
+            "__dim": null,
+            "leads_count": 0,
+            "spend": 1543,
+            "cpl": null
+          }
+        ]
       },
       {
         "caso": "por source",
@@ -1833,7 +2108,7 @@
         },
         {
           "stage": "leads_count",
-          "value": 1178,
+          "value": 495,
           "label": "Leads (contactos)"
         },
         {
@@ -1846,9 +2121,9 @@
         "current": [
           {
             "dimension_value": null,
-            "leads_count": 1178,
+            "leads_count": 495,
             "spend": 1612395,
-            "cpl": 1368.76
+            "cpl": 3257.36
           }
         ],
         "previous": [
@@ -1862,7 +2137,7 @@
       },
       "distinct_campanas": [
         "[13|08][CBO][REORGANIZACION][CAPTACION][ VENTAS][AGOSTO TANDA 9]",
-        "[REORGANIZACION] [CAPTACION] [ VENTAS] [23 FEBRERO] - Copia 3",
+        "[30|07][CBO][REORGANIZACION][CAPTACION][ VENTAS][JULIO/AGOSTO]",
         "F2[5|08][ASESORIA TRIBUTARIA][C LEADS][AGENDAMIENTO][VIDS][P FRIO][ABO][AGO]",
         "F2[20|08][CBO][ASESORIA TRIBUTARIA][C LEADS][AGENDAMIENTO][VIDS][P. FRIO INT][AGO] - ADS GANADORES TODOS - LAND DAVID",
         "F2[27|08][CBO][ASESORIA TRIBUTARIA][C LEADS][AGENDAMIENTO][IMGS][P. FRIO INT][AGO] - ADS IMGS TANDA 1- LAND DAVID",
@@ -1960,21 +2235,21 @@
         "[V9][D][27/08][CBO][DUA y PIAR][MEXICO][C LEADS][CBO] 2026 - ADS V1",
         "[V2][D][4/08][GERENCIA PROYECTOS][MEXICO][CLEADS LAND][CBO][P. FRIO] - ADS ANTIGUOS",
         "[V6][16|08][PRIMEROS AUXILIOS PSICOLOGICOS][MEXICO][C LEADS][CBO][25-45][ANDROMEDA]",
-        "%5BV1%5D%5B13%7C08%5D%5BSISTEMAS+DE+GESTION%5D%5BCHILE%5D%5BC+LEADS%5D%5BCBO%5D%5B25-45%5D%5BANDROMEDA%5D",
+        "[V1][13|08][SISTEMAS DE GESTION][CHILE][C LEADS][CBO][25-45][ANDROMEDA]",
         "V8[D][10|08][DUA y PIAR][CHILE][C LEADS][CBO][P. FRIO] - ADS V1",
         "[V9][D][29/08][CBO][DUA y PIAR][COLOMBIA][C LEADS][P. FRIO]2026 - ADS TANDA 1 V9"
       ]
     },
-    "50118457-9e39-4318-a1e0-e1755fdc7cc9": {
+    "ece4f094-7825-49b4-9f23-39a4a8db5685": {
       "funnel": [
         {
           "stage": "impressions",
-          "value": 0,
+          "value": 228,
           "label": "Impresiones"
         },
         {
           "stage": "clicks",
-          "value": 0,
+          "value": 5,
           "label": "Clics"
         },
         {
@@ -1993,7 +2268,7 @@
           {
             "dimension_value": null,
             "leads_count": 0,
-            "spend": 0,
+            "spend": 1543,
             "cpl": null
           }
         ],
@@ -2001,12 +2276,20 @@
           {
             "dimension_value": null,
             "leads_count": 0,
-            "spend": 0,
+            "spend": 8497824,
             "cpl": null
           }
         ]
       },
-      "distinct_campanas": []
+      "distinct_campanas": [
+        "[CL][FORM-DISTRITO BUSTAMANTE][CYBER][CLIENTES POTENCIALES] [CBO] [CHILE]",
+        "[CL][FORM-DISTRITO BUSTAMANTE][PROYECTOS][CLIENTES POTENCIALES] [CBO] [CHILE] Julio",
+        "[CL][FORM-LAS CONDES][COMUNAS][CLIENTES POTENCIALES] [CBO] [CHILE]",
+        "[CL][FORM-SANTA VICTORIA][CYBER][CLIENTES POTENCIALES] [CBO] [CHILE]",
+        "[EXPORENTACORTA][INSCRIPCIONES][GENERAL_FELIPE]",
+        "[EXPORENTACORTA][INSCRIPCIONES][INMOBILIARIO]",
+        "[EXPORENTACORTA][INSCRIPCIONES][TIPO_AWARNESS] - Copia"
+      ]
     }
   }
 }

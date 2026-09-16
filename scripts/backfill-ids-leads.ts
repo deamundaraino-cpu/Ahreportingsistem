@@ -16,14 +16,20 @@
  *   · S2S          → los parámetros `campaign_id`, `adset_id` y `ad_id` de la
  *                    `page_url`, si la landing ya los llevaba.
  *
+ * La LECTURA va por la Management API (`sql-remoto.ts`) y ya filtrada en SQL:
+ * por PostgREST, preguntar «¿tiene este cliente leads de GHL?» recorre todos sus
+ * leads (el único índice es por cliente y fecha) y en Eduversio se cortaba por
+ * timeout. La ESCRITURA sí va por PostgREST, una fila por clave primaria.
+ *
  * Nunca pisa un ID que ya esté: rellena solo los que faltan.
  */
 
 import { config as loadEnv } from 'dotenv';
 loadEnv({ path: '.env.local' });
+import { sqlRemoto } from './sql-remoto';
 
 type Ids = { campaign_id: string | null; adset_id: string | null; ad_id: string | null };
-type Lead = Record<string, unknown> & { id: string };
+type Lead = Record<string, unknown> & { id: string; cliente_id: string };
 
 const CHUNK_DIAS = 10;
 
@@ -44,12 +50,21 @@ function faltantes(actual: Lead, nuevos: Ids, conCols: boolean): Partial<Ids> {
   return out;
 }
 
+function porCliente(filas: Lead[]): Map<string, Lead[]> {
+  const m = new Map<string, Lead[]>();
+  for (const f of filas) {
+    const lista = m.get(f.cliente_id) ?? [];
+    lista.push(f);
+    m.set(f.cliente_id, lista);
+  }
+  return m;
+}
+
 async function main() {
   const aplicar = process.argv.includes('--aplicar');
   const { createAdminClient } = await import('../src/utils/supabase/server');
-  const { fetchAllRows } = await import('../src/lib/supabase-paginate');
   const { normLabel } = await import('../src/lib/report-utm/bi-metadata');
-  const { COLUMNAS_ID, columnasIdDisponibles, idsPublicitarios } =
+  const { columnasIdDisponibles, idsPublicitarios } =
     await import('../src/lib/report-utm/lead-ids');
   const { idsDeContacto } = await import('../src/lib/report-utm/ghl-leads');
 
@@ -64,34 +79,55 @@ async function main() {
   if (!conCols)
     console.log('ℹ️  Migración 082 sin aplicar: informe en seco sobre todos los leads.\n');
 
-  const extra = conCols ? `,${COLUMNAS_ID.join(',')}` : '';
-  const { data: clientes } = await rtm
-    .from('clientes')
-    .select('id,nombre,public_cliente_id')
-    .order('nombre');
+  // Con la 082, solo interesan los leads a los que aún les falta algún ID.
+  const colsIds = conCols ? ', e.campaign_id, e.adset_id, e.ad_id' : '';
+  const faltaAlguno = conCols
+    ? ' and (e.campaign_id is null or e.adset_id is null or e.ad_id is null)'
+    : '';
+
+  const [clientes, totales, ghlFilas, s2sFilas, metaFilas] = await Promise.all([
+    sqlRemoto<{ id: string; nombre: string; public_cliente_id: string | null }>(
+      'select id, nombre, public_cliente_id from report_utm.clientes order by nombre'
+    ),
+    sqlRemoto<{ cliente_id: string; source: string; n: number }>(
+      `select cliente_id, source, count(*)::int n from report_utm.lead_events
+       where source in ('gohighlevel', 's2s', 'meta_lead_ads') group by 1, 2`
+    ),
+    sqlRemoto<Lead>(
+      `select e.id, e.cliente_id,
+              e.custom_data->'attribution_source' as attribution_source,
+              e.custom_data->'last_attribution_source' as last_attribution_source${colsIds}
+       from report_utm.lead_events e
+       where e.source = 'gohighlevel'
+         and (e.custom_data ? 'attribution_source' or e.custom_data ? 'last_attribution_source')${faltaAlguno}`
+    ),
+    sqlRemoto<Lead>(
+      `select e.id, e.cliente_id, e.page_url${colsIds}
+       from report_utm.lead_events e
+       where e.source = 's2s' and e.page_url ~ '[?&](campaign_id|adset_id|ad_id)='${faltaAlguno}`
+    ),
+    sqlRemoto<Lead>(
+      `select e.id, e.cliente_id, e.created_at, e.utm_id, e.utm_content, e.utm_term${colsIds}
+       from report_utm.lead_events e
+       where e.source = 'meta_lead_ads' and e.utm_id is not null${faltaAlguno}`
+    ),
+  ]);
+
+  const total = (cliente: string, source: string) =>
+    totales.find((t) => t.cliente_id === cliente && t.source === source)?.n ?? 0;
+  const ghlPor = porCliente(ghlFilas);
+  const s2sPor = porCliente(s2sFilas);
+  const metaPor = porCliente(metaFilas);
 
   const cambios: Array<{ id: string; ids: Partial<Ids> }> = [];
   const resumen: Array<Record<string, unknown>> = [];
 
-  for (const c of (clientes ?? []) as Array<{
-    id: string;
-    nombre: string;
-    public_cliente_id: string | null;
-  }>) {
+  for (const c of clientes) {
     const nombre = c.nombre.trim();
 
     // ── GoHighLevel ────────────────────────────────────────────────
-    const ghl = (await fetchAllRows(() =>
-      rtm
-        .from('lead_events')
-        .select(
-          `id,attribution_source:custom_data->attribution_source,last_attribution_source:custom_data->last_attribution_source${extra}`
-        )
-        .eq('cliente_id', c.id)
-        .eq('source', 'gohighlevel')
-    )) as Lead[];
     let ghlCon = 0;
-    for (const l of ghl) {
+    for (const l of ghlPor.get(c.id) ?? []) {
       const ids = idsDeContacto({
         attributionSource: l.attribution_source ?? undefined,
         lastAttributionSource: l.last_attribution_source ?? undefined,
@@ -104,17 +140,9 @@ async function main() {
     }
 
     // ── S2S con IDs en la URL ──────────────────────────────────────
-    const s2s = (await fetchAllRows(() =>
-      rtm
-        .from('lead_events')
-        .select(`id,page_url${extra}`)
-        .eq('cliente_id', c.id)
-        .eq('source', 's2s')
-        .or('page_url.ilike.*ad_id=*,page_url.ilike.*adset_id=*,page_url.ilike.*campaign_id=*')
-    )) as Lead[];
     let s2sCon = 0;
-    for (const l of s2s) {
-      let qs: URLSearchParams | null = null;
+    for (const l of s2sPor.get(c.id) ?? []) {
+      let qs: URLSearchParams;
       try {
         qs = new URL(String(l.page_url)).searchParams;
       } catch {
@@ -129,13 +157,7 @@ async function main() {
     }
 
     // ── Meta Lead Ads ──────────────────────────────────────────────
-    const meta = (await fetchAllRows(() =>
-      rtm
-        .from('lead_events')
-        .select(`id,created_at,utm_id,utm_content,utm_term${extra}`)
-        .eq('cliente_id', c.id)
-        .eq('source', 'meta_lead_ads')
-    )) as Lead[];
+    const meta = metaPor.get(c.id) ?? [];
     let metaCon = 0;
     let metaAmbiguos = 0;
     let metaSinAnuncio = 0;
@@ -154,10 +176,13 @@ async function main() {
           .eq('cliente_id', c.public_cliente_id)
           .gte('fecha', d)
           .lte('fecha', fin > hasta ? hasta : fin);
-        if (error) throw new Error(`metricas_diarias ${nombre}: ${error.message}`);
+        if (error) throw new Error(`metricas_diarias de ${nombre}: ${error.message}`);
         for (const f of filas ?? []) {
-          for (const a of ((f as { meta_ads: unknown }).meta_ads as Record<string, unknown>[]) ??
-            []) {
+          const anuncios = ((f as { meta_ads: unknown }).meta_ads ?? []) as Record<
+            string,
+            unknown
+          >[];
+          for (const a of anuncios) {
             if (!a.ad_id || !a.campaign_id) continue;
             const k = `${a.campaign_id}|${normLabel(String(a.adset_name ?? ''))}|${normLabel(String(a.ad_name ?? ''))}`;
             let m = terna.get(k);
@@ -190,12 +215,15 @@ async function main() {
       }
     }
 
-    if (ghl.length + s2s.length + meta.length > 0) {
+    const tGhl = total(c.id, 'gohighlevel');
+    const tS2s = total(c.id, 's2s');
+    const tMeta = total(c.id, 'meta_lead_ads');
+    if (tGhl + tS2s + tMeta > 0) {
       resumen.push({
         cliente: nombre,
-        ghl: `${ghlCon}/${ghl.length}`,
-        s2s_con_ids_en_url: `${s2sCon}/${s2s.length}`,
-        meta_lead_ads: `${metaCon}/${meta.length}`,
+        ghl: `${ghlCon}/${tGhl}`,
+        s2s_con_ids_en_url: `${s2sCon}/${tS2s}`,
+        meta_lead_ads: `${metaCon}/${tMeta}`,
         meta_ambiguos: metaAmbiguos,
         meta_sin_anuncio_en_gasto: metaSinAnuncio,
       });
@@ -210,8 +238,8 @@ async function main() {
     return;
   }
 
-  // Una actualización por lead (cada uno lleva sus propios IDs), en tandas
-  // concurrentes pequeñas para no saturar PostgREST.
+  // Una actualización por lead (cada uno lleva sus propios IDs), por clave
+  // primaria y en tandas concurrentes pequeñas para no saturar PostgREST.
   const TANDA = 20;
   let hechos = 0;
   let errores = 0;

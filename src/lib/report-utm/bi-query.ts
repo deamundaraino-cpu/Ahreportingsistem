@@ -1001,11 +1001,31 @@ async function queryLeadsDirect(
     !plan.inMemory &&
     leadSegs.length === 0
   ) {
-    const { count, error } = await applyBase(
-      supabase.schema('report_utm').from('lead_events').select('id', { count: 'exact', head: true })
-    );
-    if (error) return [];
-    return [{ dim: 'total', count: count ?? 0, fields: {}, segs: {} }];
+    // Contar `excluido = false` de golpe obliga a visitar cada fila: el índice de
+    // cliente+fecha no lleva `excluido`. En Eduversio (27 mil leads al mes) eso
+    // rozaba el statement timeout de 8 s, y el error se volvía un 0 silencioso
+    // (lo destapó el golden el 2026-09-14). Se cuenta todo —lectura solo de
+    // índice— y se restan los excluidos, que tienen su índice parcial
+    // (`idx_lead_events_excluidos`). Mismo número, dos lecturas baratas.
+    const contar = (q: any) => {
+      q = rangoColombia(q, dateFrom, dateTo);
+      if (params.cliente_id) q = q.eq('cliente_id', params.cliente_id);
+      return applyDimFilters(q, params.filters, filterKey);
+    };
+    const cabecera = () =>
+      supabase
+        .schema('report_utm')
+        .from('lead_events')
+        .select('id', { count: 'exact', head: true });
+    const [todos, excluidos] = await Promise.all([
+      contar(cabecera()),
+      filtrarExcluidos
+        ? contar(cabecera()).eq('excluido', true)
+        : Promise.resolve({ count: 0, error: null }),
+    ]);
+    if (todos.error || excluidos.error) return [];
+    const count = (todos.count ?? 0) - (excluidos.count ?? 0);
+    return [{ dim: 'total', count, fields: {}, segs: {} }];
   }
 
   // Agrupado / métricas de campo / filtro avanzado: traer filas (paginado) y agrupar.

@@ -143,4 +143,48 @@ Los nombres siguen haciendo falta para leer el informe; los IDs son los que cruz
 
 ## 4. Cifras con el resolver nuevo
 
-Pendiente de volcar la salida de `scripts/auditoria-cruce.ts`.
+`scripts/auditoria-cruce.ts`, del 2026-08-15 al 2026-09-13, sobre los leads que
+cuentan. La migración 082 aún no está aplicada, así que «por ID» es el ID que llega
+en los UTM, todavía no los IDs propios del lead.
+
+| Cliente         |  Leads | Por ID | Por nombre | Manual | Ambiguos | Sin cruzar | Gasto con leads |
+| --------------- | -----: | -----: | ---------: | -----: | -------: | ---------: | --------------: |
+| Eduversio       | 27.318 |   90 % |        1 % |    0 % |      2 % |        6 % |            99 % |
+| Somos Rentable  |  2.552 |   97 % |        0 % |    0 % |      0 % |        3 % |           30 %² |
+| Sur Profundo    |  2.100 |   97 % |        1 % |    0 % |      0 % |        2 % |           39 %² |
+| Invest Brokers  |    243 |   99 % |        0 % |    0 % |      0 % |        1 % |            89 % |
+| Cris Tributario |  1.625 |    0 % |        5 % |    4 % |      0 % |      91 %³ |            90 % |
+
+² Somos Rentable y Sur Profundo comparten la cuenta de Meta a propósito: el gasto de
+una cuenta se reparte entre las dos.
+³ 1.480 de esos leads solo traen el canal (contactos orgánicos de GHL). Con la 079 ya
+aplicada, la regla «Qué leads cuentan» de la ficha de Cris los puede dejar fuera.
+
+**Lo que no cruza, en Eduversio (6 %):**
+
+- 1.506 leads llegan sin ningún UTM;
+- 108 traen macros sin rellenar (`{{campaign.name}}`);
+- solo 7 traen un valor que no existe.
+
+Los URL-encoded y las campañas renombradas ya no aparecen: cruzan.
+
+**Ambiguos (2 % de Eduversio).** Los tres nombres de anuncio que más se repiten
+reúnen 552 leads que antes caían en una campaña al azar:
+
+| Nombre de anuncio  | Leads | Campañas donde existe |
+| ------------------ | ----: | --------------------: |
+| AD 1 TANDA 1 SEPT  |   269 |                     7 |
+| IMAGEN 1 - IA 100% |   209 |                     5 |
+| IMAGEN 5           |    74 |                    15 |
+
+Se resuelven poniendo `ad_id={{ad.id}}` en esos enlaces.
+
+**Relleno del histórico (en seco, 2026-09-14).**
+
+| Fuente             | Resultado                                                                              |
+| ------------------ | -------------------------------------------------------------------------------------- |
+| Meta Lead Ads      | Invest Brokers: 671 de 675 leads con anuncio único; 2 cuyo anuncio no está en el gasto |
+| GHL                | Cris: 2 de 1.799                                                                       |
+| S2S (66 mil leads) | Ninguno trae todavía los IDs en la URL de la landing                                   |
+
+Por eso el paso 3 (la plantilla de URL) es el que más mueve la aguja.

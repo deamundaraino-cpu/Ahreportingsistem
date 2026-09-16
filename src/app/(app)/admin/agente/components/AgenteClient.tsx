@@ -46,7 +46,7 @@ function AvisosDeConfiguracion({ estado }: { estado: EstadoAgente }) {
   }
   if (!estado.tieneSecretoEntrante) {
     avisos.push(
-      'Falta AGENT_INBOUND_SECRET: WhatsApp no puede entregar mensajes. Debe tener el mismo valor aquí y en el gateway.'
+      'WhatsApp sin conectar (falta AGENT_INBOUND_SECRET). El chat de esta página funciona igual: esto solo afecta a los mensajes que llegan por WhatsApp.'
     );
   }
   // Si los turnos se acumulan y no bajan, nadie está procesando la cola. Es el
