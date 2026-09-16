@@ -1,4 +1,5 @@
 import { headers, cookies } from 'next/headers';
+import { codigoErrorDeRed, describirErrorDeRed } from '@/lib/fetch-json';
 
 /**
  * Llamadas de la app a su propia API desde server actions.
@@ -31,6 +32,55 @@ export async function internalOrigin(): Promise<string> {
   return `http://${host}`;
 }
 
+/**
+ * Pista para desarrollo cuando el origen configurado rechaza la conexión: dice
+ * en qué dirección está respondiendo de verdad la app, según el `Host` de la
+ * petición en curso.
+ *
+ * Es SOLO un texto. No se enruta por el `Host`: `next dev` escucha en todas las
+ * interfaces, así que cualquiera en la red local lo controla, e `internalCronFetch`
+ * acabaría mandando `CRON_SECRET` a donde él dijera. Cambiar de destino en silencio
+ * además escondería la deriva de configuración, que reaparecería después como un
+ * `redirect_uri_mismatch` de OAuth — la misma variable construye esos redirects.
+ */
+async function pistaPuertoDev(origin: string, e: unknown): Promise<string> {
+  if (process.env.NODE_ENV !== 'development' || codigoErrorDeRed(e) !== 'ECONNREFUSED') return '';
+  try {
+    const host = (await headers()).get('host');
+    if (!host || !(host.startsWith('localhost') || host.startsWith('127.0.0.1'))) return '';
+    const real = `http://${host}`;
+    if (real === origin) return '';
+    return ` La app está respondiendo en ${real}: ajusta NEXT_PUBLIC_APP_URL en .env.local y reinicia \`npm run dev\`.`;
+  } catch {
+    // Sin petición en curso (p. ej. desde un cron) no hay Host que mirar.
+    return '';
+  }
+}
+
+/**
+ * `fetch` al origen interno con los fallos de red traducidos.
+ *
+ * undici los resume en `fetch failed` y la causa real queda en `cause`, que
+ * ningún `catch` de las server actions leía: la UI enseñaba `fetch failed` sin
+ * más. Aquí se relanza con un mensaje que nombra el destino y el motivo. Los
+ * timeouts pasan intactos para que `esTimeoutDeFetch` los siga reconociendo.
+ */
+async function fetchInterno(origin: string, path: string, init: RequestInit): Promise<Response> {
+  try {
+    return await fetch(`${origin}${path}`, init);
+  } catch (e) {
+    const descripcion = describirErrorDeRed(e, origin);
+    if (!descripcion) throw e;
+    const pista = await pistaPuertoDev(origin, e);
+    // Sin cabeceras en el log: llevan la cookie de sesión o `CRON_SECRET`.
+    console.error(
+      `[internal-fetch] ${init.method ?? 'GET'} ${path}: ${descripcion}`,
+      (e as { cause?: unknown }).cause
+    );
+    throw new Error(descripcion + pista, { cause: e });
+  }
+}
+
 /** Cabecera `cookie` de la petición actual, para que la ruta destino vea la sesión. */
 async function forwardedCookieHeader(): Promise<string> {
   const all = (await cookies()).getAll();
@@ -48,7 +98,7 @@ export async function internalFetch(path: string, init: RequestInit = {}): Promi
   const headersInit = new Headers(init.headers);
   if (cookie) headersInit.set('cookie', cookie);
 
-  return fetch(`${origin}${path}`, {
+  return fetchInterno(origin, path, {
     ...init,
     headers: headersInit,
     cache: init.cache ?? 'no-store',
@@ -76,7 +126,7 @@ export async function internalCronFetch(path: string, init: RequestInit = {}): P
   const headersInit = new Headers(init.headers);
   headersInit.set('Authorization', `Bearer ${secret}`);
 
-  return fetch(`${origin}${path}`, {
+  return fetchInterno(origin, path, {
     ...init,
     headers: headersInit,
     cache: init.cache ?? 'no-store',

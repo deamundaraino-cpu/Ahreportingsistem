@@ -1573,7 +1573,88 @@ async function adsDailyCubre(
     adsDailyCoberturaCache.set(cacheKey, rango);
   }
   if (!rango) return false;
-  return rango.desde <= dateFrom && rango.hasta >= dateTo;
+  if (!(rango.desde <= dateFrom && rango.hasta >= dateTo)) return false;
+  return adsDailySinHuecos(publicId, nivel, dateFrom, dateTo);
+}
+
+const adsDailyHuecosCache = new Map<string, { ok: boolean; ts: number }>();
+
+/**
+ * ¿Tiene `ads_daily` filas de este nivel en CADA día del rango que tuvo gasto?
+ *
+ * El primer y el último día no bastan: la tabla puede tener huecos por dentro.
+ * Pasó con Expo Renta Corta en agosto de 2026: el nivel `ad` tenía filas del
+ * 20-07 al 16-09 —así que «cubría» agosto— pero no las del 1 de agosto, el día
+ * que concentraba todo el gasto del mes. El informe por anuncio devolvía tres
+ * anuncios a cero en vez de diez con gasto, sin ningún error. El JSONB de
+ * `metricas_diarias` sí los tenía.
+ *
+ * Se compara por plataforma contra los días con gasto de `metricas_diarias` (una
+ * fila por día): un día con gasto de Meta necesita filas de Meta. Días sin gasto
+ * no exigen nada. Si la comprobación falla por cualquier motivo, se responde
+ * `false` y se usa el JSONB, que da el mismo número cuando los dos están completos.
+ */
+async function adsDailySinHuecos(
+  publicId: string,
+  nivel: EntityKind,
+  dateFrom: string,
+  dateTo: string
+): Promise<boolean> {
+  const cacheKey = `${publicId}${nivel}${dateFrom}${dateTo}`;
+  const now = Date.now();
+  const cached = adsDailyHuecosCache.get(cacheKey);
+  if (cached && now - cached.ts <= ADS_DAILY_COBERTURA_TTL_MS) return cached.ok;
+
+  let ok = false;
+  try {
+    const db = await createAdminClient();
+    const { data: dias, error } = await db
+      .from('metricas_diarias')
+      .select('fecha, meta_spend, tiktok_spend')
+      .eq('cliente_id', publicId)
+      .gte('fecha', dateFrom)
+      .lte('fecha', dateTo)
+      .or('meta_spend.gt.0,tiktok_spend.gt.0')
+      .limit(MAX_AD_DAY_ROWS);
+    if (error) throw new Error(error.message);
+
+    const necesarios = new Set<string>();
+    for (const d of (dias ?? []) as Array<Record<string, unknown>>) {
+      const fecha = String(d.fecha).slice(0, 10);
+      if (Number(d.meta_spend) > 0) necesarios.add(`${fecha}|meta`);
+      if (Number(d.tiktok_spend) > 0) necesarios.add(`${fecha}|tiktok`);
+    }
+
+    if (necesarios.size === 0) {
+      ok = true;
+    } else {
+      const filas = await fetchAllRows(
+        () =>
+          db
+            .from('ads_daily')
+            .select('id, fecha, plataforma')
+            .eq('cliente_id', publicId)
+            .eq('nivel', nivel)
+            .gte('fecha', dateFrom)
+            .lte('fecha', dateTo),
+        1000,
+        200_000,
+        { estricto: true }
+      );
+      const presentes = new Set(filas.map((f) => `${String(f.fecha).slice(0, 10)}|${f.plataforma}`));
+      ok = [...necesarios].every((k) => presentes.has(k));
+    }
+  } catch (e) {
+    console.warn(
+      `[bi] no se pudo comprobar la cobertura de ads_daily (${nivel}); se usa el JSONB:`,
+      e instanceof Error ? e.message : e
+    );
+    ok = false;
+  }
+
+  if (adsDailyHuecosCache.size > 500) adsDailyHuecosCache.clear();
+  adsDailyHuecosCache.set(cacheKey, { ok, ts: now });
+  return ok;
 }
 
 /**

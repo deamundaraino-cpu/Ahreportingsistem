@@ -4,6 +4,7 @@ import {
   syncClienteConversiones,
   normalizeSheetConfigs,
 } from '@/lib/integrations/google-sheets-conversiones';
+import { requireCronAuth } from '@/lib/cron-auth';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -37,10 +38,12 @@ export const maxDuration = 60;
  * 200 con `parcial: true` si unos sí y otros no.
  */
 export async function GET(request: NextRequest) {
-  const authHeader = request.headers.get('authorization');
-  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  // Antes era `authHeader !== \`Bearer ${process.env.CRON_SECRET}\``: sin la env var
+  // la cadena esperada quedaba en "Bearer undefined" y cualquiera que la mandara
+  // entraba — con acceso a todos los clientes—, además de compararse sin tiempo
+  // constante. `requireCronAuth` responde 503 si falta el secreto.
+  const authError = requireCronAuth(request);
+  if (authError) return authError;
 
   const supabase = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,

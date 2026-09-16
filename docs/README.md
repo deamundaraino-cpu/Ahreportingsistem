@@ -45,16 +45,16 @@ npm install
 # 2. Configurar variables de entorno (ver doc 03)
 cp .env.example .env.local   # crear y completar manualmente
 
-# 3. Levantar el servidor de desarrollo (puerto 3001)
+# 3. Levantar el servidor de desarrollo (puerto 3000)
 npm run dev
 ```
 
-Abre [http://localhost:3001](http://localhost:3001).
+Abre [http://localhost:3000](http://localhost:3000).
 
 Scripts útiles:
 
 ```bash
-npm run dev          # Servidor de desarrollo en puerto 3001
+npm run dev          # Servidor de desarrollo en puerto 3000
 npm run build        # Build de producción
 npm run start        # Servidor de producción
 npm run lint         # ESLint (0 warnings permitidos)

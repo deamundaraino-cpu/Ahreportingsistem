@@ -550,13 +550,18 @@
           },
           {
             "__dim": "[AD 4][AGOSTO]",
-            "spend": 117455,
-            "impressions": 13851
+            "spend": 127688,
+            "impressions": 14843
           },
           {
             "__dim": "VIDEO 1 REORGANIZACIÓN",
-            "spend": 87518,
-            "impressions": 9827
+            "spend": 122004,
+            "impressions": 13604
+          },
+          {
+            "__dim": "VIDEO 2 REORGANIZACIÓN",
+            "spend": 107763,
+            "impressions": 15696
           },
           {
             "__dim": "[AD 2][TANDA 4]",
@@ -569,24 +574,19 @@
             "impressions": 10739
           },
           {
-            "__dim": "VIDEO 2 REORGANIZACIÓN",
-            "spend": 56109,
-            "impressions": 7199
+            "__dim": "[AD 3 JUL][MATEMATICA RAPIDA]",
+            "spend": 68448,
+            "impressions": 6999
+          },
+          {
+            "__dim": "[AD 3 JUL][NUESTRO EBOOK]",
+            "spend": 64088,
+            "impressions": 6196
           },
           {
             "__dim": "[T3 VID8 ][EL SII NO TE VA]",
             "spend": 52914,
             "impressions": 5329
-          },
-          {
-            "__dim": "[AD 4][TANDA 8]",
-            "spend": 43252,
-            "impressions": 3582
-          },
-          {
-            "__dim": "AD 3 TANDA 9",
-            "spend": 39123,
-            "impressions": 5313
           }
         ]
       },

@@ -2589,9 +2589,9 @@ export function ClientConfigForm({
                               }
 
                               const batchId = crypto.randomUUID();
-                              const agregados: unknown[] = [];
                               const calidad: unknown[] = [];
                               let algunaOk = false;
+                              let crudasIncompletas = false;
                               const fallosTabs: string[] = [];
 
                               for (const [j, tab] of pestanas.entries()) {
@@ -2611,13 +2611,13 @@ export function ClientConfigForm({
                                 algunaOk = true;
                                 total.totalFilas += res.totalFilas ?? 0;
                                 total.filasDescartadas += res.filasDescartadas ?? 0;
-                                if (res.aggregates) agregados.push(...res.aggregates);
+                                if (res.crudasIncompletas) crudasIncompletas = true;
                                 if (res.quality) calidad.push(...res.quality);
                                 if (res.warnings) avisos.push(...res.warnings);
                               }
 
-                              // Sin ninguna pestaña buena no se consolida: consolidar
-                              // retiraría los lotes anteriores y dejaría el sheet vacío.
+                              // Sin ninguna pestaña buena no se consolida: no hay nada
+                              // nuevo que sumar y se ahorra releer el documento.
                               if (!algunaOk) {
                                 fallos.push(`${etiqueta}: ${fallosTabs.join(' · ')}`);
                                 continue;
@@ -2637,7 +2637,8 @@ export function ClientConfigForm({
                                 sheetId: sheet.id,
                                 batchId,
                                 consolidar: true,
-                                aggregates: agregados,
+                                // Los totales los recalcula el servidor desde la base.
+                                conservarCrudas: crudasIncompletas,
                                 quality: calidad,
                                 ...(ultimo ? {} : { recalcularCampos: false }),
                               });

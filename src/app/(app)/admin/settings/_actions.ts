@@ -787,26 +787,49 @@ export async function syncClienteMetrics(clienteId: string, startDate: string, e
     const haySheets = Array.isArray(sheets)
       ? sheets.some((s: { enabled?: boolean; sheet_url?: string }) => s?.enabled && s?.sheet_url)
       : !!sheets?.sheet_url;
+    // El sync de Sheets no bloquea el resultado principal, pero su fallo sí se
+    // cuenta: antes no se miraba ni el status de la respuesta, así que un 4xx/5xx
+    // desaparecía y el botón decía "Sincronizado correctamente".
+    let avisoSheets: string | null = null;
     if (haySheets) {
       try {
-        await internalFetch(`/api/admin/sync-conversiones-offline`, {
+        const resSheets = await internalFetch(`/api/admin/sync-conversiones-offline`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ clientId: clienteId }),
           cache: 'no-store',
+          signal: AbortSignal.timeout(58_000),
         });
-      } catch (gsErr) {
+        const leido = await leerJsonRespuesta<SyncConversionesResponse>(
+          resSheets,
+          'Error al sincronizar Google Sheets',
+          TIMEOUT_SYNC_SHEETS
+        );
+        if (!leido.ok) {
+          avisoSheets = leido.error;
+        } else if (!resSheets.ok || leido.data.success === false) {
+          avisoSheets = leido.data.error || 'Error al sincronizar Google Sheets';
+        } else if (leido.data.warnings?.length) {
+          const resto = leido.data.warnings.length - 1;
+          avisoSheets = leido.data.warnings[0] + (resto > 0 ? ` (+${resto} avisos)` : '');
+        }
+      } catch (gsErr: any) {
         console.error('[syncClienteMetrics] Google Sheets sync error:', gsErr);
-        // No bloqueamos el resultado principal si falla el sync de Sheets.
+        avisoSheets = esTimeoutDeFetch(gsErr)
+          ? TIMEOUT_SYNC_SHEETS
+          : gsErr?.message || 'Error al sincronizar Google Sheets';
       }
     }
 
     revalidatePath(`/dashboard/${clienteId}`);
+    const base = dbLog
+      ? `✓ Sincronizado correctamente. ${metaLog}`
+      : `Sync completado. Revisa los datos en el dashboard.`;
     return {
       success: true,
-      message: dbLog
-        ? `✓ Sincronizado correctamente. ${metaLog}`
-        : `Sync completado. Revisa los datos en el dashboard.`,
+      // En el mensaje y no solo en `warnings`: es lo que enseña el botón.
+      message: base + (avisoSheets ? ` · ⚠ Google Sheets: ${avisoSheets}` : ''),
+      ...(avisoSheets ? { warnings: [`Google Sheets: ${avisoSheets}`] } : {}),
     };
   } catch (e: any) {
     return { error: e.message };
@@ -1056,9 +1079,13 @@ export async function listConversionesTabs(sheetConfig: ConversionesConfig) {
       cache: 'no-store',
     });
 
-    const data = await res.json();
-    if (!res.ok) return { error: data.error || 'Error al listar las pestañas' };
-    return { tabs: data.tabs as SheetTabInfo[] };
+    const leido = await leerJsonRespuesta<{ tabs?: SheetTabInfo[]; error?: string }>(
+      res,
+      'Error al listar las pestañas'
+    );
+    if (!leido.ok) return { error: leido.error };
+    if (!res.ok) return { error: leido.data.error || 'Error al listar las pestañas' };
+    return { tabs: (leido.data.tabs ?? []) as SheetTabInfo[] };
   } catch (e: any) {
     return { error: e.message || 'Error al listar las pestañas' };
   }
@@ -1309,7 +1336,12 @@ export interface SyncTanda {
   /** Pestaña a sincronizar. Sin esto, la petición consolida el lote. */
   tabId?: string;
   consolidar?: boolean;
-  aggregates?: unknown[];
+  /**
+   * Solo en la consolidación: alguna pestaña no pudo guardar su capa cruda, así
+   * que no se retiran pestañas huérfanas. Los totales ya no viajan desde aquí:
+   * el servidor los recalcula desde la base.
+   */
+  conservarCrudas?: boolean;
   quality?: unknown[];
   /** Solo en la consolidación: apagado mientras queden sheets por sincronizar. */
   recalcularCampos?: boolean;
@@ -1319,15 +1351,16 @@ export interface SyncTanda {
  * Sincroniza una tanda: una pestaña, o el cierre del lote.
  *
  * Partido así porque un documento de decenas de miles de filas no cabe en el
- * tiempo de una función. Hasta la consolidación no se toca el dato anterior.
+ * tiempo de una función. Cada pestaña escribe sus filas; la consolidación
+ * recalcula los totales diarios del sheet.
  */
 export async function syncTandaConversiones(
   clienteId: string,
   tanda: SyncTanda
 ): Promise<
   Partial<SyncConversionesResponse> & {
-    aggregates?: unknown[];
     quality?: unknown[];
+    crudasIncompletas?: boolean;
     batchId?: string;
   }
 > {

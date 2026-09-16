@@ -5,6 +5,7 @@ import { JWT, OAuth2Client } from 'google-auth-library';
 import { hasAgencyGoogleConnection, getAgencyAccessToken } from './google-auth';
 import { sanitizarColumna, parseNumeroSheet } from '../sheets/campos';
 import type { SheetRawRow } from '../sheets/campos';
+import { fetchAllRows } from '../supabase-paginate';
 
 // La capa cruda del sync es la entrada del motor de campos: el tipo vive allí,
 // que es client-safe, y se reexporta para no romper a quien ya lo importa desde
@@ -242,6 +243,16 @@ export interface TabSyncQuality {
   solo_crudas?: number;
   /** Columnas guardadas en crudo para esta pestaña. */
   columnas_crudas?: number;
+  /**
+   * Parte de `cantidad_invalida`: filas con una cantidad que no es un entero
+   * válido ("1,5", un teléfono). Van aparte porque el remedio es otro —revisar
+   * el mapeo—, no activar "Cada fila es una conversión".
+   */
+  cantidad_rechazada?: number;
+  ejemplos_cantidad_rechazada?: string[];
+  /** Filas cuyo valor no cabe en NUMERIC(12,2): se guardaron sin valor. */
+  valor_fuera_de_rango?: number;
+  ejemplos_valor_fuera_de_rango?: string[];
   warnings: string[];
 }
 
@@ -273,8 +284,11 @@ async function loadDoc(config: ConversionesConfig): Promise<GoogleSpreadsheet> {
   return doc;
 }
 
+/** Lo único que la resolución de pestañas necesita del documento. */
+type DocPestanas = Pick<GoogleSpreadsheet, 'sheetsByIndex' | 'sheetsByTitle'>;
+
 /** Resuelve la pestaña por título; vacío = la primera del documento. */
-function resolveTab(doc: GoogleSpreadsheet, tabName: string): GoogleSpreadsheetWorksheet {
+function resolveTab(doc: DocPestanas, tabName: string): GoogleSpreadsheetWorksheet {
   const name = tabName?.trim();
   if (!name) return doc.sheetsByIndex[0];
   const sheet = doc.sheetsByTitle[name];
@@ -283,6 +297,51 @@ function resolveTab(doc: GoogleSpreadsheet, tabName: string): GoogleSpreadsheetW
     throw new Error(`Pestaña "${name}" no encontrada. Disponibles: ${available}`);
   }
   return sheet;
+}
+
+/**
+ * Títulos REALES de todas las pestañas habilitadas —tal como quedan en
+ * `tab_name`—, o null si alguna no aparece en el documento.
+ *
+ * Es la lista con la que se retiran las filas de pestañas borradas o renombradas
+ * (`sheet_podar_tabs`), así que falla del lado seguro: una pestaña habilitada que
+ * no se encuentra —renombrada en Google, una errata en la config— devuelve null y
+ * no se poda nada, porque no hay forma de saber qué filas antiguas le pertenecen.
+ * Una pestaña que existe pero no se pudo parsear sí entra, y conserva sus filas.
+ * El nombre vacío resuelve a la primera pestaña, como en el sync.
+ */
+export function resolverTitulosVivos(doc: DocPestanas, tabs: SheetTabConfig[]): string[] | null {
+  const titulos: string[] = [];
+  for (const tab of tabs.filter((t) => t.enabled)) {
+    try {
+      const hoja = resolveTab(doc, tab.sheet_name);
+      if (!hoja) return null;
+      titulos.push(hoja.title);
+    } catch {
+      return null;
+    }
+  }
+  return titulos;
+}
+
+/**
+ * `resolverTitulosVivos` abriendo el documento. Null si Google no responde: sin
+ * la lista no se poda, que es lo prudente.
+ *
+ * Existe para que la consolidación del sync por pestañas calcule la lista en el
+ * servidor en vez de aceptar la que mande el navegador, que decidiría qué filas
+ * se borran.
+ */
+export async function titulosVivosDelSheet(cfg: ConversionesConfig): Promise<string[] | null> {
+  try {
+    return resolverTitulosVivos(await loadDoc(cfg), normalizeTabs(cfg));
+  } catch (e) {
+    console.warn(
+      `[conversiones] sheet ${cfg.id}: no se pudieron leer las pestañas para la poda:`,
+      e instanceof Error ? e.message : e
+    );
+    return null;
+  }
 }
 
 /** Alias del sanitizador compartido con el motor de campos (`lib/sheets/campos`). */
@@ -387,6 +446,32 @@ export function parseDate(raw: string): string {
  */
 function toNumber(raw: string): number {
   return parseNumeroSheet(raw) ?? 0;
+}
+
+/**
+ * Límites de las columnas de destino (`migrations/023`): `cantidad INTEGER` y
+ * `valor NUMERIC(12,2)`.
+ *
+ * El upsert va en trozos de 500 filas decodificados con `jsonb_to_recordset`, así
+ * que UNA celda fuera de tipo —"1,5" en la cantidad, un teléfono en el valor—
+ * hacía que Postgres rechazara el trozo entero y el sheet completo quedaba en
+ * error. Mejor descartar esa fila con un aviso que perderlas todas.
+ */
+const CANTIDAD_MAX = 2_147_483_647;
+const VALOR_MAX = 1e10;
+
+/**
+ * Cabecera REAL de la pestaña para un nombre configurado, sin distinguir
+ * mayúsculas ni espacios de los extremos; si no existe, el nombre tal cual.
+ *
+ * Las comprobaciones de cabecera ignoran mayúsculas y espacios, pero `row.get`
+ * pide el nombre EXACTO: una "Fecha " con espacio pasaba la comprobación y
+ * después cada fila se leía vacía. Vale para las columnas estándar y también
+ * para las adicionales y la capa cruda declarada, que tenían el mismo agujero.
+ */
+function resolverCabecera(headers: string[], nombre: string): string {
+  const buscado = nombre.toLowerCase().trim();
+  return headers.find((h) => h.toLowerCase().trim() === buscado) ?? nombre;
 }
 
 /** Nombres de columna estándar de una pestaña (con sus valores por defecto). */
@@ -527,7 +612,7 @@ function rawColsForTab(
     mode === 'declared'
       ? Object.entries(tab.custom_columns ?? {})
           .filter(([, def]) => def.include)
-          .map(([sanitized, def]) => ({ header: def.col_name, sanitized }))
+          .map(([sanitized, def]) => ({ header: resolverCabecera(headers, def.col_name), sanitized }))
       : headers.map((h) => ({ header: h, sanitized: sanitizeColName(h) }));
 
   const vistas = new Set<string>();
@@ -582,17 +667,13 @@ export function parseTabPayload(
     );
   }
 
-  // Las comprobaciones de cabecera ignoran mayúsculas y espacios, pero `row.get`
-  // pide el nombre EXACTO: una "Fecha " con espacio pasaba la comprobación y
-  // después cada fila se leía vacía. Se resuelve una vez a la cabecera real.
-  const resolverCabecera = (nombre: string) =>
-    headers.find((h) => h.toLowerCase().trim() === nombre.toLowerCase().trim()) ?? nombre;
-  const colFecha = resolverCabecera(fechaConfig);
-  const colTipo = resolverCabecera(std.colTipo);
-  const colCantidad = resolverCabecera(std.colCantidad);
-  const colValor = resolverCabecera(std.colValor);
-  const colFuente = resolverCabecera(std.colFuente);
-  const colNotas = resolverCabecera(std.colNotas);
+  // Se resuelve una vez a la cabecera real (ver `resolverCabecera`).
+  const colFecha = resolverCabecera(headers, fechaConfig);
+  const colTipo = resolverCabecera(headers, std.colTipo);
+  const colCantidad = resolverCabecera(headers, std.colCantidad);
+  const colValor = resolverCabecera(headers, std.colValor);
+  const colFuente = resolverCabecera(headers, std.colFuente);
+  const colNotas = resolverCabecera(headers, std.colNotas);
 
   if (fechaAdivinada) {
     quality.warnings.push(
@@ -636,7 +717,13 @@ export function parseTabPayload(
   if (customCols && Object.keys(customCols).length > 0) {
     extraColsToProcess = Object.entries(customCols)
       .filter(([, def]) => def.include)
-      .map(([sanitized, def]) => ({ header: def.col_name, sanitized, type: def.type }));
+      // La clave sigue siendo la `sanitized` configurada: re-sanearla desde la
+      // cabecera resuelta cambiaría las claves de `custom_fields` y los tokens del BI.
+      .map(([sanitized, def]) => ({
+        header: resolverCabecera(headers, def.col_name),
+        sanitized,
+        type: def.type,
+      }));
     for (const col of extraColsToProcess) {
       if (!headersLower.includes(col.header.toLowerCase().trim())) {
         quality.warnings.push(`Columna adicional "${col.header}" no existe en la pestaña`);
@@ -661,6 +748,8 @@ export function parseTabPayload(
   const crudas: SheetRawRow[] = [];
 
   const ejemplos: string[] = [];
+  const ejemplosCantidad: string[] = [];
+  const ejemplosValor: string[] = [];
 
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i];
@@ -692,9 +781,8 @@ export function parseTabPayload(
     const rawTipo = (row.get(colTipo) ?? '').toString().trim();
     const tipo = (rawTipo || tab.tipo_fijo || 'otro').toLowerCase();
     // En modo "una fila = una conversión" la columna de cantidad no se lee.
-    const cantidad = tab.count_rows ? 1 : toNumber((row.get(colCantidad) || '0').toString());
-    const rawValor = (row.get(colValor) || '').toString();
-    const valor = rawValor.trim() ? toNumber(rawValor) : null;
+    const celdaCantidad = tab.count_rows ? '' : (row.get(colCantidad) || '').toString().trim();
+    const cantidad = tab.count_rows ? 1 : toNumber(celdaCantidad || '0');
     const fuente = (row.get(colFuente) || '').toString().trim();
     const notas = (row.get(colNotas) || '').toString().trim();
 
@@ -704,6 +792,36 @@ export function parseTabPayload(
       quality.cantidad_invalida++;
       quality.solo_crudas!++;
       continue;
+    }
+
+    // Una cantidad que no cabe en `INTEGER` tumbaba el trozo entero (ver
+    // `CANTIDAD_MAX`). No se redondea: un decimal en la columna que cuenta
+    // conversiones casi siempre es un mapeo equivocado —un importe, una tasa—, y
+    // redondear lo escondería (0,4 además acabaría en 0).
+    if (!Number.isInteger(cantidad) || cantidad > CANTIDAD_MAX) {
+      quality.cantidad_invalida++;
+      quality.cantidad_rechazada = (quality.cantidad_rechazada ?? 0) + 1;
+      quality.solo_crudas!++;
+      if (ejemplosCantidad.length < 3 && !ejemplosCantidad.includes(celdaCantidad)) {
+        ejemplosCantidad.push(celdaCantidad);
+      }
+      continue;
+    }
+
+    // Sin número legible el valor es null, no 0: "N/A" no es una venta de cero.
+    // Uno fuera de NUMERIC(12,2) se guarda sin valor —la fila sigue siendo
+    // conversión— y queda avisado: suele ser un teléfono o un documento.
+    const celdaValor = (row.get(colValor) || '').toString().trim();
+    let valor = celdaValor ? parseNumeroSheet(celdaValor) : null;
+    if (
+      valor !== null &&
+      (!Number.isFinite(valor) || Math.abs(Math.round(valor * 100) / 100) >= VALOR_MAX)
+    ) {
+      quality.valor_fuera_de_rango = (quality.valor_fuera_de_rango ?? 0) + 1;
+      if (ejemplosValor.length < 3 && !ejemplosValor.includes(celdaValor)) {
+        ejemplosValor.push(celdaValor);
+      }
+      valor = null;
     }
 
     const custom_fields: Record<string, any> = {};
@@ -748,10 +866,27 @@ export function parseTabPayload(
         ' — escríbela como DD/MM/AAAA o AAAA-MM-DD'
     );
   }
-  if (quality.cantidad_invalida > 0) {
+  const cantidadVacia = quality.cantidad_invalida - (quality.cantidad_rechazada ?? 0);
+  if (cantidadVacia > 0) {
     quality.warnings.push(
-      `${quality.cantidad_invalida} filas con cantidad 0 o vacía en "${colCantidad}"` +
+      `${cantidadVacia} filas con cantidad 0 o vacía en "${colCantidad}"` +
         ' — si el Sheet trae una conversión por fila, activa "Cada fila es una conversión"'
+    );
+  }
+  if (quality.cantidad_rechazada) {
+    quality.ejemplos_cantidad_rechazada = ejemplosCantidad;
+    quality.warnings.push(
+      `${quality.cantidad_rechazada} filas con una cantidad que no es un número entero válido en "${colCantidad}"` +
+        ` (p. ej. ${ejemplosCantidad.map((e) => `"${e}"`).join(', ')})` +
+        ' — la cantidad cuenta conversiones; si es un importe, mapéala como valor o como columna adicional'
+    );
+  }
+  if (quality.valor_fuera_de_rango) {
+    quality.ejemplos_valor_fuera_de_rango = ejemplosValor;
+    quality.warnings.push(
+      `${quality.valor_fuera_de_rango} filas con un valor fuera de rango en "${colValor}"` +
+        ` (p. ej. ${ejemplosValor.map((e) => `"${e}"`).join(', ')})` +
+        ' — se guardaron sin valor; ¿es un teléfono o un documento?'
     );
   }
   return { conversiones, crudas, quality };
@@ -804,12 +939,17 @@ export async function fetchConversionesFromSheet(config: ConversionesConfig): Pr
    * Sheet está vacío de verdad y sus filas viejas deben irse—.
    */
   tabsLeidas: string[];
+  /** Ver `resolverTitulosVivos`: base de la poda de pestañas retiradas. */
+  tabsVivas: string[] | null;
 }> {
   const sheetId = config.id || 'sheet_0';
   const tabs = normalizeTabs(config).filter((t) => t.enabled);
-  if (tabs.length === 0) return { rows: [], crudas: [], quality: [], tabsLeidas: [] };
+  if (tabs.length === 0) {
+    return { rows: [], crudas: [], quality: [], tabsLeidas: [], tabsVivas: [] };
+  }
 
   const doc = await loadDoc(config);
+  const tabsVivas = resolverTitulosVivos(doc, tabs);
 
   const allRows: ConversionRow[] = [];
   const allCrudas: SheetRawRow[] = [];
@@ -841,7 +981,7 @@ export async function fetchConversionesFromSheet(config: ConversionesConfig): Pr
     throw new Error(quality.map((q) => `${q.tab_name}: ${q.warnings.join('; ')}`).join(' | '));
   }
 
-  return { rows: allRows, crudas: allCrudas, quality, tabsLeidas };
+  return { rows: allRows, crudas: allCrudas, quality, tabsLeidas, tabsVivas };
 }
 
 /**
@@ -850,10 +990,49 @@ export async function fetchConversionesFromSheet(config: ConversionesConfig): Pr
  * - percentage → promedio ponderado por cantidad de la fila
  */
 export function computeConversionesAggregates(
-  rows: ConversionRow[],
+  rows: FilaAgregable[],
   customColumnsConfig?: Record<string, CustomColumnDef>
 ): ConversionDiaria[] {
   return finalizarAgregados(computeConversionesAggregatesParcial(rows, customColumnsConfig));
+}
+
+/** Lo que la agregación lee de una conversión: sirve igual la del parser que la de la base. */
+export type FilaAgregable = Pick<
+  ConversionRow,
+  'fecha' | 'tipo' | 'fuente' | 'cantidad' | 'valor' | 'custom_fields'
+>;
+
+/**
+ * Agregados diarios a partir de filas de `conversiones_offline` tal como las
+ * devuelve PostgREST.
+ *
+ * Es lo que permite que los totales se recalculen desde la base y no desde lo
+ * leído en esta corrida: con una pestaña caída, lo leído no incluye sus filas,
+ * y los totales del día —cuya clave no lleva la pestaña— la borraban del BI
+ * mientras el dashboard, que lee las filas, la seguía contando.
+ *
+ * Los porcentajes salen idénticos: el ponderado solo necesita el valor y la
+ * cantidad de cada fila, y las dos cosas se guardan fila a fila. `fuente` se
+ * normaliza a '' porque la columna de agregados es NOT NULL y hay filas antiguas
+ * con NULL.
+ */
+export function agregadosDesdeFilasDb(
+  filas: Array<Record<string, unknown>>,
+  customColumnsConfig?: Record<string, CustomColumnDef>
+): ConversionDiaria[] {
+  const rows: FilaAgregable[] = filas.map((f) => ({
+    fecha: String(f.fecha),
+    tipo: String(f.tipo ?? 'otro'),
+    fuente: String(f.fuente ?? ''),
+    cantidad: Number(f.cantidad) || 0,
+    valor: f.valor === null || f.valor === undefined ? null : Number(f.valor),
+    custom_fields: (f.custom_fields as Record<string, any> | null) ?? {},
+  }));
+  const custom =
+    customColumnsConfig && Object.keys(customColumnsConfig).length > 0
+      ? customColumnsConfig
+      : undefined;
+  return computeConversionesAggregates(rows, custom);
 }
 
 /**
@@ -867,7 +1046,7 @@ export interface ConversionDiariaParcial extends ConversionDiaria {
 
 /** Igual que `computeConversionesAggregates`, pero sin resolver los porcentajes. */
 export function computeConversionesAggregatesParcial(
-  rows: ConversionRow[],
+  rows: FilaAgregable[],
   customColumnsConfig?: Record<string, CustomColumnDef>
 ): ConversionDiariaParcial[] {
   const map = new Map<string, ConversionDiariaParcial>();
@@ -894,6 +1073,11 @@ export function computeConversionesAggregatesParcial(
     for (const [k, v] of Object.entries(row.custom_fields)) {
       const colType = customColumnsConfig?.[k]?.type ?? 'count';
       if (colType === 'text' || colType === 'date') continue;
+      // Solo números. `mergeTabCustomColumns` se queda con la última definición,
+      // así que una clave `text` en una pestaña y `count` en otra hacía
+      // `0 + "abc"` = "0abc". Con el recálculo desde la base también llegan filas
+      // escritas con una config anterior.
+      if (typeof v !== 'number' || !Number.isFinite(v)) continue;
       if (colType === 'percentage') {
         if (!entry._pct_sums[k]) entry._pct_sums[k] = { total: 0, weight: 0 };
         entry._pct_sums[k].total += (v as number) * row.cantidad;
@@ -1118,7 +1302,7 @@ export async function insertarLoteSheet(
     if (caidaSospechosa(count ?? 0, nuevas)) {
       throw new Error(
         `La pestaña "${tab}" pasaría de ${count} a ${nuevas} conversiones: no se sincroniza para no borrar su histórico. ` +
-          'Revisa el formato de la fecha y las columnas del Sheet; si la vaciaste a propósito, desactiva la pestaña en Ajustes.'
+          'Revisa el formato de la fecha, de la cantidad y las columnas del Sheet; si la vaciaste a propósito, desactiva la pestaña en Ajustes.'
       );
     }
   }
@@ -1204,34 +1388,112 @@ export async function insertarLoteSheet(
   };
 }
 
+/** Columnas de `conversiones_offline` que necesita el recálculo (más `id`, para paginar). */
+const COLUMNAS_RECALCULO = 'id, fecha, tipo, cantidad, valor, fuente, custom_fields';
+
 /**
- * Cierra un lote: guarda los agregados diarios y retira los lotes anteriores.
+ * Agregados diarios de UN sheet leyendo todas sus filas de la base, de todas sus
+ * pestañas. Lanza si la lectura no se completa: con un recuento parcial, el
+ * borrado del lote anterior sustituiría totales buenos por otros incompletos.
+ */
+async function leerAgregadosSheetDesdeDb(
+  supabase: any,
+  clienteId: string,
+  sheetId: string,
+  customCols: Record<string, CustomColumnDef>
+): Promise<ConversionDiaria[]> {
+  const filas = await fetchAllRows(
+    () =>
+      supabase
+        .from('conversiones_offline')
+        .select(COLUMNAS_RECALCULO)
+        .eq('cliente_id', clienteId)
+        .eq('sheet_id', sheetId),
+    1000,
+    200_000,
+    { estricto: true }
+  );
+  return agregadosDesdeFilasDb(filas, customCols);
+}
+
+/**
+ * Cierra un lote: recalcula los agregados diarios del sheet y retira los lotes
+ * anteriores.
  *
- * Se llama UNA vez por sheet, con el lote ya completo. En el sync partido por
- * pestañas los agregados llegan sumados por el llamador: `uq_conv_diarias_origen`
- * es único por (cliente, sheet, fecha, tipo, fuente) **sin la pestaña**, así que
- * dos pestañas que aporten al mismo día se pisarían la una a la otra si cada una
- * escribiera su agregado por separado.
+ * Se llama UNA vez por sheet, con las filas ya escritas. Los agregados se
+ * recalculan desde `conversiones_offline`, no desde lo leído en la corrida:
+ * `uq_conv_diarias_origen` es único por (cliente, sheet, fecha, tipo, fuente)
+ * **sin la pestaña**, así que un agregado hecho solo con las pestañas que se
+ * pudieron leer pisaba el total del día y borraba del BI lo aportado por la
+ * pestaña caída, que seguía en las filas y en el dashboard. Antes, además, el
+ * sync por pestañas los recibía sumados desde el navegador. Leyendo la base, la
+ * fuente de verdad es una sola y cualquier consolidación repara la deriva que
+ * dejara una corrida a medias.
+ *
+ * El orden importa:
+ *   1. se retiran las pestañas huérfanas, para que no entren en el recálculo;
+ *   2. se recalcula — si la lectura falla, se lanza SIN escribir ni borrar nada:
+ *      los totales anteriores siguen en pie hasta el próximo sync;
+ *   3. upsert de los agregados con el lote nuevo;
+ *   4. retirada de los lotes anteriores.
  *
  * `conservarCrudas` evita retirar las pestañas huérfanas cuando la capa cruda de
  * esta corrida quedó incompleta: mejor una capa cruda vieja que ninguna.
  *
- * `tabsVivas` son las pestañas que la CONFIGURACIÓN del sheet declara hoy. Todo
- * lo que haya en la base bajo otra pestaña se retira: es lo que queda cuando se
- * borra o deshabilita una pestaña, y desde la migración 069 ya no lo barre el
- * reemplazo por lotes —que sólo miraba el `sync_batch_id`, no el nombre—.
- * Se omite la poda si no se pasa la lista: sin ella no hay forma de distinguir
- * "esta pestaña ya no existe" de "no sé qué pestañas hay".
+ * `tabsVivas` son los títulos reales de las pestañas habilitadas (ver
+ * `resolverTitulosVivos`). Todo lo que haya en la base bajo otra pestaña se
+ * retira: es lo que queda cuando se borra, renombra o deshabilita una pestaña, y
+ * desde la migración 069 ya no lo barre el reemplazo por lotes. Sin lista (null
+ * o sin pasar) no se poda: no hay forma de distinguir "esta pestaña ya no
+ * existe" de "no sé qué pestañas hay".
  */
 export async function consolidarLoteSheet(
   supabase: any,
   clienteId: string,
-  sheetId: string,
+  sheetCfg: ConversionesConfig,
   batchId: string,
-  aggregates: ConversionDiaria[],
-  conservarCrudas = false,
-  tabsVivas?: string[]
+  opts: { conservarCrudas?: boolean; tabsVivas?: string[] | null } = {}
 ): Promise<{ daysProcessed: number; replaceError?: string }> {
+  const sheetId = sheetCfg.id!;
+  const replaceErrors: string[] = [];
+
+  // 1. Pestañas retiradas de la config: lo único que la poda por fila no
+  // alcanza, porque a esa pestaña ya nadie la sincroniza.
+  const { tabsVivas, conservarCrudas } = opts;
+  if (!conservarCrudas && tabsVivas && tabsVivas.length > 0) {
+    const { error: podaErr } = await supabase.rpc('sheet_podar_tabs', {
+      p_cliente_id: clienteId,
+      p_sheet_id: sheetId,
+      p_tabs: tabsVivas,
+    });
+    if (podaErr) {
+      replaceErrors.push(`pestañas huérfanas: ${podaErr.message}`);
+      console.error(
+        `[conversiones] sheet ${sheetId}: no se pudieron retirar las pestañas huérfanas:`,
+        podaErr.message
+      );
+    }
+  }
+
+  // 2. Recálculo desde la base, fallando cerrado.
+  let aggregates: ConversionDiaria[];
+  try {
+    aggregates = await leerAgregadosSheetDesdeDb(
+      supabase,
+      clienteId,
+      sheetId,
+      mergeTabCustomColumns(normalizeTabs(sheetCfg))
+    );
+  } catch (e) {
+    const motivo = e instanceof Error ? e.message : String(e);
+    console.error(`[conversiones] sheet ${sheetId}: no se pudieron recalcular los agregados:`, motivo);
+    throw new Error(
+      `No se pudieron recalcular los totales diarios (${motivo}). Las filas del Sheet sí se guardaron; ` +
+        'el BI conserva los totales del sync anterior hasta el próximo.'
+    );
+  }
+
+  // 3. Agregados del lote nuevo.
   if (aggregates.length > 0) {
     const toInsert = aggregates.map((a) => ({
       cliente_id: clienteId,
@@ -1262,9 +1524,7 @@ export async function consolidarLoteSheet(
     }
   }
 
-  const replaceErrors: string[] = [];
-
-  // `conversiones_offline_diarias` sigue con el reemplazo por lotes: son 518
+  // 4. `conversiones_offline_diarias` sigue con el reemplazo por lotes: son 518
   // filas, se escriben por upsert sobre su propia clave única y el borrado del
   // lote anterior cuesta lo que un índice. No compensa cambiarla.
   //
@@ -1287,23 +1547,6 @@ export async function consolidarLoteSheet(
       `[conversiones] sheet ${sheetId}: no se pudo retirar el lote anterior de agregados:`,
       err
     );
-  }
-
-  // Pestañas retiradas de la config: lo único que la poda por fila no alcanza,
-  // porque a esa pestaña ya nadie la sincroniza.
-  if (!conservarCrudas && tabsVivas && tabsVivas.length > 0) {
-    const { error: podaErr } = await supabase.rpc('sheet_podar_tabs', {
-      p_cliente_id: clienteId,
-      p_sheet_id: sheetId,
-      p_tabs: tabsVivas,
-    });
-    if (podaErr) {
-      replaceErrors.push(`pestañas huérfanas: ${podaErr.message}`);
-      console.error(
-        `[conversiones] sheet ${sheetId}: no se pudieron retirar las pestañas huérfanas:`,
-        podaErr.message
-      );
-    }
   }
 
   // Un replace fallido deja una copia entera del sheet conviviendo con la nueva.
@@ -1329,9 +1572,8 @@ export async function consolidarLoteSheet(
 export async function saveConversionesSheetToDb(
   supabase: any,
   clienteId: string,
-  sheetId: string,
+  sheetCfg: ConversionesConfig,
   rows: ConversionRow[],
-  aggregates: ConversionDiaria[],
   crudas: SheetRawRow[] = [],
   /**
    * Pestañas leídas enteras (ver `fetchConversionesFromSheet`). Sólo esas se
@@ -1339,12 +1581,12 @@ export async function saveConversionesSheetToDb(
    */
   tabsLeidas?: string[],
   /**
-   * Si además se leyeron TODAS las configuradas. Sólo entonces `tabsLeidas` es
-   * la foto completa del sheet y se puede retirar lo que quede bajo otra
-   * pestaña; con una lectura parcial, esa poda borraría datos buenos de la
-   * pestaña que falló.
+   * Títulos reales de las pestañas habilitadas (ver `resolverTitulosVivos`). Lo
+   * que quede en la base bajo otro título se retira. Una pestaña que existe pero
+   * no se pudo leer está en la lista, así que conserva sus filas; con null no se
+   * poda nada.
    */
-  todasLeidas = false
+  tabsVivas?: string[] | null
 ): Promise<{
   rowsProcessed: number;
   daysProcessed: number;
@@ -1355,22 +1597,17 @@ export async function saveConversionesSheetToDb(
   const insertado = await insertarLoteSheet(
     supabase,
     clienteId,
-    sheetId,
+    sheetCfg.id!,
     batchId,
     rows,
     crudas,
     undefined,
     tabsLeidas
   );
-  const cerrado = await consolidarLoteSheet(
-    supabase,
-    clienteId,
-    sheetId,
-    batchId,
-    aggregates,
-    !!insertado.rawError,
-    todasLeidas ? tabsLeidas : undefined
-  );
+  const cerrado = await consolidarLoteSheet(supabase, clienteId, sheetCfg, batchId, {
+    conservarCrudas: !!insertado.rawError,
+    tabsVivas,
+  });
 
   const motivos = [insertado.rawError, cerrado.replaceError].filter(Boolean);
   return {
@@ -1607,8 +1844,6 @@ export interface TabSyncResult {
   rawProcessed: number;
   rowsDescartadas: number;
   quality: TabSyncQuality[];
-  /** Parciales, para que el consolidado los sume sin romper los ponderados. */
-  aggregates: ConversionDiariaParcial[];
   rawError?: string;
 }
 
@@ -1640,12 +1875,9 @@ export async function syncTabConversiones(
     tabs: [tab],
   });
 
-  const customCols = mergeTabCustomColumns([tab]);
-  const aggregates = computeConversionesAggregatesParcial(
-    rows,
-    Object.keys(customCols).length > 0 ? customCols : undefined
-  );
-
+  // Los agregados ya no salen de aquí: `consolidarLoteSheet` los recalcula desde
+  // la base con todas las pestañas del sheet.
+  //
   // Se poda por `tabsLeidas`, no por `tab.sheet_name`: cuando la config deja el
   // nombre vacío ("la primera pestaña"), el título real sólo se conoce tras
   // abrir el documento, y es ese el que quedó en `tab_name`.
@@ -1667,7 +1899,6 @@ export async function syncTabConversiones(
     rawProcessed: guardado.rawProcessed,
     rowsDescartadas: quality.reduce((s, q) => s + q.fecha_invalida + q.cantidad_invalida, 0),
     quality,
-    aggregates,
     ...(guardado.rawError ? { rawError: guardado.rawError } : {}),
   };
 }
@@ -1715,25 +1946,20 @@ export async function syncClienteConversiones(
     const sheetId = sheetCfg.id!;
     const label = sheetCfg.name || sheetCfg.sheet_url;
     try {
-      const { rows, crudas, quality, tabsLeidas } = await fetchConversionesFromSheet(sheetCfg);
-      const customCols = mergeTabCustomColumns(normalizeTabs(sheetCfg));
-      const aggregates = computeConversionesAggregates(
-        rows,
-        Object.keys(customCols).length > 0 ? customCols : undefined
-      );
-      // La poda de pestañas huérfanas sólo es segura con el documento entero
-      // leído: si una pestaña falló, `tabsLeidas` no la incluye y retirar «todo
-      // lo que no esté en la lista» se llevaría precisamente sus datos buenos.
-      const habilitadas = normalizeTabs(sheetCfg).filter((t) => t.enabled).length;
+      const { rows, crudas, quality, tabsLeidas, tabsVivas } =
+        await fetchConversionesFromSheet(sheetCfg);
+      // La poda de pestañas huérfanas va por `tabsVivas` y no por `tabsLeidas`:
+      // una pestaña que existe pero falló al leerse no está en `tabsLeidas`, y
+      // retirar «todo lo que no esté en la lista» se llevaría sus datos buenos.
+      // `tabsVivas` sí la incluye, y es null si falta alguna.
       const saved = await saveConversionesSheetToDb(
         supabase,
         clienteId,
-        sheetId,
+        sheetCfg,
         rows,
-        aggregates,
         crudas,
         tabsLeidas,
-        tabsLeidas.length === habilitadas
+        tabsVivas
       );
       allRows.push(...rows);
 

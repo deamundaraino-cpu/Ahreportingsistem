@@ -24,10 +24,22 @@ export async function fetchAllRows(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   buildQuery: () => any,
   pageSize = 1000,
-  hardCap = 200000
+  hardCap = 200000,
+  /**
+   * `estricto`: lanza en vez de devolver un resultado incompleto — si una página
+   * falla tras los reintentos, si falta `id` o si se llega a `hardCap` sin
+   * terminar.
+   *
+   * Devolver lo ya traído vale para un widget (casi completo es mejor que vacío),
+   * pero es destructivo para quien REEMPLAZA datos con el resultado: los totales
+   * diarios de un Sheet se recalculan con esto y después se borra el lote
+   * anterior, así que un recuento parcial sustituiría a uno correcto.
+   */
+  opts: { estricto?: boolean } = {}
 ): Promise<Record<string, unknown>[]> {
   const all: Record<string, unknown>[] = [];
   let lastId: string | null = null;
+  let completo = false;
   while (all.length < hardCap) {
     // Una página que falla se REINTENTA antes de rendirse.
     //
@@ -54,6 +66,12 @@ export async function fetchAllRows(
     }
 
     if (!rows) {
+      if (opts.estricto) {
+        throw new Error(
+          `[paginate] página fallida tras ${REINTENTOS} intentos con ${all.length} filas ya traídas: ` +
+            (ultimoError?.message ?? String(ultimoError))
+        );
+      }
       // Con lo ya traído se sigue devolviendo algo —cortar del todo dejaría
       // el widget vacío en vez de casi completo—, pero NUNCA en silencio.
       console.error(
@@ -64,12 +82,25 @@ export async function fetchAllRows(
       break;
     }
 
-    if (rows.length === 0) break;
+    if (rows.length === 0) {
+      completo = true;
+      break;
+    }
     all.push(...rows);
     const last = rows[rows.length - 1]?.id;
-    if (last === undefined || last === null) break; // sin `id` en el select no se puede avanzar
+    if (last === undefined || last === null) {
+      // Sin `id` en el select no se puede avanzar.
+      if (opts.estricto) throw new Error('[paginate] el select no incluye `id`: no se puede paginar');
+      break;
+    }
     lastId = String(last);
-    if (rows.length < pageSize) break;
+    if (rows.length < pageSize) {
+      completo = true;
+      break;
+    }
+  }
+  if (opts.estricto && !completo) {
+    throw new Error(`[paginate] se alcanzó el tope de ${hardCap} filas sin terminar de leer`);
   }
   return all;
 }

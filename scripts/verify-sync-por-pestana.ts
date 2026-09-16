@@ -9,8 +9,9 @@
  * hacen que trocear sea seguro:
  *
  *   1. Cada pestaña cabe holgada en el tiempo de una función (se cronometra).
- *   2. Al consolidar queda UN solo lote por sheet en las tres tablas — o sea, el
- *      reemplazo por pestañas no deja duplicados ni se come lo de las hermanas.
+ *   2. Al consolidar queda UN solo lote de agregados diarios por sheet. En
+ *      `conversiones_offline` y `sheet_filas` no se exige: desde la migración 069
+ *      las filas que no cambian conservan a propósito el lote en que se escribieron.
  *   3. Los agregados diarios suman lo mismo que las conversiones insertadas, que
  *      es lo que se rompería si dos pestañas del mismo día se pisaran en vez de
  *      sumarse (la clave única de `_diarias` no incluye la pestaña).
@@ -23,9 +24,7 @@ import {
   normalizeTabs,
   syncTabConversiones,
   consolidarLoteSheet,
-  mergeAgregadosParciales,
-  finalizarAgregados,
-  type ConversionDiariaParcial,
+  titulosVivosDelSheet,
 } from '../src/lib/integrations/google-sheets-conversiones';
 import { randomUUID } from 'crypto';
 
@@ -86,7 +85,6 @@ async function main() {
     console.log(`▸ "${sheetCfg.name}" — ${tabs.length} pestañas`);
 
     const batchId = randomUUID();
-    const agregados: ConversionDiariaParcial[][] = [];
     let filas = 0;
     let crudas = 0;
     let peorTiempo = 0;
@@ -98,7 +96,6 @@ async function main() {
       peorTiempo = Math.max(peorTiempo, segs);
       filas += res.rowsProcessed;
       crudas += res.rawProcessed;
-      agregados.push(res.aggregates);
       console.log(
         `    ${tab.sheet_name}: ${res.rowsProcessed} filas · ${res.rawProcessed} crudas · ${segs.toFixed(1)}s`
       );
@@ -106,13 +103,9 @@ async function main() {
     }
 
     const t0 = Date.now();
-    const cerrado = await consolidarLoteSheet(
-      db,
-      cliente.id,
-      sheetCfg.id!,
-      batchId,
-      finalizarAgregados(mergeAgregadosParciales(agregados))
-    );
+    const cerrado = await consolidarLoteSheet(db, cliente.id, sheetCfg, batchId, {
+      tabsVivas: await titulosVivosDelSheet(sheetCfg),
+    });
     const segsCierre = (Date.now() - t0) / 1000;
     console.log(
       `    consolidación: ${cerrado.daysProcessed} días · ${crudas} crudas · ${segsCierre.toFixed(1)}s`
@@ -127,7 +120,7 @@ async function main() {
     );
     check(segsCierre < 45, 'la consolidación cabe en el límite', `${segsCierre.toFixed(1)}s`);
 
-    for (const tabla of ['conversiones_offline', 'conversiones_offline_diarias', 'sheet_filas']) {
+    for (const tabla of ['conversiones_offline_diarias']) {
       const lotes = await lotesDe(tabla, cliente.id, sheetCfg.id!);
       check(
         lotes.size === 1,

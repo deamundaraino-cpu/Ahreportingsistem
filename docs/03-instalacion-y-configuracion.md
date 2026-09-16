@@ -153,13 +153,13 @@ Varias políticas RLS conceden acceso total al email administrador. En `schema.s
 npm run dev
 ```
 
-Abre [http://localhost:3001](http://localhost:3001). Regístrate en `/signup` y asigna el rol adecuado en la tabla `user_profiles`.
+Abre [http://localhost:3000](http://localhost:3000). Regístrate en `/signup` y asigna el rol adecuado en la tabla `user_profiles`.
 
 ## 5. Scripts disponibles
 
 | Script                 | Acción                               |
 | ---------------------- | ------------------------------------ |
-| `npm run dev`          | Servidor de desarrollo (puerto 3001) |
+| `npm run dev`          | Servidor de desarrollo (puerto 3000) |
 | `npm run build`        | Build de producción                  |
 | `npm run start`        | Servidor de producción               |
 | `npm run lint`         | ESLint (`--max-warnings 0`)          |

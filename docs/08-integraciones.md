@@ -338,11 +338,11 @@ Para el residuo ya existente: `npx tsx scripts/limpiar-sheets-huerfanos.ts`
 - **Automático**: `GET /api/worker/google-sheets-conversiones` (job `sheets_conversiones`).
 - **Manual**: `POST /api/admin/sync-conversiones-offline`, con tres modos:
 
-  | body                                                              | qué hace                               |
-  | ----------------------------------------------------------------- | -------------------------------------- |
-  | `{ clientId, sheetId, tabId, batchId }`                           | sincroniza UNA pestaña dentro del lote |
-  | `{ clientId, sheetId, batchId, consolidar, aggregates, quality }` | cierra el lote de ese sheet            |
-  | `{ clientId, sheetId?, recalcularCampos? }`                       | documento(s) enteros de una vez        |
+  | body                                                                   | qué hace                               |
+  | ---------------------------------------------------------------------- | -------------------------------------- |
+  | `{ clientId, sheetId, tabId, batchId }`                                | sincroniza UNA pestaña dentro del lote |
+  | `{ clientId, sheetId, batchId, consolidar, conservarCrudas?, quality }` | cierra el lote de ese sheet            |
+  | `{ clientId, sheetId?, recalcularCampos? }`                            | documento(s) enteros de una vez        |
 
   **"Sincronizar todos ahora" va pestaña a pestaña.** Un documento de decenas de
   miles de filas no cabe en el `maxDuration`: leer las tres pestañas de un sheet
@@ -350,17 +350,36 @@ Para el residuo ya existente: `npx tsx scripts/limpiar-sheets-huerfanos.ts`
   moría y devolvía la página de error de la plataforma en texto plano — no JSON.
   Troceado, la más lenta son 37,7 s.
 
-  Todas las pestañas comparten `sync_batch_id` y **hasta la consolidación no se
-  toca el dato anterior**: una corrida interrumpida deja un lote suelto, que el
-  siguiente sync retira, pero nunca deja al cliente sin datos. Por eso la UI no
-  consolida si ninguna pestaña salió bien.
+  Todas las pestañas comparten `sync_batch_id`. Cada pestaña escribe y poda sus
+  propias filas al momento (upsert por fila desde la migración 069); la
+  consolidación cierra el sheet. La UI no consolida si ninguna pestaña salió bien.
 
-  Los agregados viajan en su forma **parcial** (`ConversionDiariaParcial`, con las
-  sumas de los porcentajes sin dividir) y se suman en la consolidación:
+  **Los agregados diarios se recalculan desde la base** en la consolidación
+  (`consolidarLoteSheet`), leyendo `conversiones_offline` del sheet entero, no
+  sumando lo leído en la corrida ni lo que mande el navegador.
   `uq_conv_diarias_origen` es único por (cliente, sheet, fecha, tipo, fuente)
-  **sin la pestaña**, así que dos pestañas que aporten al mismo día se pisarían si
-  cada una escribiera su agregado, y promediar promedios ya calculados daría otro
-  número. Lo verifica `npx tsx scripts/verify-sync-por-pestana.ts --cliente=UUID`.
+  **sin la pestaña**: un agregado hecho solo con las pestañas que se pudieron leer
+  pisaba el total del día y borraba del BI lo aportado por la pestaña caída, que
+  el dashboard seguía contando. El orden es: podar pestañas retiradas → recalcular
+  → upsert → retirar lotes anteriores. Si la lectura falla (paginación en modo
+  `estricto`), se lanza sin escribir ni borrar: el BI conserva los totales
+  anteriores. Los porcentajes se reconstruyen exactos, porque el ponderado solo
+  necesita valor y cantidad de cada fila.
+
+  Las pestañas retiradas o renombradas se podan con `sheet_podar_tabs` a partir
+  de los títulos reales del documento (`resolverTitulosVivos`), calculados en el
+  servidor. Si alguna pestaña habilitada no aparece, no se poda nada.
+
+  Lo verifica `npx tsx --conditions=react-server scripts/verify-sync-por-pestana.ts --cliente=UUID`
+  (escribe). Antes de desplegar un cambio en esta lógica,
+  `scripts/verify-agregados-desde-db.ts` (solo lectura) muestra qué totales del BI
+  cambiarían por sheet.
+
+  **Celdas fuera de tipo.** `cantidad` es `INTEGER` y `valor` `NUMERIC(12,2)`: una
+  sola celda fuera de rango hacía que Postgres rechazara el trozo de 500 filas y el
+  sheet entero fallaba. Ahora una cantidad no entera («1,5», un teléfono) descarta
+  esa fila con aviso (`cantidad_rechazada`) y un valor fuera de rango se guarda como
+  null (`valor_fuera_de_rango`).
 
 - **Descubrimiento**: `POST /api/admin/list-sheet-tabs` (pestañas del doc) y
   `POST /api/admin/detect-sheet-columns` (encabezados de una pestaña; lo usa la

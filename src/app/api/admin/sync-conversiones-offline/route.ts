@@ -5,15 +5,11 @@ import {
   syncTabConversiones,
   consolidarLoteSheet,
   cleanupOrphanConversiones,
-  mergeAgregadosParciales,
-  finalizarAgregados,
   normalizeSheetConfigs,
   logSyncResult,
+  titulosVivosDelSheet,
 } from '@/lib/integrations/google-sheets-conversiones';
-import type {
-  ConversionDiariaParcial,
-  TabSyncQuality,
-} from '@/lib/integrations/google-sheets-conversiones';
+import type { TabSyncQuality } from '@/lib/integrations/google-sheets-conversiones';
 import { requireAdminRole } from '@/lib/report-utm/auth';
 import { esUuid } from '@/lib/validation';
 
@@ -28,15 +24,16 @@ export const maxDuration = 60;
  * Tres modos, de más troceado a menos:
  *
  *   { clientId, sheetId, tabId, batchId }        → una pestaña del lote
- *   { clientId, sheetId, batchId, consolidar, aggregates }
+ *   { clientId, sheetId, batchId, consolidar, conservarCrudas? }
  *                                                → cierra el lote de ese sheet
  *   { clientId, sheetId?, recalcularCampos? }    → documento(s) enteros de una vez
  *
  * El modo por pestaña existe porque un documento grande no cabe en los 60 s de la
  * función: la UI recorre las pestañas con un mismo `batchId` y consolida al
- * final. Hasta la consolidación no se toca el dato anterior, así que una corrida
- * interrumpida nunca deja al cliente sin datos — solo un lote suelto, que el
- * siguiente sync retira.
+ * final. Cada pestaña ya escribe y poda sus filas al momento (migración 069); la
+ * consolidación recalcula los totales diarios desde la base y retira las
+ * pestañas que ya no existen. Nada de lo que decide qué se borra o qué se suma
+ * viene del navegador.
  *
  * El modo entero se conserva para el worker diario y los clientes pequeños.
  */
@@ -46,7 +43,7 @@ export async function POST(request: NextRequest) {
   if (denied) return denied;
 
   try {
-    const { clientId, sheetId, tabId, batchId, consolidar, aggregates, quality, recalcularCampos } =
+    const { clientId, sheetId, tabId, batchId, consolidar, conservarCrudas, quality, recalcularCampos } =
       await request.json();
     if (!clientId) {
       return NextResponse.json({ error: 'clientId is required' }, { status: 400 });
@@ -99,7 +96,8 @@ export async function POST(request: NextRequest) {
         totalFilas: tab.rowsProcessed,
         filasCrudas: tab.rawProcessed,
         filasDescartadas: tab.rowsDescartadas,
-        aggregates: tab.aggregates,
+        // La consolidación no poda pestañas si la capa cruda de alguna quedó a medias.
+        crudasIncompletas: !!tab.rawError,
         quality: tab.quality,
         ...(tab.rawError ? { warnings: [`${tab.tab_name}: ${tab.rawError}`] } : {}),
       });
@@ -111,14 +109,23 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: 'Falta el batchId del lote' }, { status: 400 });
       }
 
-      const parciales = (aggregates ?? []) as ConversionDiariaParcial[];
-      const cerrado = await consolidarLoteSheet(
-        supabase,
-        cliente.id,
-        sheetCfg.id!,
-        batchId,
-        finalizarAgregados(mergeAgregadosParciales([parciales]))
-      );
+      // Los totales se recalculan desde la base y la lista de pestañas vivas se
+      // saca del documento. Un `aggregates` en el cuerpo —de una pestaña del
+      // navegador abierta con la versión anterior— se ignora: sumado ahí dejaba
+      // fuera las pestañas que fallaron y cualquiera podía mandar otros números.
+      // Lo único que se acepta es `conservarCrudas`, que solo puede evitar podas.
+      const tabsVivas = await titulosVivosDelSheet(sheetCfg);
+      let cerrado: Awaited<ReturnType<typeof consolidarLoteSheet>>;
+      try {
+        cerrado = await consolidarLoteSheet(supabase, cliente.id, sheetCfg, batchId, {
+          tabsVivas,
+          conservarCrudas: conservarCrudas === true,
+        });
+      } catch (err: any) {
+        // Igual que en el sync entero: el fallo tiene que verse en "Último sync".
+        await logSyncResult(supabase, cliente.id, sheetCfg.id!, 'error', [], err.message);
+        throw err;
+      }
 
       // El log alimenta el "Último sync" de la UI; la calidad la traen las
       // pestañas, que son las que leyeron el documento.

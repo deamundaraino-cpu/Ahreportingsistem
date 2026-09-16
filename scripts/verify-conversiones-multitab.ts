@@ -22,6 +22,8 @@ import {
   esColumnaSensible,
   parseDate,
   caidaSospechosa,
+  agregadosDesdeFilasDb,
+  resolverTitulosVivos,
 } from '../src/lib/integrations/google-sheets-conversiones';
 import type {
   ConversionesConfig,
@@ -823,6 +825,256 @@ sec('parseTabPayload — resolución de la columna de fecha');
     lanzo = true;
   }
   check('sin ninguna columna de fecha sigue lanzando error', lanzo);
+}
+
+// ─── Columnas adicionales: cabecera sin distinguir mayúsculas ni espacios ───
+// La comprobación de existencia ya ignoraba mayúsculas y espacios, pero la
+// lectura pedía el nombre exacto: la columna "existía" y se leía vacía.
+
+sec('parseTabPayload — columnas adicionales con la cabecera real');
+
+{
+  const headers = ['fecha', 'cantidad', 'Citas Agendadas '];
+  const custom: Record<string, CustomColumnDef> = {
+    citas_agendadas: { col_name: 'citas agendadas', type: 'count', label: 'Citas', include: true },
+  };
+  const tab: SheetTabConfig = { id: 't', sheet_name: 'C', enabled: true, custom_columns: custom };
+  const { conversiones, quality } = parseTabPayload(
+    headers,
+    fakeRows(headers, [['2026-07-01', '1', '3']]),
+    tab,
+    's',
+    'C'
+  );
+  check(
+    'la columna adicional se lee aunque cambien mayúsculas y espacios',
+    conversiones[0]?.custom_fields.citas_agendadas === 3,
+    JSON.stringify(conversiones[0]?.custom_fields)
+  );
+  check(
+    'y no avisa de que no existe',
+    !quality.warnings.some((w) => w.includes('Columna adicional')),
+    quality.warnings.join(' | ')
+  );
+
+  const declarada = parseTabPayload(
+    headers,
+    fakeRows(headers, [['2026-07-01', '1', '3']]),
+    { ...tab, raw_mode: 'declared' },
+    's',
+    'C'
+  );
+  check(
+    'la capa cruda declarada también lee la cabecera real',
+    declarada.crudas[0]?.valores.citas_agendadas === '3',
+    JSON.stringify(declarada.crudas[0]?.valores)
+  );
+}
+
+// ─── Cantidad entera y valor dentro de NUMERIC(12,2) ────────────────────────
+// Una sola celda fuera de tipo hacía que Postgres rechazara el trozo de 500 filas
+// y el sheet entero quedaba en error.
+
+sec('parseTabPayload — cantidad entera y valor en rango');
+
+{
+  const headers = ['fecha', 'cantidad', 'valor'];
+  const tab: SheetTabConfig = { id: 't', sheet_name: 'Q', enabled: true };
+  const leer = (filas: string[][], t: SheetTabConfig = tab) =>
+    parseTabPayload(headers, fakeRows(headers, filas), t, 's', 'Q');
+
+  const decimal = leer([['2026-07-01', '1,5', '10']]);
+  check('"1,5" no entra como conversión', decimal.conversiones.length === 0);
+  check(
+    'cuenta como cantidad inválida y rechazada',
+    decimal.quality.cantidad_invalida === 1 && decimal.quality.cantidad_rechazada === 1,
+    JSON.stringify(decimal.quality)
+  );
+  check('su fila cruda se conserva', decimal.crudas.length === 1 && decimal.quality.solo_crudas === 1);
+  check(
+    'el aviso cita la celda rechazada',
+    decimal.quality.warnings.some((w) => w.includes('"1,5"') && w.includes('entero')),
+    decimal.quality.warnings.join(' | ')
+  );
+  check(
+    'no la confunde con una cantidad vacía',
+    !decimal.quality.warnings.some((w) => w.includes('0 o vacía')),
+    decimal.quality.warnings.join(' | ')
+  );
+
+  const enteros = leer([
+    ['2026-07-01', '2,0', ''],
+    ['2026-07-01', '1.000', ''],
+  ]);
+  check(
+    '"2,0" y "1.000" son enteros válidos',
+    enteros.conversiones.map((c) => c.cantidad).join(',') === '2,1000',
+    enteros.conversiones.map((c) => c.cantidad).join(',')
+  );
+
+  const telefono = leer([['2026-07-01', '3001234567', '']]);
+  check(
+    'una cantidad mayor que INTEGER se rechaza',
+    telefono.conversiones.length === 0 && telefono.quality.cantidad_rechazada === 1
+  );
+
+  const porFila = leer([['2026-07-01', '1,5', '']], { ...tab, count_rows: true });
+  check(
+    'con "Cada fila es una conversión" la columna de cantidad no se mira',
+    porFila.conversiones.length === 1 && porFila.conversiones[0].cantidad === 1
+  );
+
+  const valorEnorme = leer([['2026-07-01', '1', '3001234567890']]);
+  check(
+    'un valor fuera de NUMERIC(12,2) se guarda sin valor',
+    valorEnorme.conversiones.length === 1 && valorEnorme.conversiones[0].valor === null
+  );
+  check(
+    'y se avisa con el ejemplo',
+    valorEnorme.quality.valor_fuera_de_rango === 1 &&
+      valorEnorme.quality.warnings.some((w) => w.includes('"3001234567890"')),
+    valorEnorme.quality.warnings.join(' | ')
+  );
+  check(
+    '9.999.999.999,99 cabe',
+    leer([['2026-07-01', '1', '9.999.999.999,99']]).conversiones[0].valor === 9999999999.99
+  );
+  check(
+    '9999999999,999 redondea a 1e10 y no cabe',
+    leer([['2026-07-01', '1', '9999999999,999']]).conversiones[0].valor === null
+  );
+  check('"N/A" en el valor es null, no 0', leer([['2026-07-01', '1', 'N/A']]).conversiones[0].valor === null);
+
+  const mezcla = leer([
+    ['2026-07-01', '3', '100'],
+    ['2026-07-01', '0,4', '5'],
+    ['2026-07-01', '99999999999', '1e30'],
+    ['2026-07-02', '7', '12345678901234'],
+    ['2026-07-02', '-2', '8'],
+    ['2026-07-02', '1', '1.234,56'],
+  ]);
+  check(
+    'toda cantidad emitida cabe en INTEGER y es positiva',
+    mezcla.conversiones.every(
+      (c) => Number.isSafeInteger(c.cantidad) && c.cantidad >= 1 && c.cantidad <= 2_147_483_647
+    ),
+    mezcla.conversiones.map((c) => c.cantidad).join(',')
+  );
+  check(
+    'todo valor emitido es null o cabe en NUMERIC(12,2)',
+    mezcla.conversiones.every(
+      (c) =>
+        c.valor === null ||
+        (Number.isFinite(c.valor) && Math.abs(Math.round(c.valor * 100) / 100) < 1e10)
+    ),
+    mezcla.conversiones.map((c) => c.valor).join(',')
+  );
+}
+
+// ─── Agregados recalculados desde la base ───────────────────────────────────
+// La consolidación ya no suma lo leído en la corrida: relee `conversiones_offline`
+// del sheet entero. Tiene que dar exactamente lo mismo que la agregación en
+// memoria, porcentajes ponderados incluidos.
+
+sec('agregadosDesdeFilasDb — mismo resultado que en memoria');
+
+{
+  const custom: Record<string, CustomColumnDef> = {
+    tasa_cierre: { col_name: 'Tasa Cierre', type: 'percentage', label: 'Tasa', include: true },
+    ticket: { col_name: 'Ticket', type: 'currency', label: 'Ticket', include: true },
+    ciudad: { col_name: 'Ciudad', type: 'text', label: 'Ciudad', include: true },
+  };
+  const headers = ['fecha', 'tipo', 'cantidad', 'valor', 'fuente', 'Tasa Cierre', 'Ticket', 'Ciudad'];
+  const tabA: SheetTabConfig = { id: 'a', sheet_name: 'A', enabled: true, custom_columns: custom };
+  const tabB: SheetTabConfig = { id: 'b', sheet_name: 'B', enabled: true, custom_columns: custom };
+  const a = parseRowsForTab(
+    headers,
+    fakeRows(headers, [['2026-07-01', 'venta', '2', '100', 'meta', '50', '10', 'Cali']]),
+    tabA,
+    's',
+    'A'
+  ).rows;
+  const b = parseRowsForTab(
+    headers,
+    fakeRows(headers, [
+      ['2026-07-01', 'venta', '8', '400', 'meta', '100', '20', 'Bogotá'],
+      ['2026-07-02', 'lead', '3', '', '', '0', '5', ''],
+    ]),
+    tabB,
+    's',
+    'B'
+  ).rows;
+  const enMemoria = computeConversionesAggregates([...a, ...b], custom);
+
+  // Como las devuelve PostgREST: JSON, y `fuente` NULL en filas antiguas.
+  const deLaBase = JSON.parse(JSON.stringify([...a, ...b])).map((f: Record<string, unknown>) => ({
+    ...f,
+    fuente: f.fuente === '' ? null : f.fuente,
+  }));
+  const recalculado = agregadosDesdeFilasDb(deLaBase, custom);
+
+  const ordenar = (xs: typeof enMemoria) =>
+    JSON.stringify([...xs].sort((x, y) => `${x.fecha}${x.tipo}`.localeCompare(`${y.fecha}${y.tipo}`)));
+  check('recalcular desde la base da lo mismo', ordenar(recalculado) === ordenar(enMemoria), ordenar(recalculado));
+  const dia1 = recalculado.find((x) => x.fecha === '2026-07-01')!;
+  check('conserva el porcentaje ponderado', dia1.custom_fields.tasa_cierre === 90, String(dia1.custom_fields.tasa_cierre));
+  check(
+    'fuente NULL se normaliza a ""',
+    recalculado.find((x) => x.fecha === '2026-07-02')?.fuente === ''
+  );
+
+  // Lo que arregla: con la pestaña B caída, lo leído en la corrida es solo A,
+  // pero la base sigue teniendo las filas de B y el total del día las incluye.
+  const soloLeidoA = computeConversionesAggregates(a, custom);
+  check(
+    'una pestaña que falló sigue contando en el total del día',
+    dia1.total_cantidad === 10 && soloLeidoA[0].total_cantidad === 2,
+    `recalculado=${dia1.total_cantidad} soloA=${soloLeidoA[0].total_cantidad}`
+  );
+}
+
+{
+  // Una clave `text` en una pestaña y `count` en otra: la última definición gana
+  // y un texto guardado no puede concatenarse a la suma.
+  const agg = agregadosDesdeFilasDb([
+    { fecha: '2026-07-01', tipo: 'lead', cantidad: 1, valor: null, fuente: '', custom_fields: { x: 2 } },
+    { fecha: '2026-07-01', tipo: 'lead', cantidad: 1, valor: null, fuente: '', custom_fields: { x: 'abc' } },
+  ]);
+  check('un texto en una columna numérica se ignora', agg[0].custom_fields.x === 2, String(agg[0].custom_fields.x));
+}
+
+sec('resolverTitulosVivos — qué pestañas se pueden podar');
+
+{
+  type Doc = Parameters<typeof resolverTitulosVivos>[0];
+  const hoja = (title: string) => ({ title }) as unknown as Doc['sheetsByIndex'][number];
+  const doc = {
+    sheetsByIndex: [hoja('GESTION LEADS'), hoja('Ventas')],
+    sheetsByTitle: { 'GESTION LEADS': hoja('GESTION LEADS'), Ventas: hoja('Ventas') },
+  } as unknown as Doc;
+  const t = (sheet_name: string, enabled = true): SheetTabConfig => ({
+    id: sheet_name || 'primera',
+    sheet_name,
+    enabled,
+  });
+
+  check(
+    'nombre vacío resuelve a la primera pestaña',
+    JSON.stringify(resolverTitulosVivos(doc, [t(''), t('Ventas')])) === '["GESTION LEADS","Ventas"]',
+    JSON.stringify(resolverTitulosVivos(doc, [t(''), t('Ventas')]))
+  );
+  check(
+    'una pestaña que no existe anula la poda (null)',
+    resolverTitulosVivos(doc, [t('Ventas'), t('Renombrada')]) === null
+  );
+  check(
+    'las deshabilitadas no cuentan',
+    JSON.stringify(resolverTitulosVivos(doc, [t('Ventas'), t('Renombrada', false)])) === '["Ventas"]'
+  );
+  check(
+    'todas deshabilitadas → lista vacía (no se poda nada)',
+    JSON.stringify(resolverTitulosVivos(doc, [t('Ventas', false)])) === '[]'
+  );
 }
 
 // ─── Tokens de columnas de Sheet en el BI ───────────────────────────────────
