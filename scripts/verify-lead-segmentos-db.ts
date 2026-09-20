@@ -25,6 +25,7 @@ loadEnv({ path: '.env.local' });
 // Estático y no dinámico como el resto: son funciones puras de fecha, sin red ni
 // `server-only`, y hacen falta antes de entrar en `main()`.
 import { addDaysISO, colombiaToday } from '../src/lib/colombia-date';
+import { salir } from './_salida';
 
 let fallos = 0;
 function check(nombre: string, cond: boolean, detalle?: string) {
@@ -235,7 +236,7 @@ async function main() {
       ? '\n✅ Segmentos contra datos reales: todas las comprobaciones pasan\n'
       : `\n❌ ${fallos} comprobación(es) fallaron\n`
   );
-  process.exit(fallos === 0 ? 0 : 1);
+  salir(fallos);
 }
 
 main().catch((e) => {

@@ -15,6 +15,7 @@
  */
 
 import { config as loadEnv } from 'dotenv';
+import { salir } from './_salida';
 loadEnv({ path: '.env.local' });
 
 let fallos = 0;
@@ -622,7 +623,7 @@ async function main() {
       ? '\n✅ Respuestas de formulario (datos): todas las comprobaciones pasan\n'
       : `\n❌ ${fallos} comprobación(es) fallaron\n`
   );
-  process.exit(fallos === 0 ? 0 : 1);
+  salir(fallos);
 }
 
 main().catch((err) => {
