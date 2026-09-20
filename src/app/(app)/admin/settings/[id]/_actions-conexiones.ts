@@ -46,7 +46,7 @@ export async function activateHotmartIntegrationAction(clienteId: string): Promi
 
   if (error) return { ok: false, error: error.message };
 
-  revalidatePath(`/report-utm/clientes/${clienteId}`);
+  revalidatePath('/admin/settings/[id]', 'page');
   return { ok: true, secret };
 }
 
@@ -62,7 +62,7 @@ export async function rotateHotmartSecretAction(clienteId: string): Promise<Acti
 
   if (error) return { ok: false, error: error.message };
 
-  revalidatePath(`/report-utm/clientes/${clienteId}`);
+  revalidatePath('/admin/settings/[id]', 'page');
   return { ok: true, secret };
 }
 
@@ -79,7 +79,7 @@ export async function setHotmartIntegrationStatusAction(
 
   if (error) return { ok: false, error: error.message };
 
-  revalidatePath(`/report-utm/clientes/${clienteId}`);
+  revalidatePath('/admin/settings/[id]', 'page');
   return { ok: true };
 }
 
@@ -109,7 +109,7 @@ export async function activateS2SIntegrationAction(clienteId: string): Promise<A
 
   if (error) return { ok: false, error: error.message };
 
-  revalidatePath(`/report-utm/clientes/${clienteId}`);
+  revalidatePath('/admin/settings/[id]', 'page');
   return { ok: true, secret: token };
 }
 
@@ -129,7 +129,7 @@ export async function rotateS2STokenAction(clienteId: string): Promise<ActionRes
 
   if (error) return { ok: false, error: error.message };
 
-  revalidatePath(`/report-utm/clientes/${clienteId}`);
+  revalidatePath('/admin/settings/[id]', 'page');
   return { ok: true, secret: token };
 }
 
@@ -153,7 +153,7 @@ export async function setS2SIntegrationStatusAction(
 
   if (error) return { ok: false, error: error.message };
 
-  revalidatePath(`/report-utm/clientes/${clienteId}`);
+  revalidatePath('/admin/settings/[id]', 'page');
   return { ok: true };
 }
 
@@ -196,7 +196,7 @@ export async function saveGoogleAdsConfigAction(
 
   if (error) return { ok: false, error: error.message };
 
-  revalidatePath(`/report-utm/clientes/${clienteId}`);
+  revalidatePath('/admin/settings/[id]', 'page');
   return { ok: true };
 }
 
@@ -283,7 +283,7 @@ export async function saveMetaCAPIConfigAction(
 
   if (error) return { ok: false, error: error.message };
 
-  revalidatePath(`/report-utm/clientes/${clienteId}`);
+  revalidatePath('/admin/settings/[id]', 'page');
   return { ok: true };
 }
 
@@ -366,7 +366,7 @@ export async function createOutboundWebhookAction(
 
   if (error) return { ok: false, error: error.message };
 
-  revalidatePath(`/report-utm/clientes/${clienteId}`);
+  revalidatePath('/admin/settings/[id]', 'page');
   return { ok: true, secret };
 }
 
@@ -378,30 +378,32 @@ export async function toggleOutboundWebhookAction(
   const supabase = await reportUtmClient();
   const { error } = await supabase.from('outbound_webhooks').update({ enabled }).eq('id', id);
   if (error) return { ok: false, error: error.message };
-  revalidatePath(`/report-utm/clientes/${clienteId}`);
+  revalidatePath('/admin/settings/[id]', 'page');
   return { ok: true };
 }
 
 export async function deleteOutboundWebhookAction(
   id: string,
-  clienteId: string
+  // La firma la fija la tarjeta que la llama; el id ya no hace falta para
+  // revalidar desde que la ficha del cliente vive en /admin/settings/[id].
+  _clienteId: string
 ): Promise<SimpleResult> {
   const supabase = await reportUtmClient();
   const { error } = await supabase.from('outbound_webhooks').delete().eq('id', id);
   if (error) return { ok: false, error: error.message };
-  revalidatePath(`/report-utm/clientes/${clienteId}`);
+  revalidatePath('/admin/settings/[id]', 'page');
   return { ok: true };
 }
 
 export async function rotateOutboundSecretAction(
   id: string,
-  clienteId: string
+  _clienteId: string
 ): Promise<ActionResult> {
   const secret = generateWebhookSecret();
   const supabase = await reportUtmClient();
   const { error } = await supabase.from('outbound_webhooks').update({ secret }).eq('id', id);
   if (error) return { ok: false, error: error.message };
-  revalidatePath(`/report-utm/clientes/${clienteId}`);
+  revalidatePath('/admin/settings/[id]', 'page');
   return { ok: true, secret };
 }
 
@@ -430,7 +432,7 @@ export async function activateMetaLeadsAction(clienteId: string): Promise<Simple
 
   if (error) return { ok: false, error: error.message };
 
-  revalidatePath(`/report-utm/clientes/${clienteId}`);
+  revalidatePath('/admin/settings/[id]', 'page');
   return { ok: true };
 }
 
@@ -447,7 +449,7 @@ export async function setMetaLeadsStatusAction(
 
   if (error) return { ok: false, error: error.message };
 
-  revalidatePath(`/report-utm/clientes/${clienteId}`);
+  revalidatePath('/admin/settings/[id]', 'page');
   return { ok: true };
 }
 
@@ -465,7 +467,7 @@ export async function syncMetaLeadsNowAction(clienteId: string): Promise<SyncRes
   if (!integration) return { ok: false, error: 'Activá Meta Lead Ads primero' };
 
   const summary = await syncMetaLeadsForCliente(base, integration);
-  revalidatePath(`/report-utm/clientes/${clienteId}`);
+  revalidatePath('/admin/settings/[id]', 'page');
   if (summary.error) return { ok: false, error: summary.error };
   return { ok: true, imported: summary.imported, forms: summary.forms };
 }
@@ -564,7 +566,7 @@ export async function saveGhlIntegrationAction(
     pausadas.push(...otras.map((o: { tipo: string }) => o.tipo));
   }
 
-  revalidatePath(`/report-utm/clientes/${clienteId}`);
+  revalidatePath('/admin/settings/[id]', 'page');
   return { ok: true, secret, total, pausadas };
 }
 
@@ -584,7 +586,7 @@ export async function rotateGhlWebhookSecretAction(clienteId: string): Promise<A
 
   if (error) return { ok: false, error: error.message };
 
-  revalidatePath(`/report-utm/clientes/${clienteId}`);
+  revalidatePath('/admin/settings/[id]', 'page');
   return { ok: true, secret };
 }
 
@@ -606,7 +608,7 @@ export async function setGhlStatusAction(
 
   if (error) return { ok: false, error: error.message };
 
-  revalidatePath(`/report-utm/clientes/${clienteId}`);
+  revalidatePath('/admin/settings/[id]', 'page');
   return { ok: true };
 }
 
@@ -646,7 +648,7 @@ export async function saveGhlFiltroAction(
 
   if (error) return { ok: false, error: error.message };
 
-  revalidatePath(`/report-utm/clientes/${clienteId}`);
+  revalidatePath('/admin/settings/[id]', 'page');
   return { ok: true };
 }
 
@@ -664,7 +666,7 @@ export async function syncGhlLeadsNowAction(clienteId: string): Promise<GhlSyncR
   if (!integration) return { ok: false, error: 'Configurá GoHighLevel primero' };
 
   const summary = await syncGhlLeadsForCliente(base, integration as GhlIntegrationRow);
-  revalidatePath(`/report-utm/clientes/${clienteId}`);
+  revalidatePath('/admin/settings/[id]', 'page');
   if (summary.error) return { ok: false, error: summary.error };
   return {
     ok: true,

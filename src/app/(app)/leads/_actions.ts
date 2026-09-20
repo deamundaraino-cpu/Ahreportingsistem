@@ -59,7 +59,7 @@ export async function marcarLeadsAction(
   const { error } = await db.from('lead_events').update(patch).in('id', limpios);
   if (error) return { ok: false, error: error.message };
 
-  revalidatePath('/report-utm/leads');
+  revalidatePath('/leads');
   return { ok: true, n: limpios.length };
 }
 
@@ -88,7 +88,7 @@ export async function guardarReglaExclusionAction(
   const { error } = await db.from('clientes').update({ config }).eq('id', clienteId);
   if (error) return { ok: false, error: error.message };
 
-  revalidatePath(`/report-utm/clientes/${clienteId}`);
+  revalidatePath('/admin/settings/[id]', 'page');
   return { ok: true };
 }
 
@@ -118,8 +118,8 @@ export async function reclasificarLeadsAction(
       aplicar,
     });
     if (aplicar) {
-      revalidatePath('/report-utm/leads');
-      revalidatePath(`/report-utm/clientes/${clienteId}`);
+      revalidatePath('/leads');
+      revalidatePath('/admin/settings/[id]', 'page');
     }
     return { ok: true, resultado };
   } catch (e) {

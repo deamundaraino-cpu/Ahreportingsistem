@@ -5,13 +5,14 @@ import { BarChart3, Eye, EyeOff, Save, FlaskConical } from 'lucide-react';
 import {
   saveGoogleAdsConfigAction,
   testGoogleAdsAction,
-} from '@/app/(report-utm)/report-utm/clientes/[clienteId]/_actions';
+} from '@/app/(app)/admin/settings/[id]/_actions-conexiones';
 import { FeedbackLine, LastErrorAlert } from './FeedbackLine';
 import { IntegrationStatusBadge } from './StatusBadge';
+import { ACENTO } from './acento';
 
-const ACCENT = 'bg-yellow-50 text-yellow-700 dark:bg-yellow-500/10 dark:text-yellow-400';
-const ICON_BG = 'bg-yellow-50 dark:bg-yellow-500/10';
-const ICON_COLOR = 'text-yellow-600 dark:text-yellow-400';
+const ACCENT = ACENTO.badge;
+const ICON_BG = ACENTO.iconoFondo;
+const ICON_COLOR = ACENTO.iconoColor;
 
 type Integration = {
   id: string;
@@ -82,7 +83,7 @@ export function GoogleAdsCard({
   );
 
   return (
-    <div className="rounded-2xl border border-border bg-card p-6 space-y-5">
+    <div className="rounded-xl border border-border bg-card shadow-sm p-6 space-y-5">
       <div className="flex items-start justify-between gap-4">
         <div className="flex items-start gap-3">
           <div className={`h-10 w-10 rounded-lg flex items-center justify-center ${ICON_BG}`}>
@@ -117,7 +118,7 @@ export function GoogleAdsCard({
               value={customerId}
               onChange={(e) => setCustomerId(e.target.value)}
               placeholder="1234567890"
-              className="w-full px-3 py-2 text-xs rounded-lg border border-border bg-muted text-foreground focus:outline-none focus:ring-2 focus:ring-yellow-500/40 font-mono"
+              className="w-full px-3 py-2 text-xs rounded-lg border border-border bg-muted text-foreground focus:outline-none focus:ring-2 focus:ring-blue-500/40 font-mono"
             />
           </label>
           <label className="block">
@@ -129,7 +130,7 @@ export function GoogleAdsCard({
               value={loginCustomerId}
               onChange={(e) => setLoginCustomerId(e.target.value)}
               placeholder="9876543210"
-              className="w-full px-3 py-2 text-xs rounded-lg border border-border bg-muted text-foreground focus:outline-none focus:ring-2 focus:ring-yellow-500/40 font-mono"
+              className="w-full px-3 py-2 text-xs rounded-lg border border-border bg-muted text-foreground focus:outline-none focus:ring-2 focus:ring-blue-500/40 font-mono"
             />
           </label>
         </div>
@@ -143,7 +144,7 @@ export function GoogleAdsCard({
             value={conversionAction}
             onChange={(e) => setConversionAction(e.target.value)}
             placeholder="customers/1234567890/conversionActions/987654321"
-            className="w-full px-3 py-2 text-xs rounded-lg border border-border bg-muted text-foreground focus:outline-none focus:ring-2 focus:ring-yellow-500/40 font-mono"
+            className="w-full px-3 py-2 text-xs rounded-lg border border-border bg-muted text-foreground focus:outline-none focus:ring-2 focus:ring-blue-500/40 font-mono"
           />
           <p className="mt-1 text-[10px] text-muted-foreground">
             Encontralo en Google Ads → Herramientas → Conversiones → Acción → Details
@@ -163,7 +164,7 @@ export function GoogleAdsCard({
               value={accessToken}
               onChange={(e) => setAccessToken(e.target.value)}
               placeholder={isConfigured ? '••••••••••••' : 'ya29.xxxxxxxxxxxx...'}
-              className="flex-1 px-3 py-2 text-xs rounded-lg border border-border bg-muted text-foreground focus:outline-none focus:ring-2 focus:ring-yellow-500/40 font-mono"
+              className="flex-1 px-3 py-2 text-xs rounded-lg border border-border bg-muted text-foreground focus:outline-none focus:ring-2 focus:ring-blue-500/40 font-mono"
             />
             <button
               type="button"
@@ -182,7 +183,7 @@ export function GoogleAdsCard({
           onClick={onSave}
           disabled={pending || !customerId.trim() || !conversionAction.trim()}
           className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium
-                               text-white bg-yellow-600 hover:bg-yellow-700
+                               text-white bg-blue-600 hover:bg-blue-700
                                disabled:opacity-50 transition-colors"
         >
           <Save className="h-3.5 w-3.5" />
@@ -193,9 +194,9 @@ export function GoogleAdsCard({
             onClick={onTest}
             disabled={pending}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium
-                                   border border-yellow-200 dark:border-yellow-500/30
-                                   text-yellow-700 dark:text-yellow-400
-                                   hover:bg-yellow-50 dark:hover:bg-yellow-500/10
+                                   border border-blue-200 dark:border-blue-500/30
+                                   text-blue-700 dark:text-blue-400
+                                   hover:bg-blue-50 dark:hover:bg-blue-500/10
                                    disabled:opacity-50 transition-colors"
           >
             <FlaskConical className="h-3.5 w-3.5" />

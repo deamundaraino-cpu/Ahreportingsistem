@@ -38,13 +38,13 @@ El middleware vive en `src/proxy.ts`, que delega en `updateSession()` (`src/util
 
 ### Categorías de rutas
 
-| Categoría                               | Rutas                                                                                                    | Requisito                                                  |
-| --------------------------------------- | -------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
-| **Públicas**                            | `/login`, `/signup`, `/api/*`, `/report/*`, `/p/*`, `/t/*`, `/report-utm-pixel.js`, `/privacy`, `/terms` | Ninguno                                                    |
-| **Autenticadas**                        | `/dashboard`, `/dashboard/[clientId]`, `/soporte`                                                        | Sesión válida                                              |
-| **Admin (solo admin/superadmin)**       | `/admin/users`, `/admin/api-tokens`, `/admin/reports`                                                    | Rol admin/superadmin                                       |
-| **Admin (admin/superadmin/trafficker)** | `/admin/settings`, `/admin/layouts`                                                                      | Uno de esos roles                                          |
-| **Report-UTM**                          | `/report-utm/*`                                                                                          | Sesión + rol admin + `NEXT_PUBLIC_REPORT_UTM_ENABLED=true` |
+| Categoría                                     | Rutas                                                                                                    | Requisito                                     |
+| --------------------------------------------- | -------------------------------------------------------------------------------------------------------- | --------------------------------------------- |
+| **Públicas**                                  | `/login`, `/signup`, `/api/*`, `/report/*`, `/p/*`, `/t/*`, `/report-utm-pixel.js`, `/privacy`, `/terms` | Ninguno                                       |
+| **Autenticadas**                              | `/dashboard`, `/dashboard/[clientId]`, `/soporte`                                                        | Sesión válida                                 |
+| **Admin (solo admin/superadmin)**             | `/admin/users`, `/admin/api-tokens`, `/admin/reports`                                                    | Rol admin/superadmin                          |
+| **Admin (admin/superadmin/trafficker)**       | `/admin/settings`, `/admin/layouts`                                                                      | Uno de esos roles                             |
+| **Análisis** (leads, ventas, informes, cruce) | `/leads`, `/ventas`, `/informes`, `/cruce-campanas`                                                      | Sesión + `superadmin`, `admin` o `trafficker` |
 
 > Nota: las rutas `/api/*` no se bloquean en el middleware; **cada endpoint aplica su propia autenticación** (token de API, `CRON_SECRET`, firma HMAC o sesión). Ver [doc 07 · API REST](./07-api-rest.md).
 

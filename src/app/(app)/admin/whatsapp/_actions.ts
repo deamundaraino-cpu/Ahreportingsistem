@@ -64,7 +64,7 @@ export async function syncGroups() {
     if (error) return { error: error.message };
   }
 
-  revalidatePath('/admin/whatsapp');
+  revalidatePath('/admin/configuracion');
   return { success: true, count: rows.length };
 }
 
@@ -122,7 +122,7 @@ export async function upsertRoute(input: {
     return { error: error.message };
   }
 
-  revalidatePath('/admin/whatsapp');
+  revalidatePath('/admin/configuracion');
   return { success: true };
 }
 
@@ -134,7 +134,7 @@ export async function setRouteEnabled(routeId: string, enabled: boolean) {
   const { error } = await admin.from('whatsapp_routes').update({ enabled }).eq('id', routeId);
   if (error) return { error: error.message };
 
-  revalidatePath('/admin/whatsapp');
+  revalidatePath('/admin/configuracion');
   return { success: true };
 }
 
@@ -146,7 +146,7 @@ export async function deleteRoute(routeId: string) {
   const { error } = await admin.from('whatsapp_routes').delete().eq('id', routeId);
   if (error) return { error: error.message };
 
-  revalidatePath('/admin/whatsapp');
+  revalidatePath('/admin/configuracion');
   return { success: true };
 }
 
@@ -165,7 +165,7 @@ export async function sendManualWhatsApp(input: { clienteId: string | null; mess
     message: input.message.trim(),
   });
 
-  revalidatePath('/admin/whatsapp');
+  revalidatePath('/admin/configuracion');
   if (result.skipped) {
     return { error: 'No hay ningún grupo ruteado para "Envío manual" (ni del cliente ni global)' };
   }
@@ -205,7 +205,7 @@ export async function setAlertTeamGroup(input: { groupId: string | null; enabled
   });
   if (error) return { error: error.message };
 
-  revalidatePath('/admin/whatsapp');
+  revalidatePath('/admin/configuracion');
   return { success: true };
 }
 

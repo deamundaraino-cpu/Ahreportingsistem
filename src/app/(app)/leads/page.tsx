@@ -132,7 +132,7 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
       .filter(([, v]) => v !== undefined && v !== '')
       .map(([k, v]) => `${k}=${encodeURIComponent(v!)}`)
       .join('&');
-    return `/report-utm/leads${qs ? '?' + qs : ''}`;
+    return `/leads${qs ? '?' + qs : ''}`;
   };
 
   // Mismos filtros para la exportación CSV
@@ -273,7 +273,7 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
         </button>
         {hasFilters && (
           <Link
-            href="/report-utm/leads"
+            href="/leads"
             className="px-3 py-1.5 rounded-lg text-xs font-medium text-muted-foreground border border-border hover:bg-accent transition-colors"
           >
             Limpiar

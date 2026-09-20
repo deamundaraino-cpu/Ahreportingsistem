@@ -63,7 +63,7 @@ export default function NuevoInformePage() {
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error ?? 'Error al crear');
-      router.push(`/report-utm/informes/${json.data.id}`);
+      router.push(`/informes/${json.data.id}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error desconocido');
       setSaving(false);
@@ -74,7 +74,7 @@ export default function NuevoInformePage() {
     <div className="max-w-lg mx-auto space-y-6">
       <div className="flex items-center gap-3">
         <Link
-          href="/report-utm/informes"
+          href="/informes"
           className="p-2 rounded-xl hover:bg-accent text-muted-foreground transition-colors"
         >
           <ArrowLeft className="h-4 w-4" />

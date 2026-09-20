@@ -252,7 +252,7 @@ const createReport: AnyAgentTool = {
     const fila = data as { id: string; nombre: string };
     return {
       informe: fila,
-      url: `/report-utm/informes/${fila.id}`,
+      url: `/informes/${fila.id}`,
       widgets: conIds.length,
     };
   },

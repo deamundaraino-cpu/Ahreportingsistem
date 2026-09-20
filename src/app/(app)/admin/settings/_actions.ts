@@ -18,6 +18,7 @@ import type { SheetCampoDef, SheetCampoVistaDef, CampoValorCrudo } from '@/lib/s
 import type { FuenteColumnas } from '@/lib/sheets/campos-db';
 import { loadCamposCliente as loadCamposClienteServer } from '@/lib/sheets/campos-db';
 import { leerJsonRespuesta, esTimeoutDeFetch } from '@/lib/fetch-json';
+import { CLAVES_POR_PESTANA, type Pestana } from '@/lib/clientes/config-pestanas';
 import { internalFetch } from '@/lib/internal-fetch';
 import {
   archivarCliente,
@@ -128,7 +129,7 @@ export async function createCliente(data: { nombre: string }) {
   if (r.aviso) console.error('[createCliente]', r.aviso);
 
   revalidatePath('/admin/settings');
-  revalidatePath('/report-utm/clientes');
+  revalidatePath('/admin/settings');
   return { success: true, data: r.cliente };
 }
 
@@ -176,7 +177,7 @@ export async function setClienteArchivado(id: string, archivado: boolean) {
 
   revalidatePath('/admin/settings');
   revalidatePath('/dashboard');
-  revalidatePath('/report-utm/clientes');
+  revalidatePath('/admin/settings');
   return { success: true };
 }
 
@@ -245,7 +246,7 @@ export async function deleteCliente(id: string) {
 
   revalidatePath('/admin/settings');
   revalidatePath('/dashboard');
-  revalidatePath('/report-utm/clientes');
+  revalidatePath('/admin/settings');
   // Lo de fuera (Storage, Meta, WhatsApp) que no se pudo limpiar: el cliente
   // ya está borrado, pero quien lo borró tiene que saberlo.
   return { success: true, avisos: r.avisos };
@@ -1431,4 +1432,63 @@ export async function syncConversionesOffline(
     if (esTimeoutDeFetch(e)) return { error: TIMEOUT_SYNC_SHEETS };
     return { error: e.message || 'Error al sincronizar conversiones offline' };
   }
+}
+
+/**
+ * Guarda SOLO las claves de una pestaña de la ficha del cliente.
+ *
+ * `updateClienteConfig` reescribía `config_api` entero con el snapshot que el
+ * navegador leyó al abrir la página, así que pisaba lo que el servidor hubiera
+ * escrito entre medias: los tokens que renueva el cron de Hotmart y el
+ * `meta_estado_cuentas` del vigilante de cuentas. Aquí se manda un parche y lo
+ * funde `public.fusionar_config_api` (migración 066) con `||`, en una sola
+ * sentencia: el resto del objeto ni se lee.
+ *
+ * El navegador no decide qué se escribe. El parche se filtra contra el mapa de
+ * la pestaña antes de tocar la base.
+ */
+export async function guardarConfigPestana(
+  clienteId: string,
+  pestana: Pestana,
+  parche: Record<string, unknown>
+): Promise<{ success?: boolean; error?: string }> {
+  const rol = await rolActual();
+  if (!rol || rol === 'viewer') return { error: 'No autorizado' };
+
+  const permitidas = new Set(CLAVES_POR_PESTANA[pestana]);
+  for (const clave of Object.keys(parche)) {
+    if (!permitidas.has(clave)) {
+      return { error: `La clave «${clave}» no pertenece a la pestaña «${pestana}»` };
+    }
+  }
+
+  const limpio: Record<string, unknown> = { ...parche };
+
+  // Misma validación de la clave privada de GA4 que hacía `updateClienteConfig`:
+  // el JSON de la service account trae los saltos de línea escapados.
+  if (typeof limpio.ga_private_key === 'string' && limpio.ga_private_key) {
+    const key = limpio.ga_private_key.replace(/\n/g, '\n');
+    if (!key.includes('BEGIN PRIVATE KEY') || !key.includes('END PRIVATE KEY')) {
+      return {
+        error: 'El formato de la Private Key de GA4 es inválido. Sube el archivo JSON original.',
+      };
+    }
+    limpio.ga_private_key = key;
+  }
+
+  if (Object.keys(limpio).length === 0) return { success: true };
+
+  const supabase = await createAdminClient();
+  const { error } = await supabase.rpc('fusionar_config_api', {
+    p_cliente_id: clienteId,
+    p_parche: limpio,
+  });
+  if (error) {
+    console.error('[guardarConfigPestana]', error);
+    return { error: error.message };
+  }
+
+  revalidatePath(`/admin/settings/${clienteId}`);
+  revalidatePath('/admin/settings');
+  return { success: true };
 }

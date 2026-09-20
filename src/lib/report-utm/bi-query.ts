@@ -1641,7 +1641,9 @@ async function adsDailySinHuecos(
         200_000,
         { estricto: true }
       );
-      const presentes = new Set(filas.map((f) => `${String(f.fecha).slice(0, 10)}|${f.plataforma}`));
+      const presentes = new Set(
+        filas.map((f) => `${String(f.fecha).slice(0, 10)}|${f.plataforma}`)
+      );
       ok = [...necesarios].every((k) => presentes.has(k));
     }
   } catch (e) {

@@ -612,7 +612,10 @@ function rawColsForTab(
     mode === 'declared'
       ? Object.entries(tab.custom_columns ?? {})
           .filter(([, def]) => def.include)
-          .map(([sanitized, def]) => ({ header: resolverCabecera(headers, def.col_name), sanitized }))
+          .map(([sanitized, def]) => ({
+            header: resolverCabecera(headers, def.col_name),
+            sanitized,
+          }))
       : headers.map((h) => ({ header: h, sanitized: sanitizeColName(h) }));
 
   const vistas = new Set<string>();
@@ -1486,7 +1489,10 @@ export async function consolidarLoteSheet(
     );
   } catch (e) {
     const motivo = e instanceof Error ? e.message : String(e);
-    console.error(`[conversiones] sheet ${sheetId}: no se pudieron recalcular los agregados:`, motivo);
+    console.error(
+      `[conversiones] sheet ${sheetId}: no se pudieron recalcular los agregados:`,
+      motivo
+    );
     throw new Error(
       `No se pudieron recalcular los totales diarios (${motivo}). Las filas del Sheet sí se guardaron; ` +
         'el BI conserva los totales del sync anterior hasta el próximo.'

@@ -8,7 +8,7 @@ import { AttributionBadge } from '@/components/report-utm/AttributionBadge';
 import { formatDateTime } from '@/lib/report-utm/formatters';
 import { PLUGIN_LABELS, dec } from '@/lib/report-utm/leads-display';
 import { MOTIVOS_EXCLUSION } from '@/lib/report-utm/lead-exclusion';
-import { marcarLeadsAction } from '@/app/(report-utm)/report-utm/leads/_actions';
+import { marcarLeadsAction } from '@/app/(app)/leads/_actions';
 
 type View = 'table' | 'cards';
 const STORAGE_KEY = 'report-utm:leads-view';

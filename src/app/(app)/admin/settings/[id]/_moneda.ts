@@ -34,7 +34,7 @@ export async function guardarMonedaReporteAction(
 
   // El cambio se ve al instante en informes y dashboard, sin esperar al TTL.
   _limpiarCacheMoneda();
-  revalidatePath(`/report-utm/clientes/${rtmClienteId}`);
+  revalidatePath('/admin/settings/[id]', 'page');
   if (actual.public_cliente_id) {
     revalidatePath(`/admin/settings/${actual.public_cliente_id}`);
     revalidatePath(`/dashboard/${actual.public_cliente_id}`);

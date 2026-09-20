@@ -667,7 +667,6 @@ function layoutUsaRespuestasLead(
  *     correcta la da siempre el cubo, que sí los conoce todos.
  */
 async function getCatalogoRespuestas(clienteId: string): Promise<LeadAnswerCampoResumen[]> {
-  if (process.env.NEXT_PUBLIC_REPORT_UTM_ENABLED !== 'true') return [];
   try {
     const rtmClienteId = await resolveRtmClienteId(clienteId);
     if (!rtmClienteId) return [];
@@ -763,8 +762,6 @@ async function getRespuestasLeadDelDia(
   // diario es la consulta cara y no tiene sentido cobrársela a un cliente que no
   // mide nada de esto.
   if (bloques.length === 0 && !conTotales) return datasetVacio();
-  // Misma guarda que la ficha del cliente: sin el módulo activo no se toca la red.
-  if (process.env.NEXT_PUBLIC_REPORT_UTM_ENABLED !== 'true') return datasetVacio();
 
   try {
     const rtmClienteId = await resolveRtmClienteId(clienteId);
@@ -2278,7 +2275,7 @@ export async function getOrCreatePublicToken(id: string, type: 'client' | 'tab')
  * Es el camino de migración de los clientes que todavía no tienen nada
  * configurado: el bloque estrena en modo 'auto' —valores crudos, sin agrupar— y
  * cuando el analista ve que la pregunta le sirve, un botón la convierte en un
- * campo de verdad, editable desde `/report-utm/clientes/[id]` con su nombre
+ * campo de verdad, editable desde `/admin/settings/[id]` con su nombre
  * bonito, sus respuestas agrupadas y su orden.
  *
  * A partir de ahí el bloque pasa a `origen: 'catalogo'` y deja de depender del

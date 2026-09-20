@@ -119,7 +119,7 @@ Hotmart. El downsell y los reembolsos se suman igual en el BI y en el dashboard.
 En cada corrida que toca hoy o ayer, el worker pregunta a Meta el `account_status`
 de cada cuenta del cliente (`src/lib/meta/alerta-cuenta.ts`). Si alguna no puede
 publicar (pago rechazado, saldo pendiente, inhabilitada), lo guarda en
-`config_api.meta_estado_cuentas`, lo muestra en `/report-utm/salud` y avisa en la
+`config_api.meta_estado_cuentas`, lo muestra en `/admin/salud` y avisa en la
 campana y en el grupo de WhatsApp del equipo, una vez cada 24 h por cliente. Al
 elegir cuentas en Ajustes también se ve su estado y su moneda.
 
@@ -145,7 +145,7 @@ Hotmart y las ventas del CRM de GoHighLevel.
 
 ### Configuración (por cliente)
 
-Desde la tarjeta _GoHighLevel · CRM_ de `/report-utm/clientes/[clienteId]`. Pide
+Desde la tarjeta _GoHighLevel · CRM_ de `/admin/settings/[id]`. Pide
 Location ID y PIT; el token se guarda cifrado en
 `report_utm.integrations.access_token_encrypted` y el Location ID en
 `config.location_id`. **Guía completa para el equipo: [doc 20](./20-integracion-gohighlevel.md).**
@@ -338,11 +338,11 @@ Para el residuo ya existente: `npx tsx scripts/limpiar-sheets-huerfanos.ts`
 - **Automático**: `GET /api/worker/google-sheets-conversiones` (job `sheets_conversiones`).
 - **Manual**: `POST /api/admin/sync-conversiones-offline`, con tres modos:
 
-  | body                                                                   | qué hace                               |
-  | ---------------------------------------------------------------------- | -------------------------------------- |
-  | `{ clientId, sheetId, tabId, batchId }`                                | sincroniza UNA pestaña dentro del lote |
+  | body                                                                    | qué hace                               |
+  | ----------------------------------------------------------------------- | -------------------------------------- |
+  | `{ clientId, sheetId, tabId, batchId }`                                 | sincroniza UNA pestaña dentro del lote |
   | `{ clientId, sheetId, batchId, consolidar, conservarCrudas?, quality }` | cierra el lote de ese sheet            |
-  | `{ clientId, sheetId?, recalcularCampos? }`                            | documento(s) enteros de una vez        |
+  | `{ clientId, sheetId?, recalcularCampos? }`                             | documento(s) enteros de una vez        |
 
   **"Sincronizar todos ahora" va pestaña a pestaña.** Un documento de decenas de
   miles de filas no cabe en el `maxDuration`: leer las tres pestañas de un sheet

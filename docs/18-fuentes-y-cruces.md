@@ -76,7 +76,7 @@ división no significa nada. El editor lo avisa antes de que lo pidas.
 Leads y gasto viven en tablas distintas y el gasto no tiene UTM. El puente es la
 **identidad de la campaña**, y se resuelve en cascada:
 
-1. Corrección manual del trafficker (`/report-utm/cruce-campanas`), a nivel
+1. Corrección manual del trafficker (`/cruce-campanas`), a nivel
    campaña, conjunto o anuncio
 2. **IDs propios del lead** (desde 2026-09-14, migración 082): `ad_id` → `adset_id`
    → `campaign_id`. Los traen Meta Lead Ads, la atribución de GoHighLevel, los
@@ -99,14 +99,14 @@ en Eduversio es el 18 % de los leads ([doc 21](./21-auditoria-utms-ghl.md)).
 
 **Un nombre repetido no se adivina.** El mismo creativo se duplica entre campañas
 (en Eduversio 83 de 91 nombres de anuncio). Si un lead solo trae ese nombre, se
-queda sin cruzar como «ambiguo» y aparece en `/report-utm/cruce-campanas` →
+queda sin cruzar como «ambiguo» y aparece en `/cruce-campanas` →
 «Nombres repetidos en varias campañas», en vez de caer en una campaña cualquiera.
 La cura es poner los IDs en el enlace ([doc 22](./22-auditoria-cruce-por-id.md)).
 
 El conjunto y el anuncio se titulan con la misma lógica: corrección manual → ID
 propio → ID en `utm_id` o en su propio campo → nombre. Un ID que la cuenta no
 conoce se queda como su propia fila, marcada como no resuelta, y se corrige en
-`/report-utm/cruce-campanas` → «Conjunto y anuncio».
+`/cruce-campanas` → «Conjunto y anuncio».
 
 ### Leads que no cuentan
 
@@ -114,7 +114,7 @@ Cada cliente puede tener una regla «Qué leads cuentan» (ficha del cliente): e
 atribución publicitaria, excluir fuentes o formularios. Los leads que la regla deja
 fuera **se guardan igual** con `excluido = true` y su motivo, pero no suman en
 `leads_count`, en el CPL, en las respuestas ni en el % de cruce. Se ven y se pueden
-re-incluir en `/report-utm/leads` → pestaña «Excluidos». La regla vive en
+re-incluir en `/leads` → pestaña «Excluidos». La regla vive en
 `src/lib/report-utm/lead-exclusion.ts` y la aplican las tres vías de ingesta.
 Requiere la migración 079.
 
@@ -126,7 +126,7 @@ problema que hay que arreglar.
 
 ## Parte 3 · Armar un informe
 
-Los informes viven en `/report-utm/informes`. Un informe es un lienzo de widgets
+Los informes viven en `/informes`. Un informe es un lienzo de widgets
 sobre **un cliente y un rango de fechas**.
 
 ### Los pasos
@@ -321,12 +321,12 @@ widget muestra el aviso. Solución: cambia la dimensión o quita esa métrica.
 
 **2. El cliente no está enlazado.**
 Sin `public_cliente_id`, cinco de las siete fuentes son invisibles y devuelven
-cero **en silencio**. Se ve de un vistazo en `/report-utm/salud`. Se arregla en
-`/report-utm/clientes`.
+cero **en silencio**. Se ve de un vistazo en `/admin/salud`. Se arregla en
+`/admin/settings`.
 
 **3. Los leads no cruzan con las campañas.**
 Si casi todo cae en `(sin campaña)`, el problema es el etiquetado UTM. Ve a
-`/report-utm/cruce-campanas`: muestra qué UTMs no cruzan y propone
+`/cruce-campanas`: muestra qué UTMs no cruzan y propone
 correcciones. También lo vigila el panel de salud.
 
 **4. Un filtro no atribuible anula el gasto.**
@@ -334,7 +334,7 @@ Filtrar por país o por un campo de formulario deja el gasto en 0 a propósito: 
 sería atribuible. El widget lo avisa.
 
 **5. La fuente está parada.**
-`/report-utm/salud` dice qué fuente lleva días sin datos y desde cuándo.
+`/admin/salud` dice qué fuente lleva días sin datos y desde cuándo.
 
 **6. Denominador en cero.**
 CPL, CPA y ROAS devuelven `—`, no 0. Un guion significa «no se puede calcular»,
@@ -363,11 +363,11 @@ salir una venta.
 Un informe con una fuente muerta **no se ve roto: se ve vacío**. Por eso hay
 herramientas dedicadas:
 
-| Dónde                        | Qué dice                                                                      |
-| ---------------------------- | ----------------------------------------------------------------------------- |
-| `/report-utm/salud`          | Fuentes paradas, integraciones caídas, cruce degradado, Sheets mal conectados |
-| `/report-utm/cruce-campanas` | Qué UTMs no cruzan y sugerencias de corrección                                |
-| `npm run diagnostico`        | Lo mismo por consola, más la ruta de ventas de cada cliente                   |
+| Dónde                 | Qué dice                                                                      |
+| --------------------- | ----------------------------------------------------------------------------- |
+| `/admin/salud`        | Fuentes paradas, integraciones caídas, cruce degradado, Sheets mal conectados |
+| `/cruce-campanas`     | Qué UTMs no cruzan y sugerencias de corrección                                |
+| `npm run diagnostico` | Lo mismo por consola, más la ruta de ventas de cada cliente                   |
 
 ### Comprobaciones automáticas
 

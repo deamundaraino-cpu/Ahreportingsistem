@@ -2,16 +2,24 @@ import { createServerClient } from '@supabase/ssr';
 import { NextRequest, NextResponse } from 'next/server';
 
 // Routes only accessible by superadmin or admin
-const ADMIN_ONLY_ROUTES = [
-  '/admin/users',
-  '/admin/api-tokens',
-  '/admin/configuracion',
-  '/admin/reports',
-  '/admin/whatsapp',
-];
+const ADMIN_ONLY_ROUTES = ['/admin/configuracion', '/admin/salud'];
 
-// Routes accessible by superadmin, admin, and trafficker
-const AUTHENTICATED_ADMIN_ROUTES = ['/admin/settings', '/admin/layouts'];
+/**
+ * Accesibles por superadmin, admin y trafficker.
+ *
+ * Leads, ventas, informes y cruce de campañas vivían en el route group
+ * `(report-utm)`, cuyo layout solo exigía sesión: un `viewer` entraba. Al
+ * absorberlas el reporting se declaran aquí, que es donde el resto de la app
+ * dice quién puede ver qué.
+ */
+const AUTHENTICATED_ADMIN_ROUTES = [
+  '/admin/settings',
+  '/admin/layouts',
+  '/leads',
+  '/ventas',
+  '/informes',
+  '/cruce-campanas',
+];
 
 /**
  * Rutas `/api` que traen su propia credencial y por tanto NO deben exigir

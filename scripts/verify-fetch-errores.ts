@@ -14,11 +14,7 @@
  *   npx tsx --conditions=react-server scripts/verify-fetch-errores.ts
  */
 
-import {
-  codigoErrorDeRed,
-  describirErrorDeRed,
-  esTimeoutDeFetch,
-} from '../src/lib/fetch-json';
+import { codigoErrorDeRed, describirErrorDeRed, esTimeoutDeFetch } from '../src/lib/fetch-json';
 import { fetchAllRows } from '../src/lib/supabase-paginate';
 
 let pasadas = 0;
@@ -168,12 +164,18 @@ async function comprobarPaginacion() {
   sec('fetchAllRows — modo estricto');
 
   const completo = await fetchAllRows(builderFalso(2500));
-  const completoEstricto = await fetchAllRows(builderFalso(2500), 1000, 200_000, { estricto: true });
+  const completoEstricto = await fetchAllRows(builderFalso(2500), 1000, 200_000, {
+    estricto: true,
+  });
   check('2.500 filas completas (normal)', completo.length === 2500, String(completo.length));
   check('2.500 filas completas (estricto)', completoEstricto.length === 2500);
 
   const exacto = await fetchAllRows(builderFalso(2000), 1000, 200_000, { estricto: true });
-  check('un múltiplo exacto de la página termina bien', exacto.length === 2000, String(exacto.length));
+  check(
+    'un múltiplo exacto de la página termina bien',
+    exacto.length === 2000,
+    String(exacto.length)
+  );
 
   const vacio = await fetchAllRows(builderFalso(0), 1000, 200_000, { estricto: true });
   check('una tabla vacía no es un error', vacio.length === 0);
@@ -188,14 +190,22 @@ async function comprobarPaginacion() {
   const errPagina = await lanza(() =>
     fetchAllRows(builderFalso(2500, falla2), 1000, 200_000, { estricto: true })
   );
-  check('estricto: con la página 2 caída lanza', !!errPagina?.includes('página fallida'), String(errPagina));
+  check(
+    'estricto: con la página 2 caída lanza',
+    !!errPagina?.includes('página fallida'),
+    String(errPagina)
+  );
 
   const tope = await fetchAllRows(builderFalso(2500), 1000, 1000);
   check('normal: el tope corta en silencio', tope.length === 1000, String(tope.length));
   const errTope = await lanza(() =>
     fetchAllRows(builderFalso(2500), 1000, 1000, { estricto: true })
   );
-  check('estricto: llegar al tope sin terminar lanza', !!errTope?.includes('tope'), String(errTope));
+  check(
+    'estricto: llegar al tope sin terminar lanza',
+    !!errTope?.includes('tope'),
+    String(errTope)
+  );
 
   const errSinId = await lanza(() =>
     fetchAllRows(builderFalso(2500, { sinId: true }), 1000, 200_000, { estricto: true })

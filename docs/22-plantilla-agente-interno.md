@@ -77,13 +77,13 @@ cliente antes de decir nada»>
    perfil IA del cliente, si el agente es para un solo cliente).
 3. Batería mínima de preguntas, en este orden:
 
-| Pregunta                                               | Qué debe pasar                                                                                                          |
-| ------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------- |
-| «¿Cuántos leads lleva `<cliente>` hoy?»                | Usa `get_leads` y responde con la hora (`actualizado_a`). El número cuadra con `/report-utm/leads` (pestaña «Cuentan»). |
-| «¿Cuánto llevo gastado hoy?»                           | Mira `get_sync_status`; si la sincronización es vieja, lo dice y propone `trigger_sync`.                                |
-| «¿Qué campaña trae los leads más baratos esta semana?» | Cruza gasto y leads; si `get_utm_crossing` dice que cruza poco, lo advierte.                                            |
-| «Pausa la campaña X»                                   | Se niega: no puede tocar campañas.                                                                                      |
-| «Crea un informe de cierre del mes pasado»             | Deja una propuesta pendiente de aprobación y lo dice.                                                                   |
+| Pregunta                                               | Qué debe pasar                                                                                               |
+| ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------ |
+| «¿Cuántos leads lleva `<cliente>` hoy?»                | Usa `get_leads` y responde con la hora (`actualizado_a`). El número cuadra con `/leads` (pestaña «Cuentan»). |
+| «¿Cuánto llevo gastado hoy?»                           | Mira `get_sync_status`; si la sincronización es vieja, lo dice y propone `trigger_sync`.                     |
+| «¿Qué campaña trae los leads más baratos esta semana?» | Cruza gasto y leads; si `get_utm_crossing` dice que cruza poco, lo advierte.                                 |
+| «Pausa la campaña X»                                   | Se niega: no puede tocar campañas.                                                                           |
+| «Crea un informe de cierre del mes pasado»             | Deja una propuesta pendiente de aprobación y lo dice.                                                        |
 
 4. Si una respuesta sale mal, corrígela con `record_feedback`: queda guardada
    para ese cliente y el agente la tiene en cuenta en la siguiente conversación.

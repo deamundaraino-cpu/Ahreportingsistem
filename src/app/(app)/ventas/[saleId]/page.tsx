@@ -101,7 +101,7 @@ export default async function SaleDetailPage({ params }: { params: Promise<{ sal
     <div className="space-y-6">
       <div>
         <Link
-          href="/report-utm/ventas"
+          href="/ventas"
           className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-emerald-600 dark:hover:text-emerald-400 transition-colors"
         >
           <ArrowLeft className="h-3.5 w-3.5" />

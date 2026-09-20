@@ -7,7 +7,7 @@ import {
   toggleOutboundWebhookAction,
   deleteOutboundWebhookAction,
   rotateOutboundSecretAction,
-} from '@/app/(report-utm)/report-utm/clientes/[clienteId]/_actions';
+} from '@/app/(app)/admin/settings/[id]/_actions-conexiones';
 
 type Webhook = {
   id: string;
@@ -86,11 +86,11 @@ export function OutboundWebhooksCard({
   };
 
   return (
-    <div className="rounded-2xl border border-border bg-card p-6 space-y-5">
+    <div className="rounded-xl border border-border bg-card shadow-sm p-6 space-y-5">
       <div className="flex items-start justify-between gap-4">
         <div className="flex items-start gap-3">
-          <div className="h-10 w-10 rounded-lg flex items-center justify-center bg-violet-50 dark:bg-violet-500/10">
-            <Send className="h-5 w-5 text-violet-600 dark:text-violet-400" />
+          <div className="h-10 w-10 rounded-lg flex items-center justify-center bg-blue-50 dark:bg-blue-500/10">
+            <Send className="h-5 w-5 text-blue-600 dark:text-blue-400" />
           </div>
           <div>
             <h3 className="text-sm font-semibold text-foreground">Outbound webhooks</h3>
@@ -105,7 +105,7 @@ export function OutboundWebhooksCard({
             setRevealed(null);
             setError(null);
           }}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-violet-700 dark:text-violet-400 bg-violet-50 dark:bg-violet-500/10 hover:bg-violet-100 dark:hover:bg-violet-500/20 transition-colors"
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-blue-700 dark:text-blue-400 bg-blue-50 dark:bg-blue-500/10 hover:bg-blue-100 dark:hover:bg-blue-500/20 transition-colors"
         >
           <Plus className="h-3.5 w-3.5" />
           Agregar
@@ -113,11 +113,11 @@ export function OutboundWebhooksCard({
       </div>
 
       {revealed && (
-        <div className="rounded-lg border border-emerald-200 dark:border-emerald-500/30 bg-emerald-50/40 dark:bg-emerald-500/5 p-4">
-          <p className="text-[11px] font-semibold uppercase tracking-wider text-emerald-700 dark:text-emerald-400 mb-2">
+        <div className="rounded-lg border border-blue-200 dark:border-blue-500/30 bg-blue-50/40 dark:bg-blue-500/5 p-4">
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-blue-700 dark:text-blue-400 mb-2">
             Secret · guardalo ahora
           </p>
-          <div className="flex items-center gap-2 rounded-lg border border-emerald-200 dark:border-emerald-500/20 bg-background px-3 py-2">
+          <div className="flex items-center gap-2 rounded-lg border border-blue-200 dark:border-blue-500/20 bg-background px-3 py-2">
             <code className="flex-1 text-xs font-mono text-foreground/90 truncate">
               {revealed.secret}
             </code>
@@ -127,13 +127,13 @@ export function OutboundWebhooksCard({
               className="p-1.5 rounded text-muted-foreground hover:text-foreground hover:bg-accent"
             >
               {copied ? (
-                <Check className="h-3.5 w-3.5 text-emerald-500" />
+                <Check className="h-3.5 w-3.5 text-blue-500" />
               ) : (
                 <Copy className="h-3.5 w-3.5" />
               )}
             </button>
           </div>
-          <p className="mt-2 text-[11px] text-emerald-700 dark:text-emerald-400">
+          <p className="mt-2 text-[11px] text-blue-700 dark:text-blue-400">
             El receptor debe verificar HMAC-SHA256 del body con este secret. Header:{' '}
             <code className="font-mono px-1 py-0.5 rounded bg-card/50">X-Rutm-Signature</code>
           </p>
@@ -171,7 +171,7 @@ export function OutboundWebhooksCard({
                     name="event_types"
                     value={e.id}
                     defaultChecked={e.id === 'sale.approved'}
-                    className="rounded text-emerald-500 focus:ring-emerald-500"
+                    className="rounded text-blue-500 focus:ring-blue-500"
                   />
                   <span className="font-medium text-foreground/90">{e.label}</span>
                   <code className="ml-auto text-[10px] font-mono text-muted-foreground">
@@ -226,7 +226,7 @@ export function OutboundWebhooksCard({
                     <span
                       className={`text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded ${
                         w.enabled
-                          ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400'
+                          ? 'bg-blue-50 text-blue-700 dark:bg-blue-500/10 dark:text-blue-400'
                           : 'bg-muted text-muted-foreground'
                       }`}
                     >
@@ -240,16 +240,14 @@ export function OutboundWebhooksCard({
                     {w.event_types.map((t) => (
                       <span
                         key={t}
-                        className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-violet-50 text-violet-700 dark:bg-violet-500/10 dark:text-violet-400"
+                        className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 dark:bg-blue-500/10 dark:text-blue-400"
                       >
                         {t}
                       </span>
                     ))}
                   </div>
                   <div className="flex items-center gap-3 mt-2 text-[10px] text-muted-foreground">
-                    <span className="text-emerald-600 dark:text-emerald-400">
-                      ✓ {w.success_count}
-                    </span>
+                    <span className="text-blue-600 dark:text-blue-400">✓ {w.success_count}</span>
                     <span className="text-red-600 dark:text-red-400">✗ {w.failure_count}</span>
                     {w.last_fired_at && (
                       <span>
@@ -268,7 +266,7 @@ export function OutboundWebhooksCard({
                   <button
                     onClick={() => onRotate(w.id)}
                     disabled={pending}
-                    className="p-1.5 rounded text-muted-foreground hover:text-violet-600 dark:hover:text-violet-400 hover:bg-accent transition-colors disabled:opacity-50"
+                    className="p-1.5 rounded text-muted-foreground hover:text-blue-600 dark:hover:text-blue-400 hover:bg-accent transition-colors disabled:opacity-50"
                     title="Rotar secret"
                   >
                     <RefreshCw className="h-3.5 w-3.5" />
@@ -300,7 +298,7 @@ export function OutboundWebhooksCard({
 }
 
 const INPUT_CLASS =
-  'w-full px-3 py-2 text-sm rounded-lg bg-background border border-border text-foreground placeholder:text-muted-foreground/70 focus:outline-none focus:ring-2 focus:ring-violet-500/40 focus:border-violet-500/40 transition-colors';
+  'w-full px-3 py-2 text-sm rounded-lg bg-background border border-border text-foreground placeholder:text-muted-foreground/70 focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500/40 transition-colors';
 
 function Field({
   label,

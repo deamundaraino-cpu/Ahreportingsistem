@@ -90,7 +90,8 @@ export async function fetchAllRows(
     const last = rows[rows.length - 1]?.id;
     if (last === undefined || last === null) {
       // Sin `id` en el select no se puede avanzar.
-      if (opts.estricto) throw new Error('[paginate] el select no incluye `id`: no se puede paginar');
+      if (opts.estricto)
+        throw new Error('[paginate] el select no incluye `id`: no se puede paginar');
       break;
     }
     lastId = String(last);

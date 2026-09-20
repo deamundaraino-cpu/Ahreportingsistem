@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import Link from 'next/link';
 import {
   Plus,
   Save,
@@ -858,17 +859,12 @@ export function BiReportCanvas({
             <span>
               Este cliente no está <strong>enlazado con su cliente de Reporting</strong>, así que la
               inversión, GA4, Hotmart, las conversiones offline y los campos de Sheet no se pueden
-              leer y se muestran vacíos. Los leads y las ventas sí funcionan. Se arregla en la{' '}
-              {filters.cliente_id ? (
-                <a
-                  href={`/report-utm/clientes/${filters.cliente_id}`}
-                  className="underline font-medium"
-                >
-                  ficha del cliente
-                </a>
-              ) : (
-                'ficha del cliente'
-              )}
+              leer y se muestran vacíos. Los leads y las ventas sí funcionan. Desde la unificación
+              el enlace se crea solo al dar de alta un cliente, así que esto solo le pasa a fichas
+              antiguas: revísalo en{' '}
+              <Link href="/admin/settings" className="underline font-medium">
+                Ajustes de Sistema
+              </Link>
               .
             </span>
           </div>

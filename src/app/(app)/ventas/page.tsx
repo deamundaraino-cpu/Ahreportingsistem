@@ -94,7 +94,7 @@ export default async function VentasPage({
       if (v) params.set(k, String(v));
     }
     const qs = params.toString();
-    return `/report-utm/ventas${qs ? `?${qs}` : ''}`;
+    return `/ventas${qs ? `?${qs}` : ''}`;
   };
 
   return (
@@ -145,7 +145,7 @@ export default async function VentasPage({
         </div>
         <div className="flex justify-end gap-2 mt-3">
           <Link
-            href="/report-utm/ventas"
+            href="/ventas"
             className="px-3 py-1.5 rounded-lg text-xs font-medium text-muted-foreground hover:bg-accent transition-colors"
           >
             Limpiar
@@ -195,7 +195,7 @@ export default async function VentasPage({
                     </td>
                     <td className="px-6 py-3">
                       <Link
-                        href={`/report-utm/clientes/${s.cliente_id}`}
+                        href={`/ventas?clienteId=${s.cliente_id}`}
                         className="text-xs font-medium text-emerald-600 dark:text-emerald-400 hover:underline"
                       >
                         {clienteName.get(s.cliente_id) ?? s.cliente_id.slice(0, 8)}
@@ -232,7 +232,7 @@ export default async function VentasPage({
                     </td>
                     <td className="px-6 py-3 text-right">
                       <Link
-                        href={`/report-utm/ventas/${s.id}`}
+                        href={`/ventas/${s.id}`}
                         className="text-emerald-600 dark:text-emerald-400 hover:underline text-[11px] font-medium"
                       >
                         detalle →

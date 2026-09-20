@@ -67,7 +67,7 @@ export function BiClienteGoalsCard({ clienteId, initialGoals = {} }: Props) {
   }
 
   return (
-    <div className="rounded-2xl border border-border bg-card p-5">
+    <div className="rounded-xl border border-border bg-card shadow-sm p-5">
       <div className="flex items-center gap-2 mb-1">
         <Target className="h-4 w-4 text-muted-foreground" />
         <h3 className="text-sm font-semibold text-foreground">Metas del cliente</h3>
@@ -95,7 +95,7 @@ export function BiClienteGoalsCard({ clienteId, initialGoals = {} }: Props) {
                   setSaved(false);
                 }}
                 placeholder="—"
-                className="flex-1 min-w-0 px-3 py-2 text-sm rounded-lg bg-muted border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
+                className="flex-1 min-w-0 px-3 py-2 text-sm rounded-lg bg-muted border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-blue-500/40"
               />
               {f.suffix && <span className="text-xs text-muted-foreground">{f.suffix}</span>}
             </div>

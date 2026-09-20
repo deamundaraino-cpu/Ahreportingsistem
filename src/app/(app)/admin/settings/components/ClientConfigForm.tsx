@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, type ReactNode } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import {
   Card,
@@ -15,8 +15,9 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import {
-  updateClienteConfig,
+  guardarConfigPestana,
   deleteCliente,
   assignLayoutToCliente,
   testMetaConnection,
@@ -45,7 +46,14 @@ import type {
 } from '@/lib/integrations/google-sheets-conversiones';
 import type { SheetEliminarPreview } from '../_actions';
 import type { GA4Property } from '@/lib/integrations/google-analytics';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from '@/components/ui/dialog';
 import { SheetCamposSection } from './sheet-campos/SheetCamposSection';
 import { PerfilIASection } from './perfil-ia/PerfilIASection';
 import {
@@ -256,6 +264,77 @@ function TikTokAccountRow({
   );
 }
 
+import {
+  PESTANAS,
+  ETIQUETA_PESTANA,
+  CLAVES_POR_PESTANA,
+  construirConfigEfectiva,
+  construirParche,
+  huella,
+  huellasPorPestana,
+  type Pestana,
+} from '@/lib/clientes/config-pestanas';
+
+/**
+ * Los callbacks de OAuth vuelven a esta página con su resultado en la
+ * querystring. Cada uno abre la pestaña de su plataforma, para que el aviso de
+ * «conectado» no quede en una pestaña que nadie está mirando.
+ */
+const CALLBACKS_OAUTH: ReadonlyArray<[string, Pestana]> = [
+  ['meta_connected', 'meta'],
+  ['meta_error', 'meta'],
+  ['tiktok_connected', 'tiktok'],
+  ['tiktok_error', 'tiktok'],
+  ['hotmart_connected', 'hotmart'],
+  ['hotmart_error', 'hotmart'],
+];
+
+/** Anclas heredadas: `#conexiones` se enlazaba desde la ficha de Report-UTM. */
+const ANCLAS: Record<string, Pestana> = {
+  conexiones: 'crm',
+  meta: 'meta',
+  google: 'google',
+  hotmart: 'hotmart',
+  tiktok: 'tiktok',
+};
+
+/**
+ * El guardado de una pestaña. Manda solo las claves de esa plataforma, así que
+ * dejar Google a medias no impide guardar Meta.
+ *
+ * Vive fuera del componente principal: definida dentro, React la trataba como
+ * un tipo nuevo en cada render y remontaba el bloque entero.
+ */
+function BarraGuardar({
+  pestana,
+  sucia,
+  guardando,
+  onGuardar,
+}: {
+  pestana: Pestana;
+  sucia: boolean;
+  guardando: Pestana | null;
+  onGuardar: (p: Pestana) => void;
+}) {
+  return (
+    <div className="flex items-center justify-end gap-3 border-t border-border pt-4">
+      {sucia && <span className="text-xs text-amber-600 dark:text-amber-400">Sin guardar</span>}
+      <Button
+        onClick={() => onGuardar(pestana)}
+        disabled={guardando !== null || !sucia}
+        className="gap-2"
+      >
+        {guardando === pestana ? (
+          <Loader2 className="w-4 h-4 animate-spin" />
+        ) : (
+          <Save className="w-4 h-4" />
+        )}
+        Guardar {ETIQUETA_PESTANA[pestana]}
+      </Button>
+    </div>
+  );
+}
+
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export function ClientConfigForm({
@@ -264,16 +343,25 @@ export function ClientConfigForm({
   isAdmin = false,
   googleConnected = false,
   googleEmail = null,
+  slots,
 }: {
   cliente: any;
   layouts?: any[];
   isAdmin?: boolean;
   googleConnected?: boolean;
   googleEmail?: string | null;
+  /**
+   * Las tarjetas de captación y atribución, ya renderizadas en el servidor.
+   *
+   * Llegan como elementos y no por `import` a propósito: este componente es
+   * `'use client'`, así que importarlas metería en el bundle del navegador
+   * —y en su árbol de dependencias— todo lo que cuelga de ellas. Como props
+   * viajan ya resueltas en el payload del servidor.
+   */
+  slots?: Partial<Record<Pestana, ReactNode>>;
 }) {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [config, setConfig] = useState<any>(() => {
     const initial = { ...(cliente.config_api || {}) };
@@ -326,14 +414,17 @@ export function ClientConfigForm({
     }
     if (searchParams.get('hotmart_connected')) {
       setHotmartOAuthStatus({ success: true });
-      setConfig((prev: any) => ({
-        ...prev,
+      sincronizarConServidor('hotmart', {
         hotmart_auth_mode: 'hotconnect',
         hotmart_connection_status: 'connected',
-      }));
+      });
     } else if (searchParams.get('hotmart_error')) {
       setHotmartOAuthStatus({ error: decodeURIComponent(searchParams.get('hotmart_error')!) });
     }
+    // Solo depende del resultado del OAuth que llega en la URL:
+    // `sincronizarConServidor` se recrea en cada render y volvería a disparar
+    // el efecto sin que haya cambiado nada.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
   const [testStatus, setTestStatus] = useState<{
     [key: string]: { loading: boolean; success?: boolean; error?: string; message?: string };
@@ -537,6 +628,136 @@ export function ClientConfigForm({
   };
   const [tiktokAccounts, setTiktokAccounts] = useState<TikTokAccount[]>(initTikTokAccounts);
 
+  // ── Pestañas por plataforma ───────────────────────────────────────────────
+  //
+  // La ficha era una columna de seis bloques con un «Guardar Todo» al final que
+  // reescribía `config_api` entero. Ahora cada plataforma es una pestaña y
+  // guarda lo suyo: el parche lleva solo sus claves, así que tener Google a
+  // medias no impide guardar Meta y lo que el servidor escriba entre medias
+  // —los tokens que renueva el cron de Hotmart— no se pisa.
+  const [pestana, setPestana] = useState<Pestana>('general');
+  const [guardandoPestana, setGuardandoPestana] = useState<Pestana | null>(null);
+  const [pendiente, setPendiente] = useState<Pestana | null>(null);
+
+  // Línea base de «lo guardado», calculada una sola vez con la MISMA derivación
+  // que usa el guardado. Con el objeto crudo, Hotmart nacería sucia en todo
+  // cliente con client_id y secret pero sin `hotmart_basic`, que se calcula solo.
+  const [guardado, setGuardado] = useState<Record<Pestana, string>>(() =>
+    huellasPorPestana(construirConfigEfectiva(config, metaAccounts, tiktokAccounts))
+  );
+
+  const configEfectiva = construirConfigEfectiva(config, metaAccounts, tiktokAccounts);
+  const sucias = new Set(
+    PESTANAS.filter((p) => huella(construirParche(configEfectiva, p)) !== guardado[p])
+  );
+
+  // El hash no existe en el servidor y los callbacks OAuth vuelven con
+  // querystring: ambos se resuelven ya en el navegador, una sola vez.
+  useEffect(() => {
+    const qs = new URLSearchParams(window.location.search);
+    const explicita = qs.get('tab');
+    if (explicita && (PESTANAS as readonly string[]).includes(explicita)) {
+      setPestana(explicita as Pestana);
+      return;
+    }
+    for (const [clave, destino] of CALLBACKS_OAUTH) {
+      if (qs.has(clave)) {
+        setPestana(destino);
+        return;
+      }
+    }
+    const ancla = window.location.hash.replace(/^#/, '');
+    if (ANCLAS[ancla]) setPestana(ANCLAS[ancla]);
+  }, []);
+
+  /** Cambia de pestaña sin navegar: `replaceState` sincroniza `useSearchParams`. */
+  function irA(destino: Pestana) {
+    setPestana(destino);
+    setPendiente(null);
+    const qs = new URLSearchParams(window.location.search);
+    for (const [clave] of CALLBACKS_OAUTH) qs.delete(clave);
+    qs.set('tab', destino);
+    window.history.replaceState(null, '', `${window.location.pathname}?${qs}`);
+  }
+
+  function intentarIr(destino: string) {
+    const p = destino as Pestana;
+    if (p !== pestana && sucias.has(pestana)) {
+      setPendiente(p);
+      return;
+    }
+    irA(p);
+  }
+
+  /** Deshace lo editado en una pestaña volviendo a su línea base. */
+  function descartarPestana(p: Pestana) {
+    const base = JSON.parse(guardado[p]) as Record<string, unknown>;
+    setConfig((prev: any) => ({ ...prev, ...base }));
+    if (p === 'meta') setMetaAccounts((base.meta_accounts as MetaAccount[]) ?? []);
+    if (p === 'tiktok') setTiktokAccounts((base.tiktok_accounts as TikTokAccount[]) ?? []);
+  }
+
+  async function guardarPestana(p: Pestana) {
+    if (CLAVES_POR_PESTANA[p].length === 0) return { success: true as const };
+    setGuardandoPestana(p);
+    setError(null);
+    const parche = construirParche(
+      construirConfigEfectiva(config, metaAccounts, tiktokAccounts),
+      p
+    );
+    const res = await guardarConfigPestana(cliente.id, p, parche);
+    if (res.success) {
+      setGuardado((prev) => ({ ...prev, [p]: huella(parche) }));
+      if (p === 'google') {
+        // Lo guardado ya tiene (o tendrá) datos colgando de su sheet_id: a
+        // partir de aquí el documento no se cambia, se elimina y se añade otro.
+        setSheetsBloqueados(
+          new Set(
+            ((parche.google_sheets_conversiones ?? []) as ConversionesConfig[]).map(
+              (s, i) => s?.id || `sheet_${i}`
+            )
+          )
+        );
+      }
+      router.refresh();
+    } else {
+      setError(res.error || 'Error al guardar la configuración');
+    }
+    setGuardandoPestana(null);
+    return res;
+  }
+
+  /**
+   * El servidor ya escribió esto; el formulario solo se pone al día.
+   *
+   * Sin mover también la línea base, la pestaña quedaría marcada como sucia por
+   * algo que ya está guardado y el usuario recibiría un aviso falso al salir.
+   */
+  function sincronizarConServidor(
+    p: Pestana,
+    parche: Record<string, unknown> | ((prev: any) => Record<string, unknown>)
+  ) {
+    setConfig((prev: any) => {
+      const delta = typeof parche === 'function' ? parche(prev) : parche;
+      const siguiente = { ...prev, ...delta };
+      setGuardado((g) => ({
+        ...g,
+        [p]: huella(
+          construirParche(construirConfigEfectiva(siguiente, metaAccounts, tiktokAccounts), p)
+        ),
+      }));
+      return siguiente;
+    });
+  }
+
+  // Cerrar o recargar con cambios a medias también avisa.
+  useEffect(() => {
+    if (sucias.size === 0) return;
+    const aviso = (e: BeforeUnloadEvent) => e.preventDefault();
+    window.addEventListener('beforeunload', aviso);
+    return () => window.removeEventListener('beforeunload', aviso);
+  }, [sucias.size]);
+
   function addTikTokAccount() {
     setTiktokAccounts((prev) => [
       ...prev,
@@ -694,56 +915,21 @@ export function ClientConfigForm({
       const res = await testHotmartConnection(config, cliente.id);
       const now = new Date().toISOString();
       if (res.error) {
-        setConfig((p: any) => ({
-          ...p,
+        sincronizarConServidor('hotmart', {
           hotmart_connection_status: 'error',
           hotmart_last_checked_at: now,
-        }));
+        });
         setTestStatus((prev) => ({ ...prev, hotmart: { loading: false, error: res.error } }));
       } else {
-        setConfig((p: any) => ({
-          ...p,
+        sincronizarConServidor('hotmart', {
           hotmart_connection_status: 'connected',
           hotmart_last_checked_at: now,
-        }));
+        });
         setTestStatus((prev) => ({ ...prev, hotmart: { loading: false, success: true } }));
       }
     } catch (err: any) {
       setTestStatus((prev) => ({ ...prev, hotmart: { loading: false, error: err.message } }));
     }
-  }
-
-  async function handleSave() {
-    setLoading(true);
-    setError(null);
-    const computedBasic =
-      !config.hotmart_basic && config.hotmart_client_id && config.hotmart_client_secret
-        ? btoa(`${config.hotmart_client_id}:${config.hotmart_client_secret}`)
-        : config.hotmart_basic;
-    const finalConfig = {
-      ...config,
-      meta_accounts: metaAccounts,
-      meta_account_id: metaAccounts[0]?.account_id || config.meta_account_id || '',
-      tiktok_accounts: tiktokAccounts,
-      hotmart_basic: computedBasic || config.hotmart_basic || '',
-    };
-    const { success, error: updateError } = await updateClienteConfig(cliente.id, finalConfig);
-    if (!success) {
-      setError(updateError || 'Error al guardar la configuración');
-    } else {
-      // Lo guardado ya tiene (o tendrá) datos colgando de su sheet_id: a
-      // partir de aquí el documento no se cambia, se elimina y se añade otro.
-      setSheetsBloqueados(
-        new Set(
-          ((finalConfig.google_sheets_conversiones ?? []) as ConversionesConfig[]).map(
-            (s, i) => s?.id || `sheet_${i}`
-          )
-        )
-      );
-      router.refresh();
-    }
-    setLoading(false);
-    return { success, error: updateError };
   }
 
   /** Abre el diálogo de borrado y pide qué se llevará por delante. */
@@ -782,8 +968,7 @@ export function ClientConfigForm({
       if (res.done) {
         // La config ya la actualizó el servidor; el estado local se pone al día
         // para no volver a guardar el sheet recién retirado.
-        setConfig((prev: any) => ({
-          ...prev,
+        sincronizarConServidor('google', (prev: any) => ({
           google_sheets_conversiones: (prev.google_sheets_conversiones ?? []).filter(
             (s: ConversionesConfig, i: number) => (s?.id || `sheet_${i}`) !== objetivo.sid
           ),
@@ -860,6 +1045,10 @@ export function ClientConfigForm({
 
   const hasMetaConfig = metaAccounts.length > 0 || config.meta_token;
 
+  /**
+   * El guardado de una pestaña. Manda solo las claves de esa plataforma, así
+   * que dejar Google a medias no impide guardar Meta.
+   */
   return (
     <div className="space-y-6">
       <div className="flex gap-4 items-center">
@@ -872,2139 +1061,2335 @@ export function ClientConfigForm({
 
       {error && <p className="text-red-500 bg-red-500/10 p-4 rounded">{error}</p>}
 
-      {/* ─── Meta Ads ─────────────────────────────────────────────────── */}
-      <Card className="bg-card border-border">
-        <CardHeader>
-          <CardTitle>Meta Ads Configuration</CardTitle>
-          <CardDescription>
-            Conecta una o más cuentas publicitarias de Meta. Los datos de todas las cuentas se
-            consolidarán en el reporte.
-          </CardDescription>
-          {testStatus.metaSync?.success && (
-            <p className="text-emerald-600 dark:text-emerald-400 text-sm flex items-center mt-2 p-2 bg-emerald-500/10 rounded">
-              <CheckCircle2 className="w-4 h-4 mr-2" /> {testStatus.metaSync.message}
-            </p>
-          )}
-          {testStatus.metaSync?.error && (
-            <p className="text-red-500 text-xs flex items-center mt-2">
-              <AlertCircle className="w-3 h-3 mr-1" /> {testStatus.metaSync.error}
-            </p>
-          )}
-        </CardHeader>
-        <CardContent className="space-y-5">
-          {/* OAuth connect + estado de conexión */}
-          <div className="flex flex-col gap-2 pb-4 border-b border-border">
-            <a href={`/api/auth/meta?client_id=${cliente.id}`}>
-              <Button
-                variant="default"
-                size="sm"
-                className="w-full bg-[#1877f2] hover:bg-[#0f5ed8] text-white"
-              >
-                {config.meta_token
-                  ? '🔄 Reconectar con Facebook Ads'
-                  : '🔗 Conectar con Facebook Ads'}
-              </Button>
-            </a>
-            {(() => {
-              const expiresAt = config.meta_token_expires_at;
-              if (config.meta_connection_status === 'expired') {
-                return (
-                  <p className="text-red-500 text-xs flex items-center gap-1">
-                    <AlertCircle className="w-3 h-3" /> Token vencido, reconecta con Facebook
-                  </p>
-                );
-              }
-              if (config.meta_token && expiresAt) {
-                const days = Math.ceil(
-                  (new Date(expiresAt).getTime() - Date.now()) / (24 * 60 * 60 * 1000)
-                );
-                if (days <= 0) {
-                  return (
-                    <p className="text-red-500 text-xs flex items-center gap-1">
-                      <AlertCircle className="w-3 h-3" /> Token vencido, reconecta con Facebook
-                    </p>
-                  );
-                }
-                const cls = days <= 10 ? 'text-amber-500' : 'text-green-500';
-                return (
-                  <p className={`${cls} text-xs flex items-center gap-1`}>
-                    <CheckCircle2 className="w-3 h-3" /> Conectado · el token se renueva
-                    automáticamente (vence en {days} días)
-                  </p>
-                );
-              }
-              return null;
-            })()}
-            {metaOAuthStatus?.success && (
-              <p className="text-green-600 dark:text-green-500 text-xs flex items-center gap-1">
-                <CheckCircle2 className="w-3 h-3" /> Cuenta de Facebook conectada exitosamente
-              </p>
-            )}
-            {metaOAuthStatus?.error && (
-              <p className="text-red-500 text-xs flex items-center gap-1">
-                <AlertCircle className="w-3 h-3" /> {metaOAuthStatus.error}
-              </p>
-            )}
-          </div>
-
-          {/* Shared token */}
-          <div className="space-y-2">
-            <Label htmlFor="meta_token" className="text-foreground/90">
-              Access Token Compartido
-            </Label>
-            <Input
-              id="meta_token"
-              type="password"
-              placeholder="EAA..."
-              value={config.meta_token || ''}
-              onChange={(e) => setConfig({ ...config, meta_token: e.target.value })}
-              className="bg-background border-input"
-            />
-            <p className="text-xs text-muted-foreground/70">
-              Se completa automáticamente al conectar por OAuth. Si una cuenta no tiene token
-              propio, se usará este. Para una conexión que <strong>no caduca</strong>, pega aquí un{' '}
-              <strong>System User token</strong> del Business Manager.
-            </p>
-          </div>
-
-          {/* Account list */}
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <Label className="text-foreground/90">Cuentas Publicitarias</Label>
-              <div className="flex items-center gap-2">
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={openMetaAccountPicker}
-                  disabled={loadingMetaAccounts || !config.meta_token}
-                  className="h-7 text-xs"
-                >
-                  {loadingMetaAccounts ? (
-                    <RefreshCw className="w-3 h-3 mr-1 animate-spin" />
-                  ) : (
-                    <DownloadCloud className="w-3 h-3 mr-1" />
-                  )}{' '}
-                  Elegir cuentas
-                </Button>
-                <Button size="sm" variant="outline" onClick={addAccount} className="h-7 text-xs">
-                  <Plus className="w-3 h-3 mr-1" /> Agregar Cuenta
-                </Button>
-              </div>
-            </div>
-
-            {/* Selector de cuentas disponibles desde el token */}
-            {availableMetaAccounts && (
-              <div className="bg-muted/40 border border-indigo-500/30 rounded-lg p-4 space-y-3">
-                <div className="flex items-center justify-between">
-                  <p className="text-sm text-foreground font-medium">
-                    Cuentas disponibles en tu Facebook
-                  </p>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setAvailableMetaAccounts(null)}
-                    className="h-6 text-xs text-muted-foreground/70 hover:text-foreground/90"
-                  >
-                    Cancelar
-                  </Button>
-                </div>
-                {metaPickerError && (
-                  <p className="text-red-500 text-xs flex items-center gap-1">
-                    <AlertCircle className="w-3 h-3" /> {metaPickerError}
-                  </p>
-                )}
-                {availableMetaAccounts.length === 0 && !metaPickerError && (
-                  <p className="text-xs text-muted-foreground/70">
-                    No se encontraron cuentas publicitarias para este token.
-                  </p>
-                )}
-                <div className="space-y-1 max-h-64 overflow-y-auto">
-                  {availableMetaAccounts.map((a) => {
-                    const alreadyAdded = metaAccounts.some((m) => m.account_id === a.account_id);
-                    return (
-                      <label
-                        key={a.account_id}
-                        className={`flex items-center gap-3 p-2 rounded-md ${alreadyAdded ? 'opacity-50' : 'hover:bg-accent cursor-pointer'}`}
-                      >
-                        <input
-                          type="checkbox"
-                          disabled={alreadyAdded}
-                          checked={alreadyAdded || selectedMetaIds.has(a.account_id)}
-                          onChange={() => toggleMetaSelection(a.account_id)}
-                          className="rounded border-input bg-background text-indigo-500 focus:ring-indigo-500"
-                        />
-                        <span className="text-sm text-foreground flex-1">{a.name}</span>
-                        <span className="text-xs text-muted-foreground/70 font-mono">
-                          {a.account_id}
-                        </span>
-                        {alreadyAdded && (
-                          <span className="text-xs text-green-500">ya agregada</span>
-                        )}
-                      </label>
-                    );
-                  })}
-                </div>
-                {availableMetaAccounts.length > 0 && (
-                  <div className="flex justify-end">
-                    <Button
-                      size="sm"
-                      onClick={addSelectedMetaAccounts}
-                      disabled={selectedMetaIds.size === 0}
-                      className="h-8 text-xs bg-indigo-600 hover:bg-indigo-700"
-                    >
-                      <Plus className="w-3 h-3 mr-1" /> Agregar{' '}
-                      {selectedMetaIds.size > 0 ? `(${selectedMetaIds.size})` : ''}
-                    </Button>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {metaAccounts.length === 0 && (
-              <p className="text-xs text-muted-foreground/70 py-3 text-center border border-dashed border-border rounded-lg">
-                Sin cuentas configuradas. Agrega al menos una para activar Meta Ads.
-              </p>
-            )}
-
-            {metaAccounts.map((acct, idx) => (
-              <MetaAccountRow
-                key={acct.id}
-                account={acct}
-                sharedToken={config.meta_token || ''}
-                testStatus={testStatus[`meta_${acct.id}`]}
-                onChange={(updated) => updateAccount(idx, updated)}
-                onRemove={() => removeAccount(idx)}
-                onTest={() =>
-                  runTest(`meta_${acct.id}`, () =>
-                    testMetaConnection(acct.token || config.meta_token, acct.account_id)
-                  )
-                }
-              />
-            ))}
-          </div>
-
-          {/* Conversiones personalizadas */}
-          <div className="pt-4 mt-2 border-t border-border">
-            <div className="flex justify-between items-center bg-muted/50 p-3 rounded-lg border border-border">
-              <div>
-                <h4 className="text-sm font-medium text-foreground">Conversiones Personalizadas</h4>
-                <p className="text-xs text-muted-foreground/70 mt-1">
-                  Busca y actualiza todos los eventos personalizados detectados en Meta durante los
-                  últimos 30 días.
-                </p>
-              </div>
-              <Button
-                variant="secondary"
-                size="sm"
-                className="bg-indigo-500/20 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-500/30 border border-indigo-500/30 whitespace-nowrap"
-                onClick={() =>
-                  runTest('metaSync', () => refreshMetaCustomConversions(cliente.id, config))
-                }
-                disabled={testStatus.metaSync?.loading || !hasMetaConfig}
-              >
-                {testStatus.metaSync?.loading ? (
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                ) : (
-                  <DownloadCloud className="w-4 h-4 mr-2" />
-                )}
-                Sincronizar Conversiones
-              </Button>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* ─── Sincronización de Datos ──────────────────────────────────── */}
-      <Card className="bg-card border-indigo-500/20">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-indigo-700 dark:text-indigo-300">
-            <DatabaseZap className="w-5 h-5" />
-            Sincronizar Datos Diarios
-          </CardTitle>
-          <CardDescription className="text-muted-foreground">
-            Carga o recarga los datos de Meta y Hotmart para el rango de fechas seleccionado. Usa
-            esto cuando falten datos o para actualizar métricas históricas.
-          </CardDescription>
-          {testStatus.dataSync?.success && (
-            <p className="text-emerald-600 dark:text-emerald-400 text-sm flex items-start gap-2 mt-2 p-3 bg-emerald-500/10 rounded">
-              <CheckCircle2 className="w-4 h-4 mt-0.5 shrink-0" />
-              <span>{testStatus.dataSync.message}</span>
-            </p>
-          )}
-          {testStatus.dataSync?.error && (
-            <p className="text-red-600 dark:text-red-400 text-sm flex items-start gap-2 mt-2 p-3 bg-red-500/10 rounded">
-              <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
-              <span>{testStatus.dataSync.error}</span>
-            </p>
-          )}
-        </CardHeader>
-        <CardContent>
-          <div className="flex items-end gap-3 flex-wrap">
-            <div className="space-y-1.5 flex-1 min-w-[140px]">
-              <Label className="text-muted-foreground text-xs">Fecha inicio</Label>
-              <Input
-                type="date"
-                value={syncStart}
-                onChange={(e) => setSyncStart(e.target.value)}
-                className="bg-background border-input text-foreground h-9"
-              />
-            </div>
-            <div className="space-y-1.5 flex-1 min-w-[140px]">
-              <Label className="text-muted-foreground text-xs">Fecha fin</Label>
-              <Input
-                type="date"
-                value={syncEnd}
-                onChange={(e) => setSyncEnd(e.target.value)}
-                className="bg-background border-input text-foreground h-9"
-              />
-            </div>
-            <Button
-              onClick={() =>
-                runTest('dataSync', () => syncClienteMetrics(cliente.id, syncStart, syncEnd))
-              }
-              disabled={testStatus.dataSync?.loading || !syncStart || !syncEnd}
-              className="bg-indigo-600 hover:bg-indigo-700 text-white h-9 whitespace-nowrap"
+      <Tabs value={pestana} onValueChange={intentarIr} className="w-full">
+        <TabsList className="bg-muted/80 p-1 rounded-lg mb-6 flex w-fit flex-wrap gap-1">
+          {PESTANAS.map((p) => (
+            <TabsTrigger
+              key={p}
+              value={p}
+              className="data-[state=active]:bg-card rounded-md px-4 py-2 flex items-center gap-2 text-sm font-medium"
             >
-              {testStatus.dataSync?.loading ? (
-                <>
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" /> Sincronizando...
-                </>
-              ) : (
-                <>
-                  <DatabaseZap className="w-4 h-4 mr-2" /> Sincronizar Datos
-                </>
-              )}
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* ─── Hotmart ──────────────────────────────────────────────────── */}
-      <Card className="bg-card border-border">
-        <CardHeader>
-          <div className="flex justify-between items-center">
-            <CardTitle>Hotmart</CardTitle>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={testHotmart}
-              disabled={testStatus.hotmart?.loading}
-            >
-              {testStatus.hotmart?.loading ? (
-                <RefreshCw className="w-3 h-3 animate-spin mr-2" />
-              ) : (
-                <RefreshCw className="w-3 h-3 mr-2" />
-              )}
-              Probar Conexión
-            </Button>
-          </div>
-          <CardDescription>
-            Conecta la cuenta de Hotmart del cliente para sincronizar ventas, comisiones y
-            afiliados.
-          </CardDescription>
-          {testStatus.hotmart?.success && (
-            <p className="text-green-600 dark:text-green-500 text-xs flex items-center mt-2">
-              <CheckCircle2 className="w-3 h-3 mr-1" /> Conexión Exitosa
-            </p>
-          )}
-          {testStatus.hotmart?.error && (
-            <p className="text-red-500 text-xs flex items-center mt-2">
-              <AlertCircle className="w-3 h-3 mr-1" /> {testStatus.hotmart.error}
-            </p>
-          )}
-        </CardHeader>
-        <CardContent className="space-y-5">
-          {/* OAuth (HotConnect) connect + estado de conexión */}
-          <div className="flex flex-col gap-2 pb-4 border-b border-border">
-            <a href={`/api/auth/hotmart?client_id=${cliente.id}`}>
-              <Button
-                variant="default"
-                size="sm"
-                className="w-full bg-[#ef4a23] hover:bg-[#d63d18] text-white"
-              >
-                {config.hotmart_auth_mode === 'hotconnect'
-                  ? '🔄 Reconectar con Hotmart'
-                  : '🔗 Conectar con Hotmart'}
-              </Button>
-            </a>
-            {(() => {
-              if (config.hotmart_connection_status === 'expired') {
-                return (
-                  <p className="text-red-500 text-xs flex items-center gap-1">
-                    <AlertCircle className="w-3 h-3" /> Token vencido, reconecta con Hotmart
-                  </p>
-                );
-              }
-              if (
-                config.hotmart_auth_mode === 'hotconnect' &&
-                config.hotmart_connection_status === 'connected'
-              ) {
-                return (
-                  <p className="text-green-600 dark:text-green-500 text-xs flex items-center gap-1">
-                    <CheckCircle2 className="w-3 h-3" /> Conectado por HotConnect · el token se
-                    renueva automáticamente
-                  </p>
-                );
-              }
-              if (config.hotmart_connection_status === 'connected') {
-                return (
-                  <p className="text-green-600 dark:text-green-500 text-xs flex items-center gap-1">
-                    <CheckCircle2 className="w-3 h-3" /> Conectado con credenciales
-                  </p>
-                );
-              }
-              return null;
-            })()}
-            {hotmartOAuthStatus?.success && (
-              <p className="text-green-600 dark:text-green-500 text-xs flex items-center gap-1">
-                <CheckCircle2 className="w-3 h-3" /> Cuenta de Hotmart conectada exitosamente
-              </p>
-            )}
-            {hotmartOAuthStatus?.error && (
-              <p className="text-red-500 text-xs flex items-center gap-1">
-                <AlertCircle className="w-3 h-3" /> {hotmartOAuthStatus.error}
-              </p>
-            )}
-          </div>
-
-          {/* Guía paso a paso para pegar credenciales */}
-          <div className="bg-orange-500/5 border border-orange-500/20 rounded-lg p-3">
-            <p className="text-xs text-orange-700 dark:text-orange-300/90 leading-relaxed">
-              <strong className="text-orange-600 dark:text-orange-400">
-                ¿Prefieres pegar credenciales?
-              </strong>{' '}
-              En la cuenta de Hotmart del cliente:
-              <br />
-              1. Entra a <strong>Herramientas → Credenciales de Desarrollador</strong>.
-              <br />
-              2. Crea una credencial (entorno <strong>Producción</strong>).
-              <br />
-              3. Copia el <strong>Client ID</strong> y <strong>Client Secret</strong> y pégalos
-              abajo.
-            </p>
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="hotmart_client_id" className="text-foreground/90">
-              Client ID
-            </Label>
-            <Input
-              id="hotmart_client_id"
-              value={config.hotmart_client_id || ''}
-              onChange={(e) => setConfig({ ...config, hotmart_client_id: e.target.value })}
-              className="bg-background border-input"
-            />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="hotmart_client_secret" className="text-foreground/90">
-              Client Secret
-            </Label>
-            <Input
-              id="hotmart_client_secret"
-              type="password"
-              value={config.hotmart_client_secret || ''}
-              onChange={(e) => setConfig({ ...config, hotmart_client_secret: e.target.value })}
-              className="bg-background border-input"
-            />
-          </div>
-
-          {/* Avanzado: campos manuales raramente necesarios */}
-          <div className="pt-1">
-            <button
-              type="button"
-              onClick={() => setShowHotmartAdvanced((v) => !v)}
-              className="text-xs text-muted-foreground/70 hover:text-foreground/90"
-            >
-              {showHotmartAdvanced ? '▾ Ocultar avanzado' : '▸ Opciones avanzadas'}
-            </button>
-            {showHotmartAdvanced && (
-              <div className="space-y-4 mt-3">
-                <div className="space-y-2">
-                  <Label htmlFor="hotmart_token" className="text-foreground/90">
-                    Access Token Temporal (opcional)
-                  </Label>
-                  <Input
-                    id="hotmart_token"
-                    type="password"
-                    value={config.hotmart_token || ''}
-                    onChange={(e) => setConfig({ ...config, hotmart_token: e.target.value })}
-                    className="bg-background border-input"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="hotmart_basic" className="text-foreground/90">
-                    Basic Auth (Base64 Client ID:Secret)
-                  </Label>
-                  <Input
-                    id="hotmart_basic"
-                    type="password"
-                    value={config.hotmart_basic || ''}
-                    onChange={(e) => setConfig({ ...config, hotmart_basic: e.target.value })}
-                    className="bg-background border-input"
-                  />
-                  <p className="text-xs text-muted-foreground/70">
-                    Se calcula automáticamente desde Client ID + Secret al guardar. Solo edítalo si
-                    tienes el token Basic directamente.
-                  </p>
-                </div>
-              </div>
-            )}
-          </div>
-
-          <div className="pt-4 border-t border-border">
-            <div className="bg-muted/40 border border-border/50 rounded-lg p-3">
-              <p className="text-xs text-muted-foreground leading-relaxed">
-                <strong className="text-foreground/90">Filtros de productos por funnel</strong> — La
-                configuración de productos (Principal / Order Bump / Upsell) y URLs de página se
-                hace <strong>por pestaña</strong> desde el dashboard del cliente. Cada pestaña
-                representa un funnel independiente con sus propias métricas.
-              </p>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* ─── Google Analytics 4 (GA4) ─────────────────────────────────── */}
-      <Card className="bg-card border-border">
-        <CardHeader>
-          <div className="flex justify-between items-center">
-            <CardTitle>Google Analytics (GA4)</CardTitle>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() =>
-                runTest('ga4', () =>
-                  testGA4Connection({
-                    ga_property_id: config.ga_property_id,
-                    ga_client_email: config.ga_client_email,
-                    ga_private_key: config.ga_private_key,
-                  })
-                )
-              }
-              disabled={
-                testStatus.ga4?.loading ||
-                !config.ga_property_id ||
-                (!googleConnected && (!config.ga_client_email || !config.ga_private_key))
-              }
-            >
-              {testStatus.ga4?.loading ? (
-                <RefreshCw className="w-3 h-3 animate-spin mr-2" />
-              ) : (
-                <RefreshCw className="w-3 h-3 mr-2" />
-              )}
-              Probar Conexión
-            </Button>
-          </div>
-          <CardDescription>
-            {googleConnected
-              ? 'Selecciona la propiedad de GA4 que corresponde a este cliente. Se usan los permisos de la cuenta de Google de la agencia.'
-              : 'Conecta una cuenta de servicio de Google Cloud para extraer métricas de GA4 (Sesiones, Rebote).'}
-          </CardDescription>
-          {testStatus.ga4?.success && (
-            <p className="text-green-600 dark:text-green-500 text-xs flex items-start mt-2">
-              <CheckCircle2 className="w-4 h-4 mr-1 shrink-0" />{' '}
-              <span>{testStatus.ga4.message || 'Conexión Exitosa'}</span>
-            </p>
-          )}
-          {testStatus.ga4?.error && (
-            <p className="text-red-500 text-xs flex items-start mt-2">
-              <AlertCircle className="w-4 h-4 mr-1 shrink-0" /> <span>{testStatus.ga4.error}</span>
-            </p>
-          )}
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {googleConnected ? (
-            <div className="space-y-2">
-              <Label className="text-foreground/90">Propiedad de GA4</Label>
-              {config.ga_property_id ? (
-                <div className="flex items-center justify-between gap-3 bg-muted/50 border border-border rounded-lg px-3 py-2.5">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <BarChart3 className="w-4 h-4 text-orange-500 shrink-0" />
-                    <div className="min-w-0">
-                      <p className="text-sm font-medium text-foreground truncate">
-                        {config.ga_property_name || `Propiedad ${config.ga_property_id}`}
-                      </p>
-                      <p className="text-xs text-muted-foreground truncate">
-                        {config.ga_account_name ? `${config.ga_account_name} · ` : ''}ID{' '}
-                        {config.ga_property_id}
-                      </p>
-                    </div>
-                  </div>
-                  <Button variant="outline" size="sm" onClick={openGa4Picker} className="shrink-0">
-                    Cambiar
-                  </Button>
-                </div>
-              ) : (
-                <Button variant="outline" onClick={openGa4Picker} className="w-full justify-start">
-                  <FolderSearch className="w-4 h-4 mr-2" />
-                  Seleccionar propiedad de GA4…
-                </Button>
-              )}
-              <p className="text-xs text-muted-foreground">
-                Se listan las propiedades a las que tiene acceso{' '}
-                {googleEmail || 'la cuenta de Google de la agencia'}.
-              </p>
-            </div>
-          ) : (
-            <div className="space-y-2">
-              <Label htmlFor="ga_property_id" className="text-foreground/90">
-                Property ID{' '}
-                <span className="text-muted-foreground/70 font-normal ml-1">(ej: 400123456)</span>
-              </Label>
-              <Input
-                id="ga_property_id"
-                value={config.ga_property_id || ''}
-                onChange={(e) => setConfig({ ...config, ga_property_id: e.target.value })}
-                className="bg-background border-input"
-              />
-              <p className="text-xs text-amber-700 dark:text-amber-400/80 bg-amber-500/5 border border-amber-500/20 rounded p-2">
-                No hay una cuenta de Google de la agencia conectada. Conéctala en{' '}
-                <Link href="/admin/settings" className="underline">
-                  Ajustes → Conexión Google
-                </Link>{' '}
-                para elegir la propiedad de una lista en vez de teclear el ID, o usa las
-                credenciales de Service Account de abajo.
-              </p>
-            </div>
-          )}
-
-          {/* Service Account: modo legacy, plegado cuando hay OAuth de agencia. */}
-          <button
-            type="button"
-            onClick={() => setShowGa4Legacy((v) => !v)}
-            className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
-          >
-            <ChevronDown
-              className={`w-3.5 h-3.5 transition-transform ${showGa4Legacy ? '' : '-rotate-90'}`}
-            />
-            Credenciales de Service Account (legacy, opcional)
-          </button>
-
-          <div
-            className={`bg-muted/40 border border-border p-4 rounded-lg space-y-4 relative overflow-hidden ${showGa4Legacy ? '' : 'hidden'}`}
-          >
-            <div className="absolute top-0 left-0 w-1 h-full bg-indigo-500/50"></div>
-
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-full bg-indigo-500/10 flex items-center justify-center shrink-0">
-                <DownloadCloud className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
-              </div>
-              <div>
-                <h4 className="text-sm font-medium text-foreground">
-                  Credenciales de Autenticación
-                </h4>
-                <p className="text-xs text-muted-foreground/70 mt-0.5">
-                  Sube el archivo JSON de tu Service Account de Google Cloud. Automáticamente
-                  extraeremos el Email y la Private Key aplicando el formato correcto.
-                </p>
-              </div>
-            </div>
-
-            <div className="mt-3">
-              <Label className="cursor-pointer">
-                <div className="border border-dashed border-input hover:border-indigo-500/50 bg-muted/50 hover:bg-muted transition-colors p-4 rounded-lg text-center flex flex-col items-center justify-center gap-2">
-                  <DatabaseZap className="w-6 h-6 text-muted-foreground/70" />
-                  <span className="text-sm text-muted-foreground">
-                    Seleccionar o arrastrar archivo <strong>.json</strong>
-                  </span>
-                </div>
-                <input
-                  type="file"
-                  accept=".json,application/json"
-                  onChange={handleGA4JSONUpload}
-                  className="hidden"
+              {ETIQUETA_PESTANA[p]}
+              {sucias.has(p) && (
+                <span
+                  className="h-1.5 w-1.5 rounded-full bg-amber-500"
+                  title="Cambios sin guardar"
                 />
-              </Label>
-            </div>
+              )}
+            </TabsTrigger>
+          ))}
+        </TabsList>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
+        {/* Las pestañas inactivas se ocultan, no se desmontan: si Radix las
+            desmontara, un token a medio escribir en una tarjeta de conexión se
+            perdería solo con mirar otra pestaña. */}
+        <TabsContent
+          value="general"
+          forceMount
+          className="space-y-6 outline-none data-[state=inactive]:hidden"
+        >
+          {/* ─── Sincronización de Datos ──────────────────────────────────── */}
+          <Card className="bg-card border-indigo-500/20">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-indigo-700 dark:text-indigo-300">
+                <DatabaseZap className="w-5 h-5" />
+                Sincronizar Datos Diarios
+              </CardTitle>
+              <CardDescription className="text-muted-foreground">
+                Carga o recarga los datos de Meta y Hotmart para el rango de fechas seleccionado.
+                Usa esto cuando falten datos o para actualizar métricas históricas.
+              </CardDescription>
+              {testStatus.dataSync?.success && (
+                <p className="text-emerald-600 dark:text-emerald-400 text-sm flex items-start gap-2 mt-2 p-3 bg-emerald-500/10 rounded">
+                  <CheckCircle2 className="w-4 h-4 mt-0.5 shrink-0" />
+                  <span>{testStatus.dataSync.message}</span>
+                </p>
+              )}
+              {testStatus.dataSync?.error && (
+                <p className="text-red-600 dark:text-red-400 text-sm flex items-start gap-2 mt-2 p-3 bg-red-500/10 rounded">
+                  <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
+                  <span>{testStatus.dataSync.error}</span>
+                </p>
+              )}
+            </CardHeader>
+            <CardContent>
+              <div className="flex items-end gap-3 flex-wrap">
+                <div className="space-y-1.5 flex-1 min-w-[140px]">
+                  <Label className="text-muted-foreground text-xs">Fecha inicio</Label>
+                  <Input
+                    type="date"
+                    value={syncStart}
+                    onChange={(e) => setSyncStart(e.target.value)}
+                    className="bg-background border-input text-foreground h-9"
+                  />
+                </div>
+                <div className="space-y-1.5 flex-1 min-w-[140px]">
+                  <Label className="text-muted-foreground text-xs">Fecha fin</Label>
+                  <Input
+                    type="date"
+                    value={syncEnd}
+                    onChange={(e) => setSyncEnd(e.target.value)}
+                    className="bg-background border-input text-foreground h-9"
+                  />
+                </div>
+                <Button
+                  onClick={() =>
+                    runTest('dataSync', () => syncClienteMetrics(cliente.id, syncStart, syncEnd))
+                  }
+                  disabled={testStatus.dataSync?.loading || !syncStart || !syncEnd}
+                  className="bg-indigo-600 hover:bg-indigo-700 text-white h-9 whitespace-nowrap"
+                >
+                  {testStatus.dataSync?.loading ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" /> Sincronizando...
+                    </>
+                  ) : (
+                    <>
+                      <DatabaseZap className="w-4 h-4 mr-2" /> Sincronizar Datos
+                    </>
+                  )}
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* ─── Plantilla de Reporte ─────────────────────────────────────── */}
+          <Card className="bg-card border-indigo-500/30">
+            <CardHeader>
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-indigo-500/10 rounded-lg">
+                  <LayoutDashboard className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
+                </div>
+                <div>
+                  <CardTitle className="text-foreground">Plantilla de Reporte</CardTitle>
+                  <CardDescription className="text-muted-foreground mt-1">
+                    Selecciona la plantilla de métricas que quieres ver en el Dashboard de este
+                    cliente.
+                  </CardDescription>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-3">
+                <Label className="text-foreground/90">Layout Activo</Label>
+                <select
+                  value={selectedLayoutId}
+                  onChange={async (e) => {
+                    const newId = e.target.value;
+                    setSelectedLayoutId(newId);
+                    setLayoutSaving(true);
+                    await assignLayoutToCliente(cliente.id, newId || null);
+                    setLayoutSaving(false);
+                  }}
+                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground ring-offset-background focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <option value="">— Sin plantilla (Vista clásica) —</option>
+                  {layouts.map((l: any) => (
+                    <option key={l.id} value={l.id}>
+                      {l.nombre}
+                    </option>
+                  ))}
+                </select>
+
+                {layoutSaving && (
+                  <div className="flex items-center gap-2 text-xs text-indigo-600 dark:text-indigo-400">
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                    Guardando asignación...
+                  </div>
+                )}
+
+                {selectedLayoutId &&
+                  (() => {
+                    const activeLayout = layouts.find((l: any) => l.id === selectedLayoutId);
+                    if (!activeLayout) return null;
+                    return (
+                      <div className="bg-indigo-500/5 border border-indigo-500/20 rounded-lg p-4 space-y-2">
+                        <div className="flex items-center gap-2">
+                          <CheckCircle2 className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+                          <span className="text-sm font-medium text-indigo-700 dark:text-indigo-300">
+                            {activeLayout.nombre}
+                          </span>
+                        </div>
+                        {activeLayout.descripcion && (
+                          <p className="text-xs text-muted-foreground ml-6">
+                            {activeLayout.descripcion}
+                          </p>
+                        )}
+                        <div className="ml-6 flex flex-wrap gap-2 mt-2">
+                          {(activeLayout.tarjetas || []).map((t: any) => (
+                            <span
+                              key={t.id}
+                              className="text-xs bg-muted text-foreground/90 px-2 py-1 rounded-md border border-border"
+                            >
+                              {t.label}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })()}
+
+                {!selectedLayoutId && (
+                  <p className="text-xs text-muted-foreground/70">
+                    Sin plantilla activa → el Dashboard usará la vista clásica con columnas basadas
+                    en APIs conectadas.
+                  </p>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Frontera natural: arriba está cómo se conectan los datos, abajo cómo se
+          presentan. El perfil es cómo se interpretan. Se autogestiona: no toca
+          `config` ni el botón "Guardar Todo". */}
+          <PerfilIASection clienteId={cliente.id} />
+
+          {slots?.general}
+
+          {isAdmin && (
+            <Card className="bg-card border-destructive/30">
+              <CardHeader>
+                <CardTitle className="text-base">Eliminar cliente</CardTitle>
+                <CardDescription>
+                  Se borra en el reporting y en Report-UTM, con todas sus métricas, leads y ventas.
+                  No se puede deshacer.
+                </CardDescription>
+              </CardHeader>
+              <CardFooter className="pt-0">
+                <Button variant="destructive" onClick={handleDelete} className="gap-2">
+                  <Trash2 className="w-4 h-4" />
+                  Eliminar Cliente
+                </Button>
+              </CardFooter>
+            </Card>
+          )}
+        </TabsContent>
+
+        <TabsContent
+          value="meta"
+          forceMount
+          className="space-y-6 outline-none data-[state=inactive]:hidden"
+        >
+          {/* ─── Meta Ads ─────────────────────────────────────────────────── */}
+          <Card className="bg-card border-border">
+            <CardHeader>
+              <CardTitle>Meta Ads Configuration</CardTitle>
+              <CardDescription>
+                Conecta una o más cuentas publicitarias de Meta. Los datos de todas las cuentas se
+                consolidarán en el reporte.
+              </CardDescription>
+              {testStatus.metaSync?.success && (
+                <p className="text-emerald-600 dark:text-emerald-400 text-sm flex items-center mt-2 p-2 bg-emerald-500/10 rounded">
+                  <CheckCircle2 className="w-4 h-4 mr-2" /> {testStatus.metaSync.message}
+                </p>
+              )}
+              {testStatus.metaSync?.error && (
+                <p className="text-red-500 text-xs flex items-center mt-2">
+                  <AlertCircle className="w-3 h-3 mr-1" /> {testStatus.metaSync.error}
+                </p>
+              )}
+            </CardHeader>
+            <CardContent className="space-y-5">
+              {/* OAuth connect + estado de conexión */}
+              <div className="flex flex-col gap-2 pb-4 border-b border-border">
+                <a href={`/api/auth/meta?client_id=${cliente.id}`}>
+                  <Button
+                    variant="default"
+                    size="sm"
+                    className="w-full bg-[#1877f2] hover:bg-[#0f5ed8] text-white"
+                  >
+                    {config.meta_token
+                      ? '🔄 Reconectar con Facebook Ads'
+                      : '🔗 Conectar con Facebook Ads'}
+                  </Button>
+                </a>
+                {(() => {
+                  const expiresAt = config.meta_token_expires_at;
+                  if (config.meta_connection_status === 'expired') {
+                    return (
+                      <p className="text-red-500 text-xs flex items-center gap-1">
+                        <AlertCircle className="w-3 h-3" /> Token vencido, reconecta con Facebook
+                      </p>
+                    );
+                  }
+                  if (config.meta_token && expiresAt) {
+                    const days = Math.ceil(
+                      (new Date(expiresAt).getTime() - Date.now()) / (24 * 60 * 60 * 1000)
+                    );
+                    if (days <= 0) {
+                      return (
+                        <p className="text-red-500 text-xs flex items-center gap-1">
+                          <AlertCircle className="w-3 h-3" /> Token vencido, reconecta con Facebook
+                        </p>
+                      );
+                    }
+                    const cls = days <= 10 ? 'text-amber-500' : 'text-green-500';
+                    return (
+                      <p className={`${cls} text-xs flex items-center gap-1`}>
+                        <CheckCircle2 className="w-3 h-3" /> Conectado · el token se renueva
+                        automáticamente (vence en {days} días)
+                      </p>
+                    );
+                  }
+                  return null;
+                })()}
+                {metaOAuthStatus?.success && (
+                  <p className="text-green-600 dark:text-green-500 text-xs flex items-center gap-1">
+                    <CheckCircle2 className="w-3 h-3" /> Cuenta de Facebook conectada exitosamente
+                  </p>
+                )}
+                {metaOAuthStatus?.error && (
+                  <p className="text-red-500 text-xs flex items-center gap-1">
+                    <AlertCircle className="w-3 h-3" /> {metaOAuthStatus.error}
+                  </p>
+                )}
+              </div>
+
+              {/* Shared token */}
               <div className="space-y-2">
-                <Label htmlFor="ga_client_email" className="text-muted-foreground text-xs">
-                  Client Email (Auto-extraído)
+                <Label htmlFor="meta_token" className="text-foreground/90">
+                  Access Token Compartido
                 </Label>
                 <Input
-                  id="ga_client_email"
-                  value={config.ga_client_email || ''}
-                  readOnly
-                  className="bg-muted/50 border-border text-muted-foreground/70 text-xs focus-visible:ring-0"
+                  id="meta_token"
+                  type="password"
+                  placeholder="EAA..."
+                  value={config.meta_token || ''}
+                  onChange={(e) => setConfig({ ...config, meta_token: e.target.value })}
+                  className="bg-background border-input"
                 />
+                <p className="text-xs text-muted-foreground/70">
+                  Se completa automáticamente al conectar por OAuth. Si una cuenta no tiene token
+                  propio, se usará este. Para una conexión que <strong>no caduca</strong>, pega aquí
+                  un <strong>System User token</strong> del Business Manager.
+                </p>
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="ga_private_key" className="text-muted-foreground text-xs">
-                  Private Key (Auto-extraída)
-                </Label>
-                <textarea
-                  id="ga_private_key"
-                  value={
-                    config.ga_private_key
-                      ? '•••••••••••••••••••••••••••• PRIVATE KEY LOADED ••••••••••••••••••••••••••••'
-                      : ''
-                  }
-                  readOnly
-                  className="w-full h-9 rounded-md bg-muted/50 border border-border px-3 py-2 text-xs text-muted-foreground/70 resize-none focus-visible:outline-none focus-visible:ring-0"
-                />
-              </div>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
 
-      {/* ── GA4 Property Picker Modal ─────────────────────────────────── */}
-      <Dialog
-        open={ga4PickerOpen}
-        onOpenChange={(open) => {
-          if (!open) setGa4PickerOpen(false);
-        }}
-      >
-        <DialogContent className="sm:max-w-lg">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <BarChart3 className="w-4 h-4 text-orange-500" />
-              Seleccionar propiedad de GA4
-            </DialogTitle>
-          </DialogHeader>
-
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
-            <Input
-              placeholder="Buscar por propiedad, cuenta o ID…"
-              value={ga4Query}
-              onChange={(e) => setGa4Query(e.target.value)}
-              className="pl-9 bg-background border-input"
-            />
-          </div>
-
-          <div className="overflow-y-auto max-h-72 space-y-0.5 -mx-1 px-1">
-            {ga4Loading && (
-              <div className="flex items-center justify-center py-8 gap-2 text-muted-foreground text-sm">
-                <RefreshCw className="w-4 h-4 animate-spin" /> Cargando propiedades…
-              </div>
-            )}
-            {ga4Error && (
-              <p className="text-sm text-red-500 flex items-center gap-2 py-4">
-                <AlertCircle className="w-4 h-4 shrink-0" /> {ga4Error}
-              </p>
-            )}
-            {!ga4Loading && !ga4Error && filteredGa4Properties.length === 0 && (
-              <p className="text-sm text-muted-foreground text-center py-6">
-                No se encontraron propiedades.
-              </p>
-            )}
-            {filteredGa4Properties.map((prop) => (
-              <button
-                key={prop.id}
-                className={`w-full text-left flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-muted/60 transition-colors ${config.ga_property_id === prop.id ? 'bg-muted/60' : ''}`}
-                onClick={() => selectGa4Property(prop)}
-              >
-                <BarChart3 className="w-4 h-4 text-orange-500 shrink-0" />
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-medium text-foreground truncate">{prop.name}</p>
-                  <p className="text-xs text-muted-foreground truncate">
-                    {prop.accountName} · ID {prop.id}
-                  </p>
-                </div>
-                {config.ga_property_id === prop.id && (
-                  <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
-                )}
-              </button>
-            ))}
-          </div>
-
-          <p className="text-xs text-muted-foreground/60 text-center border-t border-border pt-3">
-            ¿Falta una propiedad? Dale acceso de Lector a {googleEmail || 'la cuenta de la agencia'}{' '}
-            en GA4 → Administrar.
-          </p>
-        </DialogContent>
-      </Dialog>
-
-      {/* ─── TikTok ───────────────────────────────────────────────────── */}
-      <Card className="bg-card border-border">
-        <CardHeader>
-          <CardTitle>TikTok Ads</CardTitle>
-          <CardDescription>
-            Conecta una o más cuentas publicitarias de TikTok Ads. Los datos de todas las cuentas se
-            consolidan en el reporte y pueden filtrarse por cuenta en el layout.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {/* Shared token */}
-          <div className="space-y-2">
-            <Label className="text-foreground/90">Access Token Compartido</Label>
-            <Input
-              type="password"
-              placeholder="Tu TikTok Marketing API Access Token"
-              value={config.tiktok_access_token || ''}
-              onChange={(e) => setConfig({ ...config, tiktok_access_token: e.target.value })}
-              className="bg-background border-input"
-            />
-            <p className="text-xs text-muted-foreground/70">
-              Token OAuth o token manual. Las cuentas sin token propio usarán este.
-            </p>
-          </div>
-
-          {/* OAuth button */}
-          <div className="flex flex-col gap-2">
-            <a href={`/api/auth/tiktok?client_id=${cliente.id}`}>
-              <Button
-                variant="default"
-                size="sm"
-                className="w-full bg-[#ff2d55] hover:bg-[#e0003a] text-white"
-              >
-                {config.tiktok_access_token
-                  ? '🔄 Reconectar con TikTok Ads'
-                  : '🔗 Conectar con TikTok Ads'}
-              </Button>
-            </a>
-            {tiktokOAuthStatus?.success && (
-              <p className="text-green-600 dark:text-green-500 text-xs flex items-center gap-1">
-                <CheckCircle2 className="w-3 h-3" /> Cuenta TikTok conectada exitosamente
-              </p>
-            )}
-            {tiktokOAuthStatus?.error && (
-              <p className="text-red-500 text-xs flex items-center gap-1">
-                <AlertCircle className="w-3 h-3" /> {tiktokOAuthStatus.error}
-              </p>
-            )}
-            {testStatus.tiktok?.success && (
-              <p className="text-green-600 dark:text-green-500 text-xs flex items-center gap-1">
-                <CheckCircle2 className="w-3 h-3" /> Conexión Exitosa
-              </p>
-            )}
-            {testStatus.tiktok?.error && (
-              <p className="text-red-500 text-xs flex items-center gap-1">
-                <AlertCircle className="w-3 h-3" /> {testStatus.tiktok.error}
-              </p>
-            )}
-          </div>
-
-          {/* Multi-account list */}
-          <div className="space-y-3 pt-2 border-t border-border">
-            <div className="flex items-center justify-between">
-              <Label className="text-foreground/90">Cuentas Publicitarias TikTok</Label>
-              <div className="flex items-center gap-2">
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={openTikTokAccountPicker}
-                  disabled={loadingTiktokAccounts || !config.tiktok_access_token}
-                  className="h-7 text-xs"
-                >
-                  {loadingTiktokAccounts ? (
-                    <RefreshCw className="w-3 h-3 mr-1 animate-spin" />
-                  ) : (
-                    <DownloadCloud className="w-3 h-3 mr-1" />
-                  )}{' '}
-                  Elegir cuentas
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={addTikTokAccount}
-                  className="h-7 text-xs"
-                >
-                  <Plus className="w-3 h-3 mr-1" /> Agregar Cuenta
-                </Button>
-              </div>
-            </div>
-
-            {/* Selector de cuentas disponibles desde el token */}
-            {availableTiktokAccounts && (
-              <div className="bg-muted/40 border border-indigo-500/30 rounded-lg p-4 space-y-3">
+              {/* Account list */}
+              <div className="space-y-3">
                 <div className="flex items-center justify-between">
-                  <p className="text-sm text-foreground font-medium">
-                    Cuentas disponibles en tu TikTok
-                  </p>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setAvailableTiktokAccounts(null)}
-                    className="h-6 text-xs text-muted-foreground/70 hover:text-foreground/90"
-                  >
-                    Cancelar
-                  </Button>
-                </div>
-                {tiktokPickerError && (
-                  <p className="text-red-500 text-xs flex items-center gap-1">
-                    <AlertCircle className="w-3 h-3" /> {tiktokPickerError}
-                  </p>
-                )}
-                {availableTiktokAccounts.length === 0 && !tiktokPickerError && (
-                  <p className="text-xs text-muted-foreground/70">
-                    No se encontraron cuentas publicitarias para este token.
-                  </p>
-                )}
-                <div className="space-y-1 max-h-64 overflow-y-auto">
-                  {availableTiktokAccounts.map((a) => {
-                    const alreadyAdded = tiktokAccounts.some(
-                      (t) => t.advertiser_id === a.advertiser_id
-                    );
-                    return (
-                      <label
-                        key={a.advertiser_id}
-                        className={`flex items-center gap-3 p-2 rounded-md ${alreadyAdded ? 'opacity-50' : 'hover:bg-accent cursor-pointer'}`}
-                      >
-                        <input
-                          type="checkbox"
-                          disabled={alreadyAdded}
-                          checked={alreadyAdded || selectedTiktokIds.has(a.advertiser_id)}
-                          onChange={() => toggleTiktokSelection(a.advertiser_id)}
-                          className="rounded border-input bg-background text-indigo-500 focus:ring-indigo-500"
-                        />
-                        <span className="text-sm text-foreground flex-1">{a.name}</span>
-                        <span className="text-xs text-muted-foreground/70 font-mono">
-                          {a.advertiser_id}
-                        </span>
-                        {alreadyAdded && (
-                          <span className="text-xs text-green-500">ya agregada</span>
-                        )}
-                      </label>
-                    );
-                  })}
-                </div>
-                {availableTiktokAccounts.length > 0 && (
-                  <div className="flex justify-end">
+                  <Label className="text-foreground/90">Cuentas Publicitarias</Label>
+                  <div className="flex items-center gap-2">
                     <Button
                       size="sm"
-                      onClick={addSelectedTikTokAccounts}
-                      disabled={selectedTiktokIds.size === 0}
-                      className="h-8 text-xs bg-indigo-600 hover:bg-indigo-700"
+                      variant="outline"
+                      onClick={openMetaAccountPicker}
+                      disabled={loadingMetaAccounts || !config.meta_token}
+                      className="h-7 text-xs"
                     >
-                      <Plus className="w-3 h-3 mr-1" /> Agregar{' '}
-                      {selectedTiktokIds.size > 0 ? `(${selectedTiktokIds.size})` : ''}
+                      {loadingMetaAccounts ? (
+                        <RefreshCw className="w-3 h-3 mr-1 animate-spin" />
+                      ) : (
+                        <DownloadCloud className="w-3 h-3 mr-1" />
+                      )}{' '}
+                      Elegir cuentas
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={addAccount}
+                      className="h-7 text-xs"
+                    >
+                      <Plus className="w-3 h-3 mr-1" /> Agregar Cuenta
                     </Button>
                   </div>
-                )}
-              </div>
-            )}
-
-            {tiktokAccounts.length === 0 && (
-              <p className="text-xs text-muted-foreground/70 py-3 text-center border border-dashed border-border rounded-lg">
-                Sin cuentas configuradas. Conéctate via OAuth o agrega manualmente.
-              </p>
-            )}
-
-            {tiktokAccounts.map((acct, idx) => (
-              <TikTokAccountRow
-                key={acct.id}
-                account={acct}
-                sharedToken={config.tiktok_access_token || ''}
-                testStatus={testStatus[`tiktok_${acct.id}`]}
-                onChange={(updated) => updateTikTokAccount(idx, updated)}
-                onRemove={() => removeTikTokAccount(idx)}
-                onTest={() =>
-                  runTest(`tiktok_${acct.id}`, () =>
-                    testTikTokConnection(
-                      acct.access_token || config.tiktok_access_token,
-                      acct.advertiser_id
-                    )
-                  )
-                }
-              />
-            ))}
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* ─── Google Sheets (Conversiones Offline) ────────────────────── */}
-      {(() => {
-        const convSheets: ConversionesConfig[] = config.google_sheets_conversiones || [];
-
-        const updateSheet = (idx: number, partial: Partial<ConversionesConfig>) => {
-          const next = convSheets.map((s, i) => (i === idx ? { ...s, ...partial } : s));
-          setConfig({ ...config, google_sheets_conversiones: next });
-        };
-
-        const removeSheet = (idx: number) => {
-          setConfig({
-            ...config,
-            google_sheets_conversiones: convSheets.filter((_, i) => i !== idx),
-          });
-        };
-
-        const addSheet = () => {
-          const newSheet: ConversionesConfig = {
-            id: crypto.randomUUID(),
-            name: `Sheet ${convSheets.length + 1}`,
-            enabled: true,
-            sheet_url: '',
-          };
-          setConfig({ ...config, google_sheets_conversiones: [...convSheets, newSheet] });
-        };
-
-        const openPicker = async (sheetId: string) => {
-          setPickerForSheetId(sheetId);
-          setPickerOpen(true);
-          setDriveLoading(true);
-          setDriveError(null);
-          setDriveQuery('');
-          const res = await listDriveSheets();
-          if ('error' in res) {
-            setDriveError(res.error ?? 'Error al listar Sheets');
-          } else {
-            setDriveSheets(res.sheets ?? []);
-          }
-          setDriveLoading(false);
-        };
-
-        const selectDriveSheet = (file: DriveSheet) => {
-          const idx = convSheets.findIndex((s) => s.id === pickerForSheetId);
-          if (idx !== -1) {
-            updateSheet(idx, { sheet_url: file.url, name: convSheets[idx].name || file.name });
-          }
-          setPickerOpen(false);
-          setPickerForSheetId(null);
-        };
-
-        // ── Pestañas ─────────────────────────────────────────────────
-        // Las configs anteriores guardaban una sola pestaña con el mapeo
-        // a nivel de sheet: se sintetiza como una pestaña única para que
-        // se editen igual (al guardar quedan ya en formato `tabs`).
-        const tabsOf = (sheet: ConversionesConfig): SheetTabConfig[] => {
-          if (Array.isArray(sheet.tabs)) return sheet.tabs;
-          return [
-            {
-              id: `${sheet.id ?? 'sheet'}_tab`,
-              sheet_name: sheet.sheet_name ?? '',
-              enabled: true,
-              col_fecha: sheet.col_fecha,
-              col_tipo: sheet.col_tipo,
-              col_cantidad: sheet.col_cantidad,
-              col_valor: sheet.col_valor,
-              col_fuente: sheet.col_fuente,
-              col_notas: sheet.col_notas,
-              custom_columns: sheet.custom_columns,
-            },
-          ];
-        };
-
-        // Al escribir `tabs` se retiran los campos planos legacy del sheet.
-        const setTabs = (idx: number, tabs: SheetTabConfig[]) => {
-          const next = convSheets.map((s, i) => {
-            if (i !== idx) return s;
-            const {
-              sheet_name: _sn,
-              col_fecha: _cf,
-              col_tipo: _ct,
-              col_cantidad: _cc,
-              col_valor: _cv,
-              col_fuente: _cfu,
-              col_notas: _cn,
-              custom_columns: _cx,
-              ...rest
-            } = s;
-            return { ...rest, tabs };
-          });
-          setConfig({ ...config, google_sheets_conversiones: next });
-        };
-
-        const updateTab = (sheetIdx: number, tabId: string, partial: Partial<SheetTabConfig>) => {
-          setTabs(
-            sheetIdx,
-            tabsOf(convSheets[sheetIdx]).map((t) => (t.id === tabId ? { ...t, ...partial } : t))
-          );
-        };
-
-        const addTab = (sheetIdx: number, sheetName = '') => {
-          const existing = tabsOf(convSheets[sheetIdx]);
-          if (sheetName && existing.some((t) => t.sheet_name === sheetName)) return;
-          setTabs(sheetIdx, [
-            ...existing,
-            { id: crypto.randomUUID(), sheet_name: sheetName, enabled: true },
-          ]);
-        };
-
-        const removeTab = (sheetIdx: number, tabId: string) => {
-          const t = tabsOf(convSheets[sheetIdx]).find((x) => x.id === tabId);
-          const hasMapping =
-            t &&
-            (Object.keys(t.custom_columns ?? {}).length > 0 ||
-              !!(
-                t.col_fecha ||
-                t.col_tipo ||
-                t.col_cantidad ||
-                t.col_valor ||
-                t.col_fuente ||
-                t.col_notas
-              ));
-          if (
-            hasMapping &&
-            !confirm(
-              `¿Quitar la pestaña "${t!.sheet_name || '(primera pestaña)'}" y su mapeo de columnas?`
-            )
-          )
-            return;
-          setTabs(
-            sheetIdx,
-            tabsOf(convSheets[sheetIdx]).filter((x) => x.id !== tabId)
-          );
-        };
-
-        const detectTabs = async (idx: number) => {
-          const sheet = convSheets[idx];
-          const sid = sheet.id ?? String(idx);
-          setTabsUI((prev) => ({
-            ...prev,
-            [sid]: { loading: true, error: null, available: prev[sid]?.available ?? [] },
-          }));
-          const res = await listConversionesTabs(sheet);
-          if ('error' in res && res.error) {
-            setTabsUI((prev) => ({
-              ...prev,
-              [sid]: { loading: false, error: res.error!, available: [] },
-            }));
-          } else {
-            setTabsUI((prev) => ({
-              ...prev,
-              [sid]: {
-                loading: false,
-                error: null,
-                available: (res as any).tabs as SheetTabInfo[],
-              },
-            }));
-          }
-        };
-
-        const toggleAvailableTab = (idx: number, title: string) => {
-          const existing = tabsOf(convSheets[idx]).find((t) => t.sheet_name === title);
-          if (existing) removeTab(idx, existing.id);
-          else addTab(idx, title);
-        };
-
-        // Comprueba acceso al doc, existencia de la pestaña y de las
-        // columnas mapeadas. No bloquea el guardado: solo informa.
-        const validateSheet = async (idx: number) => {
-          const sheet = convSheets[idx];
-          const sid = sheet.id ?? String(idx);
-          setValidateUI((prev) => ({ ...prev, [sid]: { loading: true, results: [] } }));
-          const out: { tab: string; ok: boolean; message: string }[] = [];
-          for (const tab of tabsOf(sheet).filter((t) => t.enabled !== false)) {
-            const label = tab.sheet_name || '(primera pestaña)';
-            const res = await detectConversionesColumns(sheet, tab);
-            if ('error' in res && res.error) {
-              out.push({ tab: label, ok: false, message: res.error });
-              continue;
-            }
-            // Los encabezados alimentan el autocompletado del mapeo de
-            // columnas. Antes los traía "Detectar columnas", que se retiró
-            // junto con las columnas adicionales; validar cumple la misma
-            // función y además es lo que se hace antes de sincronizar.
-            setSheetUI((prev) => ({
-              ...prev,
-              [`${sid}:${tab.id}`]: { headers: res.headers ?? [] },
-            }));
-
-            const heads = (res.headers ?? []).map((h) => h.toLowerCase().trim());
-            const mapped: [string, string][] = [
-              ['fecha', tab.col_fecha || 'fecha'],
-              ['valor', tab.col_valor || 'valor'],
-              ['fuente', tab.col_fuente || 'fuente'],
-              ['notas', tab.col_notas || 'notas'],
-            ];
-            if (!tab.tipo_fijo) mapped.push(['tipo', tab.col_tipo || 'tipo']);
-            if (!tab.count_rows) mapped.push(['cantidad', tab.col_cantidad || 'cantidad']);
-
-            const missing = mapped.filter(([, c]) => !heads.includes(c.toLowerCase().trim()));
-            const faltaFecha = missing.some(([k]) => k === 'fecha');
-            // Sin cantidad TODAS las filas se descartan: es un fallo,
-            // no un aviso. Se resuelve con "cada fila es una conversión".
-            const faltaCantidad = missing.some(([k]) => k === 'cantidad');
-            const problemas: string[] = [];
-            if (faltaFecha) problemas.push('Falta la columna de fecha: no se puede importar.');
-            if (faltaCantidad)
-              problemas.push(
-                'Falta la columna de cantidad: se descartarían todas las filas. Marca "Cada fila es una conversión" si el Sheet tiene un lead o venta por fila.'
-              );
-            if (!tab.tipo_fijo && missing.some(([k]) => k === 'tipo')) {
-              problemas.push(
-                'Sin columna de tipo: las filas entrarán como "otro" y no sumarán en leads/ventas offline. Usa "Tipo fijo".'
-              );
-            }
-            const opcionales = missing
-              .map(([k]) => k)
-              .filter((k) => k !== 'fecha' && k !== 'cantidad' && k !== 'tipo');
-
-            out.push({
-              tab: label,
-              ok: !faltaFecha && !faltaCantidad,
-              message:
-                problemas.length === 0
-                  ? opcionales.length === 0
-                    ? 'Todas las columnas mapeadas existen'
-                    : `Listo para importar. Sin columna (opcional) para: ${opcionales.join(', ')}`
-                  : problemas.join(' '),
-            });
-          }
-          setValidateUI((prev) => ({ ...prev, [sid]: { loading: false, results: out } }));
-        };
-
-        const filteredDriveSheets = driveSheets.filter(
-          (s) => !driveQuery || s.name.toLowerCase().includes(driveQuery.toLowerCase())
-        );
-
-        return (
-          <>
-            <Card className="bg-card border-border">
-              <CardHeader>
-                <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <CardTitle>Google Sheets — Conversiones Offline</CardTitle>
-                    <CardDescription className="mt-1">
-                      Importa leads y ventas que no se capturan por píxel. Configura uno o varios
-                      Sheets por cliente.
-                    </CardDescription>
-                  </div>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={addSheet}
-                    className="shrink-0 h-8 text-xs gap-1.5"
-                  >
-                    <Plus className="w-3 h-3" /> Agregar Sheet
-                  </Button>
                 </div>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                {convSheets.length === 0 && (
-                  <p className="text-sm text-muted-foreground text-center py-6 border border-dashed border-border rounded-lg">
-                    No hay sheets configurados. Haz clic en &quot;Agregar Sheet&quot; para empezar.
+
+                {/* Selector de cuentas disponibles desde el token */}
+                {availableMetaAccounts && (
+                  <div className="bg-muted/40 border border-indigo-500/30 rounded-lg p-4 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <p className="text-sm text-foreground font-medium">
+                        Cuentas disponibles en tu Facebook
+                      </p>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setAvailableMetaAccounts(null)}
+                        className="h-6 text-xs text-muted-foreground/70 hover:text-foreground/90"
+                      >
+                        Cancelar
+                      </Button>
+                    </div>
+                    {metaPickerError && (
+                      <p className="text-red-500 text-xs flex items-center gap-1">
+                        <AlertCircle className="w-3 h-3" /> {metaPickerError}
+                      </p>
+                    )}
+                    {availableMetaAccounts.length === 0 && !metaPickerError && (
+                      <p className="text-xs text-muted-foreground/70">
+                        No se encontraron cuentas publicitarias para este token.
+                      </p>
+                    )}
+                    <div className="space-y-1 max-h-64 overflow-y-auto">
+                      {availableMetaAccounts.map((a) => {
+                        const alreadyAdded = metaAccounts.some(
+                          (m) => m.account_id === a.account_id
+                        );
+                        return (
+                          <label
+                            key={a.account_id}
+                            className={`flex items-center gap-3 p-2 rounded-md ${alreadyAdded ? 'opacity-50' : 'hover:bg-accent cursor-pointer'}`}
+                          >
+                            <input
+                              type="checkbox"
+                              disabled={alreadyAdded}
+                              checked={alreadyAdded || selectedMetaIds.has(a.account_id)}
+                              onChange={() => toggleMetaSelection(a.account_id)}
+                              className="rounded border-input bg-background text-indigo-500 focus:ring-indigo-500"
+                            />
+                            <span className="text-sm text-foreground flex-1">{a.name}</span>
+                            <span className="text-xs text-muted-foreground/70 font-mono">
+                              {a.account_id}
+                            </span>
+                            {alreadyAdded && (
+                              <span className="text-xs text-green-500">ya agregada</span>
+                            )}
+                          </label>
+                        );
+                      })}
+                    </div>
+                    {availableMetaAccounts.length > 0 && (
+                      <div className="flex justify-end">
+                        <Button
+                          size="sm"
+                          onClick={addSelectedMetaAccounts}
+                          disabled={selectedMetaIds.size === 0}
+                          className="h-8 text-xs bg-indigo-600 hover:bg-indigo-700"
+                        >
+                          <Plus className="w-3 h-3 mr-1" /> Agregar{' '}
+                          {selectedMetaIds.size > 0 ? `(${selectedMetaIds.size})` : ''}
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {metaAccounts.length === 0 && (
+                  <p className="text-xs text-muted-foreground/70 py-3 text-center border border-dashed border-border rounded-lg">
+                    Sin cuentas configuradas. Agrega al menos una para activar Meta Ads.
                   </p>
                 )}
 
-                {convSheets.map((sheet, idx) => {
-                  const sid = sheet.id ?? String(idx);
-                  const bloqueado = sheetsBloqueados.has(sid);
-                  const tabs = tabsOf(sheet);
-                  const tabsState = tabsUI[sid] || { loading: false, error: null, available: [] };
-                  const validation = validateUI[sid];
-                  const lastSync = convSyncStatus[sid];
-                  // Dos pestañas con columnas que sanitizan al mismo nombre se
-                  // suman en la variable sheet_<nombre>: conviene avisarlo.
-                  const dupCustomKeys = (() => {
-                    const seen = new Map<string, number>();
-                    for (const t of tabs) {
-                      // Solo cuentan las marcadas para sincronizar: el resto no llega a la base.
-                      for (const [k, def] of Object.entries(t.custom_columns ?? {})) {
-                        if (def.include) seen.set(k, (seen.get(k) ?? 0) + 1);
-                      }
+                {metaAccounts.map((acct, idx) => (
+                  <MetaAccountRow
+                    key={acct.id}
+                    account={acct}
+                    sharedToken={config.meta_token || ''}
+                    testStatus={testStatus[`meta_${acct.id}`]}
+                    onChange={(updated) => updateAccount(idx, updated)}
+                    onRemove={() => removeAccount(idx)}
+                    onTest={() =>
+                      runTest(`meta_${acct.id}`, () =>
+                        testMetaConnection(acct.token || config.meta_token, acct.account_id)
+                      )
                     }
-                    return Array.from(seen.entries())
-                      .filter(([, n]) => n > 1)
-                      .map(([k]) => k);
-                  })();
+                  />
+                ))}
+              </div>
 
-                  return (
-                    <div key={sid} className="border border-border rounded-lg overflow-hidden">
-                      {/* Sheet header */}
-                      <div className="flex items-center gap-2 px-4 py-3 bg-muted/30 border-b border-border">
-                        <input
-                          type="checkbox"
-                          checked={sheet.enabled || false}
-                          onChange={(e) => updateSheet(idx, { enabled: e.target.checked })}
-                          className="rounded border-input bg-background text-indigo-500 focus:ring-indigo-500 shrink-0"
-                        />
-                        <Input
-                          placeholder="Nombre del sheet (ej: Leads WhatsApp)"
-                          value={sheet.name || ''}
-                          onChange={(e) => updateSheet(idx, { name: e.target.value })}
-                          className="bg-background border-input h-8 text-sm font-medium"
-                        />
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => {
-                            // Un sheet que aún no se ha guardado no tiene datos
-                            // que borrar: se quita y ya.
-                            if (!bloqueado) {
-                              removeSheet(idx);
-                              return;
-                            }
-                            abrirBorradoSheet(idx, sid, sheet.name || `Sheet ${idx + 1}`);
-                          }}
-                          className="text-muted-foreground/70 hover:text-red-500 shrink-0 h-8 w-8 p-0"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </Button>
-                      </div>
+              {/* Conversiones personalizadas */}
+              <div className="pt-4 mt-2 border-t border-border">
+                <div className="flex justify-between items-center bg-muted/50 p-3 rounded-lg border border-border">
+                  <div>
+                    <h4 className="text-sm font-medium text-foreground">
+                      Conversiones Personalizadas
+                    </h4>
+                    <p className="text-xs text-muted-foreground/70 mt-1">
+                      Busca y actualiza todos los eventos personalizados detectados en Meta durante
+                      los últimos 30 días.
+                    </p>
+                  </div>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    className="bg-indigo-500/20 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-500/30 border border-indigo-500/30 whitespace-nowrap"
+                    onClick={() =>
+                      runTest('metaSync', () => refreshMetaCustomConversions(cliente.id, config))
+                    }
+                    disabled={testStatus.metaSync?.loading || !hasMetaConfig}
+                  >
+                    {testStatus.metaSync?.loading ? (
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    ) : (
+                      <DownloadCloud className="w-4 h-4 mr-2" />
+                    )}
+                    Sincronizar Conversiones
+                  </Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
 
-                      {/* Sheet body */}
-                      <div className="p-4 space-y-4">
-                        {/* URL + picker */}
-                        <div className="space-y-1.5">
-                          <Label className="text-foreground/90 text-sm">URL del Google Sheet</Label>
-                          <div className="flex gap-2">
-                            <Input
-                              placeholder="https://docs.google.com/spreadsheets/d/..."
-                              value={sheet.sheet_url || ''}
-                              onChange={(e) => updateSheet(idx, { sheet_url: e.target.value })}
-                              readOnly={bloqueado}
-                              title={
-                                bloqueado
-                                  ? 'El documento no se puede cambiar. Elimina este sheet y añade otro.'
-                                  : undefined
-                              }
-                              className={`bg-background border-input ${bloqueado ? 'text-muted-foreground cursor-not-allowed' : ''}`}
-                            />
-                            {!bloqueado && (
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                className="shrink-0 h-10 text-xs gap-1.5"
-                                onClick={() => openPicker(sid)}
-                              >
-                                <FolderSearch className="w-3.5 h-3.5" />
-                                Seleccionar
-                              </Button>
-                            )}
-                          </div>
-                          {bloqueado && (
-                            <p className="text-xs text-muted-foreground/70 flex items-center gap-1.5">
-                              <Lock className="w-3 h-3 shrink-0" />
-                              El documento queda fijo al guardar. Todos los datos sincronizados
-                              cuelgan de este sheet, así que para usar otro documento hay que
-                              eliminar este — con sus datos — y añadir uno nuevo.
-                            </p>
-                          )}
+          {/* ─── Filtros de Dashboard ─────────────────────────────────────── */}
+          <Card className="bg-card border-border">
+            <CardHeader>
+              <CardTitle>Filtros de Dashboard</CardTitle>
+              <CardDescription>
+                Configura botones de filtrado rápido para el Dashboard (ej. nombres de campañas o
+                proyectos).
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="meta_keywords" className="text-foreground/90">
+                  Keywords de Campañas (Separadas por comas)
+                </Label>
+                <Input
+                  id="meta_keywords"
+                  placeholder="Psicología, Pedagogía, Diplomado"
+                  value={config.meta_keywords || ''}
+                  onChange={(e) => setConfig({ ...config, meta_keywords: e.target.value })}
+                  className="bg-background border-input"
+                />
+                <p className="text-xs text-muted-foreground/70">
+                  Estos textos aparecerán como botones de filtro rápido en la vista superior del
+                  embudo de Meta Ads.
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+
+          {slots?.meta}
+          <BarraGuardar
+            pestana="meta"
+            sucia={sucias.has('meta')}
+            guardando={guardandoPestana}
+            onGuardar={guardarPestana}
+          />
+        </TabsContent>
+
+        <TabsContent
+          value="google"
+          forceMount
+          className="space-y-6 outline-none data-[state=inactive]:hidden"
+        >
+          {/* ─── Google Analytics 4 (GA4) ─────────────────────────────────── */}
+          <Card className="bg-card border-border">
+            <CardHeader>
+              <div className="flex justify-between items-center">
+                <CardTitle>Google Analytics (GA4)</CardTitle>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() =>
+                    runTest('ga4', () =>
+                      testGA4Connection({
+                        ga_property_id: config.ga_property_id,
+                        ga_client_email: config.ga_client_email,
+                        ga_private_key: config.ga_private_key,
+                      })
+                    )
+                  }
+                  disabled={
+                    testStatus.ga4?.loading ||
+                    !config.ga_property_id ||
+                    (!googleConnected && (!config.ga_client_email || !config.ga_private_key))
+                  }
+                >
+                  {testStatus.ga4?.loading ? (
+                    <RefreshCw className="w-3 h-3 animate-spin mr-2" />
+                  ) : (
+                    <RefreshCw className="w-3 h-3 mr-2" />
+                  )}
+                  Probar Conexión
+                </Button>
+              </div>
+              <CardDescription>
+                {googleConnected
+                  ? 'Selecciona la propiedad de GA4 que corresponde a este cliente. Se usan los permisos de la cuenta de Google de la agencia.'
+                  : 'Conecta una cuenta de servicio de Google Cloud para extraer métricas de GA4 (Sesiones, Rebote).'}
+              </CardDescription>
+              {testStatus.ga4?.success && (
+                <p className="text-green-600 dark:text-green-500 text-xs flex items-start mt-2">
+                  <CheckCircle2 className="w-4 h-4 mr-1 shrink-0" />{' '}
+                  <span>{testStatus.ga4.message || 'Conexión Exitosa'}</span>
+                </p>
+              )}
+              {testStatus.ga4?.error && (
+                <p className="text-red-500 text-xs flex items-start mt-2">
+                  <AlertCircle className="w-4 h-4 mr-1 shrink-0" />{' '}
+                  <span>{testStatus.ga4.error}</span>
+                </p>
+              )}
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {googleConnected ? (
+                <div className="space-y-2">
+                  <Label className="text-foreground/90">Propiedad de GA4</Label>
+                  {config.ga_property_id ? (
+                    <div className="flex items-center justify-between gap-3 bg-muted/50 border border-border rounded-lg px-3 py-2.5">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <BarChart3 className="w-4 h-4 text-orange-500 shrink-0" />
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium text-foreground truncate">
+                            {config.ga_property_name || `Propiedad ${config.ga_property_id}`}
+                          </p>
+                          <p className="text-xs text-muted-foreground truncate">
+                            {config.ga_account_name ? `${config.ga_account_name} · ` : ''}ID{' '}
+                            {config.ga_property_id}
+                          </p>
                         </div>
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={openGa4Picker}
+                        className="shrink-0"
+                      >
+                        Cambiar
+                      </Button>
+                    </div>
+                  ) : (
+                    <Button
+                      variant="outline"
+                      onClick={openGa4Picker}
+                      className="w-full justify-start"
+                    >
+                      <FolderSearch className="w-4 h-4 mr-2" />
+                      Seleccionar propiedad de GA4…
+                    </Button>
+                  )}
+                  <p className="text-xs text-muted-foreground">
+                    Se listan las propiedades a las que tiene acceso{' '}
+                    {googleEmail || 'la cuenta de Google de la agencia'}.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <Label htmlFor="ga_property_id" className="text-foreground/90">
+                    Property ID{' '}
+                    <span className="text-muted-foreground/70 font-normal ml-1">
+                      (ej: 400123456)
+                    </span>
+                  </Label>
+                  <Input
+                    id="ga_property_id"
+                    value={config.ga_property_id || ''}
+                    onChange={(e) => setConfig({ ...config, ga_property_id: e.target.value })}
+                    className="bg-background border-input"
+                  />
+                  <p className="text-xs text-amber-700 dark:text-amber-400/80 bg-amber-500/5 border border-amber-500/20 rounded p-2">
+                    No hay una cuenta de Google de la agencia conectada. Conéctala en{' '}
+                    <Link href="/admin/settings" className="underline">
+                      Ajustes → Conexión Google
+                    </Link>{' '}
+                    para elegir la propiedad de una lista en vez de teclear el ID, o usa las
+                    credenciales de Service Account de abajo.
+                  </p>
+                </div>
+              )}
 
-                        {/* Pestañas del documento */}
-                        <div className="space-y-2">
-                          <div className="flex items-center justify-between gap-2">
-                            <div>
-                              <Label className="text-foreground/90 text-sm">
-                                Pestañas a sincronizar
-                              </Label>
-                              <p className="text-xs text-muted-foreground/70 mt-0.5">
-                                Cada pestaña tiene su propio mapeo de columnas.
-                              </p>
-                            </div>
-                            <div className="flex gap-2 shrink-0">
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                className="h-7 text-xs"
-                                disabled={tabsState.loading || !sheet.sheet_url}
-                                onClick={() => detectTabs(idx)}
-                              >
-                                {tabsState.loading ? (
-                                  <RefreshCw className="w-3 h-3 animate-spin mr-1" />
-                                ) : (
-                                  <FolderSearch className="w-3 h-3 mr-1" />
-                                )}
-                                Detectar pestañas
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="h-7 text-xs"
-                                onClick={() => addTab(idx)}
-                              >
-                                <Plus className="w-3 h-3 mr-1" /> Manual
-                              </Button>
-                            </div>
+              {/* Service Account: modo legacy, plegado cuando hay OAuth de agencia. */}
+              <button
+                type="button"
+                onClick={() => setShowGa4Legacy((v) => !v)}
+                className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <ChevronDown
+                  className={`w-3.5 h-3.5 transition-transform ${showGa4Legacy ? '' : '-rotate-90'}`}
+                />
+                Credenciales de Service Account (legacy, opcional)
+              </button>
+
+              <div
+                className={`bg-muted/40 border border-border p-4 rounded-lg space-y-4 relative overflow-hidden ${showGa4Legacy ? '' : 'hidden'}`}
+              >
+                <div className="absolute top-0 left-0 w-1 h-full bg-indigo-500/50"></div>
+
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-full bg-indigo-500/10 flex items-center justify-center shrink-0">
+                    <DownloadCloud className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-medium text-foreground">
+                      Credenciales de Autenticación
+                    </h4>
+                    <p className="text-xs text-muted-foreground/70 mt-0.5">
+                      Sube el archivo JSON de tu Service Account de Google Cloud. Automáticamente
+                      extraeremos el Email y la Private Key aplicando el formato correcto.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="mt-3">
+                  <Label className="cursor-pointer">
+                    <div className="border border-dashed border-input hover:border-indigo-500/50 bg-muted/50 hover:bg-muted transition-colors p-4 rounded-lg text-center flex flex-col items-center justify-center gap-2">
+                      <DatabaseZap className="w-6 h-6 text-muted-foreground/70" />
+                      <span className="text-sm text-muted-foreground">
+                        Seleccionar o arrastrar archivo <strong>.json</strong>
+                      </span>
+                    </div>
+                    <input
+                      type="file"
+                      accept=".json,application/json"
+                      onChange={handleGA4JSONUpload}
+                      className="hidden"
+                    />
+                  </Label>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="ga_client_email" className="text-muted-foreground text-xs">
+                      Client Email (Auto-extraído)
+                    </Label>
+                    <Input
+                      id="ga_client_email"
+                      value={config.ga_client_email || ''}
+                      readOnly
+                      className="bg-muted/50 border-border text-muted-foreground/70 text-xs focus-visible:ring-0"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="ga_private_key" className="text-muted-foreground text-xs">
+                      Private Key (Auto-extraída)
+                    </Label>
+                    <textarea
+                      id="ga_private_key"
+                      value={
+                        config.ga_private_key
+                          ? '•••••••••••••••••••••••••••• PRIVATE KEY LOADED ••••••••••••••••••••••••••••'
+                          : ''
+                      }
+                      readOnly
+                      className="w-full h-9 rounded-md bg-muted/50 border border-border px-3 py-2 text-xs text-muted-foreground/70 resize-none focus-visible:outline-none focus-visible:ring-0"
+                    />
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* ── GA4 Property Picker Modal ─────────────────────────────────── */}
+          <Dialog
+            open={ga4PickerOpen}
+            onOpenChange={(open) => {
+              if (!open) setGa4PickerOpen(false);
+            }}
+          >
+            <DialogContent className="sm:max-w-lg">
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2">
+                  <BarChart3 className="w-4 h-4 text-orange-500" />
+                  Seleccionar propiedad de GA4
+                </DialogTitle>
+              </DialogHeader>
+
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+                <Input
+                  placeholder="Buscar por propiedad, cuenta o ID…"
+                  value={ga4Query}
+                  onChange={(e) => setGa4Query(e.target.value)}
+                  className="pl-9 bg-background border-input"
+                />
+              </div>
+
+              <div className="overflow-y-auto max-h-72 space-y-0.5 -mx-1 px-1">
+                {ga4Loading && (
+                  <div className="flex items-center justify-center py-8 gap-2 text-muted-foreground text-sm">
+                    <RefreshCw className="w-4 h-4 animate-spin" /> Cargando propiedades…
+                  </div>
+                )}
+                {ga4Error && (
+                  <p className="text-sm text-red-500 flex items-center gap-2 py-4">
+                    <AlertCircle className="w-4 h-4 shrink-0" /> {ga4Error}
+                  </p>
+                )}
+                {!ga4Loading && !ga4Error && filteredGa4Properties.length === 0 && (
+                  <p className="text-sm text-muted-foreground text-center py-6">
+                    No se encontraron propiedades.
+                  </p>
+                )}
+                {filteredGa4Properties.map((prop) => (
+                  <button
+                    key={prop.id}
+                    className={`w-full text-left flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-muted/60 transition-colors ${config.ga_property_id === prop.id ? 'bg-muted/60' : ''}`}
+                    onClick={() => selectGa4Property(prop)}
+                  >
+                    <BarChart3 className="w-4 h-4 text-orange-500 shrink-0" />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium text-foreground truncate">{prop.name}</p>
+                      <p className="text-xs text-muted-foreground truncate">
+                        {prop.accountName} · ID {prop.id}
+                      </p>
+                    </div>
+                    {config.ga_property_id === prop.id && (
+                      <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
+                    )}
+                  </button>
+                ))}
+              </div>
+
+              <p className="text-xs text-muted-foreground/60 text-center border-t border-border pt-3">
+                ¿Falta una propiedad? Dale acceso de Lector a{' '}
+                {googleEmail || 'la cuenta de la agencia'} en GA4 → Administrar.
+              </p>
+            </DialogContent>
+          </Dialog>
+
+          {/* ─── Google Sheets (Conversiones Offline) ────────────────────── */}
+          {(() => {
+            const convSheets: ConversionesConfig[] = config.google_sheets_conversiones || [];
+
+            const updateSheet = (idx: number, partial: Partial<ConversionesConfig>) => {
+              const next = convSheets.map((s, i) => (i === idx ? { ...s, ...partial } : s));
+              setConfig({ ...config, google_sheets_conversiones: next });
+            };
+
+            const removeSheet = (idx: number) => {
+              setConfig({
+                ...config,
+                google_sheets_conversiones: convSheets.filter((_, i) => i !== idx),
+              });
+            };
+
+            const addSheet = () => {
+              const newSheet: ConversionesConfig = {
+                id: crypto.randomUUID(),
+                name: `Sheet ${convSheets.length + 1}`,
+                enabled: true,
+                sheet_url: '',
+              };
+              setConfig({ ...config, google_sheets_conversiones: [...convSheets, newSheet] });
+            };
+
+            const openPicker = async (sheetId: string) => {
+              setPickerForSheetId(sheetId);
+              setPickerOpen(true);
+              setDriveLoading(true);
+              setDriveError(null);
+              setDriveQuery('');
+              const res = await listDriveSheets();
+              if ('error' in res) {
+                setDriveError(res.error ?? 'Error al listar Sheets');
+              } else {
+                setDriveSheets(res.sheets ?? []);
+              }
+              setDriveLoading(false);
+            };
+
+            const selectDriveSheet = (file: DriveSheet) => {
+              const idx = convSheets.findIndex((s) => s.id === pickerForSheetId);
+              if (idx !== -1) {
+                updateSheet(idx, { sheet_url: file.url, name: convSheets[idx].name || file.name });
+              }
+              setPickerOpen(false);
+              setPickerForSheetId(null);
+            };
+
+            // ── Pestañas ─────────────────────────────────────────────────
+            // Las configs anteriores guardaban una sola pestaña con el mapeo
+            // a nivel de sheet: se sintetiza como una pestaña única para que
+            // se editen igual (al guardar quedan ya en formato `tabs`).
+            const tabsOf = (sheet: ConversionesConfig): SheetTabConfig[] => {
+              if (Array.isArray(sheet.tabs)) return sheet.tabs;
+              return [
+                {
+                  id: `${sheet.id ?? 'sheet'}_tab`,
+                  sheet_name: sheet.sheet_name ?? '',
+                  enabled: true,
+                  col_fecha: sheet.col_fecha,
+                  col_tipo: sheet.col_tipo,
+                  col_cantidad: sheet.col_cantidad,
+                  col_valor: sheet.col_valor,
+                  col_fuente: sheet.col_fuente,
+                  col_notas: sheet.col_notas,
+                  custom_columns: sheet.custom_columns,
+                },
+              ];
+            };
+
+            // Al escribir `tabs` se retiran los campos planos legacy del sheet.
+            const setTabs = (idx: number, tabs: SheetTabConfig[]) => {
+              const next = convSheets.map((s, i) => {
+                if (i !== idx) return s;
+                const {
+                  sheet_name: _sn,
+                  col_fecha: _cf,
+                  col_tipo: _ct,
+                  col_cantidad: _cc,
+                  col_valor: _cv,
+                  col_fuente: _cfu,
+                  col_notas: _cn,
+                  custom_columns: _cx,
+                  ...rest
+                } = s;
+                return { ...rest, tabs };
+              });
+              setConfig({ ...config, google_sheets_conversiones: next });
+            };
+
+            const updateTab = (
+              sheetIdx: number,
+              tabId: string,
+              partial: Partial<SheetTabConfig>
+            ) => {
+              setTabs(
+                sheetIdx,
+                tabsOf(convSheets[sheetIdx]).map((t) => (t.id === tabId ? { ...t, ...partial } : t))
+              );
+            };
+
+            const addTab = (sheetIdx: number, sheetName = '') => {
+              const existing = tabsOf(convSheets[sheetIdx]);
+              if (sheetName && existing.some((t) => t.sheet_name === sheetName)) return;
+              setTabs(sheetIdx, [
+                ...existing,
+                { id: crypto.randomUUID(), sheet_name: sheetName, enabled: true },
+              ]);
+            };
+
+            const removeTab = (sheetIdx: number, tabId: string) => {
+              const t = tabsOf(convSheets[sheetIdx]).find((x) => x.id === tabId);
+              const hasMapping =
+                t &&
+                (Object.keys(t.custom_columns ?? {}).length > 0 ||
+                  !!(
+                    t.col_fecha ||
+                    t.col_tipo ||
+                    t.col_cantidad ||
+                    t.col_valor ||
+                    t.col_fuente ||
+                    t.col_notas
+                  ));
+              if (
+                hasMapping &&
+                !confirm(
+                  `¿Quitar la pestaña "${t!.sheet_name || '(primera pestaña)'}" y su mapeo de columnas?`
+                )
+              )
+                return;
+              setTabs(
+                sheetIdx,
+                tabsOf(convSheets[sheetIdx]).filter((x) => x.id !== tabId)
+              );
+            };
+
+            const detectTabs = async (idx: number) => {
+              const sheet = convSheets[idx];
+              const sid = sheet.id ?? String(idx);
+              setTabsUI((prev) => ({
+                ...prev,
+                [sid]: { loading: true, error: null, available: prev[sid]?.available ?? [] },
+              }));
+              const res = await listConversionesTabs(sheet);
+              if ('error' in res && res.error) {
+                setTabsUI((prev) => ({
+                  ...prev,
+                  [sid]: { loading: false, error: res.error!, available: [] },
+                }));
+              } else {
+                setTabsUI((prev) => ({
+                  ...prev,
+                  [sid]: {
+                    loading: false,
+                    error: null,
+                    available: (res as any).tabs as SheetTabInfo[],
+                  },
+                }));
+              }
+            };
+
+            const toggleAvailableTab = (idx: number, title: string) => {
+              const existing = tabsOf(convSheets[idx]).find((t) => t.sheet_name === title);
+              if (existing) removeTab(idx, existing.id);
+              else addTab(idx, title);
+            };
+
+            // Comprueba acceso al doc, existencia de la pestaña y de las
+            // columnas mapeadas. No bloquea el guardado: solo informa.
+            const validateSheet = async (idx: number) => {
+              const sheet = convSheets[idx];
+              const sid = sheet.id ?? String(idx);
+              setValidateUI((prev) => ({ ...prev, [sid]: { loading: true, results: [] } }));
+              const out: { tab: string; ok: boolean; message: string }[] = [];
+              for (const tab of tabsOf(sheet).filter((t) => t.enabled !== false)) {
+                const label = tab.sheet_name || '(primera pestaña)';
+                const res = await detectConversionesColumns(sheet, tab);
+                if ('error' in res && res.error) {
+                  out.push({ tab: label, ok: false, message: res.error });
+                  continue;
+                }
+                // Los encabezados alimentan el autocompletado del mapeo de
+                // columnas. Antes los traía "Detectar columnas", que se retiró
+                // junto con las columnas adicionales; validar cumple la misma
+                // función y además es lo que se hace antes de sincronizar.
+                setSheetUI((prev) => ({
+                  ...prev,
+                  [`${sid}:${tab.id}`]: { headers: res.headers ?? [] },
+                }));
+
+                const heads = (res.headers ?? []).map((h) => h.toLowerCase().trim());
+                const mapped: [string, string][] = [
+                  ['fecha', tab.col_fecha || 'fecha'],
+                  ['valor', tab.col_valor || 'valor'],
+                  ['fuente', tab.col_fuente || 'fuente'],
+                  ['notas', tab.col_notas || 'notas'],
+                ];
+                if (!tab.tipo_fijo) mapped.push(['tipo', tab.col_tipo || 'tipo']);
+                if (!tab.count_rows) mapped.push(['cantidad', tab.col_cantidad || 'cantidad']);
+
+                const missing = mapped.filter(([, c]) => !heads.includes(c.toLowerCase().trim()));
+                const faltaFecha = missing.some(([k]) => k === 'fecha');
+                // Sin cantidad TODAS las filas se descartan: es un fallo,
+                // no un aviso. Se resuelve con "cada fila es una conversión".
+                const faltaCantidad = missing.some(([k]) => k === 'cantidad');
+                const problemas: string[] = [];
+                if (faltaFecha) problemas.push('Falta la columna de fecha: no se puede importar.');
+                if (faltaCantidad)
+                  problemas.push(
+                    'Falta la columna de cantidad: se descartarían todas las filas. Marca "Cada fila es una conversión" si el Sheet tiene un lead o venta por fila.'
+                  );
+                if (!tab.tipo_fijo && missing.some(([k]) => k === 'tipo')) {
+                  problemas.push(
+                    'Sin columna de tipo: las filas entrarán como "otro" y no sumarán en leads/ventas offline. Usa "Tipo fijo".'
+                  );
+                }
+                const opcionales = missing
+                  .map(([k]) => k)
+                  .filter((k) => k !== 'fecha' && k !== 'cantidad' && k !== 'tipo');
+
+                out.push({
+                  tab: label,
+                  ok: !faltaFecha && !faltaCantidad,
+                  message:
+                    problemas.length === 0
+                      ? opcionales.length === 0
+                        ? 'Todas las columnas mapeadas existen'
+                        : `Listo para importar. Sin columna (opcional) para: ${opcionales.join(', ')}`
+                      : problemas.join(' '),
+                });
+              }
+              setValidateUI((prev) => ({ ...prev, [sid]: { loading: false, results: out } }));
+            };
+
+            const filteredDriveSheets = driveSheets.filter(
+              (s) => !driveQuery || s.name.toLowerCase().includes(driveQuery.toLowerCase())
+            );
+
+            return (
+              <>
+                <Card className="bg-card border-border">
+                  <CardHeader>
+                    <div className="flex items-start justify-between gap-4">
+                      <div>
+                        <CardTitle>Google Sheets — Conversiones Offline</CardTitle>
+                        <CardDescription className="mt-1">
+                          Importa leads y ventas que no se capturan por píxel. Configura uno o
+                          varios Sheets por cliente.
+                        </CardDescription>
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={addSheet}
+                        className="shrink-0 h-8 text-xs gap-1.5"
+                      >
+                        <Plus className="w-3 h-3" /> Agregar Sheet
+                      </Button>
+                    </div>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    {convSheets.length === 0 && (
+                      <p className="text-sm text-muted-foreground text-center py-6 border border-dashed border-border rounded-lg">
+                        No hay sheets configurados. Haz clic en &quot;Agregar Sheet&quot; para
+                        empezar.
+                      </p>
+                    )}
+
+                    {convSheets.map((sheet, idx) => {
+                      const sid = sheet.id ?? String(idx);
+                      const bloqueado = sheetsBloqueados.has(sid);
+                      const tabs = tabsOf(sheet);
+                      const tabsState = tabsUI[sid] || {
+                        loading: false,
+                        error: null,
+                        available: [],
+                      };
+                      const validation = validateUI[sid];
+                      const lastSync = convSyncStatus[sid];
+                      // Dos pestañas con columnas que sanitizan al mismo nombre se
+                      // suman en la variable sheet_<nombre>: conviene avisarlo.
+                      const dupCustomKeys = (() => {
+                        const seen = new Map<string, number>();
+                        for (const t of tabs) {
+                          // Solo cuentan las marcadas para sincronizar: el resto no llega a la base.
+                          for (const [k, def] of Object.entries(t.custom_columns ?? {})) {
+                            if (def.include) seen.set(k, (seen.get(k) ?? 0) + 1);
+                          }
+                        }
+                        return Array.from(seen.entries())
+                          .filter(([, n]) => n > 1)
+                          .map(([k]) => k);
+                      })();
+
+                      return (
+                        <div key={sid} className="border border-border rounded-lg overflow-hidden">
+                          {/* Sheet header */}
+                          <div className="flex items-center gap-2 px-4 py-3 bg-muted/30 border-b border-border">
+                            <input
+                              type="checkbox"
+                              checked={sheet.enabled || false}
+                              onChange={(e) => updateSheet(idx, { enabled: e.target.checked })}
+                              className="rounded border-input bg-background text-indigo-500 focus:ring-indigo-500 shrink-0"
+                            />
+                            <Input
+                              placeholder="Nombre del sheet (ej: Leads WhatsApp)"
+                              value={sheet.name || ''}
+                              onChange={(e) => updateSheet(idx, { name: e.target.value })}
+                              className="bg-background border-input h-8 text-sm font-medium"
+                            />
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => {
+                                // Un sheet que aún no se ha guardado no tiene datos
+                                // que borrar: se quita y ya.
+                                if (!bloqueado) {
+                                  removeSheet(idx);
+                                  return;
+                                }
+                                abrirBorradoSheet(idx, sid, sheet.name || `Sheet ${idx + 1}`);
+                              }}
+                              className="text-muted-foreground/70 hover:text-red-500 shrink-0 h-8 w-8 p-0"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </Button>
                           </div>
 
-                          {tabsState.error && (
-                            <p className="text-xs text-red-500 flex items-center gap-1">
-                              <AlertCircle className="w-3 h-3" /> {tabsState.error}
-                            </p>
-                          )}
-
-                          {tabsState.available.length > 0 && (
-                            <div className="bg-muted/40 border border-border rounded-lg p-3 space-y-1.5">
-                              <p className="text-xs text-muted-foreground/70">
-                                Pestañas del documento — marca las que quieras sincronizar:
-                              </p>
-                              <div className="grid grid-cols-2 md:grid-cols-3 gap-1.5">
-                                {tabsState.available.map((t) => {
-                                  const checked = tabs.some((x) => x.sheet_name === t.title);
-                                  return (
-                                    <label
-                                      key={t.title}
-                                      className="flex items-center gap-2 text-xs text-foreground cursor-pointer"
-                                    >
-                                      <input
-                                        type="checkbox"
-                                        checked={checked}
-                                        onChange={() => toggleAvailableTab(idx, t.title)}
-                                        className="rounded border-input bg-background text-indigo-500 focus:ring-indigo-500"
-                                      />
-                                      <span className="truncate" title={t.title}>
-                                        {t.title}
-                                      </span>
-                                      <span className="text-muted-foreground/50 shrink-0">
-                                        ({t.rowCount})
-                                      </span>
-                                    </label>
-                                  );
-                                })}
+                          {/* Sheet body */}
+                          <div className="p-4 space-y-4">
+                            {/* URL + picker */}
+                            <div className="space-y-1.5">
+                              <Label className="text-foreground/90 text-sm">
+                                URL del Google Sheet
+                              </Label>
+                              <div className="flex gap-2">
+                                <Input
+                                  placeholder="https://docs.google.com/spreadsheets/d/..."
+                                  value={sheet.sheet_url || ''}
+                                  onChange={(e) => updateSheet(idx, { sheet_url: e.target.value })}
+                                  readOnly={bloqueado}
+                                  title={
+                                    bloqueado
+                                      ? 'El documento no se puede cambiar. Elimina este sheet y añade otro.'
+                                      : undefined
+                                  }
+                                  className={`bg-background border-input ${bloqueado ? 'text-muted-foreground cursor-not-allowed' : ''}`}
+                                />
+                                {!bloqueado && (
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="shrink-0 h-10 text-xs gap-1.5"
+                                    onClick={() => openPicker(sid)}
+                                  >
+                                    <FolderSearch className="w-3.5 h-3.5" />
+                                    Seleccionar
+                                  </Button>
+                                )}
                               </div>
+                              {bloqueado && (
+                                <p className="text-xs text-muted-foreground/70 flex items-center gap-1.5">
+                                  <Lock className="w-3 h-3 shrink-0" />
+                                  El documento queda fijo al guardar. Todos los datos sincronizados
+                                  cuelgan de este sheet, así que para usar otro documento hay que
+                                  eliminar este — con sus datos — y añadir uno nuevo.
+                                </p>
+                              )}
                             </div>
-                          )}
 
-                          {dupCustomKeys.length > 0 && (
-                            <p className="text-xs text-amber-600 dark:text-amber-400 flex items-start gap-1">
-                              <AlertCircle className="w-3 h-3 mt-0.5 shrink-0" />
-                              Columnas repetidas entre pestañas (
-                              {dupCustomKeys.slice(0, 5).join(', ')}
-                              {dupCustomKeys.length > 5 ? ` y ${dupCustomKeys.length - 5} más` : ''}
-                              ): si las marcas como &quot;Usar&quot; en varias pestañas, sus valores
-                              se suman en la misma variable{' '}
-                              <span className="font-mono">sheet_*</span>.
-                            </p>
-                          )}
-
-                          {tabs.length === 0 && (
-                            <p className="text-xs text-muted-foreground/50 text-center py-3 border border-dashed border-border rounded-lg">
-                              Sin pestañas seleccionadas. Usa &quot;Detectar pestañas&quot; o
-                              agrégala manualmente.
-                            </p>
-                          )}
-
-                          {/* Una sub-tarjeta por pestaña, con su mapeo propio */}
-                          {tabs.map((tab) => {
-                            const tabKey = `${sid}:${tab.id}`;
-                            const headerOpts = sheetUI[tabKey]?.headers ?? [];
-                            const listId = `headers-${tabKey}`;
-
-                            return (
-                              <div
-                                key={tab.id}
-                                className="border border-border rounded-lg overflow-hidden"
-                              >
-                                <div className="flex items-center gap-2 px-3 py-2 bg-muted/30 border-b border-border">
-                                  <input
-                                    type="checkbox"
-                                    checked={tab.enabled !== false}
-                                    onChange={(e) =>
-                                      updateTab(idx, tab.id, { enabled: e.target.checked })
-                                    }
-                                    className="rounded border-input bg-background text-indigo-500 focus:ring-indigo-500 shrink-0"
-                                  />
-                                  <Input
-                                    placeholder="Nombre de la pestaña — vacío = primera pestaña"
-                                    value={tab.sheet_name || ''}
-                                    onChange={(e) =>
-                                      updateTab(idx, tab.id, { sheet_name: e.target.value })
-                                    }
-                                    className="bg-background border-input h-7 text-xs"
-                                  />
+                            {/* Pestañas del documento */}
+                            <div className="space-y-2">
+                              <div className="flex items-center justify-between gap-2">
+                                <div>
+                                  <Label className="text-foreground/90 text-sm">
+                                    Pestañas a sincronizar
+                                  </Label>
+                                  <p className="text-xs text-muted-foreground/70 mt-0.5">
+                                    Cada pestaña tiene su propio mapeo de columnas.
+                                  </p>
+                                </div>
+                                <div className="flex gap-2 shrink-0">
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="h-7 text-xs"
+                                    disabled={tabsState.loading || !sheet.sheet_url}
+                                    onClick={() => detectTabs(idx)}
+                                  >
+                                    {tabsState.loading ? (
+                                      <RefreshCw className="w-3 h-3 animate-spin mr-1" />
+                                    ) : (
+                                      <FolderSearch className="w-3 h-3 mr-1" />
+                                    )}
+                                    Detectar pestañas
+                                  </Button>
                                   <Button
                                     variant="ghost"
                                     size="sm"
-                                    onClick={() => removeTab(idx, tab.id)}
-                                    className="text-muted-foreground/70 hover:text-red-500 shrink-0 h-7 w-7 p-0"
+                                    className="h-7 text-xs"
+                                    onClick={() => addTab(idx)}
                                   >
-                                    <Trash2 className="w-3 h-3" />
+                                    <Plus className="w-3 h-3 mr-1" /> Manual
                                   </Button>
                                 </div>
+                              </div>
 
-                                <div className="p-3 space-y-3">
-                                  {/* Mapeo de columnas de esta pestaña */}
-                                  <div className="bg-muted/40 border border-border p-3 rounded-lg space-y-3 relative overflow-hidden">
-                                    <div className="absolute top-0 left-0 w-1 h-full bg-violet-500/50" />
-                                    <h4 className="text-sm font-medium text-foreground">
-                                      Nombres de columnas
-                                    </h4>
-                                    <p className="text-xs text-muted-foreground/70 -mt-1">
-                                      Nombres exactos en la pestaña. Vacío = usa el valor por
-                                      defecto.
-                                      {headerOpts.length > 0 &&
-                                        ' Se sugieren los encabezados detectados.'}
-                                    </p>
-                                    {headerOpts.length > 0 && (
-                                      <datalist id={listId}>
-                                        {headerOpts.map((h) => (
-                                          <option key={h} value={h} />
-                                        ))}
-                                      </datalist>
-                                    )}
-                                    <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                                      {[
-                                        {
-                                          field: 'col_fecha',
-                                          label: 'Fecha',
-                                          placeholder: 'fecha',
-                                          hint: 'DD/MM/AAAA, DD/MM/AA o AAAA-MM-DD',
-                                        },
-                                        {
-                                          field: 'col_tipo',
-                                          label: 'Tipo',
-                                          placeholder: 'tipo',
-                                          hint: '"lead", "venta", etc.',
-                                        },
-                                        {
-                                          field: 'col_cantidad',
-                                          label: 'Cantidad',
-                                          placeholder: 'cantidad',
-                                          hint: 'Número entero',
-                                        },
-                                        {
-                                          field: 'col_valor',
-                                          label: 'Valor $',
-                                          placeholder: 'valor',
-                                          hint: 'Revenue (opcional)',
-                                        },
-                                        {
-                                          field: 'col_fuente',
-                                          label: 'Fuente',
-                                          placeholder: 'fuente',
-                                          hint: '"meta", "tiktok"…',
-                                        },
-                                        {
-                                          field: 'col_notas',
-                                          label: 'Notas',
-                                          placeholder: 'notas',
-                                          hint: 'Texto libre (opcional)',
-                                        },
-                                      ].map(({ field, label, placeholder, hint }) => {
-                                        // Cantidad y Tipo pueden resolverse por configuración
-                                        // en hojas donde una fila = una conversión.
-                                        const porConfig =
-                                          (field === 'col_cantidad' && tab.count_rows) ||
-                                          (field === 'col_tipo' && !!tab.tipo_fijo);
-                                        return (
-                                          <div key={field} className="space-y-1">
-                                            <Label className="text-muted-foreground text-xs">
-                                              {label}
-                                            </Label>
-                                            <Input
-                                              placeholder={
-                                                porConfig ? 'definido abajo' : placeholder
-                                              }
-                                              list={headerOpts.length > 0 ? listId : undefined}
-                                              disabled={porConfig}
-                                              value={porConfig ? '' : (tab as any)[field] || ''}
-                                              onChange={(e) =>
-                                                updateTab(idx, tab.id, { [field]: e.target.value })
-                                              }
-                                              className="bg-background border-input h-8 text-sm disabled:opacity-50"
-                                            />
-                                            <p className="text-xs text-muted-foreground/60">
-                                              {hint}
-                                            </p>
-                                          </div>
-                                        );
-                                      })}
+                              {tabsState.error && (
+                                <p className="text-xs text-red-500 flex items-center gap-1">
+                                  <AlertCircle className="w-3 h-3" /> {tabsState.error}
+                                </p>
+                              )}
+
+                              {tabsState.available.length > 0 && (
+                                <div className="bg-muted/40 border border-border rounded-lg p-3 space-y-1.5">
+                                  <p className="text-xs text-muted-foreground/70">
+                                    Pestañas del documento — marca las que quieras sincronizar:
+                                  </p>
+                                  <div className="grid grid-cols-2 md:grid-cols-3 gap-1.5">
+                                    {tabsState.available.map((t) => {
+                                      const checked = tabs.some((x) => x.sheet_name === t.title);
+                                      return (
+                                        <label
+                                          key={t.title}
+                                          className="flex items-center gap-2 text-xs text-foreground cursor-pointer"
+                                        >
+                                          <input
+                                            type="checkbox"
+                                            checked={checked}
+                                            onChange={() => toggleAvailableTab(idx, t.title)}
+                                            className="rounded border-input bg-background text-indigo-500 focus:ring-indigo-500"
+                                          />
+                                          <span className="truncate" title={t.title}>
+                                            {t.title}
+                                          </span>
+                                          <span className="text-muted-foreground/50 shrink-0">
+                                            ({t.rowCount})
+                                          </span>
+                                        </label>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                              )}
+
+                              {dupCustomKeys.length > 0 && (
+                                <p className="text-xs text-amber-600 dark:text-amber-400 flex items-start gap-1">
+                                  <AlertCircle className="w-3 h-3 mt-0.5 shrink-0" />
+                                  Columnas repetidas entre pestañas (
+                                  {dupCustomKeys.slice(0, 5).join(', ')}
+                                  {dupCustomKeys.length > 5
+                                    ? ` y ${dupCustomKeys.length - 5} más`
+                                    : ''}
+                                  ): si las marcas como &quot;Usar&quot; en varias pestañas, sus
+                                  valores se suman en la misma variable{' '}
+                                  <span className="font-mono">sheet_*</span>.
+                                </p>
+                              )}
+
+                              {tabs.length === 0 && (
+                                <p className="text-xs text-muted-foreground/50 text-center py-3 border border-dashed border-border rounded-lg">
+                                  Sin pestañas seleccionadas. Usa &quot;Detectar pestañas&quot; o
+                                  agrégala manualmente.
+                                </p>
+                              )}
+
+                              {/* Una sub-tarjeta por pestaña, con su mapeo propio */}
+                              {tabs.map((tab) => {
+                                const tabKey = `${sid}:${tab.id}`;
+                                const headerOpts = sheetUI[tabKey]?.headers ?? [];
+                                const listId = `headers-${tabKey}`;
+
+                                return (
+                                  <div
+                                    key={tab.id}
+                                    className="border border-border rounded-lg overflow-hidden"
+                                  >
+                                    <div className="flex items-center gap-2 px-3 py-2 bg-muted/30 border-b border-border">
+                                      <input
+                                        type="checkbox"
+                                        checked={tab.enabled !== false}
+                                        onChange={(e) =>
+                                          updateTab(idx, tab.id, { enabled: e.target.checked })
+                                        }
+                                        className="rounded border-input bg-background text-indigo-500 focus:ring-indigo-500 shrink-0"
+                                      />
+                                      <Input
+                                        placeholder="Nombre de la pestaña — vacío = primera pestaña"
+                                        value={tab.sheet_name || ''}
+                                        onChange={(e) =>
+                                          updateTab(idx, tab.id, { sheet_name: e.target.value })
+                                        }
+                                        className="bg-background border-input h-7 text-xs"
+                                      />
+                                      <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        onClick={() => removeTab(idx, tab.id)}
+                                        className="text-muted-foreground/70 hover:text-red-500 shrink-0 h-7 w-7 p-0"
+                                      >
+                                        <Trash2 className="w-3 h-3" />
+                                      </Button>
                                     </div>
 
-                                    {/* Hojas donde una fila = una conversión (exports de leads) */}
-                                    <div className="border-t border-border pt-3 space-y-2">
-                                      <label className="flex items-start gap-2 text-xs text-foreground cursor-pointer">
-                                        <input
-                                          type="checkbox"
-                                          checked={!!tab.count_rows}
-                                          onChange={(e) =>
-                                            updateTab(idx, tab.id, { count_rows: e.target.checked })
-                                          }
-                                          className="rounded border-input bg-background text-indigo-500 focus:ring-indigo-500 mt-0.5"
-                                        />
-                                        <span>
-                                          Cada fila es una conversión
-                                          <span className="block text-muted-foreground/60">
-                                            Para hojas sin columna de cantidad (un lead o una venta
-                                            por fila).
-                                          </span>
-                                        </span>
-                                      </label>
-                                      <div className="flex items-center gap-2">
-                                        <Label className="text-muted-foreground text-xs shrink-0">
-                                          Tipo fijo
-                                        </Label>
-                                        <select
-                                          value={tab.tipo_fijo ?? ''}
-                                          onChange={(e) =>
-                                            updateTab(idx, tab.id, {
-                                              tipo_fijo: e.target.value || undefined,
-                                            })
-                                          }
-                                          className="h-7 text-xs rounded-md border border-input bg-background px-2 text-foreground focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                                        >
-                                          <option value="">Usar la columna de tipo</option>
-                                          <option value="lead">Todas son leads</option>
-                                          <option value="venta">Todas son ventas</option>
-                                          <option value="otro">Otro</option>
-                                        </select>
-                                        <span className="text-xs text-muted-foreground/60">
-                                          Sin esto las filas entran como &quot;otro&quot; y no suman
-                                          en leads/ventas offline.
-                                        </span>
+                                    <div className="p-3 space-y-3">
+                                      {/* Mapeo de columnas de esta pestaña */}
+                                      <div className="bg-muted/40 border border-border p-3 rounded-lg space-y-3 relative overflow-hidden">
+                                        <div className="absolute top-0 left-0 w-1 h-full bg-violet-500/50" />
+                                        <h4 className="text-sm font-medium text-foreground">
+                                          Nombres de columnas
+                                        </h4>
+                                        <p className="text-xs text-muted-foreground/70 -mt-1">
+                                          Nombres exactos en la pestaña. Vacío = usa el valor por
+                                          defecto.
+                                          {headerOpts.length > 0 &&
+                                            ' Se sugieren los encabezados detectados.'}
+                                        </p>
+                                        {headerOpts.length > 0 && (
+                                          <datalist id={listId}>
+                                            {headerOpts.map((h) => (
+                                              <option key={h} value={h} />
+                                            ))}
+                                          </datalist>
+                                        )}
+                                        <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                                          {[
+                                            {
+                                              field: 'col_fecha',
+                                              label: 'Fecha',
+                                              placeholder: 'fecha',
+                                              hint: 'DD/MM/AAAA, DD/MM/AA o AAAA-MM-DD',
+                                            },
+                                            {
+                                              field: 'col_tipo',
+                                              label: 'Tipo',
+                                              placeholder: 'tipo',
+                                              hint: '"lead", "venta", etc.',
+                                            },
+                                            {
+                                              field: 'col_cantidad',
+                                              label: 'Cantidad',
+                                              placeholder: 'cantidad',
+                                              hint: 'Número entero',
+                                            },
+                                            {
+                                              field: 'col_valor',
+                                              label: 'Valor $',
+                                              placeholder: 'valor',
+                                              hint: 'Revenue (opcional)',
+                                            },
+                                            {
+                                              field: 'col_fuente',
+                                              label: 'Fuente',
+                                              placeholder: 'fuente',
+                                              hint: '"meta", "tiktok"…',
+                                            },
+                                            {
+                                              field: 'col_notas',
+                                              label: 'Notas',
+                                              placeholder: 'notas',
+                                              hint: 'Texto libre (opcional)',
+                                            },
+                                          ].map(({ field, label, placeholder, hint }) => {
+                                            // Cantidad y Tipo pueden resolverse por configuración
+                                            // en hojas donde una fila = una conversión.
+                                            const porConfig =
+                                              (field === 'col_cantidad' && tab.count_rows) ||
+                                              (field === 'col_tipo' && !!tab.tipo_fijo);
+                                            return (
+                                              <div key={field} className="space-y-1">
+                                                <Label className="text-muted-foreground text-xs">
+                                                  {label}
+                                                </Label>
+                                                <Input
+                                                  placeholder={
+                                                    porConfig ? 'definido abajo' : placeholder
+                                                  }
+                                                  list={headerOpts.length > 0 ? listId : undefined}
+                                                  disabled={porConfig}
+                                                  value={porConfig ? '' : (tab as any)[field] || ''}
+                                                  onChange={(e) =>
+                                                    updateTab(idx, tab.id, {
+                                                      [field]: e.target.value,
+                                                    })
+                                                  }
+                                                  className="bg-background border-input h-8 text-sm disabled:opacity-50"
+                                                />
+                                                <p className="text-xs text-muted-foreground/60">
+                                                  {hint}
+                                                </p>
+                                              </div>
+                                            );
+                                          })}
+                                        </div>
+
+                                        {/* Hojas donde una fila = una conversión (exports de leads) */}
+                                        <div className="border-t border-border pt-3 space-y-2">
+                                          <label className="flex items-start gap-2 text-xs text-foreground cursor-pointer">
+                                            <input
+                                              type="checkbox"
+                                              checked={!!tab.count_rows}
+                                              onChange={(e) =>
+                                                updateTab(idx, tab.id, {
+                                                  count_rows: e.target.checked,
+                                                })
+                                              }
+                                              className="rounded border-input bg-background text-indigo-500 focus:ring-indigo-500 mt-0.5"
+                                            />
+                                            <span>
+                                              Cada fila es una conversión
+                                              <span className="block text-muted-foreground/60">
+                                                Para hojas sin columna de cantidad (un lead o una
+                                                venta por fila).
+                                              </span>
+                                            </span>
+                                          </label>
+                                          <div className="flex items-center gap-2">
+                                            <Label className="text-muted-foreground text-xs shrink-0">
+                                              Tipo fijo
+                                            </Label>
+                                            <select
+                                              value={tab.tipo_fijo ?? ''}
+                                              onChange={(e) =>
+                                                updateTab(idx, tab.id, {
+                                                  tipo_fijo: e.target.value || undefined,
+                                                })
+                                              }
+                                              className="h-7 text-xs rounded-md border border-input bg-background px-2 text-foreground focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                                            >
+                                              <option value="">Usar la columna de tipo</option>
+                                              <option value="lead">Todas son leads</option>
+                                              <option value="venta">Todas son ventas</option>
+                                              <option value="otro">Otro</option>
+                                            </select>
+                                            <span className="text-xs text-muted-foreground/60">
+                                              Sin esto las filas entran como &quot;otro&quot; y no
+                                              suman en leads/ventas offline.
+                                            </span>
+                                          </div>
+                                        </div>
                                       </div>
                                     </div>
                                   </div>
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
+                                );
+                              })}
+                            </div>
 
-                        {/* Validación + estado del último sync */}
-                        <div className="flex flex-wrap items-center gap-2 pt-1">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="h-7 text-xs"
-                            disabled={validation?.loading || !sheet.sheet_url}
-                            onClick={() => validateSheet(idx)}
-                          >
-                            {validation?.loading ? (
-                              <RefreshCw className="w-3 h-3 animate-spin mr-1" />
-                            ) : (
-                              <CheckCircle2 className="w-3 h-3 mr-1" />
-                            )}
-                            Validar configuración
-                          </Button>
-                          {lastSync &&
-                            (() => {
-                              const pestanas = lastSync.detalle?.por_pestana ?? [];
-                              const sinFecha = pestanas.reduce(
-                                (n, q) => n + (q.fecha_vacia ?? 0),
-                                0
-                              );
-                              const avisos = pestanas.flatMap((q) =>
-                                q.warnings.map((w) =>
-                                  pestanas.length > 1 ? `${q.tab_name}: ${w}` : w
-                                )
-                              );
-                              // `partial` iba con el mismo check verde que `ok` y
-                              // el motivo solo vivía en un tooltip: así pasó un
-                              // mes entero descartándose sin que nadie lo viera.
-                              const color =
-                                lastSync.status === 'error'
-                                  ? 'text-red-500'
-                                  : lastSync.status === 'partial'
-                                    ? 'text-amber-600 dark:text-amber-500'
-                                    : 'text-muted-foreground';
-                              return (
-                                <>
-                                  <span
-                                    className={`text-xs flex items-center gap-1 ${color}`}
-                                    title={
-                                      pestanas
-                                        .map(
-                                          (q) =>
-                                            `${q.tab_name}: ${q.rows_ok} filas${q.warnings.length ? ` — ${q.warnings.join('; ')}` : ''}`
-                                        )
-                                        .join('\n') ||
-                                      lastSync.detalle?.error ||
-                                      ''
-                                    }
-                                  >
-                                    {lastSync.status === 'ok' ? (
-                                      <CheckCircle2 className="w-3 h-3" />
-                                    ) : (
-                                      <AlertCircle className="w-3 h-3" />
-                                    )}
-                                    Último sync: {lastSync.rows_ok} filas
-                                    {lastSync.rows_descartadas > 0 &&
-                                      ` · ${lastSync.rows_descartadas} descartadas`}
-                                    {sinFecha > 0 && ` · ${sinFecha} sin fecha`}
-                                    {' · '}
-                                    {new Date(lastSync.run_at).toLocaleString('es-CO')}
-                                  </span>
-                                  {lastSync.status !== 'ok' &&
-                                    (avisos.length > 0 || lastSync.detalle?.error) && (
-                                      <ul className={`basis-full text-xs space-y-0.5 ${color}`}>
-                                        {lastSync.detalle?.error && (
-                                          <li>{lastSync.detalle.error}</li>
-                                        )}
-                                        {avisos.slice(0, 3).map((w) => (
-                                          <li key={w}>· {w}</li>
-                                        ))}
-                                        {avisos.length > 3 && (
-                                          <li>· y {avisos.length - 3} aviso(s) más</li>
-                                        )}
-                                      </ul>
-                                    )}
-                                </>
-                              );
-                            })()}
-                        </div>
-
-                        {validation?.results && validation.results.length > 0 && (
-                          <div className="space-y-1">
-                            {validation.results.map((r) => (
-                              <p
-                                key={r.tab}
-                                className={`text-xs flex items-start gap-1 ${r.ok ? 'text-green-600 dark:text-green-500' : 'text-red-500'}`}
+                            {/* Validación + estado del último sync */}
+                            <div className="flex flex-wrap items-center gap-2 pt-1">
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="h-7 text-xs"
+                                disabled={validation?.loading || !sheet.sheet_url}
+                                onClick={() => validateSheet(idx)}
                               >
-                                {r.ok ? (
-                                  <CheckCircle2 className="w-3 h-3 mt-0.5 shrink-0" />
+                                {validation?.loading ? (
+                                  <RefreshCw className="w-3 h-3 animate-spin mr-1" />
                                 ) : (
-                                  <AlertCircle className="w-3 h-3 mt-0.5 shrink-0" />
+                                  <CheckCircle2 className="w-3 h-3 mr-1" />
                                 )}
-                                <span>
-                                  <span className="font-medium">{r.tab}</span> — {r.message}
-                                </span>
-                              </p>
-                            ))}
+                                Validar configuración
+                              </Button>
+                              {lastSync &&
+                                (() => {
+                                  const pestanas = lastSync.detalle?.por_pestana ?? [];
+                                  const sinFecha = pestanas.reduce(
+                                    (n, q) => n + (q.fecha_vacia ?? 0),
+                                    0
+                                  );
+                                  const avisos = pestanas.flatMap((q) =>
+                                    q.warnings.map((w) =>
+                                      pestanas.length > 1 ? `${q.tab_name}: ${w}` : w
+                                    )
+                                  );
+                                  // `partial` iba con el mismo check verde que `ok` y
+                                  // el motivo solo vivía en un tooltip: así pasó un
+                                  // mes entero descartándose sin que nadie lo viera.
+                                  const color =
+                                    lastSync.status === 'error'
+                                      ? 'text-red-500'
+                                      : lastSync.status === 'partial'
+                                        ? 'text-amber-600 dark:text-amber-500'
+                                        : 'text-muted-foreground';
+                                  return (
+                                    <>
+                                      <span
+                                        className={`text-xs flex items-center gap-1 ${color}`}
+                                        title={
+                                          pestanas
+                                            .map(
+                                              (q) =>
+                                                `${q.tab_name}: ${q.rows_ok} filas${q.warnings.length ? ` — ${q.warnings.join('; ')}` : ''}`
+                                            )
+                                            .join('\n') ||
+                                          lastSync.detalle?.error ||
+                                          ''
+                                        }
+                                      >
+                                        {lastSync.status === 'ok' ? (
+                                          <CheckCircle2 className="w-3 h-3" />
+                                        ) : (
+                                          <AlertCircle className="w-3 h-3" />
+                                        )}
+                                        Último sync: {lastSync.rows_ok} filas
+                                        {lastSync.rows_descartadas > 0 &&
+                                          ` · ${lastSync.rows_descartadas} descartadas`}
+                                        {sinFecha > 0 && ` · ${sinFecha} sin fecha`}
+                                        {' · '}
+                                        {new Date(lastSync.run_at).toLocaleString('es-CO')}
+                                      </span>
+                                      {lastSync.status !== 'ok' &&
+                                        (avisos.length > 0 || lastSync.detalle?.error) && (
+                                          <ul className={`basis-full text-xs space-y-0.5 ${color}`}>
+                                            {lastSync.detalle?.error && (
+                                              <li>{lastSync.detalle.error}</li>
+                                            )}
+                                            {avisos.slice(0, 3).map((w) => (
+                                              <li key={w}>· {w}</li>
+                                            ))}
+                                            {avisos.length > 3 && (
+                                              <li>· y {avisos.length - 3} aviso(s) más</li>
+                                            )}
+                                          </ul>
+                                        )}
+                                    </>
+                                  );
+                                })()}
+                            </div>
+
+                            {validation?.results && validation.results.length > 0 && (
+                              <div className="space-y-1">
+                                {validation.results.map((r) => (
+                                  <p
+                                    key={r.tab}
+                                    className={`text-xs flex items-start gap-1 ${r.ok ? 'text-green-600 dark:text-green-500' : 'text-red-500'}`}
+                                  >
+                                    {r.ok ? (
+                                      <CheckCircle2 className="w-3 h-3 mt-0.5 shrink-0" />
+                                    ) : (
+                                      <AlertCircle className="w-3 h-3 mt-0.5 shrink-0" />
+                                    )}
+                                    <span>
+                                      <span className="font-medium">{r.tab}</span> — {r.message}
+                                    </span>
+                                  </p>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+
+                    {/* Sync all button */}
+                    {convSheets.some((s) => s.enabled && s.sheet_url) && (
+                      <div className="pt-2 border-t border-border flex gap-2 items-center">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() =>
+                            runTest('conversionesOffline', async () => {
+                              // Persistir la config actual antes de sincronizar: el endpoint
+                              // lee los sheets desde la BD, no desde el estado del formulario.
+                              const saved = await guardarPestana('google');
+                              if (saved && !saved.success) {
+                                return {
+                                  error:
+                                    saved.error ||
+                                    'Error al guardar la configuración antes de sincronizar',
+                                };
+                              }
+
+                              // Una PESTAÑA por petición. Un documento de decenas de miles de
+                              // filas no cabe en el tiempo de una función, así que se recorren
+                              // las pestañas con un mismo lote y se consolida al final: hasta
+                              // ese momento el dato anterior sigue intacto, y una corrida a
+                              // medias no deja al cliente sin nada. El id ausente se deriva de
+                              // la posición, igual que `normalizeSheetConfigs` en el servidor.
+                              const objetivo = convSheets
+                                .map((s, i) => ({ ...s, id: s.id || `sheet_${i}` }))
+                                .filter((s) => s.enabled && s.sheet_url);
+
+                              const total = {
+                                totalFilas: 0,
+                                diasProcesados: 0,
+                                filasDescartadas: 0,
+                              };
+                              const avisos: string[] = [];
+                              const fallos: string[] = [];
+
+                              try {
+                                for (const [i, sheet] of objetivo.entries()) {
+                                  const etiqueta = sheet.name || `Sheet ${i + 1}`;
+                                  const pestanas = tabsOf(sheet)
+                                    .map((t, j) => ({ ...t, id: t.id || `tab_${j}` }))
+                                    .filter((t) => t.enabled !== false);
+                                  if (pestanas.length === 0) {
+                                    fallos.push(`${etiqueta}: no tiene pestañas habilitadas`);
+                                    continue;
+                                  }
+
+                                  const batchId = crypto.randomUUID();
+                                  const calidad: unknown[] = [];
+                                  let algunaOk = false;
+                                  let crudasIncompletas = false;
+                                  const fallosTabs: string[] = [];
+
+                                  for (const [j, tab] of pestanas.entries()) {
+                                    const nombreTab = tab.sheet_name || `Pestaña ${j + 1}`;
+                                    setConvSyncProgreso(
+                                      `${etiqueta} · pestaña ${j + 1}/${pestanas.length} (${nombreTab})`
+                                    );
+                                    const res = await syncTandaConversiones(cliente.id, {
+                                      sheetId: sheet.id,
+                                      batchId,
+                                      tabId: tab.id,
+                                    });
+                                    if (res.error) {
+                                      fallosTabs.push(`${nombreTab}: ${res.error}`);
+                                      continue;
+                                    }
+                                    algunaOk = true;
+                                    total.totalFilas += res.totalFilas ?? 0;
+                                    total.filasDescartadas += res.filasDescartadas ?? 0;
+                                    if (res.crudasIncompletas) crudasIncompletas = true;
+                                    if (res.quality) calidad.push(...res.quality);
+                                    if (res.warnings) avisos.push(...res.warnings);
+                                  }
+
+                                  // Sin ninguna pestaña buena no se consolida: no hay nada
+                                  // nuevo que sumar y se ahorra releer el documento.
+                                  if (!algunaOk) {
+                                    fallos.push(`${etiqueta}: ${fallosTabs.join(' · ')}`);
+                                    continue;
+                                  }
+                                  if (fallosTabs.length > 0) {
+                                    avisos.push(...fallosTabs.map((f) => `${etiqueta} › ${f}`));
+                                  }
+
+                                  // Los campos se recalculan una sola vez, tras el último sheet.
+                                  const ultimo = i === objetivo.length - 1;
+                                  setConvSyncProgreso(
+                                    ultimo
+                                      ? `${etiqueta} · consolidando y recalculando campos…`
+                                      : `${etiqueta} · consolidando…`
+                                  );
+                                  const cierre = await syncTandaConversiones(cliente.id, {
+                                    sheetId: sheet.id,
+                                    batchId,
+                                    consolidar: true,
+                                    // Los totales los recalcula el servidor desde la base.
+                                    conservarCrudas: crudasIncompletas,
+                                    quality: calidad,
+                                    ...(ultimo ? {} : { recalcularCampos: false }),
+                                  });
+                                  if (cierre.error) {
+                                    fallos.push(`${etiqueta}: ${cierre.error}`);
+                                    continue;
+                                  }
+                                  total.diasProcesados += cierre.diasProcesados ?? 0;
+                                  if (cierre.warnings) avisos.push(...cierre.warnings);
+                                }
+
+                                if (objetivo.length > 0 && fallos.length === objetivo.length) {
+                                  return { error: fallos.join(' · ') };
+                                }
+                              } finally {
+                                setConvSyncProgreso(null);
+                              }
+
+                              return { ...total, warnings: [...fallos, ...avisos] };
+                            })
+                          }
+                          disabled={testStatus['conversionesOffline']?.loading}
+                          className="h-8 text-xs"
+                        >
+                          {testStatus['conversionesOffline']?.loading ? (
+                            <RefreshCw className="w-3 h-3 animate-spin mr-2" />
+                          ) : (
+                            <DownloadCloud className="w-3 h-3 mr-2" />
+                          )}
+                          {convSyncProgreso
+                            ? `Sincronizando ${convSyncProgreso}`
+                            : 'Sincronizar todos ahora'}
+                        </Button>
+                        {testStatus['conversionesOffline']?.success && (
+                          <span className="text-green-600 dark:text-green-500 text-xs flex items-center gap-1">
+                            <CheckCircle2 className="w-3 h-3" />{' '}
+                            {testStatus['conversionesOffline']?.message || 'Sincronizado'}
+                          </span>
+                        )}
+                        {testStatus['conversionesOffline']?.error && (
+                          <span className="text-red-500 text-xs flex items-center gap-1">
+                            <AlertCircle className="w-3 h-3" />{' '}
+                            {testStatus['conversionesOffline']?.error}
+                          </span>
+                        )}
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+
+                {/* ── Confirmación de borrado de un sheet ─────────────── */}
+                <Dialog
+                  open={!!borrarSheet}
+                  onOpenChange={(open) => {
+                    if (!open && !borrarSheet?.borrando) setBorrarSheet(null);
+                  }}
+                >
+                  <DialogContent className="sm:max-w-lg">
+                    <DialogHeader>
+                      <DialogTitle className="flex items-center gap-2">
+                        <Trash2 className="w-4 h-4 text-red-500" />
+                        Eliminar «{borrarSheet?.nombre}»
+                      </DialogTitle>
+                    </DialogHeader>
+
+                    {borrarSheet?.cargando && (
+                      <p className="text-sm text-muted-foreground flex items-center gap-2 py-4">
+                        <Loader2 className="w-4 h-4 animate-spin" /> Comprobando qué datos tiene…
+                      </p>
+                    )}
+
+                    {borrarSheet?.preview && !borrarSheet.borrando && (
+                      <div className="space-y-3 text-sm">
+                        <p className="text-foreground/90">
+                          Se borrarán{' '}
+                          <strong>{borrarSheet.preview.filas.total.toLocaleString('es')}</strong>{' '}
+                          filas y el documento saldrá de la configuración. No se puede deshacer.
+                        </p>
+                        <ul className="text-xs text-muted-foreground space-y-0.5 pl-4 list-disc">
+                          <li>
+                            {borrarSheet.preview.filas.conversiones.toLocaleString('es')}{' '}
+                            conversiones
+                          </li>
+                          <li>
+                            {borrarSheet.preview.filas.diarias.toLocaleString('es')} agregados
+                            diarios
+                          </li>
+                          <li>
+                            {borrarSheet.preview.filas.crudas.toLocaleString('es')} filas de la capa
+                            cruda
+                          </li>
+                        </ul>
+
+                        {borrarSheet.preview.campos.length > 0 && (
+                          <div className="rounded-md border border-amber-500/40 bg-amber-500/5 p-3 space-y-1.5">
+                            <p className="text-xs font-medium text-amber-600 dark:text-amber-500">
+                              Campos de Sheet que pierden este origen
+                            </p>
+                            <ul className="text-xs text-muted-foreground space-y-0.5">
+                              {borrarSheet.preview.campos.map((c) => (
+                                <li key={c.clave}>
+                                  <span className="text-foreground/80">{c.nombre}</span>
+                                  {c.quedaSinOrigen
+                                    ? ' — se queda sin ningún origen y quedará vacío'
+                                    : ' — se recalculará sin este documento'}
+                                </li>
+                              ))}
+                            </ul>
+                            <p className="text-xs text-muted-foreground/70">
+                              Los campos no se borran. Las fórmulas del dashboard que los usen
+                              seguirán resolviendo.
+                            </p>
                           </div>
                         )}
                       </div>
-                    </div>
-                  );
-                })}
-
-                {/* Sync all button */}
-                {convSheets.some((s) => s.enabled && s.sheet_url) && (
-                  <div className="pt-2 border-t border-border flex gap-2 items-center">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() =>
-                        runTest('conversionesOffline', async () => {
-                          // Persistir la config actual antes de sincronizar: el endpoint
-                          // lee los sheets desde la BD, no desde el estado del formulario.
-                          const saved = await handleSave();
-                          if (saved && !saved.success) {
-                            return {
-                              error:
-                                saved.error ||
-                                'Error al guardar la configuración antes de sincronizar',
-                            };
-                          }
-
-                          // Una PESTAÑA por petición. Un documento de decenas de miles de
-                          // filas no cabe en el tiempo de una función, así que se recorren
-                          // las pestañas con un mismo lote y se consolida al final: hasta
-                          // ese momento el dato anterior sigue intacto, y una corrida a
-                          // medias no deja al cliente sin nada. El id ausente se deriva de
-                          // la posición, igual que `normalizeSheetConfigs` en el servidor.
-                          const objetivo = convSheets
-                            .map((s, i) => ({ ...s, id: s.id || `sheet_${i}` }))
-                            .filter((s) => s.enabled && s.sheet_url);
-
-                          const total = { totalFilas: 0, diasProcesados: 0, filasDescartadas: 0 };
-                          const avisos: string[] = [];
-                          const fallos: string[] = [];
-
-                          try {
-                            for (const [i, sheet] of objetivo.entries()) {
-                              const etiqueta = sheet.name || `Sheet ${i + 1}`;
-                              const pestanas = tabsOf(sheet)
-                                .map((t, j) => ({ ...t, id: t.id || `tab_${j}` }))
-                                .filter((t) => t.enabled !== false);
-                              if (pestanas.length === 0) {
-                                fallos.push(`${etiqueta}: no tiene pestañas habilitadas`);
-                                continue;
-                              }
-
-                              const batchId = crypto.randomUUID();
-                              const calidad: unknown[] = [];
-                              let algunaOk = false;
-                              let crudasIncompletas = false;
-                              const fallosTabs: string[] = [];
-
-                              for (const [j, tab] of pestanas.entries()) {
-                                const nombreTab = tab.sheet_name || `Pestaña ${j + 1}`;
-                                setConvSyncProgreso(
-                                  `${etiqueta} · pestaña ${j + 1}/${pestanas.length} (${nombreTab})`
-                                );
-                                const res = await syncTandaConversiones(cliente.id, {
-                                  sheetId: sheet.id,
-                                  batchId,
-                                  tabId: tab.id,
-                                });
-                                if (res.error) {
-                                  fallosTabs.push(`${nombreTab}: ${res.error}`);
-                                  continue;
-                                }
-                                algunaOk = true;
-                                total.totalFilas += res.totalFilas ?? 0;
-                                total.filasDescartadas += res.filasDescartadas ?? 0;
-                                if (res.crudasIncompletas) crudasIncompletas = true;
-                                if (res.quality) calidad.push(...res.quality);
-                                if (res.warnings) avisos.push(...res.warnings);
-                              }
-
-                              // Sin ninguna pestaña buena no se consolida: no hay nada
-                              // nuevo que sumar y se ahorra releer el documento.
-                              if (!algunaOk) {
-                                fallos.push(`${etiqueta}: ${fallosTabs.join(' · ')}`);
-                                continue;
-                              }
-                              if (fallosTabs.length > 0) {
-                                avisos.push(...fallosTabs.map((f) => `${etiqueta} › ${f}`));
-                              }
-
-                              // Los campos se recalculan una sola vez, tras el último sheet.
-                              const ultimo = i === objetivo.length - 1;
-                              setConvSyncProgreso(
-                                ultimo
-                                  ? `${etiqueta} · consolidando y recalculando campos…`
-                                  : `${etiqueta} · consolidando…`
-                              );
-                              const cierre = await syncTandaConversiones(cliente.id, {
-                                sheetId: sheet.id,
-                                batchId,
-                                consolidar: true,
-                                // Los totales los recalcula el servidor desde la base.
-                                conservarCrudas: crudasIncompletas,
-                                quality: calidad,
-                                ...(ultimo ? {} : { recalcularCampos: false }),
-                              });
-                              if (cierre.error) {
-                                fallos.push(`${etiqueta}: ${cierre.error}`);
-                                continue;
-                              }
-                              total.diasProcesados += cierre.diasProcesados ?? 0;
-                              if (cierre.warnings) avisos.push(...cierre.warnings);
-                            }
-
-                            if (objetivo.length > 0 && fallos.length === objetivo.length) {
-                              return { error: fallos.join(' · ') };
-                            }
-                          } finally {
-                            setConvSyncProgreso(null);
-                          }
-
-                          return { ...total, warnings: [...fallos, ...avisos] };
-                        })
-                      }
-                      disabled={testStatus['conversionesOffline']?.loading}
-                      className="h-8 text-xs"
-                    >
-                      {testStatus['conversionesOffline']?.loading ? (
-                        <RefreshCw className="w-3 h-3 animate-spin mr-2" />
-                      ) : (
-                        <DownloadCloud className="w-3 h-3 mr-2" />
-                      )}
-                      {convSyncProgreso
-                        ? `Sincronizando ${convSyncProgreso}`
-                        : 'Sincronizar todos ahora'}
-                    </Button>
-                    {testStatus['conversionesOffline']?.success && (
-                      <span className="text-green-600 dark:text-green-500 text-xs flex items-center gap-1">
-                        <CheckCircle2 className="w-3 h-3" />{' '}
-                        {testStatus['conversionesOffline']?.message || 'Sincronizado'}
-                      </span>
                     )}
-                    {testStatus['conversionesOffline']?.error && (
-                      <span className="text-red-500 text-xs flex items-center gap-1">
-                        <AlertCircle className="w-3 h-3" />{' '}
-                        {testStatus['conversionesOffline']?.error}
-                      </span>
-                    )}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
 
-            {/* ── Confirmación de borrado de un sheet ─────────────── */}
-            <Dialog
-              open={!!borrarSheet}
-              onOpenChange={(open) => {
-                if (!open && !borrarSheet?.borrando) setBorrarSheet(null);
-              }}
-            >
-              <DialogContent className="sm:max-w-lg">
-                <DialogHeader>
-                  <DialogTitle className="flex items-center gap-2">
-                    <Trash2 className="w-4 h-4 text-red-500" />
-                    Eliminar «{borrarSheet?.nombre}»
-                  </DialogTitle>
-                </DialogHeader>
-
-                {borrarSheet?.cargando && (
-                  <p className="text-sm text-muted-foreground flex items-center gap-2 py-4">
-                    <Loader2 className="w-4 h-4 animate-spin" /> Comprobando qué datos tiene…
-                  </p>
-                )}
-
-                {borrarSheet?.preview && !borrarSheet.borrando && (
-                  <div className="space-y-3 text-sm">
-                    <p className="text-foreground/90">
-                      Se borrarán{' '}
-                      <strong>{borrarSheet.preview.filas.total.toLocaleString('es')}</strong> filas
-                      y el documento saldrá de la configuración. No se puede deshacer.
-                    </p>
-                    <ul className="text-xs text-muted-foreground space-y-0.5 pl-4 list-disc">
-                      <li>
-                        {borrarSheet.preview.filas.conversiones.toLocaleString('es')} conversiones
-                      </li>
-                      <li>
-                        {borrarSheet.preview.filas.diarias.toLocaleString('es')} agregados diarios
-                      </li>
-                      <li>
-                        {borrarSheet.preview.filas.crudas.toLocaleString('es')} filas de la capa
-                        cruda
-                      </li>
-                    </ul>
-
-                    {borrarSheet.preview.campos.length > 0 && (
-                      <div className="rounded-md border border-amber-500/40 bg-amber-500/5 p-3 space-y-1.5">
-                        <p className="text-xs font-medium text-amber-600 dark:text-amber-500">
-                          Campos de Sheet que pierden este origen
-                        </p>
-                        <ul className="text-xs text-muted-foreground space-y-0.5">
-                          {borrarSheet.preview.campos.map((c) => (
-                            <li key={c.clave}>
-                              <span className="text-foreground/80">{c.nombre}</span>
-                              {c.quedaSinOrigen
-                                ? ' — se queda sin ningún origen y quedará vacío'
-                                : ' — se recalculará sin este documento'}
-                            </li>
-                          ))}
-                        </ul>
-                        <p className="text-xs text-muted-foreground/70">
-                          Los campos no se borran. Las fórmulas del dashboard que los usen seguirán
-                          resolviendo.
-                        </p>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {borrarSheet?.borrando && (
-                  <p className="text-sm text-muted-foreground flex items-center gap-2 py-4">
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    Borrando… {borrarSheet.progreso.toLocaleString('es')} filas retiradas
-                  </p>
-                )}
-
-                {borrarSheet?.error && (
-                  <p className="text-sm text-red-500 flex items-start gap-2">
-                    <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" /> {borrarSheet.error}
-                  </p>
-                )}
-
-                <div className="flex justify-end gap-2 pt-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setBorrarSheet(null)}
-                    disabled={borrarSheet?.borrando}
-                  >
-                    Cancelar
-                  </Button>
-                  <Button
-                    size="sm"
-                    onClick={confirmarBorradoSheet}
-                    disabled={borrarSheet?.cargando || borrarSheet?.borrando}
-                    className="bg-red-600 hover:bg-red-700 text-white"
-                  >
-                    {borrarSheet?.borrando ? (
-                      <>
-                        <Loader2 className="w-3.5 h-3.5 animate-spin mr-2" /> Borrando
-                      </>
-                    ) : (
-                      'Eliminar sheet y datos'
-                    )}
-                  </Button>
-                </div>
-              </DialogContent>
-            </Dialog>
-
-            {/* ── Sheet Picker Modal ──────────────────────────────── */}
-            <Dialog
-              open={pickerOpen}
-              onOpenChange={(open) => {
-                if (!open) {
-                  setPickerOpen(false);
-                  setPickerForSheetId(null);
-                }
-              }}
-            >
-              <DialogContent className="sm:max-w-lg">
-                <DialogHeader>
-                  <DialogTitle className="flex items-center gap-2">
-                    <FileSpreadsheet className="w-4 h-4 text-emerald-500" />
-                    Seleccionar Google Sheet
-                  </DialogTitle>
-                </DialogHeader>
-
-                {/* Search */}
-                <div className="relative">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
-                  <Input
-                    placeholder="Buscar por nombre…"
-                    value={driveQuery}
-                    onChange={(e) => setDriveQuery(e.target.value)}
-                    className="pl-9 bg-background border-input"
-                  />
-                </div>
-
-                {/* List */}
-                <div className="overflow-y-auto max-h-72 space-y-0.5 -mx-1 px-1">
-                  {driveLoading && (
-                    <div className="flex items-center justify-center py-8 gap-2 text-muted-foreground text-sm">
-                      <RefreshCw className="w-4 h-4 animate-spin" /> Cargando Sheets…
-                    </div>
-                  )}
-                  {driveError && (
-                    <p className="text-sm text-red-500 flex items-center gap-2 py-4">
-                      <AlertCircle className="w-4 h-4 shrink-0" /> {driveError}
-                    </p>
-                  )}
-                  {!driveLoading && !driveError && filteredDriveSheets.length === 0 && (
-                    <p className="text-sm text-muted-foreground text-center py-6">
-                      No se encontraron Sheets.
-                    </p>
-                  )}
-                  {filteredDriveSheets.map((file) => (
-                    <button
-                      key={file.id}
-                      className="w-full text-left flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-muted/60 transition-colors"
-                      onClick={() => selectDriveSheet(file)}
-                    >
-                      <FileSpreadsheet className="w-4 h-4 text-emerald-500 shrink-0" />
-                      <div className="min-w-0">
-                        <p className="text-sm font-medium text-foreground truncate">{file.name}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {file.modifiedTime
-                            ? `Modificado: ${new Date(file.modifiedTime).toLocaleDateString('es-CO', { day: 'numeric', month: 'short', year: 'numeric' })}`
-                            : ''}
-                        </p>
-                      </div>
-                    </button>
-                  ))}
-                </div>
-
-                <p className="text-xs text-muted-foreground/60 text-center border-t border-border pt-3">
-                  O pega la URL directamente en el campo de URL del Sheet.
-                </p>
-              </DialogContent>
-            </Dialog>
-          </>
-        );
-      })()}
-
-      {/* ─── Campos de Sheet ──────────────────────────────────────────── */}
-      {/* La card de arriba define la CONEXIÓN (documento, pestañas, fecha);
-                esta define QUÉ SE MIDE. Va aparte porque un campo cruza varias
-                pestañas y puede cruzar varios documentos. */}
-      <SheetCamposSection clienteId={cliente.id} />
-
-      {/* Frontera natural: arriba está cómo se conectan los datos, abajo cómo se
-          presentan. El perfil es cómo se interpretan. Se autogestiona: no toca
-          `config` ni el botón "Guardar Todo". */}
-      <PerfilIASection clienteId={cliente.id} />
-
-      {/* ─── Filtros de Dashboard ─────────────────────────────────────── */}
-      <Card className="bg-card border-border">
-        <CardHeader>
-          <CardTitle>Filtros de Dashboard</CardTitle>
-          <CardDescription>
-            Configura botones de filtrado rápido para el Dashboard (ej. nombres de campañas o
-            proyectos).
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="meta_keywords" className="text-foreground/90">
-              Keywords de Campañas (Separadas por comas)
-            </Label>
-            <Input
-              id="meta_keywords"
-              placeholder="Psicología, Pedagogía, Diplomado"
-              value={config.meta_keywords || ''}
-              onChange={(e) => setConfig({ ...config, meta_keywords: e.target.value })}
-              className="bg-background border-input"
-            />
-            <p className="text-xs text-muted-foreground/70">
-              Estos textos aparecerán como botones de filtro rápido en la vista superior del embudo
-              de Meta Ads.
-            </p>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* ─── Plantilla de Reporte ─────────────────────────────────────── */}
-      <Card className="bg-card border-indigo-500/30">
-        <CardHeader>
-          <div className="flex items-center gap-3">
-            <div className="p-2 bg-indigo-500/10 rounded-lg">
-              <LayoutDashboard className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
-            </div>
-            <div>
-              <CardTitle className="text-foreground">Plantilla de Reporte</CardTitle>
-              <CardDescription className="text-muted-foreground mt-1">
-                Selecciona la plantilla de métricas que quieres ver en el Dashboard de este cliente.
-              </CardDescription>
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="space-y-3">
-            <Label className="text-foreground/90">Layout Activo</Label>
-            <select
-              value={selectedLayoutId}
-              onChange={async (e) => {
-                const newId = e.target.value;
-                setSelectedLayoutId(newId);
-                setLayoutSaving(true);
-                await assignLayoutToCliente(cliente.id, newId || null);
-                setLayoutSaving(false);
-              }}
-              className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground ring-offset-background focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              <option value="">— Sin plantilla (Vista clásica) —</option>
-              {layouts.map((l: any) => (
-                <option key={l.id} value={l.id}>
-                  {l.nombre}
-                </option>
-              ))}
-            </select>
-
-            {layoutSaving && (
-              <div className="flex items-center gap-2 text-xs text-indigo-600 dark:text-indigo-400">
-                <Loader2 className="w-3 h-3 animate-spin" />
-                Guardando asignación...
-              </div>
-            )}
-
-            {selectedLayoutId &&
-              (() => {
-                const activeLayout = layouts.find((l: any) => l.id === selectedLayoutId);
-                if (!activeLayout) return null;
-                return (
-                  <div className="bg-indigo-500/5 border border-indigo-500/20 rounded-lg p-4 space-y-2">
-                    <div className="flex items-center gap-2">
-                      <CheckCircle2 className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
-                      <span className="text-sm font-medium text-indigo-700 dark:text-indigo-300">
-                        {activeLayout.nombre}
-                      </span>
-                    </div>
-                    {activeLayout.descripcion && (
-                      <p className="text-xs text-muted-foreground ml-6">
-                        {activeLayout.descripcion}
+                    {borrarSheet?.borrando && (
+                      <p className="text-sm text-muted-foreground flex items-center gap-2 py-4">
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        Borrando… {borrarSheet.progreso.toLocaleString('es')} filas retiradas
                       </p>
                     )}
-                    <div className="ml-6 flex flex-wrap gap-2 mt-2">
-                      {(activeLayout.tarjetas || []).map((t: any) => (
-                        <span
-                          key={t.id}
-                          className="text-xs bg-muted text-foreground/90 px-2 py-1 rounded-md border border-border"
+
+                    {borrarSheet?.error && (
+                      <p className="text-sm text-red-500 flex items-start gap-2">
+                        <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" /> {borrarSheet.error}
+                      </p>
+                    )}
+
+                    <div className="flex justify-end gap-2 pt-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setBorrarSheet(null)}
+                        disabled={borrarSheet?.borrando}
+                      >
+                        Cancelar
+                      </Button>
+                      <Button
+                        size="sm"
+                        onClick={confirmarBorradoSheet}
+                        disabled={borrarSheet?.cargando || borrarSheet?.borrando}
+                        className="bg-red-600 hover:bg-red-700 text-white"
+                      >
+                        {borrarSheet?.borrando ? (
+                          <>
+                            <Loader2 className="w-3.5 h-3.5 animate-spin mr-2" /> Borrando
+                          </>
+                        ) : (
+                          'Eliminar sheet y datos'
+                        )}
+                      </Button>
+                    </div>
+                  </DialogContent>
+                </Dialog>
+
+                {/* ── Sheet Picker Modal ──────────────────────────────── */}
+                <Dialog
+                  open={pickerOpen}
+                  onOpenChange={(open) => {
+                    if (!open) {
+                      setPickerOpen(false);
+                      setPickerForSheetId(null);
+                    }
+                  }}
+                >
+                  <DialogContent className="sm:max-w-lg">
+                    <DialogHeader>
+                      <DialogTitle className="flex items-center gap-2">
+                        <FileSpreadsheet className="w-4 h-4 text-emerald-500" />
+                        Seleccionar Google Sheet
+                      </DialogTitle>
+                    </DialogHeader>
+
+                    {/* Search */}
+                    <div className="relative">
+                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+                      <Input
+                        placeholder="Buscar por nombre…"
+                        value={driveQuery}
+                        onChange={(e) => setDriveQuery(e.target.value)}
+                        className="pl-9 bg-background border-input"
+                      />
+                    </div>
+
+                    {/* List */}
+                    <div className="overflow-y-auto max-h-72 space-y-0.5 -mx-1 px-1">
+                      {driveLoading && (
+                        <div className="flex items-center justify-center py-8 gap-2 text-muted-foreground text-sm">
+                          <RefreshCw className="w-4 h-4 animate-spin" /> Cargando Sheets…
+                        </div>
+                      )}
+                      {driveError && (
+                        <p className="text-sm text-red-500 flex items-center gap-2 py-4">
+                          <AlertCircle className="w-4 h-4 shrink-0" /> {driveError}
+                        </p>
+                      )}
+                      {!driveLoading && !driveError && filteredDriveSheets.length === 0 && (
+                        <p className="text-sm text-muted-foreground text-center py-6">
+                          No se encontraron Sheets.
+                        </p>
+                      )}
+                      {filteredDriveSheets.map((file) => (
+                        <button
+                          key={file.id}
+                          className="w-full text-left flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-muted/60 transition-colors"
+                          onClick={() => selectDriveSheet(file)}
                         >
-                          {t.label}
-                        </span>
+                          <FileSpreadsheet className="w-4 h-4 text-emerald-500 shrink-0" />
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium text-foreground truncate">
+                              {file.name}
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              {file.modifiedTime
+                                ? `Modificado: ${new Date(file.modifiedTime).toLocaleDateString('es-CO', { day: 'numeric', month: 'short', year: 'numeric' })}`
+                                : ''}
+                            </p>
+                          </div>
+                        </button>
                       ))}
                     </div>
-                  </div>
-                );
-              })()}
 
-            {!selectedLayoutId && (
-              <p className="text-xs text-muted-foreground/70">
-                Sin plantilla activa → el Dashboard usará la vista clásica con columnas basadas en
-                APIs conectadas.
-              </p>
-            )}
-          </div>
-        </CardContent>
-        <CardFooter className="bg-muted/30 border-t border-border flex justify-between pt-6">
-          {isAdmin && (
-            <Button variant="destructive" onClick={handleDelete} className="gap-2">
-              <Trash2 className="w-4 h-4" />
-              Eliminar Cliente
-            </Button>
+                    <p className="text-xs text-muted-foreground/60 text-center border-t border-border pt-3">
+                      O pega la URL directamente en el campo de URL del Sheet.
+                    </p>
+                  </DialogContent>
+                </Dialog>
+              </>
+            );
+          })()}
+
+          {/* ─── Campos de Sheet ──────────────────────────────────────────── */}
+          {/* La card de arriba define la CONEXIÓN (documento, pestañas, fecha);
+                esta define QUÉ SE MIDE. Va aparte porque un campo cruza varias
+                pestañas y puede cruzar varios documentos. */}
+          <SheetCamposSection clienteId={cliente.id} />
+
+          {slots?.google}
+          <BarraGuardar
+            pestana="google"
+            sucia={sucias.has('google')}
+            guardando={guardandoPestana}
+            onGuardar={guardarPestana}
+          />
+        </TabsContent>
+
+        <TabsContent
+          value="hotmart"
+          forceMount
+          className="space-y-6 outline-none data-[state=inactive]:hidden"
+        >
+          {/* ─── Hotmart ──────────────────────────────────────────────────── */}
+          <Card className="bg-card border-border">
+            <CardHeader>
+              <div className="flex justify-between items-center">
+                <CardTitle>Hotmart</CardTitle>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={testHotmart}
+                  disabled={testStatus.hotmart?.loading}
+                >
+                  {testStatus.hotmart?.loading ? (
+                    <RefreshCw className="w-3 h-3 animate-spin mr-2" />
+                  ) : (
+                    <RefreshCw className="w-3 h-3 mr-2" />
+                  )}
+                  Probar Conexión
+                </Button>
+              </div>
+              <CardDescription>
+                Conecta la cuenta de Hotmart del cliente para sincronizar ventas, comisiones y
+                afiliados.
+              </CardDescription>
+              {testStatus.hotmart?.success && (
+                <p className="text-green-600 dark:text-green-500 text-xs flex items-center mt-2">
+                  <CheckCircle2 className="w-3 h-3 mr-1" /> Conexión Exitosa
+                </p>
+              )}
+              {testStatus.hotmart?.error && (
+                <p className="text-red-500 text-xs flex items-center mt-2">
+                  <AlertCircle className="w-3 h-3 mr-1" /> {testStatus.hotmart.error}
+                </p>
+              )}
+            </CardHeader>
+            <CardContent className="space-y-5">
+              {/* OAuth (HotConnect) connect + estado de conexión */}
+              <div className="flex flex-col gap-2 pb-4 border-b border-border">
+                <a href={`/api/auth/hotmart?client_id=${cliente.id}`}>
+                  <Button
+                    variant="default"
+                    size="sm"
+                    className="w-full bg-[#ef4a23] hover:bg-[#d63d18] text-white"
+                  >
+                    {config.hotmart_auth_mode === 'hotconnect'
+                      ? '🔄 Reconectar con Hotmart'
+                      : '🔗 Conectar con Hotmart'}
+                  </Button>
+                </a>
+                {(() => {
+                  if (config.hotmart_connection_status === 'expired') {
+                    return (
+                      <p className="text-red-500 text-xs flex items-center gap-1">
+                        <AlertCircle className="w-3 h-3" /> Token vencido, reconecta con Hotmart
+                      </p>
+                    );
+                  }
+                  if (
+                    config.hotmart_auth_mode === 'hotconnect' &&
+                    config.hotmart_connection_status === 'connected'
+                  ) {
+                    return (
+                      <p className="text-green-600 dark:text-green-500 text-xs flex items-center gap-1">
+                        <CheckCircle2 className="w-3 h-3" /> Conectado por HotConnect · el token se
+                        renueva automáticamente
+                      </p>
+                    );
+                  }
+                  if (config.hotmart_connection_status === 'connected') {
+                    return (
+                      <p className="text-green-600 dark:text-green-500 text-xs flex items-center gap-1">
+                        <CheckCircle2 className="w-3 h-3" /> Conectado con credenciales
+                      </p>
+                    );
+                  }
+                  return null;
+                })()}
+                {hotmartOAuthStatus?.success && (
+                  <p className="text-green-600 dark:text-green-500 text-xs flex items-center gap-1">
+                    <CheckCircle2 className="w-3 h-3" /> Cuenta de Hotmart conectada exitosamente
+                  </p>
+                )}
+                {hotmartOAuthStatus?.error && (
+                  <p className="text-red-500 text-xs flex items-center gap-1">
+                    <AlertCircle className="w-3 h-3" /> {hotmartOAuthStatus.error}
+                  </p>
+                )}
+              </div>
+
+              {/* Guía paso a paso para pegar credenciales */}
+              <div className="bg-orange-500/5 border border-orange-500/20 rounded-lg p-3">
+                <p className="text-xs text-orange-700 dark:text-orange-300/90 leading-relaxed">
+                  <strong className="text-orange-600 dark:text-orange-400">
+                    ¿Prefieres pegar credenciales?
+                  </strong>{' '}
+                  En la cuenta de Hotmart del cliente:
+                  <br />
+                  1. Entra a <strong>Herramientas → Credenciales de Desarrollador</strong>.
+                  <br />
+                  2. Crea una credencial (entorno <strong>Producción</strong>).
+                  <br />
+                  3. Copia el <strong>Client ID</strong> y <strong>Client Secret</strong> y pégalos
+                  abajo.
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="hotmart_client_id" className="text-foreground/90">
+                  Client ID
+                </Label>
+                <Input
+                  id="hotmart_client_id"
+                  value={config.hotmart_client_id || ''}
+                  onChange={(e) => setConfig({ ...config, hotmart_client_id: e.target.value })}
+                  className="bg-background border-input"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="hotmart_client_secret" className="text-foreground/90">
+                  Client Secret
+                </Label>
+                <Input
+                  id="hotmart_client_secret"
+                  type="password"
+                  value={config.hotmart_client_secret || ''}
+                  onChange={(e) => setConfig({ ...config, hotmart_client_secret: e.target.value })}
+                  className="bg-background border-input"
+                />
+              </div>
+
+              {/* Avanzado: campos manuales raramente necesarios */}
+              <div className="pt-1">
+                <button
+                  type="button"
+                  onClick={() => setShowHotmartAdvanced((v) => !v)}
+                  className="text-xs text-muted-foreground/70 hover:text-foreground/90"
+                >
+                  {showHotmartAdvanced ? '▾ Ocultar avanzado' : '▸ Opciones avanzadas'}
+                </button>
+                {showHotmartAdvanced && (
+                  <div className="space-y-4 mt-3">
+                    <div className="space-y-2">
+                      <Label htmlFor="hotmart_token" className="text-foreground/90">
+                        Access Token Temporal (opcional)
+                      </Label>
+                      <Input
+                        id="hotmart_token"
+                        type="password"
+                        value={config.hotmart_token || ''}
+                        onChange={(e) => setConfig({ ...config, hotmart_token: e.target.value })}
+                        className="bg-background border-input"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="hotmart_basic" className="text-foreground/90">
+                        Basic Auth (Base64 Client ID:Secret)
+                      </Label>
+                      <Input
+                        id="hotmart_basic"
+                        type="password"
+                        value={config.hotmart_basic || ''}
+                        onChange={(e) => setConfig({ ...config, hotmart_basic: e.target.value })}
+                        className="bg-background border-input"
+                      />
+                      <p className="text-xs text-muted-foreground/70">
+                        Se calcula automáticamente desde Client ID + Secret al guardar. Solo edítalo
+                        si tienes el token Basic directamente.
+                      </p>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="pt-4 border-t border-border">
+                <div className="bg-muted/40 border border-border/50 rounded-lg p-3">
+                  <p className="text-xs text-muted-foreground leading-relaxed">
+                    <strong className="text-foreground/90">Filtros de productos por funnel</strong>{' '}
+                    — La configuración de productos (Principal / Order Bump / Upsell) y URLs de
+                    página se hace <strong>por pestaña</strong> desde el dashboard del cliente. Cada
+                    pestaña representa un funnel independiente con sus propias métricas.
+                  </p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          {slots?.hotmart}
+          <BarraGuardar
+            pestana="hotmart"
+            sucia={sucias.has('hotmart')}
+            guardando={guardandoPestana}
+            onGuardar={guardarPestana}
+          />
+        </TabsContent>
+
+        <TabsContent
+          value="tiktok"
+          forceMount
+          className="space-y-6 outline-none data-[state=inactive]:hidden"
+        >
+          {/* ─── TikTok ───────────────────────────────────────────────────── */}
+          <Card className="bg-card border-border">
+            <CardHeader>
+              <CardTitle>TikTok Ads</CardTitle>
+              <CardDescription>
+                Conecta una o más cuentas publicitarias de TikTok Ads. Los datos de todas las
+                cuentas se consolidan en el reporte y pueden filtrarse por cuenta en el layout.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {/* Shared token */}
+              <div className="space-y-2">
+                <Label className="text-foreground/90">Access Token Compartido</Label>
+                <Input
+                  type="password"
+                  placeholder="Tu TikTok Marketing API Access Token"
+                  value={config.tiktok_access_token || ''}
+                  onChange={(e) => setConfig({ ...config, tiktok_access_token: e.target.value })}
+                  className="bg-background border-input"
+                />
+                <p className="text-xs text-muted-foreground/70">
+                  Token OAuth o token manual. Las cuentas sin token propio usarán este.
+                </p>
+              </div>
+
+              {/* OAuth button */}
+              <div className="flex flex-col gap-2">
+                <a href={`/api/auth/tiktok?client_id=${cliente.id}`}>
+                  <Button
+                    variant="default"
+                    size="sm"
+                    className="w-full bg-[#ff2d55] hover:bg-[#e0003a] text-white"
+                  >
+                    {config.tiktok_access_token
+                      ? '🔄 Reconectar con TikTok Ads'
+                      : '🔗 Conectar con TikTok Ads'}
+                  </Button>
+                </a>
+                {tiktokOAuthStatus?.success && (
+                  <p className="text-green-600 dark:text-green-500 text-xs flex items-center gap-1">
+                    <CheckCircle2 className="w-3 h-3" /> Cuenta TikTok conectada exitosamente
+                  </p>
+                )}
+                {tiktokOAuthStatus?.error && (
+                  <p className="text-red-500 text-xs flex items-center gap-1">
+                    <AlertCircle className="w-3 h-3" /> {tiktokOAuthStatus.error}
+                  </p>
+                )}
+                {testStatus.tiktok?.success && (
+                  <p className="text-green-600 dark:text-green-500 text-xs flex items-center gap-1">
+                    <CheckCircle2 className="w-3 h-3" /> Conexión Exitosa
+                  </p>
+                )}
+                {testStatus.tiktok?.error && (
+                  <p className="text-red-500 text-xs flex items-center gap-1">
+                    <AlertCircle className="w-3 h-3" /> {testStatus.tiktok.error}
+                  </p>
+                )}
+              </div>
+
+              {/* Multi-account list */}
+              <div className="space-y-3 pt-2 border-t border-border">
+                <div className="flex items-center justify-between">
+                  <Label className="text-foreground/90">Cuentas Publicitarias TikTok</Label>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={openTikTokAccountPicker}
+                      disabled={loadingTiktokAccounts || !config.tiktok_access_token}
+                      className="h-7 text-xs"
+                    >
+                      {loadingTiktokAccounts ? (
+                        <RefreshCw className="w-3 h-3 mr-1 animate-spin" />
+                      ) : (
+                        <DownloadCloud className="w-3 h-3 mr-1" />
+                      )}{' '}
+                      Elegir cuentas
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={addTikTokAccount}
+                      className="h-7 text-xs"
+                    >
+                      <Plus className="w-3 h-3 mr-1" /> Agregar Cuenta
+                    </Button>
+                  </div>
+                </div>
+
+                {/* Selector de cuentas disponibles desde el token */}
+                {availableTiktokAccounts && (
+                  <div className="bg-muted/40 border border-indigo-500/30 rounded-lg p-4 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <p className="text-sm text-foreground font-medium">
+                        Cuentas disponibles en tu TikTok
+                      </p>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setAvailableTiktokAccounts(null)}
+                        className="h-6 text-xs text-muted-foreground/70 hover:text-foreground/90"
+                      >
+                        Cancelar
+                      </Button>
+                    </div>
+                    {tiktokPickerError && (
+                      <p className="text-red-500 text-xs flex items-center gap-1">
+                        <AlertCircle className="w-3 h-3" /> {tiktokPickerError}
+                      </p>
+                    )}
+                    {availableTiktokAccounts.length === 0 && !tiktokPickerError && (
+                      <p className="text-xs text-muted-foreground/70">
+                        No se encontraron cuentas publicitarias para este token.
+                      </p>
+                    )}
+                    <div className="space-y-1 max-h-64 overflow-y-auto">
+                      {availableTiktokAccounts.map((a) => {
+                        const alreadyAdded = tiktokAccounts.some(
+                          (t) => t.advertiser_id === a.advertiser_id
+                        );
+                        return (
+                          <label
+                            key={a.advertiser_id}
+                            className={`flex items-center gap-3 p-2 rounded-md ${alreadyAdded ? 'opacity-50' : 'hover:bg-accent cursor-pointer'}`}
+                          >
+                            <input
+                              type="checkbox"
+                              disabled={alreadyAdded}
+                              checked={alreadyAdded || selectedTiktokIds.has(a.advertiser_id)}
+                              onChange={() => toggleTiktokSelection(a.advertiser_id)}
+                              className="rounded border-input bg-background text-indigo-500 focus:ring-indigo-500"
+                            />
+                            <span className="text-sm text-foreground flex-1">{a.name}</span>
+                            <span className="text-xs text-muted-foreground/70 font-mono">
+                              {a.advertiser_id}
+                            </span>
+                            {alreadyAdded && (
+                              <span className="text-xs text-green-500">ya agregada</span>
+                            )}
+                          </label>
+                        );
+                      })}
+                    </div>
+                    {availableTiktokAccounts.length > 0 && (
+                      <div className="flex justify-end">
+                        <Button
+                          size="sm"
+                          onClick={addSelectedTikTokAccounts}
+                          disabled={selectedTiktokIds.size === 0}
+                          className="h-8 text-xs bg-indigo-600 hover:bg-indigo-700"
+                        >
+                          <Plus className="w-3 h-3 mr-1" /> Agregar{' '}
+                          {selectedTiktokIds.size > 0 ? `(${selectedTiktokIds.size})` : ''}
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {tiktokAccounts.length === 0 && (
+                  <p className="text-xs text-muted-foreground/70 py-3 text-center border border-dashed border-border rounded-lg">
+                    Sin cuentas configuradas. Conéctate via OAuth o agrega manualmente.
+                  </p>
+                )}
+
+                {tiktokAccounts.map((acct, idx) => (
+                  <TikTokAccountRow
+                    key={acct.id}
+                    account={acct}
+                    sharedToken={config.tiktok_access_token || ''}
+                    testStatus={testStatus[`tiktok_${acct.id}`]}
+                    onChange={(updated) => updateTikTokAccount(idx, updated)}
+                    onRemove={() => removeTikTokAccount(idx)}
+                    onTest={() =>
+                      runTest(`tiktok_${acct.id}`, () =>
+                        testTikTokConnection(
+                          acct.access_token || config.tiktok_access_token,
+                          acct.advertiser_id
+                        )
+                      )
+                    }
+                  />
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+
+          {slots?.tiktok}
+          <BarraGuardar
+            pestana="tiktok"
+            sucia={sucias.has('tiktok')}
+            guardando={guardandoPestana}
+            onGuardar={guardarPestana}
+          />
+        </TabsContent>
+
+        <TabsContent
+          value="crm"
+          forceMount
+          className="space-y-6 outline-none data-[state=inactive]:hidden"
+        >
+          {slots?.crm ?? (
+            <p className="text-sm text-muted-foreground">
+              Las conexiones de captación se preparan al abrir la ficha. Recarga la página si no
+              aparecen.
+            </p>
           )}
-          {!isAdmin && <div />}
-          <Button onClick={handleSave} disabled={loading} className="gap-2">
-            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-            Guardar Todo
-          </Button>
-        </CardFooter>
-      </Card>
+        </TabsContent>
+      </Tabs>
+
+      {/* Cambiar de pestaña con algo a medias no lo tira sin avisar. */}
+      <Dialog open={pendiente !== null} onOpenChange={(abierto) => !abierto && setPendiente(null)}>
+        <DialogContent className="sm:max-w-[425px] bg-card border-border text-foreground">
+          <DialogHeader>
+            <DialogTitle>Cambios sin guardar</DialogTitle>
+            <DialogDescription>
+              Tienes cambios sin guardar en «{ETIQUETA_PESTANA[pestana]}». Si sales ahora se
+              perderán.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button variant="outline" onClick={() => setPendiente(null)}>
+              Cancelar
+            </Button>
+            <Button
+              variant="ghost"
+              onClick={() => {
+                descartarPestana(pestana);
+                if (pendiente) irA(pendiente);
+              }}
+            >
+              Descartar
+            </Button>
+            <Button
+              disabled={guardandoPestana !== null}
+              onClick={async () => {
+                const destino = pendiente;
+                const res = await guardarPestana(pestana);
+                if (res.success && destino) irA(destino);
+                else setPendiente(null);
+              }}
+              className="gap-2"
+            >
+              {guardandoPestana ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Save className="w-4 h-4" />
+              )}
+              Guardar y continuar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

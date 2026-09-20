@@ -45,7 +45,7 @@ sus valores agrupados y en el orden correcto.
 
 ## Configuración
 
-Todo ocurre en la **ficha del cliente** (`/report-utm/clientes/[id]`), card
+Todo ocurre en la **ficha del cliente** (`/admin/settings/[id]`), card
 **"Campos de lead"**.
 
 ### 1. Nuevo campo

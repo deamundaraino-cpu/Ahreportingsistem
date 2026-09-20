@@ -45,7 +45,7 @@ export default async function InformesPage(props: {
           </p>
         </div>
         <Link
-          href="/report-utm/informes/nuevo"
+          href="/informes/nuevo"
           className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium text-white nav-active-emerald shadow-sm"
         >
           <PlusCircle className="h-4 w-4" />

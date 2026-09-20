@@ -15,15 +15,77 @@ import {
   Menu,
   X,
   Shield,
-  FileText,
   Sliders,
-  ArrowLeftRight,
+  UserCheck,
+  ShoppingBag,
+  PieChart,
+  Link2,
+  Activity,
   Bell,
   Map,
   Bot,
 } from 'lucide-react';
 
-const REPORT_UTM_ENABLED = process.env.NEXT_PUBLIC_REPORT_UTM_ENABLED === 'true';
+type NavItem = {
+  name: string;
+  href: string;
+  icon: typeof LayoutDashboard;
+};
+
+/**
+ * Un grupo del menú. Antes cada sección repetía el mismo enlace de 25 líneas;
+ * al unificar los dos sidebars en uno solo habría hecho falta una tercera copia,
+ * así que el patrón que ya usaba el sidebar de Report-UTM se queda como el único.
+ */
+function NavSection({
+  title,
+  items,
+  accent,
+  pathname,
+  onNavigate,
+}: {
+  title: string;
+  items: NavItem[];
+  accent: string;
+  pathname: string | null;
+  onNavigate: () => void;
+}) {
+  if (items.length === 0) return null;
+  return (
+    <div>
+      <p className="px-3 text-[10px] font-semibold text-muted-foreground/70 uppercase tracking-widest mb-2">
+        {title}
+      </p>
+      <div className="space-y-0.5">
+        {items.map((item) => {
+          const active = pathname?.startsWith(item.href);
+          return (
+            <Link
+              key={item.name}
+              href={item.href}
+              onClick={onNavigate}
+              className={`
+                group flex items-center px-3 py-2.5 text-sm font-medium rounded-lg
+                transition-all duration-200 cursor-pointer
+                ${active ? `text-white ${accent}` : 'text-muted-foreground hover:text-foreground hover:bg-accent'}
+              `}
+            >
+              <item.icon
+                className={`
+                  mr-3 flex-shrink-0 h-4.5 w-4.5 transition-transform duration-200
+                  group-hover:scale-110
+                  ${active ? 'text-white' : 'text-muted-foreground/80 group-hover:text-foreground'}
+                `}
+              />
+              <span className="flex-1">{item.name}</span>
+              {active && <div className="w-1.5 h-1.5 rounded-full bg-white/70 animate-pulse" />}
+            </Link>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
 
 export function AppSidebar({
   initialRole = 'viewer',
@@ -102,17 +164,27 @@ export function AppSidebar({
     { name: 'Notificaciones', href: '/notificaciones', icon: Bell },
   ];
 
+  // Lo que antes era el workspace Report-UTM: dejó de ser un sitio aparte al
+  // que "ir" y pasó a ser una sección más del reporting. Un trafficker las
+  // necesita para su trabajo diario, igual que el agente.
+  const analisisNavigation = [
+    { name: 'Leads', href: '/leads', icon: UserCheck, show: puedeUsarAgente },
+    { name: 'Ventas', href: '/ventas', icon: ShoppingBag, show: puedeUsarAgente },
+    { name: 'Informes', href: '/informes', icon: PieChart, show: puedeUsarAgente },
+    { name: 'Cruce de Campañas', href: '/cruce-campanas', icon: Link2, show: puedeUsarAgente },
+  ].filter((item) => item.show);
+
   const settingsNavigation = [
     { name: 'Agente', href: '/admin/agente', icon: Bot, show: puedeUsarAgente },
     { name: 'Ajustes de Sistema', href: '/admin/settings', icon: Settings, show: true },
     { name: 'Constructor de Layouts', href: '/admin/layouts', icon: Users, show: true },
-    { name: 'Reportes Mensuales', href: '/admin/reports', icon: FileText, show: hasAdminAccess },
     {
       name: 'Configuración y Alertas',
       href: '/admin/configuracion',
       icon: Sliders,
       show: hasAdminAccess,
     },
+    { name: 'Salud de Fuentes', href: '/admin/salud', icon: Activity, show: hasAdminAccess },
   ].filter((item) => item.show);
 
   const isActive = (path: string) => pathname?.startsWith(path);
@@ -180,102 +252,29 @@ export function AppSidebar({
           </div>
         </div>
 
-        {/* Workspace switcher (todos los roles + flag local) */}
-        {REPORT_UTM_ENABLED && (
-          <Link
-            href="/report-utm"
-            className="mx-3 mt-3 flex items-center gap-2 px-3 py-2 text-xs font-medium rounded-lg
-                                   text-emerald-600 dark:text-emerald-400
-                                   border border-dashed border-emerald-300 dark:border-emerald-500/30
-                                   hover:bg-emerald-50 dark:hover:bg-emerald-500/10
-                                   transition-colors"
-          >
-            <ArrowLeftRight className="h-3.5 w-3.5" />
-            Ir a Report-UTM
-          </Link>
-        )}
-
         {/* Navigation */}
         <nav className="flex-1 space-y-6 px-3 py-6 overflow-y-auto custom-scrollbar">
-          {/* Dashboard section */}
-          <div>
-            <p className="px-3 text-[10px] font-semibold text-muted-foreground/70 uppercase tracking-widest mb-2">
-              Dashboard
-            </p>
-            <div className="space-y-0.5">
-              {navigation.map((item) => {
-                const active = isActive(item.href);
-                return (
-                  <Link
-                    key={item.name}
-                    href={item.href}
-                    onClick={() => setIsOpen(false)}
-                    className={`
-                                            group flex items-center px-3 py-2.5 text-sm font-medium rounded-lg
-                                            transition-all duration-200 cursor-pointer
-                                            ${
-                                              active
-                                                ? 'text-white nav-active-red'
-                                                : 'text-muted-foreground hover:text-foreground hover:bg-accent'
-                                            }
-                                        `}
-                  >
-                    <item.icon
-                      className={`
-                                                mr-3 flex-shrink-0 h-4.5 w-4.5 transition-transform duration-200
-                                                group-hover:scale-110
-                                                ${active ? 'text-white' : 'text-muted-foreground/80 group-hover:text-foreground'}
-                                            `}
-                    />
-                    <span className="flex-1">{item.name}</span>
-                    {active && (
-                      <div className="w-1.5 h-1.5 rounded-full bg-white/70 animate-pulse" />
-                    )}
-                  </Link>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Settings section */}
-          <div>
-            <p className="px-3 text-[10px] font-semibold text-muted-foreground/70 uppercase tracking-widest mb-2">
-              Configuración
-            </p>
-            <div className="space-y-0.5">
-              {settingsNavigation.map((item) => {
-                const active = isActive(item.href);
-                return (
-                  <Link
-                    key={item.name}
-                    href={item.href}
-                    onClick={() => setIsOpen(false)}
-                    className={`
-                                            group flex items-center px-3 py-2.5 text-sm font-medium rounded-lg
-                                            transition-all duration-200 cursor-pointer
-                                            ${
-                                              active
-                                                ? 'text-white nav-active-blue'
-                                                : 'text-muted-foreground hover:text-foreground hover:bg-accent'
-                                            }
-                                        `}
-                  >
-                    <item.icon
-                      className={`
-                                                mr-3 flex-shrink-0 h-4.5 w-4.5 transition-transform duration-200
-                                                group-hover:rotate-6
-                                                ${active ? 'text-white' : 'text-muted-foreground/80 group-hover:text-foreground'}
-                                            `}
-                    />
-                    <span className="flex-1">{item.name}</span>
-                    {active && (
-                      <div className="w-1.5 h-1.5 rounded-full bg-white/70 animate-pulse" />
-                    )}
-                  </Link>
-                );
-              })}
-            </div>
-          </div>
+          <NavSection
+            title="Dashboard"
+            items={navigation}
+            accent="nav-active-red"
+            pathname={pathname}
+            onNavigate={() => setIsOpen(false)}
+          />
+          <NavSection
+            title="Análisis"
+            items={analisisNavigation}
+            accent="nav-active-blue"
+            pathname={pathname}
+            onNavigate={() => setIsOpen(false)}
+          />
+          <NavSection
+            title="Configuración"
+            items={settingsNavigation}
+            accent="nav-active-blue"
+            pathname={pathname}
+            onNavigate={() => setIsOpen(false)}
+          />
         </nav>
 
         {/* Roadmap — fixed button */}

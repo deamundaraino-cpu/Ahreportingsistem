@@ -5,10 +5,7 @@ import { Filter, Check, Eye, Play, AlertTriangle, Loader2 } from 'lucide-react';
 import type { ReglaExclusion } from '@/lib/report-utm/lead-exclusion';
 import { MOTIVOS_EXCLUSION } from '@/lib/report-utm/lead-exclusion';
 import type { ResultadoReclasificacion } from '@/lib/report-utm/lead-exclusion-db';
-import {
-  guardarReglaExclusionAction,
-  reclasificarLeadsAction,
-} from '@/app/(report-utm)/report-utm/leads/_actions';
+import { guardarReglaExclusionAction, reclasificarLeadsAction } from '@/app/(app)/leads/_actions';
 
 function aLista(texto: string): string[] {
   return texto
@@ -83,11 +80,11 @@ export function FiltroAtribucionCard({
     : 0;
 
   return (
-    <div className="rounded-2xl border border-border bg-card p-6 space-y-4">
+    <div className="rounded-xl border border-border bg-card shadow-sm p-6 space-y-4">
       <div className="flex items-start justify-between gap-4">
         <div>
           <div className="flex items-center gap-2">
-            <Filter className="h-4 w-4 text-emerald-500" />
+            <Filter className="h-4 w-4 text-blue-500" />
             <h2 className="text-sm font-semibold text-foreground">Qué leads cuentan</h2>
           </div>
           <p className="text-xs text-muted-foreground mt-1 max-w-2xl">
@@ -100,7 +97,7 @@ export function FiltroAtribucionCard({
             type="checkbox"
             checked={activa}
             onChange={(e) => setActiva(e.target.checked)}
-            className="accent-emerald-500"
+            className="accent-blue-500"
           />
           Regla activa
         </label>
@@ -120,7 +117,7 @@ export function FiltroAtribucionCard({
             type="checkbox"
             checked={exigir}
             onChange={(e) => setExigir(e.target.checked)}
-            className="accent-emerald-500 mt-0.5"
+            className="accent-blue-500 mt-0.5"
             disabled={!activa}
           />
           <span>
@@ -186,7 +183,7 @@ export function FiltroAtribucionCard({
             <Play className="h-3 w-3" /> Aplicar al histórico
           </button>
         )}
-        {guardado && <span className="text-[11px] text-emerald-600">Regla guardada.</span>}
+        {guardado && <span className="text-[11px] text-blue-600">Regla guardada.</span>}
       </div>
 
       {resultado && (

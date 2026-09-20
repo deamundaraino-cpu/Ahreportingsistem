@@ -104,7 +104,7 @@ export async function updateUserRole(targetUserId: string, newRole: string) {
 
   if (error) return { error: error.message };
 
-  revalidatePath('/admin/users');
+  revalidatePath('/admin/configuracion');
   return { success: true };
 }
 
@@ -156,7 +156,7 @@ export async function deleteUser(userId: string) {
   if (authError) return { error: authError.message };
   await adminSupabase.from('user_profiles').delete().eq('id', userId);
 
-  revalidatePath('/admin/users');
+  revalidatePath('/admin/configuracion');
   return { success: true };
 }
 
@@ -190,7 +190,7 @@ export async function reasignarDuenoClientes(deUserId: string, aUserId: string) 
     .select('id');
   if (error) return { error: error.message };
 
-  revalidatePath('/admin/users');
+  revalidatePath('/admin/configuracion');
   revalidatePath('/admin/settings');
   return { success: true, reasignados: data?.length ?? 0 };
 }
@@ -228,7 +228,7 @@ export async function setClientAssignments(targetUserId: string, clientIds: stri
   await adminSupabase.from('user_client_assignments').delete().eq('user_id', targetUserId);
 
   if (clientIds.length === 0) {
-    revalidatePath('/admin/users');
+    revalidatePath('/admin/configuracion');
     return { success: true };
   }
 
@@ -248,7 +248,7 @@ export async function setClientAssignments(targetUserId: string, clientIds: stri
     after(() => notifyNewAssignments(adminSupabase, targetUserId, addedIds));
   }
 
-  revalidatePath('/admin/users');
+  revalidatePath('/admin/configuracion');
   return { success: true };
 }
 
@@ -348,7 +348,7 @@ export async function createUser(input: {
     }
   }
 
-  revalidatePath('/admin/users');
+  revalidatePath('/admin/configuracion');
   return {
     success: true,
     user: {

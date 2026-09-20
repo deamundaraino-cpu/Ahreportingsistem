@@ -3,7 +3,7 @@
 import { useState, useTransition } from 'react';
 import { Palette, Upload, Check, Trash2 } from 'lucide-react';
 import { createClient } from '@/utils/supabase/client';
-import { updateClienteBrandingAction } from '@/app/(report-utm)/report-utm/clientes/_actions';
+import { updateClienteBrandingAction } from '@/app/(app)/admin/settings/[id]/_actions-branding-utm';
 
 const ACCENT_OPTIONS = [
   '#3b82f6',
@@ -74,10 +74,10 @@ export function BiClienteBrandingCard({
   }
 
   return (
-    <div className="rounded-2xl border border-border bg-card p-5">
+    <div className="rounded-xl border border-border bg-card shadow-sm p-5">
       <div className="flex items-start gap-3 mb-4">
-        <div className="h-10 w-10 rounded-lg flex items-center justify-center bg-violet-50 dark:bg-violet-500/10">
-          <Palette className="h-5 w-5 text-violet-600 dark:text-violet-400" />
+        <div className="h-10 w-10 rounded-lg flex items-center justify-center bg-blue-50 dark:bg-blue-500/10">
+          <Palette className="h-5 w-5 text-blue-600 dark:text-blue-400" />
         </div>
         <div>
           <h3 className="text-sm font-semibold text-foreground">Branding para informes</h3>
@@ -128,7 +128,7 @@ export function BiClienteBrandingCard({
           value={logoUrl}
           onChange={(e) => setLogoUrl(e.target.value)}
           placeholder="…o pega la URL del logo"
-          className="mt-2 w-full px-3 py-2 text-xs rounded-lg bg-muted border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
+          className="mt-2 w-full px-3 py-2 text-xs rounded-lg bg-muted border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-blue-500/40"
         />
       </div>
 

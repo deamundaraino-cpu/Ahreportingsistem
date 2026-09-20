@@ -141,10 +141,10 @@ export default async function DashboardHomePage() {
         <h2 className="text-lg font-semibold text-foreground">Acceso Rápido</h2>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <QuickLink
-            href="/report-utm"
+            href="/informes"
             icon={<TrendingUp className="h-5 w-5" />}
-            title="Report UTM"
-            description="Atribución por UTMs y ventas"
+            title="Informes"
+            description="Informes BI por cliente"
             color="blue"
           />
           <QuickLink
@@ -162,10 +162,10 @@ export default async function DashboardHomePage() {
             color="amber"
           />
           <QuickLink
-            href="/admin/reports"
+            href="/leads"
             icon={<BarChart3 className="h-5 w-5" />}
-            title="Reportes"
-            description="Reportes mensuales por cliente"
+            title="Leads"
+            description="Leads, exclusiones y atribución"
             color="emerald"
           />
         </div>

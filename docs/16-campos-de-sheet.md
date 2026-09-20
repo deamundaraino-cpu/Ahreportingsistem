@@ -181,7 +181,7 @@ No requiere recálculo: se evalúa sobre el desglose que el campo ya dejó guard
 
 ## Parte 5 · Usarlo
 
-### En un informe del BI (`/report-utm/informes`)
+### En un informe del BI (`/informes`)
 
 | Quiero…                           | Widget            | Configuración                         |
 | --------------------------------- | ----------------- | ------------------------------------- |

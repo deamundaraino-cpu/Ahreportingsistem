@@ -1,6 +1,6 @@
 // Salud de las fuentes de datos de todos los clientes.
 //
-// Alimenta /report-utm/salud. Es la respuesta al problema que dejó tres fallos
+// Alimenta /admin/salud. Es la respuesta al problema que dejó tres fallos
 // vivos durante semanas: un informe con una fuente muerta no se ve roto, se ve
 // vacío, así que nadie lo reporta.
 

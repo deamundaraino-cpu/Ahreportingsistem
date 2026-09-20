@@ -202,7 +202,7 @@ export function InformesBrowser({
               Crea tu primer informe o usa una plantilla del sistema.
             </p>
             <Link
-              href="/report-utm/informes/nuevo"
+              href="/informes/nuevo"
               className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium text-white nav-active-emerald"
             >
               <PlusCircle className="h-3.5 w-3.5" />
@@ -299,7 +299,7 @@ function ReportCard({
     <div className="relative group">
       {showActions && <ReportActions report={report} className="absolute top-3 right-3 z-10" />}
       <Link
-        href={`/report-utm/informes/${report.id}`}
+        href={`/informes/${report.id}`}
         className="rounded-2xl border border-border bg-card p-5 hover:border-emerald-500/40 hover:shadow-sm transition-all duration-200 flex flex-col gap-3"
       >
         <div className="flex items-start justify-between gap-2">
