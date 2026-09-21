@@ -57,6 +57,8 @@ Snippet (`public/report-utm-pixel.js`) que el cliente embebe en su sitio. Envía
 
 El snippet lo instala el plugin de WordPress (`wordpress-plugin/report-utm/`); la pantalla que lo mostraba se retiró.
 
+El plugin empaquetado vive en `public/report-utm.zip` —lo regenera `wordpress-plugin/build.ps1`, que escribe ahí directamente— y se descarga desde la tarjeta **Pixel S2S** de la ficha del cliente, junto al slug y la URL base que hay que pegar en WordPress. No está en `isPublicPath`, así que la descarga exige sesión: un anónimo que pida `/report-utm.zip` termina en `/login`.
+
 ### 2. Webhook de ventas (Hotmart)
 
 `POST /api/report-utm/webhooks/hotmart/[clienteId]`:

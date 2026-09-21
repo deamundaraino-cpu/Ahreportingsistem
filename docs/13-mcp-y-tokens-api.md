@@ -65,7 +65,7 @@ Endpoint: `GET|POST /api/mcp` (`src/app/api/mcp/route.ts`). JSON-RPC 2.0.
   ```
 - `POST /api/mcp` — `initialize`, `ping` y `notifications/initialized` son abiertos; `tools/list` y `tools/call` exigen token.
 
-Códigos de error: `-32001` token o permisos, `-32601` método desconocido, `-32602` falta el nombre de la herramienta, `-32603` error al ejecutarla.
+Códigos de error: `-32001` token o permisos, `-32600` el cuerpo no declara `"jsonrpc": "2.0"`, `-32601` método desconocido, `-32602` falta el nombre de la herramienta, `-32603` error al ejecutarla.
 
 ### El catálogo sale del registro
 

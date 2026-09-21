@@ -85,8 +85,9 @@ export type ReportUtmLeadEvent = {
   ip_address: string | null;
   ip_country: string | null;
   user_agent: string | null;
-  first_touch: Record<string, unknown> | null;
-  last_touch: Record<string, unknown> | null;
+  // Sin `first_touch`/`last_touch`: eran una copia JSONB de las columnas `utm_*`
+  // de esta misma fila (medido: `campaign` coincidía en 89.486 de 89.489) y
+  // pesaban 39 MB, el 27 % de los datos de la tabla. Eliminadas en la 084.
   attribution_method: string | null;
   attribution_resolved_at: string | null;
   custom_data: Record<string, unknown> | null;

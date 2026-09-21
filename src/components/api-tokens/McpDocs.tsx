@@ -838,9 +838,9 @@ export function McpDocs({ appUrl, onIrATokens }: { appUrl: string; onIrATokens: 
           ))}
         </div>
         <p className="text-muted-foreground">
-          Códigos de error: <C>-32001</C> token inválido o permisos insuficientes, <C>-32601</C>{' '}
-          método desconocido, <C>-32602</C> falta el nombre de la herramienta, <C>-32603</C> error
-          al ejecutarla.
+          Códigos de error: <C>-32001</C> token inválido o permisos insuficientes, <C>-32600</C> el
+          cuerpo no declara <C>{String.raw`"jsonrpc": "2.0"`}</C>, <C>-32601</C> método desconocido,{' '}
+          <C>-32602</C> falta el nombre de la herramienta, <C>-32603</C> error al ejecutarla.
         </p>
         <Aviso>
           <p>

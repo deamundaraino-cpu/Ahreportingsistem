@@ -518,22 +518,7 @@ function buildLeadRow(
     lead.created_time && !Number.isNaN(new Date(lead.created_time).getTime())
       ? new Date(lead.created_time).toISOString()
       : undefined;
-  const ts = createdAt ?? new Date().toISOString();
-
   const hasSignal = Boolean(utm.utm_source || utm.utm_campaign);
-  const touch = hasSignal
-    ? {
-        source: utm.utm_source,
-        medium: utm.utm_medium,
-        campaign: utm.utm_campaign,
-        content: utm.utm_content,
-        term: utm.utm_term,
-        click_id: null,
-        referrer: null,
-        page_url: null,
-        ts,
-      }
-    : null;
 
   const row: Record<string, unknown> = {
     cliente_id: clienteId,
@@ -557,10 +542,6 @@ function buildLeadRow(
     click_id: utm.click_id,
     raw_fields,
     source: 'meta_lead_ads',
-    // `last_touch` va a NULL: aquí ambos touches son el mismo objeto y la copia
-    // duplicaba el campo más pesado de la fila. Quien lea usa `?? first_touch`.
-    first_touch: touch,
-    last_touch: null,
     attribution_method: hasSignal ? 'utm_only' : 'none',
     attribution_resolved_at: new Date().toISOString(),
   };

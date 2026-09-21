@@ -29,6 +29,8 @@ export interface DatosUtm {
   outbound: unknown[];
   metaConnected: boolean;
   webhookOrigin: string;
+  /** Slug del cliente en report_utm: es lo que se pega en el plugin de WordPress. */
+  slug: string | null;
   moneda: MonedaReporte;
   ultimasTasas: Partial<Record<MonedaReporte, TasaGuardada>>;
   reglaExclusion: ReglaExclusion;
@@ -77,7 +79,7 @@ export const cargarDatosUtm = cache(
       ultimasTasas,
       migracionExclusion,
     ] = await Promise.all([
-      supabase.from('clientes').select('config').eq('id', rtmClienteId).maybeSingle(),
+      supabase.from('clientes').select('slug, config').eq('id', rtmClienteId).maybeSingle(),
       supabase
         .from('integrations')
         .select('*')
@@ -139,6 +141,7 @@ export const cargarDatosUtm = cache(
       outbound: outbound ?? [],
       metaConnected,
       webhookOrigin: `${proto}://${host}`,
+      slug: (cliente as { slug?: string } | null)?.slug ?? null,
       moneda,
       ultimasTasas,
       reglaExclusion: leerRegla(config),

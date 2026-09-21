@@ -94,6 +94,7 @@ import {
 import type { LeadCampoDef, LeadSegmentoDef, LeadSegmentoMeta } from './lead-campos';
 import {
   sinValores,
+  errorDeConsulta,
   VACIO_HONESTO,
   plegarConteos,
   ordenarPorFrecuencia,
@@ -3365,7 +3366,7 @@ async function calcularValores(params: ParamsValores): Promise<ResultadoValores>
         p_hasta: dateTo,
         p_limite: limite,
       });
-      if (error) return sinValores('error_consulta');
+      if (error) return errorDeConsulta('hotmart_valores_conteo', error);
       return desdeFilasRpc(data, limite, filtrarPorBusqueda);
     }
 
@@ -3394,7 +3395,7 @@ async function calcularValores(params: ParamsValores): Promise<ResultadoValores>
         p_claves_json: campo.claves_origen,
         p_limite: 500,
       });
-      if (error) return sinValores('error_consulta');
+      if (error) return errorDeConsulta('bi_valores_conteo (campo de lead)', error);
 
       const crudos = (data ?? []) as Array<{ valor: string; n: number }>;
       const plegado = plegarConteos(
@@ -3426,7 +3427,7 @@ async function calcularValores(params: ParamsValores): Promise<ResultadoValores>
         .eq('campo_id', campo.id)
         .gte('fecha', dateFrom)
         .lte('fecha', dateTo);
-      if (error) return sinValores('error_consulta');
+      if (error) return errorDeConsulta('sheet_campo_valores_diarios', error);
 
       const porValor = new Map<string, number>();
       for (const r of (data ?? []) as Record<string, unknown>[]) {
@@ -3454,7 +3455,7 @@ async function calcularValores(params: ParamsValores): Promise<ResultadoValores>
         p_claves_json: [fieldKey],
         p_limite: limite,
       });
-      if (error) return sinValores('error_consulta');
+      if (error) return errorDeConsulta('bi_valores_conteo (campo de formulario)', error);
       return desdeFilasRpc(data, limite, filtrarPorBusqueda);
     }
 
@@ -3479,7 +3480,7 @@ async function calcularValores(params: ParamsValores): Promise<ResultadoValores>
         p_hasta: bounds.lt,
         p_limite: 5000,
       });
-      if (error) return sinValores('error_consulta');
+      if (error) return errorDeConsulta('bi_valores_utm (dimensión unificada)', error);
 
       const porEtiqueta = new Map<string, number>();
 
@@ -3519,14 +3520,25 @@ async function calcularValores(params: ParamsValores): Promise<ResultadoValores>
       p_claves_json: null,
       p_limite: limite,
     });
-    // Una columna que la RPC no admite para esta tabla llega aquí como
-    // error: es el caso del slicer de ventas pidiendo `form_name`.
-    if (error) return sinValores('dimension_no_listable');
+    // Una columna que la RPC no admite para esta tabla llega aquí como error:
+    // es el caso del slicer de ventas pidiendo `form_name`. Eso SÍ es
+    // «no listable».
+    //
+    // Pero no todo error lo es. `P0001` es el RAISE EXCEPTION de la lista
+    // blanca de la RPC; cualquier otro código es un fallo de verdad —el 57014
+    // del `statement_timeout`, por ejemplo— y devolverlo como «no listable»
+    // convierte una caída en un dato: la pantalla dice «no hay campañas».
+    if (error) {
+      return (error as { code?: string }).code === 'P0001'
+        ? sinValores('dimension_no_listable')
+        : errorDeConsulta('bi_valores_conteo (columna directa)', error);
+    }
     return desdeFilasRpc(data, limite, filtrarPorBusqueda);
-  } catch {
-    // Incluye el 57014 de `statement_timeout`. Nunca se cae de vuelta al
-    // escaneo truncado antiguo: sería devolver datos sesgados como buenos.
-    return sinValores('error_consulta');
+  } catch (e) {
+    // Incluye el 57014 de `statement_timeout` cuando llega como excepción.
+    // Nunca se cae de vuelta al escaneo truncado antiguo: sería devolver datos
+    // sesgados como buenos.
+    return errorDeConsulta('bi_valores_conteo (columna directa)', e);
   }
 }
 

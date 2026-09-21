@@ -1,5 +1,4 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { dedupTouches } from './attribution-resolver';
 import { aplicarExclusion, cargarReglaExclusion, type ReglaExclusion } from './lead-exclusion';
 import {
   adaptarIds,
@@ -351,24 +350,6 @@ export function pasaFiltro(contact: GhlContact, filtro: GhlFiltro): boolean {
   return true;
 }
 
-/** Objeto `touch` a partir de una atribución de GHL, con la forma que ya usa la tabla. */
-function touchDe(a: GhlAtribucion | null | undefined, ts: string): Record<string, unknown> | null {
-  if (!a || typeof a !== 'object' || Object.keys(a).length === 0) return null;
-  const touch = {
-    source: pick(a.utmSource, a.sessionSource),
-    medium: pick(a.utmMedium, a.medium),
-    campaign: pick(a.campaign, a.campaignName),
-    content: pick(a.utmContent, a.adName),
-    term: pick(a.utmTerm, a.adGroupName),
-    click_id: pick(a.fbclid, a.gclid),
-    referrer: txt(a.referrer),
-    page_url: txt(a.url),
-    ts,
-  };
-  const tieneSenal = Object.entries(touch).some(([k, v]) => k !== 'ts' && v !== null);
-  return tieneSenal ? touch : null;
-}
-
 /**
  * Construye la fila de `lead_events` para un contacto de GHL, con la atribución
  * resuelta **inline**: estos contactos no tienen historia de píxel, así que no
@@ -389,13 +370,6 @@ export function buildLeadRow(
     contact.dateAdded && !Number.isNaN(new Date(contact.dateAdded).getTime())
       ? new Date(contact.dateAdded).toISOString()
       : undefined;
-  const ts = createdAt ?? new Date().toISOString();
-
-  const touches = dedupTouches(
-    touchDe(contact.attributionSource, ts),
-    touchDe(contact.lastAttributionSource, ts)
-  );
-
   const row: Record<string, unknown> = {
     cliente_id: clienteId,
     external_id: `${GHL_EXTERNAL_PREFIX}${contact.id}`,
@@ -417,7 +391,6 @@ export function buildLeadRow(
     ip_country: txt(contact.country),
     raw_fields: campos.raw_fields,
     source: GHL_SOURCE,
-    ...touches,
     attribution_method: utm.attribution_method,
     attribution_resolved_at: new Date().toISOString(),
     custom_data: {

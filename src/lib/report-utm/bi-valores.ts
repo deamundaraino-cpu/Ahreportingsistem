@@ -58,6 +58,31 @@ export function sinValores(motivo: MotivoSinValores): ResultadoValores {
 /** Resultado vacío legítimo: se consultó y de verdad no hay nada. */
 export const VACIO_HONESTO: ResultadoValores = { valores: [], total: 0, truncado: false };
 
+/**
+ * La consulta FALLÓ: devuelve vacío, pero dejando rastro en el log.
+ *
+ * `motivo: 'error_consulta'` ya distinguía este caso de `VACIO_HONESTO`, pero
+ * nadie lo miraba y los dos consumidores de la lista —`SlicerWidget` y el
+ * desplegable de campaña— reciben solo `string[]`, así que un fallo llegaba a la
+ * pantalla como «este cliente no tiene campañas».
+ *
+ * Medido el 2026-09-21: `bi_valores_conteo` sobre Eduversio tardaba ~8 s contra
+ * el `statement_timeout` de 8 s de PostgREST. El desplegable salía vacío en
+ * silencio y el golden fallaba sin que nada dijera por qué — se tardó una hora
+ * en encontrarlo justamente porque no había ni una línea de log.
+ *
+ * Mismo criterio que `[paginate]` en supabase-paginate.ts: se puede devolver un
+ * resultado degradado, pero NUNCA sin avisar.
+ */
+export function errorDeConsulta(donde: string, error: unknown): ResultadoValores {
+  const detalle =
+    error && typeof error === 'object' && 'message' in error
+      ? String((error as { message: unknown }).message)
+      : String(error);
+  console.error(`[bi-valores] ${donde}: la consulta falló, la lista sale VACÍA — ${detalle}`);
+  return sinValores('error_consulta');
+}
+
 // ════════════════════════════════════════════════════════════════════════
 // Plegado y orden
 // ════════════════════════════════════════════════════════════════════════

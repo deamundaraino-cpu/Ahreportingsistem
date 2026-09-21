@@ -352,9 +352,24 @@ check(
   typeof (custom.campos_largos as Record<string, string>)['Resumen IA'] === 'string'
 );
 
+// ── Sin `first_touch`/`last_touch` (migración 084) ──────────────
+// Eran una copia JSONB de las columnas `utm_*` de la misma fila: medido en
+// producción, `campaign` coincidía en 89.486 de 89.489 filas. 39 MB duplicados.
 check(
-  'los dos touches idénticos no se duplican (last_touch queda en null)',
-  fila.first_touch !== null && fila.last_touch === null
+  'la fila ya no lleva touches: eran copia de las columnas utm_*',
+  fila.first_touch === undefined && fila.last_touch === undefined
+);
+check(
+  'y la atribución sigue entera en sus columnas, que es donde se lee',
+  fila.utm_source === 'facebook' &&
+    fila.utm_medium === 'paid_social' &&
+    fila.utm_content === '🚨 ¿Reportado en centrales?' &&
+    fila.utm_id === '120239585076400410' &&
+    fila.attribution_method === 'utm_only'
+);
+check(
+  'la atribución cruda de GHL se conserva en custom_data, por si hay que auditar',
+  (fila.custom_data as Record<string, unknown>).attribution_source !== null
 );
 
 const filaSinFecha = buildLeadRow(CLIENTE, { id: 'x' }, DEFS);
@@ -363,8 +378,10 @@ check(
   filaSinFecha.created_at === undefined
 );
 check(
-  'un contacto sin atribución no inventa touches',
-  filaSinFecha.first_touch === null && filaSinFecha.last_touch === null
+  'un contacto sin atribución tampoco inventa nada en las columnas',
+  filaSinFecha.utm_source === null &&
+    filaSinFecha.utm_campaign === null &&
+    filaSinFecha.attribution_method === 'none'
 );
 
 const filaOrganica = buildLeadRow(CLIENTE, ORGANICO_IG, DEFS);

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/utils/supabase/server';
+import { normalizarPageUrl } from '@/lib/report-utm/page-url';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -89,7 +90,9 @@ export async function POST(req: NextRequest) {
     event_name: body.event_name ?? null,
     visitor_id: body.visitor_id ?? null,
     session_id: body.session_id ?? null,
-    page_url: body.page_url ?? null,
+    // Misma normalización que el S2S: las UTM de la query string ya van en sus
+    // columnas, guardarlas otra vez dentro de la URL era el 29 % de lead_events.
+    page_url: normalizarPageUrl(body.page_url),
     page_title: body.page_title ?? null,
     referrer: body.referrer ?? null,
     utm_source: body.utm_source ?? null,

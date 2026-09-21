@@ -93,7 +93,12 @@ export default async function ClientDetailPage(props: { params: Promise<{ id: st
                 integration={datos.ghl}
                 webhookOrigin={datos.webhookOrigin}
               />
-              <S2SIntegrationCard clienteId={rtmId} integration={datos.s2s} />
+              <S2SIntegrationCard
+                clienteId={rtmId}
+                integration={datos.s2s}
+                slug={datos.slug}
+                baseUrl={datos.webhookOrigin}
+              />
               <OutboundWebhooksCard
                 clienteId={rtmId}
                 webhooks={datos.outbound as Parameters<typeof OutboundWebhooksCard>[0]['webhooks']}

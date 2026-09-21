@@ -25,6 +25,7 @@ import {
   alternarValor,
   sinValores,
   VACIO_HONESTO,
+  errorDeConsulta,
 } from '../src/lib/report-utm/bi-valores';
 import type { ValorConConteo, ResultadoValores } from '../src/lib/report-utm/bi-valores';
 
@@ -283,6 +284,32 @@ check('«no es igual a» sí', esSeleccionPorCasillas('neq'));
 for (const op of ['contains', 'ncontains', 'starts', 'ends'] as const) {
   check(`«${op}» no`, !esSeleccionPorCasillas(op));
 }
+
+seccion('Un fallo de consulta deja rastro y no se disfraza de dato');
+// ════════════════════════════════════════════════════════════
+// El 2026-09-21 el desplegable de campañas salía VACÍO para el cliente grande
+// porque `bi_valores_conteo` se pasaba de los 8 s de PostgREST. El motor
+// devolvía la lista vacía sin una sola línea de log, así que en pantalla era
+// indistinguible de «este cliente no tiene campañas». Encontrarlo costó una
+// hora justamente por eso.
+const avisos: string[] = [];
+const errorOriginal = console.error;
+console.error = (...args: unknown[]) => void avisos.push(args.join(' '));
+const fallo = errorDeConsulta('rpc_de_prueba', {
+  message: 'canceling statement due to statement timeout',
+});
+console.error = errorOriginal;
+
+check('devuelve vacío, como antes', fallo.valores.length === 0 && fallo.total === 0);
+check('pero marcado como fallo, no como dato', fallo.motivo === 'error_consulta');
+check('y sigue siendo distinguible de un vacío legítimo', VACIO_HONESTO.motivo === undefined);
+check('deja UNA línea en el log', avisos.length === 1, `dejo ${avisos.length}`);
+check('que dice dónde falló', avisos[0]?.includes('rpc_de_prueba') === true);
+check(
+  'y arrastra el error de Postgres, no solo «falló»',
+  avisos[0]?.includes('statement timeout') === true,
+  avisos[0]
+);
 
 console.log(fallos === 0 ? '\n✓ TODO OK' : `\n✗ ${fallos} comprobación(es) fallida(s)`);
 process.exit(fallos === 0 ? 0 : 1);
