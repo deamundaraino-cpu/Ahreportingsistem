@@ -62,7 +62,7 @@ La aplicación usa **distintos mecanismos según el consumidor**:
 
 ### Tokens de API
 
-Generados desde `/admin/api-tokens`. El token plano (`ads_…`) se muestra **solo al crearlo**; en BD se guarda únicamente su hash SHA-256 y un prefijo visible. Cada token tiene permisos (`read:metrics`, `read:clients`, `read:campaigns`, `read:reports`, `write:sync`) y, opcionalmente, fecha de expiración. Ver [doc 13](./13-mcp-y-tokens-api.md).
+Generados desde `/admin/configuracion`, pestaña «Servidor MCP & API». El token plano (`ads_…`) se muestra **solo al crearlo**; en BD se guarda únicamente su hash SHA-256 y un prefijo visible. Los permisos disponibles son los de `ALL_PERMISSIONS` y los scopes de escritura no bastan por sí solos: el nivel efectivo lo sigue poniendo el rol de quien creó el token. Ver [doc 13](./13-mcp-y-tokens-api.md).
 
 ## Flujo de registro e ingreso
 
