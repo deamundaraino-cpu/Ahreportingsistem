@@ -1,7 +1,10 @@
 import Link from 'next/link';
 import { EyeOff, Users, ListFilter } from 'lucide-react';
+import type { EstadoLeads } from '@/lib/report-utm/leads-filtros';
 
-export type EstadoLeads = 'incluidos' | 'excluidos' | 'todos';
+// El tipo vive en `leads-filtros.ts`, que es quien valida el parámetro de la URL.
+// Se reexporta para no romper a quien ya lo importaba desde aquí.
+export type { EstadoLeads };
 
 /**
  * Pestañas de la página de leads: los que cuentan, los que la regla (o una

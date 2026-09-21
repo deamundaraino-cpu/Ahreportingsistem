@@ -66,7 +66,8 @@ export type ReportUtmLeadEvent = {
   id: string;
   cliente_id: string;
   form_name: string | null;
-  form_id: string | null;
+  /** La página de leads ya no lo pide: no se pinta en ninguna vista. */
+  form_id?: string | null;
   form_plugin: string | null;
   lead_name: string | null;
   lead_email: string | null;
@@ -78,7 +79,8 @@ export type ReportUtmLeadEvent = {
   utm_term: string | null;
   utm_id: string | null;
   click_id: string | null;
-  visitor_id: string | null;
+  /** Igual que `form_id`: no se pinta y está a NULL en el 100 % de las filas. */
+  visitor_id?: string | null;
   session_id: string | null;
   page_url: string | null;
   referrer: string | null;

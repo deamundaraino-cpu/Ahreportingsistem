@@ -99,6 +99,25 @@ export function colombiaDateOf(instant: string | Date | null | undefined): strin
 }
 
 /**
+ * Fecha y hora en Colombia de un instante, como `yyyy-MM-dd HH:mm`.
+ *
+ * Es `colombiaDateOf` con la hora pegada. Existe por el CSV de leads: imprimía el
+ * ISO crudo, o sea el instante UTC, así que un lead de las 20:00 salía fechado el
+ * día siguiente. Quien abre ese CSV lee fechas de Colombia en todas partes menos
+ * ahí, y no tiene forma de saberlo.
+ *
+ * Un `yyyy-MM-dd` suelto se devuelve intacto, igual que en `colombiaDateOf`: no
+ * tiene hora que convertir y convertirlo lo retrasaría un día.
+ */
+export function colombiaDateTimeOf(instant: string | Date | null | undefined): string {
+  if (!instant) return '';
+  if (typeof instant === 'string' && ISO_DATE.test(instant)) return instant;
+  const t = typeof instant === 'string' ? Date.parse(instant) : instant.getTime();
+  if (Number.isNaN(t)) return typeof instant === 'string' ? instant : '';
+  return new Date(t - COLOMBIA_UTC_OFFSET_MS).toISOString().slice(0, 16).replace('T', ' ');
+}
+
+/**
  * Límites de un rango de días de Colombia, listos para comparar contra una
  * columna `timestamptz`.
  *

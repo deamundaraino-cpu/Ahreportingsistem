@@ -73,14 +73,14 @@ Componentes admin: `ClientConfigForm`, `NewClientDialog` (settings), `UserManage
 
 Acceso: sesión + rol `superadmin`, `admin` o `trafficker` (ver `AUTHENTICATED_ADMIN_ROUTES` en `src/utils/supabase/middleware.ts`).
 
-| Ruta               | Archivo                          | Descripción                                                                                    |
-| ------------------ | -------------------------------- | ---------------------------------------------------------------------------------------------- |
-| `/leads`           | `(app)/leads/page.tsx`           | Leads con pestañas Cuentan / Excluidos / Todos; excluir o re-incluir en lote; exportar CSV     |
-| `/ventas`          | `(app)/ventas/page.tsx`          | Ventas (webhook de Hotmart y del CRM de GoHighLevel)                                           |
-| `/ventas/[saleId]` | `(app)/ventas/[saleId]/page.tsx` | Detalle de venta + payload crudo + atribución                                                  |
-| `/informes`        | `(app)/informes/…`               | Informes BI: lista, nuevo desde plantilla, editor                                              |
-| `/cruce-campanas`  | `(app)/cruce-campanas/page.tsx`  | Cruce de leads con campaña, conjunto y anuncio (por ID o nombre) y corrección manual por nivel |
-| `/admin/salud`     | `(app)/admin/salud/page.tsx`     | Fuentes paradas, integraciones en error, cuentas de Meta que no pueden publicar                |
+| Ruta               | Archivo                          | Descripción                                                                                                                                                                                                            |
+| ------------------ | -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/leads`           | `(app)/leads/page.tsx`           | Leads con buscador (nombre/email/teléfono), pestañas Cuentan / Excluidos / Todos con desglose por motivo, filtros por cliente, origen, atribución, formulario, UTM y fecha; excluir o re-incluir en lote; exportar CSV |
+| `/ventas`          | `(app)/ventas/page.tsx`          | Ventas (webhook de Hotmart y del CRM de GoHighLevel)                                                                                                                                                                   |
+| `/ventas/[saleId]` | `(app)/ventas/[saleId]/page.tsx` | Detalle de venta + payload crudo + atribución                                                                                                                                                                          |
+| `/informes`        | `(app)/informes/…`               | Informes BI: lista, nuevo desde plantilla, editor                                                                                                                                                                      |
+| `/cruce-campanas`  | `(app)/cruce-campanas/page.tsx`  | Cruce de leads con campaña, conjunto y anuncio (por ID o nombre) y corrección manual por nivel                                                                                                                         |
+| `/admin/salud`     | `(app)/admin/salud/page.tsx`     | Fuentes paradas, integraciones en error, cuentas de Meta que no pueden publicar                                                                                                                                        |
 
 ## Server Actions
 

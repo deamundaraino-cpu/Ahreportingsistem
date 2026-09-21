@@ -1,6 +1,7 @@
 import { createAdminClient } from '@/utils/supabase/server';
 import { fetchAllRows } from '@/lib/supabase-paginate';
 import { columnaExcluidoDisponible } from './lead-exclusion';
+import { escLike, patronLike } from './leads-filtros';
 import { COLUMNAS_ID, SELECT_IDS_VENTA, columnasIdDisponibles } from './lead-ids';
 import {
   cargarConversor,
@@ -3227,19 +3228,21 @@ export function applyOneFilter(q: any, key: string, raw: string): any {
   // Los filtros de campo de formulario apuntan a la clave JSONB (raw_fields->>clave).
   const fieldKey = parseFieldDim(key);
   const col = fieldKey !== null ? `raw_fields->>${fieldKey}` : key;
-  // Escapar comodines de LIKE en el valor del usuario
-  const esc = (s: string) => s.replace(/[%_]/g, (m) => `\\${m}`);
+  // Escapar comodines de LIKE en el valor del usuario. `escLike` vive en
+  // `leads-filtros.ts` para que exista UNA sola definición: la que había aquí
+  // escapaba `%` y `_` pero no `\`, así que una barra del usuario se comía el
+  // carácter siguiente.
   switch (op) {
     case 'neq':
       return q.neq(col, v);
     case 'contains':
-      return q.ilike(col, `%${esc(v)}%`);
+      return q.ilike(col, patronLike(v));
     case 'ncontains':
-      return q.not(col, 'ilike', `%${esc(v)}%`);
+      return q.not(col, 'ilike', patronLike(v));
     case 'starts':
-      return q.ilike(col, `${esc(v)}%`);
+      return q.ilike(col, `${escLike(v)}%`);
     case 'ends':
-      return q.ilike(col, `%${esc(v)}`);
+      return q.ilike(col, `%${escLike(v)}`);
     case 'eq':
     default:
       // Multi-valor por comas → IN

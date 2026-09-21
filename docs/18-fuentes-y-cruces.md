@@ -118,6 +118,29 @@ re-incluir en `/leads` → pestaña «Excluidos». La regla vive en
 `src/lib/report-utm/lead-exclusion.ts` y la aplican las tres vías de ingesta.
 Requiere la migración 079.
 
+Esa pestaña desglosa **por qué** no cuenta cada lead (sin atribución / fuente
+excluida / formulario excluido / a mano) y deja filtrar por motivo. No es lo
+mismo que sobren 1.500 leads porque la regla filtra un formulario que porque
+lleguen sin atribución: son dos problemas con dos arreglos distintos.
+
+### Buscar un lead concreto
+
+`/leads?q=` busca a la vez en nombre, email y teléfono, y se combina con el resto
+de filtros y con el CSV. Tres cosas que conviene saber:
+
+- **Mínimo 3 caracteres.** Con menos, `pg_trgm` no puede usar el índice y la
+  consulta pasaría a recorrer la tabla entera; la UI lo avisa en vez de callarse.
+- **No pliega tildes.** «Jose» no encuentra «José». `unaccent` no está instalado y
+  añadirlo costaría otros tres índices.
+- **Los teléfonos se normalizan.** El 31 % de los guardados empiezan por `+57`, así
+  que un término que parece un teléfono se busca también en solo dígitos.
+
+Los filtros —los de la página y los del CSV— salen de un único módulo,
+`src/lib/report-utm/leads-filtros.ts`. Estaban duplicados y habían divergido: el
+CSV recortaba el rango en UTC y la página en día Colombia, así que el total de la
+pantalla y las filas del CSV no cuadraban. Requiere la migración 086 para que la
+búsqueda use índice (funciona sin ella, pero con un seq scan de 171 MB).
+
 Un lead que no cruza **no se funde en un cubo común**: se queda como su propia
 fila con gasto 0 y la UI la marca. Es deliberado — fundirlas escondía justo el
 problema que hay que arreglar.
