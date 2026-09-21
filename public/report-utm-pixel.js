@@ -16,7 +16,10 @@
   'use strict';
 
   var config = window.RUTM_CONFIG || {};
-  var slug = config.cliente || config.client_slug || config.slug;
+  // `cliente_slug` es el nombre que usa el plugin de WordPress y el endpoint;
+  // se acepta como alias para que un sitio con el plugin viejo instalado no
+  // quede mudo por una letra de diferencia.
+  var slug = config.cliente || config.cliente_slug || config.client_slug || config.slug;
 
   if (!slug) {
     if (window.console) console.warn('[rutm] missing window.RUTM_CONFIG.cliente — pixel inactive');

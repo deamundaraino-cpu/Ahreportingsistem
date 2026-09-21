@@ -1,13 +1,26 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createClient } from '@/utils/supabase/server';
-import { generateApiToken } from '@/lib/api-token-auth';
+import { generateApiToken, ALL_PERMISSIONS, type TokenPermission } from '@/lib/api-token-auth';
 import { ApiError, apiErrorResponse, handleUnexpectedError } from '@/lib/error-handler';
 
+/**
+ * Los permisos admitidos son los del catálogo, no una copia.
+ *
+ * Esta lista estaba escrita a mano con cinco scopes mientras el formulario
+ * ofrecía los doce, así que marcar 'write:reports' o 'write:tasks' devolvía un
+ * 400 sin explicar por qué: era imposible crear un token que usara ninguna de
+ * las herramientas de escritura del MCP.
+ *
+ * Conceder el scope no concede la capacidad: el nivel efectivo lo sigue
+ * poniendo el rol de la aplicación —un viewer opera como 'consulta' aunque su
+ * token lleve 'write:clients'—, las escrituras pasan por aprobación de otra
+ * persona y las de riesgo alto exigen un administrador.
+ */
 const createTokenSchema = z.object({
   name: z.string().min(1).max(80),
   permissions: z
-    .array(z.enum(['read:metrics', 'read:clients', 'read:campaigns', 'read:reports', 'write:sync']))
+    .array(z.enum(ALL_PERMISSIONS as [TokenPermission, ...TokenPermission[]]))
     .min(1)
     .default(['read:metrics', 'read:clients', 'read:campaigns']),
   expires_at: z.string().datetime().optional().nullable(),

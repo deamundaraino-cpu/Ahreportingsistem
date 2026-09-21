@@ -239,7 +239,7 @@ entra sola y deja de haber que cargarla a mano.
 4. **Publicá** el workflow.
 
 La venta queda en `report_utm.sales_events` con la atribución del contacto (así
-cruza con la campaña que trajo el lead), aparece en `/report-utm/ventas`, en los
+cruza con la campaña que trajo el lead), aparece en `/ventas`, en los
 informes (ROAS, CPA, tasa de conversión) y en el dashboard como `crm_ventas` /
 `crm_revenue`. Una oportunidad es una venta aunque GHL reenvíe el webhook.
 

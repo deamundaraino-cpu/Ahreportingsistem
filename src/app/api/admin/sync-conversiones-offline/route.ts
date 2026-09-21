@@ -43,8 +43,16 @@ export async function POST(request: NextRequest) {
   if (denied) return denied;
 
   try {
-    const { clientId, sheetId, tabId, batchId, consolidar, conservarCrudas, quality, recalcularCampos } =
-      await request.json();
+    const {
+      clientId,
+      sheetId,
+      tabId,
+      batchId,
+      consolidar,
+      conservarCrudas,
+      quality,
+      recalcularCampos,
+    } = await request.json();
     if (!clientId) {
       return NextResponse.json({ error: 'clientId is required' }, { status: 400 });
     }

@@ -257,7 +257,7 @@ export function evaluarCliente(s: SenalesCliente): SaludCliente {
       gravedad: 'aviso',
       ambito: 'Cruce UTM ↔ campaña',
       titulo: `Solo el ${s.pctLeadsCruzados.toFixed(1)} % de los leads se ata a una campaña real.`,
-      accion: 'Revisar /report-utm/cruce-campanas y añadir correcciones manuales donde falte.',
+      accion: 'Revisar /cruce-campanas y añadir correcciones manuales donde falte.',
     });
   }
 

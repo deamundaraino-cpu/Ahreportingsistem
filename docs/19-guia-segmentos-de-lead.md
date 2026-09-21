@@ -46,7 +46,7 @@ un nombre —y por eso hay que definirlo— y es lo único que resuelve un acumu
 
 ## Parte 2 · Crear un segmento
 
-Todo ocurre en la **ficha del cliente**: `/report-utm/clientes/[id]`, card
+Todo ocurre en la **ficha del cliente**: `/admin/settings/[id]`, card
 **«Campos de lead»**. Bajo cada campo hay una sección **«Segmentos · métricas de
 este campo»** con tres formas de crearlos.
 
@@ -98,7 +98,7 @@ dashboard.
 
 ---
 
-## Parte 3 · Usarlo en los informes (`/report-utm/informes`)
+## Parte 3 · Usarlo en los informes (`/informes`)
 
 ### Como métrica
 

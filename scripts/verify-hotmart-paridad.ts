@@ -26,6 +26,7 @@ loadEnv({ path: '.env.local' });
 
 import { createClient } from '@supabase/supabase-js';
 import { addDaysISO, colombiaToday } from '../src/lib/colombia-date';
+import { salir } from './_salida';
 
 let fallos = 0;
 function check(nombre: string, cond: boolean, detalle?: string) {
@@ -178,7 +179,7 @@ async function main() {
   }
 
   console.log(`\n${fallos === 0 ? '✓ TODO OK' : `✗ ${fallos} FALLO(S)`}\n`);
-  process.exit(fallos === 0 ? 0 : 1);
+  salir(fallos);
 }
 
 main().catch((e) => {

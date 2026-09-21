@@ -66,6 +66,31 @@ const nextConfig: NextConfig = {
       '@dnd-kit/sortable',
     ],
   },
+  // Report-UTM dejó de ser un espacio aparte y sus páginas pasaron a ser
+  // secciones del reporting. Estas reglas mantienen vivos los enlaces que la
+  // gente tenga guardados. `permanent: true` emite un 308, que conserva el
+  // método HTTP; los query params viajan solos al destino.
+  //
+  // Ojo: NO se redirige `/api/report-utm/**`. Esas URLs están registradas como
+  // webhook en Hotmart, GoHighLevel y Meta, así que se quedan donde están
+  // aunque la interfaz ya no se llame así.
+  async redirects() {
+    return [
+      { source: '/report-utm', destination: '/dashboard', permanent: true },
+      { source: '/report-utm/clientes', destination: '/admin/settings', permanent: true },
+      { source: '/report-utm/clientes/:id', destination: '/admin/settings', permanent: true },
+      { source: '/report-utm/leads/:path*', destination: '/leads/:path*', permanent: true },
+      { source: '/report-utm/ventas/:path*', destination: '/ventas/:path*', permanent: true },
+      { source: '/report-utm/informes/:path*', destination: '/informes/:path*', permanent: true },
+      { source: '/report-utm/cruce-campanas', destination: '/cruce-campanas', permanent: true },
+      { source: '/report-utm/salud', destination: '/admin/salud', permanent: true },
+      // El módulo de reportes mensuales lo sustituyó el BI Builder.
+      { source: '/admin/reports/:path*', destination: '/informes', permanent: true },
+      { source: '/admin/users', destination: '/admin/configuracion', permanent: true },
+      { source: '/admin/api-tokens', destination: '/admin/configuracion', permanent: true },
+      { source: '/admin/whatsapp', destination: '/admin/configuracion', permanent: true },
+    ];
+  },
   async headers() {
     return [
       // Public, shareable/embeddable report routes: no frame restrictions so

@@ -8,7 +8,7 @@ import { AttributionBadge } from '@/components/report-utm/AttributionBadge';
 import { formatDateTime } from '@/lib/report-utm/formatters';
 import { PLUGIN_LABELS, dec } from '@/lib/report-utm/leads-display';
 import { MOTIVOS_EXCLUSION } from '@/lib/report-utm/lead-exclusion';
-import { marcarLeadsAction } from '@/app/(report-utm)/report-utm/leads/_actions';
+import { marcarLeadsAction, marcarLeadsPorFiltroAction } from '@/app/(app)/leads/_actions';
 
 type View = 'table' | 'cards';
 const STORAGE_KEY = 'report-utm:leads-view';
@@ -45,11 +45,17 @@ export function LeadsView({
   leads,
   clienteMap,
   puedeExcluir = false,
+  paramsFiltro,
+  totalFiltrado = 0,
 }: {
   leads: ReportUtmLeadEvent[];
   clienteMap: Record<string, string>;
   /** La migración 079 está aplicada: se puede seleccionar y excluir/re-incluir. */
   puedeExcluir?: boolean;
+  /** Los searchParams de la página, para «todos los que coinciden». */
+  paramsFiltro?: Record<string, string | string[] | undefined>;
+  /** Cuántos leads coinciden con el filtro, más allá de esta página. */
+  totalFiltrado?: number;
 }) {
   const view = useSyncExternalStore(subscribeView, readView, () => 'table');
   const changeView = (v: View) => writeView(v);
@@ -75,6 +81,32 @@ export function LeadsView({
     setError(null);
     startTransition(async () => {
       const r = await marcarLeadsAction(Array.from(sel), excluir);
+      if (!r.ok) {
+        setError(r.error ?? 'No se pudo actualizar.');
+        return;
+      }
+      setSel(new Set());
+      router.refresh();
+    });
+  }
+
+  /**
+   * Marca TODOS los que coinciden, no solo los de esta página.
+   *
+   * Se confirma con el número que ya está en pantalla: es una escritura masiva
+   * y deshacerla a mano no es viable. El tope real lo pone la acción, que
+   * además explica qué hacer por encima de él.
+   */
+  function marcarTodos(excluir: boolean) {
+    if (!paramsFiltro) return;
+    const verbo = excluir ? 'Excluir del conteo' : 'Volver a contar';
+    if (
+      !confirm(`${verbo} los ${totalFiltrado.toLocaleString()} leads que coinciden con el filtro.`)
+    )
+      return;
+    setError(null);
+    startTransition(async () => {
+      const r = await marcarLeadsPorFiltroAction(paramsFiltro, excluir);
       if (!r.ok) {
         setError(r.error ?? 'No se pudo actualizar.');
         return;
@@ -115,6 +147,20 @@ export function LeadsView({
               <Eye className="h-3 w-3" />
               Volver a contar
             </button>
+            {/* La selección es de esta página; el filtro puede abarcar mucho
+                más. Ofrecerlo aquí es lo que convierte /leads en una
+                herramienta de limpieza en vez de un visor de 25 en 25. */}
+            {paramsFiltro && totalFiltrado > leads.length && todosMarcados && (
+              <button
+                type="button"
+                onClick={() => marcarTodos(true)}
+                disabled={pendiente}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-medium border border-amber-400 text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-500/10 disabled:opacity-40"
+              >
+                <EyeOff className="h-3 w-3" />
+                Excluir los {totalFiltrado.toLocaleString()} que coinciden
+              </button>
+            )}
             {error && <span className="text-[11px] text-red-500">{error}</span>}
           </div>
         ) : (

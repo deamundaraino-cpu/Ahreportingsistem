@@ -29,6 +29,7 @@
 import { config as loadEnv } from 'dotenv';
 import { writeFileSync, readFileSync, existsSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { salir } from './_salida';
 
 loadEnv({ path: '.env.local' });
 
@@ -465,7 +466,7 @@ async function main() {
   console.log(
     `\n${fallos === 0 ? '✓ El motor produce los MISMOS números que la línea base' : `✗ ${fallos} DIFERENCIA(S) — investigar antes de seguir`}\n`
   );
-  process.exit(fallos === 0 ? 0 : 1);
+  salir(fallos);
 }
 
 main().catch((e) => {

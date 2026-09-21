@@ -26,6 +26,7 @@ import {
   VENTANA_NIVEL_AD_DIAS,
 } from '../src/lib/ads/ads-daily-writer';
 import { normLabel } from '../src/lib/report-utm/bi-metadata';
+import { salir } from './_salida';
 
 let fallos = 0;
 function check(nombre: string, cond: boolean, detalle?: string) {
@@ -437,5 +438,5 @@ comprobacionesConEntorno()
   })
   .finally(() => {
     console.log(`\n${fallos === 0 ? '✓ TODO OK' : `✗ ${fallos} FALLO(S)`}\n`);
-    process.exit(fallos === 0 ? 0 : 1);
+    salir(fallos);
   });

@@ -8,7 +8,7 @@
 //
 // Este módulo centraliza ese cruce para que TODOS lo hagan igual:
 //   • el motor del BI al agrupar leads/ventas por campaña/anuncio/conjunto
-//   • el diagnóstico de /report-utm/cruce-campanas
+//   • el diagnóstico de /cruce-campanas
 //
 // Antes vivía dentro de `campaign-data.ts` junto a un motor de consulta paralelo
 // (`runCampaignQuery`) que solo sabía emitir ~20 de las 72 métricas e ignoraba
@@ -150,7 +150,7 @@ export interface CampaignIndex {
   // lead no cruzaba ni se podía titular: el informe mostraba `120212…`.
   adsetByAdsetId: Map<string, string>; // adset_id → adset_name
   byAdsetId: Map<string, string>; // adset_id → key (de la campaña)
-  // ── Catálogo para corregir a mano por nivel (/report-utm/cruce-campanas) ──
+  // ── Catálogo para corregir a mano por nivel (/cruce-campanas) ──
   adCatalog: Map<string, EntidadCatalogo>; // ad_id → anuncio
   adsetCatalog: Map<string, EntidadCatalogo>; // adset_id → conjunto
 }

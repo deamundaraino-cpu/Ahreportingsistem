@@ -20,7 +20,6 @@ Plataforma multi-cliente para agencias de publicidad que **consolida métricas d
 | 08  | [Integraciones externas](./08-integraciones.md)                    | Meta, TikTok, Hotmart, GA4 y Google Sheets                                                                                    |
 | 09  | [Motor de fórmulas](./09-motor-de-formulas.md)                     | Evaluación de métricas, macros y alias semánticos                                                                             |
 | 10  | [Sistema de layouts y dashboards](./10-sistema-de-layouts.md)      | Layouts, tabs, tarjetas, gráficos y rankings                                                                                  |
-| 11  | [Reportes mensuales](./11-reportes-mensuales.md)                   | Plantillas, generación y reportes públicos                                                                                    |
 | 12  | [Módulo Report-UTM](./12-modulo-report-utm.md)                     | Tracking, pixel, webhooks y atribución multi-touch                                                                            |
 | 13  | [MCP y tokens de API](./13-mcp-y-tokens-api.md)                    | Servidor MCP y gestión de tokens programáticos                                                                                |
 | 14  | [Cron jobs y workers](./14-cron-y-workers.md)                      | Sincronizaciones automáticas y tareas programadas                                                                             |

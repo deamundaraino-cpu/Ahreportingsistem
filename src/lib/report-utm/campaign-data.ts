@@ -1,6 +1,6 @@
 // ── Diagnóstico del cruce UTM ↔ campañas ──────────────────────────────
 //
-// Alimenta /report-utm/cruce-campanas: qué UTM de los leads cruzan con una
+// Alimenta /cruce-campanas: qué UTM de los leads cruzan con una
 // campaña real, por qué método, cuáles no cruzan y qué campaña se les parece.
 //
 // El CRUCE en sí (índice de campañas, cascada de matching, overrides) vive en

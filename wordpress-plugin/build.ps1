@@ -1,6 +1,11 @@
 # Genera report-utm.zip listo para instalar en WordPress
 # Uso: cd wordpress-plugin; .\build.ps1
 #
+# El ZIP se escribe en public/, no aquí: es lo que Next sirve como
+# /report-utm.zip, destino del botón "Descargar plugin" de la tarjeta S2S.
+# Un solo artefacto y no dos, para que nadie instale una copia vieja. En
+# Docker lo cubre el COPY de public/ del Dockerfile.
+#
 # IMPORTANTE: No se usa [ZipFile]::CreateFromDirectory porque en
 # Windows/.NET Framework escribe los nombres de entrada con barras
 # invertidas (\), lo cual viola la especificación ZIP. Al descomprimir
@@ -9,7 +14,7 @@
 # manualmente normalizando los separadores a barra normal (/).
 
 $pluginDir = Join-Path $PSScriptRoot "report-utm"
-$outZip    = Join-Path $PSScriptRoot "report-utm.zip"
+$outZip    = Join-Path (Split-Path $PSScriptRoot -Parent) "public/report-utm.zip"
 
 if (Test-Path $outZip) { Remove-Item $outZip -Force }
 

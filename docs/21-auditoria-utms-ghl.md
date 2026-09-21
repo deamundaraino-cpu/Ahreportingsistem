@@ -94,7 +94,7 @@ Cómo comprobarlo en 5 minutos:
 2. Enviar el formulario.
 3. En GHL → el contacto → Atribución: si aparecen `utm_campaign = prueba_campo_oculto`
    y `utm_id = 123`, los campos ocultos funcionan.
-4. En `/report-utm/leads` debe aparecer con esa campaña en menos de un minuto.
+4. En `/leads` debe aparecer con esa campaña en menos de un minuto.
 
 Mientras no funcione, el sistema sigue cubriendo el caso: los leads con anuncio
 cruzan por `utm_id`, y los que no traen nada se excluyen con la regla del cliente.

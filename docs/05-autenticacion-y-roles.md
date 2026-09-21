@@ -38,13 +38,13 @@ El middleware vive en `src/proxy.ts`, que delega en `updateSession()` (`src/util
 
 ### Categorías de rutas
 
-| Categoría                               | Rutas                                                                                                    | Requisito                                                  |
-| --------------------------------------- | -------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
-| **Públicas**                            | `/login`, `/signup`, `/api/*`, `/report/*`, `/p/*`, `/t/*`, `/report-utm-pixel.js`, `/privacy`, `/terms` | Ninguno                                                    |
-| **Autenticadas**                        | `/dashboard`, `/dashboard/[clientId]`, `/soporte`                                                        | Sesión válida                                              |
-| **Admin (solo admin/superadmin)**       | `/admin/users`, `/admin/api-tokens`, `/admin/reports`                                                    | Rol admin/superadmin                                       |
-| **Admin (admin/superadmin/trafficker)** | `/admin/settings`, `/admin/layouts`                                                                      | Uno de esos roles                                          |
-| **Report-UTM**                          | `/report-utm/*`                                                                                          | Sesión + rol admin + `NEXT_PUBLIC_REPORT_UTM_ENABLED=true` |
+| Categoría                                     | Rutas                                                                                                    | Requisito                                     |
+| --------------------------------------------- | -------------------------------------------------------------------------------------------------------- | --------------------------------------------- |
+| **Públicas**                                  | `/login`, `/signup`, `/api/*`, `/report/*`, `/p/*`, `/t/*`, `/report-utm-pixel.js`, `/privacy`, `/terms` | Ninguno                                       |
+| **Autenticadas**                              | `/dashboard`, `/dashboard/[clientId]`, `/soporte`                                                        | Sesión válida                                 |
+| **Admin (solo admin/superadmin)**             | `/admin/users`, `/admin/api-tokens`, `/admin/reports`                                                    | Rol admin/superadmin                          |
+| **Admin (admin/superadmin/trafficker)**       | `/admin/settings`, `/admin/layouts`                                                                      | Uno de esos roles                             |
+| **Análisis** (leads, ventas, informes, cruce) | `/leads`, `/ventas`, `/informes`, `/cruce-campanas`                                                      | Sesión + `superadmin`, `admin` o `trafficker` |
 
 > Nota: las rutas `/api/*` no se bloquean en el middleware; **cada endpoint aplica su propia autenticación** (token de API, `CRON_SECRET`, firma HMAC o sesión). Ver [doc 07 · API REST](./07-api-rest.md).
 
@@ -62,7 +62,7 @@ La aplicación usa **distintos mecanismos según el consumidor**:
 
 ### Tokens de API
 
-Generados desde `/admin/api-tokens`. El token plano (`ads_…`) se muestra **solo al crearlo**; en BD se guarda únicamente su hash SHA-256 y un prefijo visible. Cada token tiene permisos (`read:metrics`, `read:clients`, `read:campaigns`, `read:reports`, `write:sync`) y, opcionalmente, fecha de expiración. Ver [doc 13](./13-mcp-y-tokens-api.md).
+Generados desde `/admin/configuracion`, pestaña «Servidor MCP & API». El token plano (`ads_…`) se muestra **solo al crearlo**; en BD se guarda únicamente su hash SHA-256 y un prefijo visible. Los permisos disponibles son los de `ALL_PERMISSIONS` y los scopes de escritura no bastan por sí solos: el nivel efectivo lo sigue poniendo el rol de quien creó el token. Ver [doc 13](./13-mcp-y-tokens-api.md).
 
 ## Flujo de registro e ingreso
 

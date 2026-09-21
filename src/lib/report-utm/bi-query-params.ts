@@ -69,6 +69,8 @@ export interface ParsedBiQuery {
   source?: 'leads' | 'sales';
   /** Búsqueda por subcadena, para cuando la lista de valores viene truncada. */
   search?: string;
+  /** Contar también los excluidos al listar valores (migración 087). */
+  incluir_excluidos?: boolean;
 }
 
 export function parseBiQueryParams(sp: URLSearchParams): ParsedBiQuery {
@@ -90,6 +92,10 @@ export function parseBiQueryParams(sp: URLSearchParams): ParsedBiQuery {
   // que no buscar; se descarta en vez de disparar la consulta.
   const rawSearch = (sp.get('search') ?? '').trim().slice(0, 64);
   const search = rawSearch.length >= 2 ? rawSearch : undefined;
+
+  // Solo lo pide /leads en sus pestañas de excluidos. Por defecto, false: un
+  // informe cuenta lo que cuenta.
+  const incluir_excluidos = sp.get('incluir_excluidos') === '1';
 
   // metrics puede venir como CSV o como múltiples ?metrics[]=
   const metricsRaw = sp.get('metrics') ?? sp.getAll('metrics[]').join(',');
@@ -134,5 +140,6 @@ export function parseBiQueryParams(sp: URLSearchParams): ParsedBiQuery {
     advancedFilter,
     source,
     search,
+    incluir_excluidos,
   };
 }

@@ -58,6 +58,21 @@ let totalDone = 0
 let totalFailed = 0
 let loopRunning = false
 
+// ─── Retroceso ante caídas de la base ────────────────────────────────────────
+//
+// El poll es fijo, así que con la base caída este proceso la golpeaba cada 15s
+// indefinidamente. No es tráfico inocuo: cada 503 de PostgREST dispara una
+// recarga de su schema cache, una consulta de catálogo de ~3s que devuelve
+// 21.000 filas. En la caída del 2026-09-20 fueron 5.045 respuestas 503 en 6
+// horas y 325 recargas — el worker no causó el incidente, pero impidió que la
+// base se recuperara sola.
+//
+// Con fallos consecutivos el intervalo se dobla hasta 10 minutos; el primer
+// ciclo bueno lo devuelve al poll normal.
+const BACKOFF_MAX_MS = 10 * 60_000
+let fallosSeguidos = 0
+let proximoIntentoMs = 0
+
 // ─── Bucle de la cola ────────────────────────────────────────────────────────
 
 /**
@@ -67,6 +82,7 @@ let loopRunning = false
  */
 async function drenarCola(): Promise<void> {
     if (loopRunning) return
+    if (Date.now() < proximoIntentoMs) return
     loopRunning = true
     try {
         const res = await runJobs(db, {
@@ -83,6 +99,9 @@ async function drenarCola(): Promise<void> {
         })
         lastLoopAt = new Date().toISOString()
         lastError = null
+        if (fallosSeguidos > 0) log(`[cola] base recuperada tras ${fallosSeguidos} fallo(s) — vuelve el poll normal`)
+        fallosSeguidos = 0
+        proximoIntentoMs = 0
         totalDone += res.done
         totalFailed += res.failed
         if (res.claimed > 0) {
@@ -93,7 +112,10 @@ async function drenarCola(): Promise<void> {
         }
     } catch (e: any) {
         lastError = e?.message ?? String(e)
-        log(`[cola] ❌ Error en el bucle: ${lastError}`)
+        fallosSeguidos += 1
+        const espera = Math.min(pollMs * 2 ** fallosSeguidos, BACKOFF_MAX_MS)
+        proximoIntentoMs = Date.now() + espera
+        log(`[cola] ❌ Error en el bucle (${fallosSeguidos} seguidos, reintento en ${Math.round(espera / 1000)}s): ${lastError}`)
     } finally {
         loopRunning = false
     }
@@ -198,6 +220,8 @@ app.get('/status', async (_req, res) => {
             totalDone,
             totalFailed,
             loopRunning,
+            fallosSeguidos,
+            proximoIntentoAt: proximoIntentoMs ? new Date(proximoIntentoMs).toISOString() : null,
             cola: await queueStats(db),
         })
     } catch (e: any) {

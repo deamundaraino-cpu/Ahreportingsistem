@@ -186,7 +186,7 @@ export function BiCrossBanner({ clienteId, dateFrom, dateTo, readonly }: Props) 
                 </div>
               )}
               <a
-                href={`/report-utm/cruce-campanas?${qs}`}
+                href={`/cruce-campanas?${qs}`}
                 className="inline-flex items-center gap-1 underline font-medium"
               >
                 Corregir el mapeo <ExternalLink className="h-3 w-3" />

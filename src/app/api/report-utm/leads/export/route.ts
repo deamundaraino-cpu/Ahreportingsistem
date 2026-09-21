@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { reportUtmClient } from '@/lib/report-utm/client';
-import { columnaExcluidoDisponible } from '@/lib/report-utm/lead-exclusion';
+import { columnaExcluidoDisponible, MOTIVOS_EXCLUSION } from '@/lib/report-utm/lead-exclusion';
+import { leerFiltros, aplicarFiltrosLeads } from '@/lib/report-utm/leads-filtros';
+import { colombiaDateTimeOf } from '@/lib/colombia-date';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -12,10 +14,17 @@ export const maxDuration = 60;
 /**
  * Exporta los leads (filtrados) a CSV.
  *
- *   GET /api/report-utm/leads/export?clienteId=&utm_source=&utm_campaign=&...
+ *   GET /api/report-utm/leads/export?clienteId=&q=&utm_source=&...
  *
  * Usa el cliente con sesión del usuario, por lo que RLS aplica:
  * solo superadmin/admin/trafficker autenticados pueden exportar.
+ *
+ * Los filtros NO se escriben aquí: salen de `leads-filtros.ts`, el mismo módulo
+ * que usa la página. Cuando estaban duplicados divergieron — este endpoint
+ * mandaba los límites de fecha SIN zona horaria, que Postgres lee en UTC, así que
+ * el CSV cogía 5 h de más al principio del rango y perdía las 5 últimas. El total
+ * de la pantalla y el número de filas del CSV no cuadraban y no había forma de
+ * saber cuál de los dos mentía.
  */
 
 // PostgREST limita cada respuesta a `db-max-rows` (≈1000) sin importar el
@@ -23,14 +32,19 @@ export const maxDuration = 60;
 const PAGE_SIZE = 1000;
 // Tope de seguridad para evitar bucles infinitos ante datasets enormes.
 const MAX_ROWS = 500_000;
+// Un cliente con formularios muy distintos puede tener cientos de claves en
+// `raw_fields`. Sin tope, el CSV salía con una columna por cada una y se volvía
+// inabrible; las que se recortan siguen en la app.
+const MAX_CAMPOS_PERSONALIZADOS = 60;
 
 const COLUMNS: { key: string; header: string }[] = [
   { key: 'created_at', header: 'Fecha' },
+  { key: 'cliente', header: 'Cliente' },
   { key: 'lead_name', header: 'Nombre' },
   { key: 'lead_email', header: 'Email' },
   { key: 'lead_phone', header: 'Teléfono' },
   { key: 'form_name', header: 'Formulario' },
-  { key: 'form_plugin', header: 'Plugin' },
+  { key: 'form_plugin', header: 'Origen' },
   { key: 'utm_source', header: 'UTM Source' },
   { key: 'utm_medium', header: 'UTM Medium' },
   { key: 'utm_campaign', header: 'UTM Campaign' },
@@ -39,8 +53,14 @@ const COLUMNS: { key: string; header: string }[] = [
   { key: 'utm_id', header: 'UTM ID' },
   { key: 'click_id', header: 'Click ID' },
   { key: 'attribution_method', header: 'Atribución' },
-  { key: 'ip_country', header: 'País' },
+  { key: 'ip_country', header: 'País (IP servidor)' },
   { key: 'page_url', header: 'Página de destino' },
+];
+
+/** Columnas que solo existen con la migración 079 aplicada. */
+const COLUMNS_EXCLUSION: { key: string; header: string }[] = [
+  { key: 'excluido', header: '¿Excluido?' },
+  { key: 'excluido_motivo', header: 'Motivo de exclusión' },
 ];
 
 const UTM_KEYS = new Set(['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term']);
@@ -64,52 +84,40 @@ function csvField(v: string): string {
 }
 
 export async function GET(req: NextRequest) {
-  const sp = req.nextUrl.searchParams;
   const supabase = await reportUtmClient();
-
-  const clienteId = sp.get('clienteId');
-  const formPlugin = sp.get('form_plugin');
-  const utmSource = sp.get('utm_source');
-  const utmCampaign = sp.get('utm_campaign');
-  const utmContent = sp.get('utm_content');
-  const from = sp.get('from');
-  const to = sp.get('to');
-
-  // Si `to` viene como fecha (YYYY-MM-DD) sin hora, incluimos todo ese día
-  // hasta las 23:59:59 — igual que la página de leads. Sin esto la
-  // exportación por rango excluía casi todo el último día del rango.
-  const toBound = to && /^\d{4}-\d{2}-\d{2}$/.test(to) ? `${to}T23:59:59` : to;
+  const f = leerFiltros(req.nextUrl.searchParams);
 
   // Estado de exclusión: por defecto se exporta lo mismo que cuenta el informe.
   // `estado=excluidos` o `estado=todos` para auditar lo que la regla dejó fuera.
   const conExclusion = await columnaExcluidoDisponible(supabase);
-  const estado = sp.get('estado') ?? 'incluidos';
+
+  const columnas = conExclusion ? [...COLUMNS, ...COLUMNS_EXCLUSION] : COLUMNS;
+
+  const seleccion =
+    'cliente_id, created_at, lead_name, lead_email, lead_phone, form_name, form_plugin, ' +
+    'utm_source, utm_medium, utm_campaign, utm_content, utm_term, utm_id, click_id, ' +
+    'attribution_method, ip_country, page_url, raw_fields' +
+    (conExclusion ? ', excluido, excluido_motivo' : '');
 
   // Aplica todos los filtros a una query nueva (se reconstruye por página).
-  const applyFilters = () => {
-    let q = supabase
-      .from('lead_events')
-      .select(
-        'created_at, lead_name, lead_email, lead_phone, form_name, form_plugin, utm_source, utm_medium, utm_campaign, utm_content, utm_term, utm_id, click_id, attribution_method, ip_country, page_url, raw_fields' +
-          (conExclusion ? ', excluido, excluido_motivo' : '')
-      );
-    if (conExclusion && estado === 'incluidos') q = q.eq('excluido', false);
-    if (conExclusion && estado === 'excluidos') q = q.eq('excluido', true);
-    if (clienteId) q = q.eq('cliente_id', clienteId);
-    if (formPlugin) q = q.eq('form_plugin', formPlugin);
-    if (utmSource) q = q.ilike('utm_source', `%${utmSource}%`);
-    if (utmCampaign) q = q.ilike('utm_campaign', `%${utmCampaign}%`);
-    if (utmContent) q = q.ilike('utm_content', `%${utmContent}%`);
-    if (from) q = q.gte('created_at', from);
-    if (toBound) q = q.lte('created_at', toBound);
-    return q;
-  };
+  const consulta = () =>
+    aplicarFiltrosLeads(supabase.from('lead_events').select(seleccion), f, {
+      conExclusion,
+      conEstado: true,
+    });
+
+  // El nombre del cliente no está en `lead_events`. Se resuelve con un mapa, no
+  // con un embed: `cliente_tabs→clientes` es ambiguo en PostgREST y aquí no hace
+  // falta arriesgarse a un 300.
+  const nombreCliente = new Map<string, string>();
+  const { data: clientes } = await supabase.from('clientes').select('id, nombre');
+  for (const c of clientes ?? []) nombreCliente.set(c.id as string, (c.nombre as string) ?? '');
 
   // Pagina con `.range()` hasta agotar el dataset: PostgREST devuelve como
   // máximo ≈1000 filas por respuesta, así que un solo request nunca baja todo.
   const rows: Record<string, unknown>[] = [];
   for (let offset = 0; offset < MAX_ROWS; offset += PAGE_SIZE) {
-    const { data, error } = await applyFilters()
+    const { data, error } = await consulta()
       .order('created_at', { ascending: false })
       .range(offset, offset + PAGE_SIZE - 1);
 
@@ -133,7 +141,7 @@ export async function GET(req: NextRequest) {
     const rf = row.raw_fields;
     if (rf && typeof rf === 'object' && !Array.isArray(rf)) {
       for (const k of Object.keys(rf as Record<string, unknown>)) {
-        if (!seen.has(k)) {
+        if (!seen.has(k) && customKeys.length < MAX_CAMPOS_PERSONALIZADOS) {
           seen.add(k);
           customKeys.push(k);
         }
@@ -147,16 +155,30 @@ export async function GET(req: NextRequest) {
     return String(v);
   };
 
+  /** El valor de una columna fija, ya legible. */
+  const celda = (row: Record<string, unknown>, key: string): string => {
+    // La fecha se imprimía como ISO, es decir el instante UTC: un lead de las
+    // 20:00 salía fechado el día siguiente, mientras el resto de la app habla en
+    // hora Colombia.
+    if (key === 'created_at') return colombiaDateTimeOf(row.created_at as string);
+    if (key === 'cliente') return nombreCliente.get(row.cliente_id as string) ?? '';
+    if (key === 'excluido') return row.excluido === true ? 'sí' : 'no';
+    if (key === 'excluido_motivo') {
+      const m = row.excluido_motivo as keyof typeof MOTIVOS_EXCLUSION | null;
+      return m ? (MOTIVOS_EXCLUSION[m] ?? m) : '';
+    }
+    const raw = row[key];
+    if (UTM_KEYS.has(key)) return dec(raw);
+    return raw == null ? '' : String(raw);
+  };
+
   // Cabecera: columnas fijas + una columna por cada campo personalizado.
-  const header = [...COLUMNS.map((c) => c.header), ...customKeys.map((k) => `campo: ${k}`)];
+  const header = [...columnas.map((c) => c.header), ...customKeys.map((k) => `campo: ${k}`)];
   const lines = [header.map(csvField).join(',')];
 
   for (const row of rows) {
     const rf = (row.raw_fields ?? {}) as Record<string, unknown>;
-    const fixed = COLUMNS.map((c) => {
-      const raw = row[c.key];
-      return csvField(UTM_KEYS.has(c.key) ? dec(raw) : raw == null ? '' : String(raw));
-    });
+    const fixed = columnas.map((c) => csvField(celda(row, c.key)));
     const custom = customKeys.map((k) => csvField(toCell(rf[k])));
     lines.push([...fixed, ...custom].join(','));
   }

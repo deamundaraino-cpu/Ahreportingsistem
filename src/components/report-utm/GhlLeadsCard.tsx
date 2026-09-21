@@ -8,15 +8,16 @@ import {
   setGhlStatusAction,
   syncGhlLeadsNowAction,
   rotateGhlWebhookSecretAction,
-} from '@/app/(report-utm)/report-utm/clientes/[clienteId]/_actions';
+} from '@/app/(app)/admin/settings/[id]/_actions-conexiones';
 import { CopyField, useCopyHandler } from './CopyField';
 import { FeedbackLine, LastErrorAlert } from './FeedbackLine';
 import { IntegrationStatusBadge } from './StatusBadge';
+import { ACENTO } from './acento';
 
-const ACCENT = 'bg-violet-50 text-violet-700 dark:bg-violet-500/10 dark:text-violet-400';
-const ICON_BG = 'bg-violet-50 dark:bg-violet-500/10';
-const ICON_COLOR = 'text-violet-600 dark:text-violet-400';
-const BTN = 'bg-violet-600 hover:bg-violet-700';
+const ACCENT = ACENTO.badge;
+const ICON_BG = ACENTO.iconoFondo;
+const ICON_COLOR = ACENTO.iconoColor;
+const BTN = ACENTO.boton;
 
 type Integration = {
   id: string;
@@ -211,7 +212,7 @@ export function GhlLeadsCard({
   // Sin configurar.
   if (!integration) {
     return (
-      <div className="rounded-2xl border border-border bg-card p-6 space-y-4">
+      <div className="rounded-xl border border-border bg-card shadow-sm p-6 space-y-4">
         {header}
         {avisoFuenteUnica}
         {campos}
@@ -248,7 +249,7 @@ export function GhlLeadsCard({
     : 0;
 
   return (
-    <div className="rounded-2xl border border-border bg-card p-6 space-y-5">
+    <div className="rounded-xl border border-border bg-card shadow-sm p-6 space-y-5">
       <div className="flex items-start justify-between gap-4">
         {header}
         <IntegrationStatusBadge status={integration.status} activeCls={ACCENT} />
@@ -341,7 +342,7 @@ export function GhlLeadsCard({
           className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors disabled:opacity-50 ${
             isActive
               ? 'border-amber-200 dark:border-amber-500/30 text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-500/10'
-              : 'border-violet-200 dark:border-violet-500/30 text-violet-700 dark:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-500/10'
+              : 'border-blue-200 dark:border-blue-500/30 text-blue-700 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-500/10'
           }`}
         >
           <Power className="h-3.5 w-3.5" />
@@ -384,7 +385,7 @@ function Campo({
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
         className="w-full rounded-lg border border-border bg-background px-3 py-2 text-xs text-foreground
-                           placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-violet-500/40"
+                           placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-blue-500/40"
       />
     </div>
   );

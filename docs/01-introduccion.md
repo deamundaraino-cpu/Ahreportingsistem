@@ -32,7 +32,7 @@ El producto central: clientes, métricas diarias, layouts, dashboards, reportes 
 
 ### 2. Report-UTM (`report_utm` schema)
 
-Un módulo aislado de **tracking y atribución**. Genera enlaces cortos con UTMs, instala un pixel JavaScript en sitios del cliente, recibe ventas vía webhook (Hotmart) y resuelve la atribución multi-touch (qué clic/fuente generó cada venta). Está protegido por un _feature flag_ (`NEXT_PUBLIC_REPORT_UTM_ENABLED`) y es accesible solo para administradores. Ver [doc 12](./12-modulo-report-utm.md).
+Un módulo aislado de **tracking y atribución**. Genera enlaces cortos con UTMs, instala un pixel JavaScript en sitios del cliente, recibe ventas vía webhook (Hotmart) y resuelve la atribución multi-touch (qué clic/fuente generó cada venta). Desde la unificación ya no es un módulo aparte: sus páginas (`/leads`, `/ventas`, `/informes`, `/cruce-campanas`) son secciones del reporting y su configuración vive en la ficha del cliente. Ver [doc 12](./12-modulo-report-utm.md).
 
 ## Conceptos clave
 

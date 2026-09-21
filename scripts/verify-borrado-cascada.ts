@@ -19,6 +19,7 @@
  */
 
 import { sqlRemoto } from './sql-remoto';
+import { salir } from './_salida';
 
 let fallos = 0;
 function check(nombre: string, cond: boolean, detalle?: string) {
@@ -116,7 +117,7 @@ async function main() {
   );
 
   console.log(fallos === 0 ? '\n✓ TODO OK\n' : `\n✗ ${fallos} fallo(s)\n`);
-  process.exit(fallos === 0 ? 0 : 1);
+  salir(fallos);
 }
 
 main().catch((e) => {

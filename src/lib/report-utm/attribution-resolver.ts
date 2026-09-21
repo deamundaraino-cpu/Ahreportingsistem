@@ -9,6 +9,20 @@ import type { SupabaseClient } from '@supabase/supabase-js';
  *      Levantamos TODA la historia de ese visitor para first/last touch.
  *   3) Si no hay match, fallback a UTMs propios de la venta (utm_only).
  *   4) Si no hay nada, attribution_method = 'none'.
+ *
+ * ── SOLO VENTAS: los leads ya no pasan por aquí (2026-09-21) ────
+ * El endpoint S2S llamaba a esto por cada lead y luego hacía un UPDATE con el
+ * resultado: tres viajes a la base por formulario. No podía dar nada. El paso 2
+ * de la cascada depende de `visitor_id`, y `visitor_id` estaba a NULL en el
+ * 100 % de las 90.317 filas de `pixel_events` y de las 92.967 de `lead_events`,
+ * así que el `.not('visitor_id','is',null)` de abajo nunca casaba: el método
+ * salía siempre del fallback por UTM, que el propio endpoint ya calculaba.
+ * Ahora el lead guarda su `attribution_method` en el insert y punto.
+ *
+ * Antes de volver a enchufar esto a los leads hay que arreglar la causa: que
+ * algo POBLE `visitor_id`. Sin eso, la cascada es un rodeo caro hacia el mismo
+ * resultado. Y ojo: `sales_events` sigue vacía (0 filas), así que este camino
+ * tampoco ha resuelto ninguna venta todavía.
  */
 
 type Touch = {

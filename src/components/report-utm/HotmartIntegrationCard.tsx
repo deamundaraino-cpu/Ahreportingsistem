@@ -6,15 +6,16 @@ import {
   activateHotmartIntegrationAction,
   rotateHotmartSecretAction,
   setHotmartIntegrationStatusAction,
-} from '@/app/(report-utm)/report-utm/clientes/[clienteId]/_actions';
+} from '@/app/(app)/admin/settings/[id]/_actions-conexiones';
 import { CopyField, useCopyHandler } from './CopyField';
 import { FeedbackLine, LastErrorAlert } from './FeedbackLine';
 import { IntegrationStatusBadge } from './StatusBadge';
 import { formatDateTime } from '@/lib/report-utm/formatters';
+import { ACENTO } from './acento';
 
-const ACCENT = 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400';
-const ICON_BG = 'bg-emerald-50 dark:bg-emerald-500/10';
-const ICON_COLOR = 'text-emerald-600 dark:text-emerald-400';
+const ACCENT = ACENTO.badge;
+const ICON_BG = ACENTO.iconoFondo;
+const ICON_COLOR = ACENTO.iconoColor;
 
 type Integration = {
   id: string;
@@ -76,7 +77,7 @@ export function HotmartIntegrationCard({
 
   if (!integration) {
     return (
-      <div className="rounded-2xl border border-border bg-card p-6">
+      <div className="rounded-xl border border-border bg-card shadow-sm p-6">
         <div className="flex items-start gap-3">
           <div className={`h-10 w-10 rounded-lg flex items-center justify-center ${ICON_BG}`}>
             <Webhook className={`h-5 w-5 ${ICON_COLOR}`} />
@@ -104,7 +105,7 @@ export function HotmartIntegrationCard({
   const isActive = integration.status === 'active';
 
   return (
-    <div className="rounded-2xl border border-border bg-card p-6 space-y-5">
+    <div className="rounded-xl border border-border bg-card shadow-sm p-6 space-y-5">
       <div className="flex items-start justify-between gap-4">
         <div className="flex items-start gap-3">
           <div className={`h-10 w-10 rounded-lg flex items-center justify-center ${ICON_BG}`}>
@@ -132,8 +133,8 @@ export function HotmartIntegrationCard({
       />
 
       {revealedSecret ? (
-        <div className="rounded-lg border border-emerald-200 dark:border-emerald-500/30 bg-emerald-50/40 dark:bg-emerald-500/5 p-4">
-          <p className="text-[10px] font-semibold uppercase tracking-wider text-emerald-700 dark:text-emerald-400 mb-2">
+        <div className="rounded-lg border border-blue-200 dark:border-blue-500/30 bg-blue-50/40 dark:bg-blue-500/5 p-4">
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-blue-700 dark:text-blue-400 mb-2">
             Webhook secret · guardalo ahora
           </p>
           <CopyField
@@ -141,7 +142,7 @@ export function HotmartIntegrationCard({
             onCopy={() => copySecret(revealedSecret)}
             copied={copiedSecret}
           />
-          <p className="mt-2 text-xs text-emerald-700 dark:text-emerald-400">
+          <p className="mt-2 text-xs text-blue-700 dark:text-blue-400">
             Solo se muestra una vez. Configuralo en Hotmart como{' '}
             <code className="mx-1 px-1 py-0.5 rounded bg-card/50 font-mono">hottok</code>o usalo
             como secret HMAC.
@@ -173,7 +174,7 @@ export function HotmartIntegrationCard({
                                 border transition-colors disabled:opacity-50 ${
                                   isActive
                                     ? 'border-amber-200 dark:border-amber-500/30 text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-500/10'
-                                    : 'border-emerald-200 dark:border-emerald-500/30 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-500/10'
+                                    : 'border-blue-200 dark:border-blue-500/30 text-blue-700 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-500/10'
                                 }`}
         >
           <Power className="h-3.5 w-3.5" />

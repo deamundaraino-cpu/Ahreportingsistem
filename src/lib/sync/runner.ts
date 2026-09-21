@@ -122,8 +122,6 @@ function buildRequest(job: SyncJob, appUrl: string): { url: string; method: 'GET
       if (job.cliente_id) p.set('clienteId', job.cliente_id);
       return { url: `${base}/api/cron/sync-ghl-leads?${p}`, method: 'POST' };
     }
-    case 'utm_aggregate':
-      return { url: `${base}/api/cron/report-utm/aggregate?${qs}`, method: 'GET' };
     case 'cierre_mes':
       return { url: `${base}/api/cron/cierre-mes?${qs}`, method: 'POST' };
     case 'reconciliar':

@@ -3,7 +3,7 @@
  * Plugin Name:       Report UTM — Ad House
  * Plugin URI:        https://reportes.adshouse.cloud/
  * Description:       Tracking UTM server-side para WordPress. Capta leads de formularios con datos de contacto completos, propaga UTMs a links de checkout y registra la atribución multi-touch de cada visitante.
- * Version:           0.3.1
+ * Version:           0.3.2
  * Requires at least: 5.8
  * Requires PHP:      7.4
  * Author:            Robinson Zapata / Ad House
@@ -101,6 +101,15 @@
  *  CHANGELOG
  * ════════════════════════════════════════════════════════════════════
  *
+ *  v0.3.2 — El pixel JS vuelve a ejecutarse
+ *    + Fix: la config se inyectaba con la clave `cliente_slug`, pero el pixel
+ *           lee `cliente`. El script abortaba con "pixel inactive" en cuanto
+ *           cargaba: cero pageviews, cero cookies rutm_vid, cero propagación
+ *           de UTMs a checkout. La captura S2S de leads no estaba afectada.
+ *    + Fix: wp_add_inline_script() se llamaba ANTES de wp_enqueue_script(),
+ *           con el handle todavía sin registrar. WordPress descarta el inline
+ *           script en ese caso, así que RUTM_CONFIG ni siquiera llegaba al HTML.
+ *
  *  v0.3.1 — Correcciones de empaquetado y test
  *    + Fix: ZIP empaquetado con separadores '/' (antes '\' rompía la
  *           instalación en Linux con error fatal en los require_once)
@@ -134,7 +143,7 @@
 
 if ( ! defined( 'ABSPATH' ) ) exit;
 
-define( 'RUTM_VERSION',    '0.3.1' );
+define( 'RUTM_VERSION',    '0.3.2' );
 define( 'RUTM_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'RUTM_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 define( 'RUTM_PLATFORM',   'https://reportes.adshouse.cloud/' );
@@ -214,10 +223,18 @@ class ReportUTM_Plugin {
      * Inyecta window.RUTM_CONFIG y el pixel JS en el <head> del sitio.
      *
      * El objeto RUTM_CONFIG le indica al pixel JS:
-     *   cliente_slug    — a qué cuenta de la plataforma enviar los eventos
+     *   cliente          — a qué cuenta de la plataforma enviar los eventos.
+     *                      La clave se llama `cliente` porque es la que lee el
+     *                      pixel (`config.cliente || config.client_slug ||
+     *                      config.slug`): mandar `cliente_slug` lo dejaba
+     *                      inactivo sin más aviso que un warning en consola.
      *   propagate_utms  — si debe decorar links de checkout con UTMs
      *   checkout_domains — lista de dominios a los que propagar UTMs
      *                      (null = usar la lista por defecto de la plataforma)
+     *
+     * El orden importa: wp_add_inline_script() sobre un handle que aún no está
+     * registrado devuelve false y descarta el script sin avisar, así que el
+     * enqueue va primero y la config después.
      */
     public function enqueue_pixel(): void {
         $options = get_option( 'rutm_options', [] );
@@ -237,22 +254,22 @@ class ReportUTM_Plugin {
             );
         }
 
-        wp_add_inline_script(
-            'report-utm-pixel',
-            sprintf( 'window.RUTM_CONFIG = %s;', wp_json_encode( [
-                'cliente_slug'     => $slug,
-                'propagate_utms'   => ! empty( $options['propagate_utms'] ),
-                'checkout_domains' => $checkout_domains,
-            ] ) ),
-            'before'
-        );
-
         wp_enqueue_script(
             'report-utm-pixel',
             $pixel_url,
             [],
             RUTM_VERSION,
             [ 'strategy' => 'defer', 'in_footer' => false ]
+        );
+
+        wp_add_inline_script(
+            'report-utm-pixel',
+            sprintf( 'window.RUTM_CONFIG = %s;', wp_json_encode( [
+                'cliente'          => $slug,
+                'propagate_utms'   => ! empty( $options['propagate_utms'] ),
+                'checkout_domains' => $checkout_domains,
+            ] ) ),
+            'before'
         );
     }
 

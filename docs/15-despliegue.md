@@ -71,7 +71,6 @@ no arrancaría nunca. Hay que declararlas **también** en _Build Args_:
 NEXT_PUBLIC_SUPABASE_URL=https://xxxxxxxx.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJhbGciOi...
 NEXT_PUBLIC_APP_URL=https://reportes.adshouse.cloud
-NEXT_PUBLIC_REPORT_UTM_ENABLED=true
 ```
 
 Corolario: **cambiar el dominio obliga a reconstruir**, no basta con reiniciar.
@@ -222,7 +221,6 @@ de extremo a extremo (la app encola, el worker reclama, los datos aterrizan).
    - Cron: `CRON_SECRET`.
    - OAuth: `META_APP_ID`, `META_APP_SECRET`, `TIKTOK_APP_ID`, `TIKTOK_APP_SECRET`.
    - Sheets: `GOOGLE_SERVICE_ACCOUNT_EMAIL`, `GOOGLE_SERVICE_ACCOUNT_KEY`.
-   - Report-UTM (opcional): `NEXT_PUBLIC_REPORT_UTM_ENABLED`.
 3. **Aplicar el esquema y migraciones** en Supabase (`schema.sql` + `migrations/001…020`). Exponer `report_utm` si se usa el módulo.
 4. **Configurar callbacks OAuth** en Meta y TikTok con el dominio de producción.
 5. **Recrear `vercel.json`** con los crons: se eliminó al migrar a Dokploy, así que un despliegue en Vercel partiría sin ninguna programación (ver [doc 14](./14-cron-y-workers.md)).

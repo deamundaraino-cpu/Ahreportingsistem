@@ -1,45 +1,53 @@
-# 12 · Módulo Report-UTM (tracking y atribución)
+# 12 · Tracking y atribución (lo que fue Report-UTM)
 
-Módulo **aislado** dentro del mismo proyecto Next.js. Comparte auth, deploy e instancia de Supabase con el reporting principal, pero **no comparte tablas ni rutas**. Su objetivo: rastrear el recorrido del visitante (enlaces + pixel) y atribuir las ventas (webhooks) a la fuente que las originó.
+Nació como un módulo **aislado** dentro del mismo proyecto: sidebar propio,
+route group propio y un feature flag que lo apagaba entero. Ya no. Sus páginas
+son secciones del reporting y su configuración vive en la ficha del cliente.
+Lo que queda de aquella separación es dónde están las cosas, no cómo se usan.
 
-## Activación
+Su objetivo no ha cambiado: rastrear de dónde viene cada lead y atribuir las
+ventas (webhooks) a la fuente que las originó.
 
-1. Aplicar la migración 012 (y 013, 014) que crean el schema `report_utm`.
-2. En **Supabase Studio → Settings → API → Exposed schemas**, agregar `report_utm`.
-3. En el entorno: `NEXT_PUBLIC_REPORT_UTM_ENABLED=true`.
-4. Acceder a `/report-utm` (solo admin/superadmin).
+## Qué se movió y qué no
 
-Mientras la flag esté desactivada, el route group redirige a `/dashboard` y el switcher del sidebar queda oculto.
+| Concepto                  | Dónde está ahora                                                                |
+| ------------------------- | ------------------------------------------------------------------------------- |
+| Páginas                   | `/leads`, `/ventas`, `/informes`, `/cruce-campanas`, `/admin/salud` en `(app)/` |
+| Configuración por cliente | `/admin/settings/[id]`, en pestañas por plataforma                              |
+| Navegación                | El sidebar único (`src/components/layout/AppSidebar.tsx`), grupo «Análisis»     |
+| Tablas                    | Sin cambios: schema `report_utm.*`                                              |
+| API                       | Sin cambios: `src/app/api/report-utm/**`                                        |
+| Cliente Supabase          | Sin cambios: `src/lib/report-utm/client.ts`                                     |
+| Tipos y lógica            | Sin cambios: `src/lib/report-utm/*`, `src/components/report-utm/*`              |
 
-## Aislamiento
+Las rutas de `/api/report-utm/**` **no se tocan a propósito**: hay webhooks
+registrados con esas URLs en Hotmart, GoHighLevel y Meta, y renombrarlas rompe
+la ingesta en vivo. Las carpetas `lib/` y `components/` tampoco, porque medio
+reporting las importa (`lib/report-utm/auth.ts` autentica todo `/api/admin/*`).
 
-| Concepto         | Ubicación                                                                  |
-| ---------------- | -------------------------------------------------------------------------- |
-| Tablas           | schema `report_utm.*`                                                      |
-| Rutas UI         | `src/app/(report-utm)/report-utm/**`                                       |
-| API              | `src/app/api/report-utm/**` + `/t/[slug]`                                  |
-| Sidebar          | `src/components/report-utm/ReportUtmSidebar.tsx`                           |
-| Cliente Supabase | `src/lib/report-utm/client.ts` (`reportUtmClient`, `reportUtmAdminClient`) |
-| Tipos            | `src/lib/report-utm/types.ts`                                              |
-| Lógica           | `src/lib/report-utm/*`                                                     |
+`report_utm.clientes` sigue siendo una tabla aparte, enlazada a
+`public.clientes` por `public_cliente_id`. El espejo se crea solo
+(`asegurarEspejoUtm`, en `src/lib/clientes/ciclo-de-vida.ts`) y el usuario nunca
+lo ve: para él solo existe «el cliente».
 
-`report_utm.clientes` tiene un FK opcional `public_cliente_id` para cruzar (si se quiere) con un cliente del reporting principal; por defecto son universos separados.
+## Requisito de instalación
 
-## Las tres piezas de tracking
+En **Supabase Studio → Settings → API → Exposed schemas** tiene que estar
+`report_utm`. Sin eso, las páginas de análisis cargan vacías.
 
-### 1. Enlaces de tracking (`/t/[slug]`)
+## Retirado
 
-Enlaces cortos con UTMs predefinidos (`report_utm.tracking_links`). Cuando alguien visita `/t/[slug]` (`src/app/t/[slug]/route.ts`):
+- **Overview `/report-utm`** — su roadmap seguía anunciando como pendientes cosas hechas hacía meses, la cifra de clientes estaba capada a 5 por un `.limit(5)` y el «Revenue (7d)» sumaba monedas distintas sin convertir.
+- **Enlaces de tracking `/t/[slug]`** y la tabla `tracking_links` — ninguna pantalla creaba enlaces desde que se retiró `/report-utm/links`.
+- **`hourly_metrics`** y su cron — se recalculaba a diario y no la leía nadie.
+- **Pantallas de clientes del módulo** — eran un espejo de `/admin/settings`.
 
-1. Resuelve el slug → `destination_url` + UTMs.
-2. Setea **cookies de atribución** de primera parte (ver abajo).
-3. Incrementa `clicks_count` y `last_click_at`.
-4. Registra un evento de clic en `pixel_events`.
-5. Hace **302** al destino, propagando UTMs y `click_id`.
+El **pixel** (`public/report-utm-pixel.js`, `/api/report-utm/pixel/*`) sigue
+vivo: lo usa `wordpress-plugin/report-utm/report-utm.php`.
 
-Gestión en `/report-utm/links`.
+## Las dos piezas de tracking
 
-### 2. Pixel JavaScript
+### 1. Pixel JavaScript
 
 Snippet (`public/report-utm-pixel.js`) que el cliente embebe en su sitio. Envía eventos a `POST /api/report-utm/pixel/event` (público, CORS `*`):
 
@@ -47,9 +55,11 @@ Snippet (`public/report-utm-pixel.js`) que el cliente embebe en su sitio. Envía
 - Datos: `cliente_slug`, `visitor_id`, `session_id`, `page_url`, `referrer`, UTMs, `click_id`, `custom_data`.
 - El endpoint resuelve el slug → cliente, valida que esté `active`, y guarda en `report_utm.pixel_events` (captura IP/país/User-Agent de cabeceras).
 
-Snippet y stream de eventos en `/report-utm/pixel`.
+El snippet lo instala el plugin de WordPress (`wordpress-plugin/report-utm/`); la pantalla que lo mostraba se retiró.
 
-### 3. Webhook de ventas (Hotmart)
+El plugin empaquetado vive en `public/report-utm.zip` —lo regenera `wordpress-plugin/build.ps1`, que escribe ahí directamente— y se descarga desde la tarjeta **Pixel S2S** de la ficha del cliente, junto al slug y la URL base que hay que pegar en WordPress. No está en `isPublicPath`, así que la descarga exige sesión: un anónimo que pida `/report-utm.zip` termina en `/login`.
+
+### 2. Webhook de ventas (Hotmart)
 
 `POST /api/report-utm/webhooks/hotmart/[clienteId]`:
 
@@ -59,7 +69,7 @@ Snippet y stream de eventos en `/report-utm/pixel`.
 4. **Resuelve atribución** multi-touch (ver abajo).
 5. Emite **webhooks salientes** a suscriptores (fire-and-forget).
 
-Códigos: 201 ok · 404 sin integración · 403 pausada · 401 firma inválida · 422 payload inválido · 500 error BD. `GET` es health-check de la URL. Log de ventas en `/report-utm/ventas`.
+Códigos: 201 ok · 404 sin integración · 403 pausada · 401 firma inválida · 422 payload inválido · 500 error BD. `GET` es health-check de la URL. Log de ventas en `/ventas`.
 
 ## Cookies de atribución
 
@@ -125,33 +135,3 @@ Extrae monto, moneda, producto, comprador, `transaction_type` (bump/upsell/subsc
 4. Actualiza contadores `success_count`/`failure_count` del webhook.
 
 Tipos de evento: `sale.approved`, `sale.pending`, `sale.refunded`, `sale.chargeback`. Configuración en `report_utm.outbound_webhooks`; UI en `OutboundWebhooksCard.tsx`.
-
-## Agregación horaria
-
-`src/lib/report-utm/aggregate.ts` → `aggregateHourlyMetrics({ sinceISO, untilISO?, clienteId? })`:
-
-- Agrupa `sales_events` por `(cliente_id, hora, utm_source, utm_campaign)`.
-- Cuenta ventas aprobadas y reembolsos/chargebacks por separado.
-- Borra los buckets afectados y reinserta (idempotente) en `hourly_metrics`.
-
-Se ejecuta vía `GET/POST /api/cron/report-utm/aggregate` (cron diario). Botón manual: `RunAggregateButton`.
-
-## Analítica de atribución (`/report-utm/atribucion`)
-
-Dashboard que agrega `sales_events` en vivo:
-
-- KPIs: eventos totales, revenue aprobado, AOV, fuentes distintas.
-- Gráficos: tendencia de revenue diaria, distribución por fuente.
-- Tablas: top sources (ventas, revenue, AOV, % del total) y **matriz UTM** (source × campaign con reembolsos).
-
-Componentes en `src/components/report-utm/`: `AttributionCharts`, `AttributionBadge`, `TrackingLinkRow`, `PixelSnippet`, `HotmartIntegrationCard`, `OutboundWebhooksCard`, `RunAggregateButton`, `PhaseStub`.
-
-## Roadmap (del README del módulo)
-
-- **Fase 0** — Esqueleto ✅
-- **Fase 1** — Webhook Hotmart + sales_events + listado de ventas
-- **Fase 2** — Dashboard UTM + atribución + agregaciones
-- **Fase 3** — Tracking links `/t/:slug` + pixel JS
-- **Fase 4** — Meta CAPI outbound + reglas / automatizaciones
-
-> Referencia original: [`src/app/(report-utm)/README.md`](<../src/app/(report-utm)/README.md>).

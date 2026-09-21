@@ -86,7 +86,7 @@ La primera regla que acierta gana:
 | 7   | Nombre de anuncio / conjunto             | **solo si lleva a UNA campaña**, solo o cruzando anuncio con conjunto |
 
 Un nombre que existe en varias campañas y que el otro campo no desambigua queda
-como **`ambiguous`**: no cruza, y aparece en `/report-utm/cruce-campanas` → «Nombres
+como **`ambiguous`**: no cruza, y aparece en `/cruce-campanas` → «Nombres
 repetidos en varias campañas», con las campañas candidatas. Se decidió así a propósito:
 baja el % de cruce visible, pero deja de inventarlo.
 

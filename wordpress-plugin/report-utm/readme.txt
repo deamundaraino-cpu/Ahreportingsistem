@@ -3,7 +3,7 @@ Contributors: adshouse, robinsonzapata
 Requires at least: 5.8
 Tested up to: 6.7
 Requires PHP: 7.4
-Stable tag: 0.3.1
+Stable tag: 0.3.2
 License: Proprietary — Ad House Internal Use
 
 Tracking UTM server-side para WordPress. Capta leads de formularios con atribución multi-touch, propaga UTMs a checkout y registra cada conversión con primer y último toque.
@@ -65,7 +65,7 @@ Métodos de atribución (cascada):
 
 == Instalación ==
 
-1. Subir el archivo `report-utm.zip` en WP Admin → Plugins → Añadir nuevo → Subir plugin
+1. Descargar `report-utm.zip` desde reportes.adshouse.cloud → tu cliente → tarjeta "Pixel S2S" → botón "Descargar plugin", y subirlo en WP Admin → Plugins → Añadir nuevo → Subir plugin
 2. Activar el plugin
 3. Ir a Ajustes → Report UTM
 4. Ingresar el Slug de cliente (provisto por Ad House)
@@ -117,6 +117,11 @@ En reportes.adshouse.cloud → sección "Leads". Podés filtrar por cliente, plu
 
 == Changelog ==
 
+= 0.3.2 =
+* Fix: el pixel JS no se ejecutaba nunca. La configuración se inyectaba con la clave `cliente_slug` y el script espera `cliente`, así que abortaba en la primera línea ("pixel inactive" en consola).
+* Fix: la configuración se añadía con wp_add_inline_script() antes de registrar el script, y WordPress la descartaba en silencio. Ahora el enqueue va primero.
+* Con esto vuelven los pageviews, las cookies de atribución (rutm_vid / rutm_ft / rutm_lt) y la propagación de UTMs a los links de checkout. La captura de leads por S2S no estaba afectada y sigue igual.
+
 = 0.3.1 =
 * Fix: el ZIP ahora se empaqueta con separadores '/' (antes usaba '\', lo que rompía la instalación en servidores Linux con un error fatal en los require_once)
 * Fix: polyfills para str_contains/str_starts_with para compatibilidad real con PHP 7.4
@@ -150,6 +155,9 @@ En reportes.adshouse.cloud → sección "Leads". Podés filtrar por cliente, plu
 * Panel de configuración básico
 
 == Upgrade Notice ==
+
+= 0.3.2 =
+Actualización recomendada para todos los sitios: hasta esta versión el pixel JS no llegaba a ejecutarse y solo funcionaba la captura de leads por servidor. Subí el ZIP nuevo y volvé a activar; la configuración guardada se conserva.
 
 = 0.3.1 =
 Corrige el error fatal de instalación causado por el empaquetado del ZIP. Si la versión anterior no se pudo activar, borrala y subí este ZIP nuevo.

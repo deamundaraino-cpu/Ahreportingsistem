@@ -18,6 +18,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 import { config as loadEnv } from 'dotenv';
+import { salir } from './_salida';
 loadEnv({ path: '.env.local' });
 
 let fallos = 0;
@@ -142,7 +143,7 @@ async function main() {
       ? '\n✅ Referencias a campos de lead: todas las comprobaciones pasan\n'
       : `\n❌ ${fallos} comprobación(es) fallaron\n`
   );
-  process.exit(fallos === 0 ? 0 : 1);
+  salir(fallos);
 }
 
 main().catch((e) => {

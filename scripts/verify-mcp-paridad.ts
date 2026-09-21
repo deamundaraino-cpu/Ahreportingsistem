@@ -23,6 +23,7 @@
  * Requiere base de datos (forma parte de `test:datos`).
  */
 import { config as loadEnv } from 'dotenv';
+import { salir } from './_salida';
 loadEnv({ path: '.env.local' });
 
 let ok = 0,
@@ -307,7 +308,7 @@ async function main() {
   }
 
   console.log(`\n${fail === 0 ? '✅' : '❌'} ${ok} comprobaciones pasadas, ${fail} fallidas\n`);
-  process.exit(fail === 0 ? 0 : 1);
+  salir(fail);
 }
 
 main().catch((e) => {

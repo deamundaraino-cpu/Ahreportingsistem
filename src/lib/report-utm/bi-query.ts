@@ -1,6 +1,7 @@
 import { createAdminClient } from '@/utils/supabase/server';
 import { fetchAllRows } from '@/lib/supabase-paginate';
 import { columnaExcluidoDisponible } from './lead-exclusion';
+import { escLike, patronLike } from './leads-filtros';
 import { COLUMNAS_ID, SELECT_IDS_VENTA, columnasIdDisponibles } from './lead-ids';
 import {
   cargarConversor,
@@ -94,6 +95,7 @@ import {
 import type { LeadCampoDef, LeadSegmentoDef, LeadSegmentoMeta } from './lead-campos';
 import {
   sinValores,
+  errorDeConsulta,
   VACIO_HONESTO,
   plegarConteos,
   ordenarPorFrecuencia,
@@ -1641,7 +1643,9 @@ async function adsDailySinHuecos(
         200_000,
         { estricto: true }
       );
-      const presentes = new Set(filas.map((f) => `${String(f.fecha).slice(0, 10)}|${f.plataforma}`));
+      const presentes = new Set(
+        filas.map((f) => `${String(f.fecha).slice(0, 10)}|${f.plataforma}`)
+      );
       ok = [...necesarios].every((k) => presentes.has(k));
     }
   } catch (e) {
@@ -3224,19 +3228,21 @@ export function applyOneFilter(q: any, key: string, raw: string): any {
   // Los filtros de campo de formulario apuntan a la clave JSONB (raw_fields->>clave).
   const fieldKey = parseFieldDim(key);
   const col = fieldKey !== null ? `raw_fields->>${fieldKey}` : key;
-  // Escapar comodines de LIKE en el valor del usuario
-  const esc = (s: string) => s.replace(/[%_]/g, (m) => `\\${m}`);
+  // Escapar comodines de LIKE en el valor del usuario. `escLike` vive en
+  // `leads-filtros.ts` para que exista UNA sola definición: la que había aquí
+  // escapaba `%` y `_` pero no `\`, así que una barra del usuario se comía el
+  // carácter siguiente.
   switch (op) {
     case 'neq':
       return q.neq(col, v);
     case 'contains':
-      return q.ilike(col, `%${esc(v)}%`);
+      return q.ilike(col, patronLike(v));
     case 'ncontains':
-      return q.not(col, 'ilike', `%${esc(v)}%`);
+      return q.not(col, 'ilike', patronLike(v));
     case 'starts':
-      return q.ilike(col, `${esc(v)}%`);
+      return q.ilike(col, `${escLike(v)}%`);
     case 'ends':
-      return q.ilike(col, `%${esc(v)}`);
+      return q.ilike(col, `%${escLike(v)}`);
     case 'eq':
     default:
       // Multi-valor por comas → IN
@@ -3280,6 +3286,14 @@ export interface ParamsValores {
   /** Búsqueda por subcadena, para cuando la lista viene truncada. */
   search?: string;
   limit?: number;
+  /**
+   * Contar también los leads excluidos (migración 087).
+   *
+   * Para un informe SIEMPRE es false: cuenta lo que cuenta. Lo pide /leads en
+   * sus pestañas «Excluidos» y «Todos», donde la lista por defecto ofrece justo
+   * los valores que NO están en lo que se está mirando.
+   */
+  incluir_excluidos?: boolean;
 }
 
 /** Cuántos valores pide el servidor por defecto. */
@@ -3302,6 +3316,9 @@ function claveCache(p: ParamsValores): string {
     p.source ?? 'leads',
     p.search ?? '',
     p.limit ?? LIMITE_VALORES,
+    // Sin esto, cambiar de pestaña antes de 60 s sirve la lista cacheada de
+    // «incluidos» a la pestaña «todos»: mismo TTL, misma clave, otra pregunta.
+    p.incluir_excluidos ? 1 : 0,
   ]);
 }
 
@@ -3363,7 +3380,7 @@ async function calcularValores(params: ParamsValores): Promise<ResultadoValores>
         p_hasta: dateTo,
         p_limite: limite,
       });
-      if (error) return sinValores('error_consulta');
+      if (error) return errorDeConsulta('hotmart_valores_conteo', error);
       return desdeFilasRpc(data, limite, filtrarPorBusqueda);
     }
 
@@ -3391,8 +3408,12 @@ async function calcularValores(params: ParamsValores): Promise<ResultadoValores>
         p_columna: null,
         p_claves_json: campo.claves_origen,
         p_limite: 500,
+        // Solo se manda cuando se pide: así la llamada normal sigue siendo la de 7
+        // argumentos y funciona con o sin la migración 087. Mandarlo siempre daría
+        // PGRST202 hasta aplicarla, y con él todos los desplegables del BI.
+        ...(params.incluir_excluidos ? { p_incluir_excluidos: true } : {}),
       });
-      if (error) return sinValores('error_consulta');
+      if (error) return errorDeConsulta('bi_valores_conteo (campo de lead)', error);
 
       const crudos = (data ?? []) as Array<{ valor: string; n: number }>;
       const plegado = plegarConteos(
@@ -3424,7 +3445,7 @@ async function calcularValores(params: ParamsValores): Promise<ResultadoValores>
         .eq('campo_id', campo.id)
         .gte('fecha', dateFrom)
         .lte('fecha', dateTo);
-      if (error) return sinValores('error_consulta');
+      if (error) return errorDeConsulta('sheet_campo_valores_diarios', error);
 
       const porValor = new Map<string, number>();
       for (const r of (data ?? []) as Record<string, unknown>[]) {
@@ -3451,8 +3472,12 @@ async function calcularValores(params: ParamsValores): Promise<ResultadoValores>
         p_columna: null,
         p_claves_json: [fieldKey],
         p_limite: limite,
+        // Solo se manda cuando se pide: así la llamada normal sigue siendo la de 7
+        // argumentos y funciona con o sin la migración 087. Mandarlo siempre daría
+        // PGRST202 hasta aplicarla, y con él todos los desplegables del BI.
+        ...(params.incluir_excluidos ? { p_incluir_excluidos: true } : {}),
       });
-      if (error) return sinValores('error_consulta');
+      if (error) return errorDeConsulta('bi_valores_conteo (campo de formulario)', error);
       return desdeFilasRpc(data, limite, filtrarPorBusqueda);
     }
 
@@ -3477,7 +3502,7 @@ async function calcularValores(params: ParamsValores): Promise<ResultadoValores>
         p_hasta: bounds.lt,
         p_limite: 5000,
       });
-      if (error) return sinValores('error_consulta');
+      if (error) return errorDeConsulta('bi_valores_utm (dimensión unificada)', error);
 
       const porEtiqueta = new Map<string, number>();
 
@@ -3516,15 +3541,30 @@ async function calcularValores(params: ParamsValores): Promise<ResultadoValores>
       p_columna: col,
       p_claves_json: null,
       p_limite: limite,
+      // Solo se manda cuando se pide: así la llamada normal sigue siendo la de 7
+      // argumentos y funciona con o sin la migración 087. Mandarlo siempre daría
+      // PGRST202 hasta aplicarla, y con él todos los desplegables del BI.
+      ...(params.incluir_excluidos ? { p_incluir_excluidos: true } : {}),
     });
-    // Una columna que la RPC no admite para esta tabla llega aquí como
-    // error: es el caso del slicer de ventas pidiendo `form_name`.
-    if (error) return sinValores('dimension_no_listable');
+    // Una columna que la RPC no admite para esta tabla llega aquí como error:
+    // es el caso del slicer de ventas pidiendo `form_name`. Eso SÍ es
+    // «no listable».
+    //
+    // Pero no todo error lo es. `P0001` es el RAISE EXCEPTION de la lista
+    // blanca de la RPC; cualquier otro código es un fallo de verdad —el 57014
+    // del `statement_timeout`, por ejemplo— y devolverlo como «no listable»
+    // convierte una caída en un dato: la pantalla dice «no hay campañas».
+    if (error) {
+      return (error as { code?: string }).code === 'P0001'
+        ? sinValores('dimension_no_listable')
+        : errorDeConsulta('bi_valores_conteo (columna directa)', error);
+    }
     return desdeFilasRpc(data, limite, filtrarPorBusqueda);
-  } catch {
-    // Incluye el 57014 de `statement_timeout`. Nunca se cae de vuelta al
-    // escaneo truncado antiguo: sería devolver datos sesgados como buenos.
-    return sinValores('error_consulta');
+  } catch (e) {
+    // Incluye el 57014 de `statement_timeout` cuando llega como excepción.
+    // Nunca se cae de vuelta al escaneo truncado antiguo: sería devolver datos
+    // sesgados como buenos.
+    return errorDeConsulta('bi_valores_conteo (columna directa)', e);
   }
 }
 

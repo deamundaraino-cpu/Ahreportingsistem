@@ -890,7 +890,10 @@ sec('parseTabPayload — cantidad entera y valor en rango');
     decimal.quality.cantidad_invalida === 1 && decimal.quality.cantidad_rechazada === 1,
     JSON.stringify(decimal.quality)
   );
-  check('su fila cruda se conserva', decimal.crudas.length === 1 && decimal.quality.solo_crudas === 1);
+  check(
+    'su fila cruda se conserva',
+    decimal.crudas.length === 1 && decimal.quality.solo_crudas === 1
+  );
   check(
     'el aviso cita la celda rechazada',
     decimal.quality.warnings.some((w) => w.includes('"1,5"') && w.includes('entero')),
@@ -943,7 +946,10 @@ sec('parseTabPayload — cantidad entera y valor en rango');
     '9999999999,999 redondea a 1e10 y no cabe',
     leer([['2026-07-01', '1', '9999999999,999']]).conversiones[0].valor === null
   );
-  check('"N/A" en el valor es null, no 0', leer([['2026-07-01', '1', 'N/A']]).conversiones[0].valor === null);
+  check(
+    '"N/A" en el valor es null, no 0',
+    leer([['2026-07-01', '1', 'N/A']]).conversiones[0].valor === null
+  );
 
   const mezcla = leer([
     ['2026-07-01', '3', '100'],
@@ -984,7 +990,16 @@ sec('agregadosDesdeFilasDb — mismo resultado que en memoria');
     ticket: { col_name: 'Ticket', type: 'currency', label: 'Ticket', include: true },
     ciudad: { col_name: 'Ciudad', type: 'text', label: 'Ciudad', include: true },
   };
-  const headers = ['fecha', 'tipo', 'cantidad', 'valor', 'fuente', 'Tasa Cierre', 'Ticket', 'Ciudad'];
+  const headers = [
+    'fecha',
+    'tipo',
+    'cantidad',
+    'valor',
+    'fuente',
+    'Tasa Cierre',
+    'Ticket',
+    'Ciudad',
+  ];
   const tabA: SheetTabConfig = { id: 'a', sheet_name: 'A', enabled: true, custom_columns: custom };
   const tabB: SheetTabConfig = { id: 'b', sheet_name: 'B', enabled: true, custom_columns: custom };
   const a = parseRowsForTab(
@@ -1014,10 +1029,20 @@ sec('agregadosDesdeFilasDb — mismo resultado que en memoria');
   const recalculado = agregadosDesdeFilasDb(deLaBase, custom);
 
   const ordenar = (xs: typeof enMemoria) =>
-    JSON.stringify([...xs].sort((x, y) => `${x.fecha}${x.tipo}`.localeCompare(`${y.fecha}${y.tipo}`)));
-  check('recalcular desde la base da lo mismo', ordenar(recalculado) === ordenar(enMemoria), ordenar(recalculado));
+    JSON.stringify(
+      [...xs].sort((x, y) => `${x.fecha}${x.tipo}`.localeCompare(`${y.fecha}${y.tipo}`))
+    );
+  check(
+    'recalcular desde la base da lo mismo',
+    ordenar(recalculado) === ordenar(enMemoria),
+    ordenar(recalculado)
+  );
   const dia1 = recalculado.find((x) => x.fecha === '2026-07-01')!;
-  check('conserva el porcentaje ponderado', dia1.custom_fields.tasa_cierre === 90, String(dia1.custom_fields.tasa_cierre));
+  check(
+    'conserva el porcentaje ponderado',
+    dia1.custom_fields.tasa_cierre === 90,
+    String(dia1.custom_fields.tasa_cierre)
+  );
   check(
     'fuente NULL se normaliza a ""',
     recalculado.find((x) => x.fecha === '2026-07-02')?.fuente === ''
@@ -1037,10 +1062,28 @@ sec('agregadosDesdeFilasDb — mismo resultado que en memoria');
   // Una clave `text` en una pestaña y `count` en otra: la última definición gana
   // y un texto guardado no puede concatenarse a la suma.
   const agg = agregadosDesdeFilasDb([
-    { fecha: '2026-07-01', tipo: 'lead', cantidad: 1, valor: null, fuente: '', custom_fields: { x: 2 } },
-    { fecha: '2026-07-01', tipo: 'lead', cantidad: 1, valor: null, fuente: '', custom_fields: { x: 'abc' } },
+    {
+      fecha: '2026-07-01',
+      tipo: 'lead',
+      cantidad: 1,
+      valor: null,
+      fuente: '',
+      custom_fields: { x: 2 },
+    },
+    {
+      fecha: '2026-07-01',
+      tipo: 'lead',
+      cantidad: 1,
+      valor: null,
+      fuente: '',
+      custom_fields: { x: 'abc' },
+    },
   ]);
-  check('un texto en una columna numérica se ignora', agg[0].custom_fields.x === 2, String(agg[0].custom_fields.x));
+  check(
+    'un texto en una columna numérica se ignora',
+    agg[0].custom_fields.x === 2,
+    String(agg[0].custom_fields.x)
+  );
 }
 
 sec('resolverTitulosVivos — qué pestañas se pueden podar');
@@ -1060,7 +1103,8 @@ sec('resolverTitulosVivos — qué pestañas se pueden podar');
 
   check(
     'nombre vacío resuelve a la primera pestaña',
-    JSON.stringify(resolverTitulosVivos(doc, [t(''), t('Ventas')])) === '["GESTION LEADS","Ventas"]',
+    JSON.stringify(resolverTitulosVivos(doc, [t(''), t('Ventas')])) ===
+      '["GESTION LEADS","Ventas"]',
     JSON.stringify(resolverTitulosVivos(doc, [t(''), t('Ventas')]))
   );
   check(
@@ -1069,7 +1113,8 @@ sec('resolverTitulosVivos — qué pestañas se pueden podar');
   );
   check(
     'las deshabilitadas no cuentan',
-    JSON.stringify(resolverTitulosVivos(doc, [t('Ventas'), t('Renombrada', false)])) === '["Ventas"]'
+    JSON.stringify(resolverTitulosVivos(doc, [t('Ventas'), t('Renombrada', false)])) ===
+      '["Ventas"]'
   );
   check(
     'todas deshabilitadas → lista vacía (no se poda nada)',

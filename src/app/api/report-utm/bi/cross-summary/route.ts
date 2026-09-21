@@ -2,7 +2,7 @@
 //
 // Alimenta el chip «Cruce 94%» de los widgets y el banner del informe. Devuelve
 // SOLO el resumen (dos porcentajes, los métodos y los peores casos), no el
-// desglose completo que consume la página `/report-utm/cruce-campanas`: el chip
+// desglose completo que consume la página `/cruce-campanas`: el chip
 // se pinta en cada carga de informe y no puede costar lo que cuesta esa página.
 //
 // La decisión de producto detrás de esto: el cruce sigue siendo automático y el

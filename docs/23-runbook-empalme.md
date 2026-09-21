@@ -8,11 +8,11 @@ síntoma que se ve, dice dónde mirar y qué hacer. Si nada de esto lo resuelve,
 
 ## Antes de nada: las tres pantallas de diagnóstico
 
-| Pantalla                     | Qué dice                                                                                                  |
-| ---------------------------- | --------------------------------------------------------------------------------------------------------- |
-| `/report-utm/salud`          | Fuentes paradas, integraciones en error, cuentas de Meta que no pueden publicar, cruce de leads degradado |
-| `/report-utm/cruce-campanas` | Qué UTMs no cruzan con campañas, conjuntos y anuncios, y cuántos leads quedaron excluidos                 |
-| `/admin/sync`                | Estado de las sincronizaciones y sus errores                                                              |
+| Pantalla          | Qué dice                                                                                                  |
+| ----------------- | --------------------------------------------------------------------------------------------------------- |
+| `/admin/salud`    | Fuentes paradas, integraciones en error, cuentas de Meta que no pueden publicar, cruce de leads degradado |
+| `/cruce-campanas` | Qué UTMs no cruzan con campañas, conjuntos y anuncios, y cuántos leads quedaron excluidos                 |
+| `/admin/sync`     | Estado de las sincronizaciones y sus errores                                                              |
 
 Y por consola: `npm run diagnostico` (estado real de cada fuente por cliente).
 
@@ -25,21 +25,21 @@ En este orden de probabilidad:
 1. **La métrica no cruza con la dimensión.** El editor atenúa las métricas que no
    se reparten por esa dimensión (el gasto no se reparte por país; las sesiones de
    GA4 no se reparten por campaña). Cambia la dimensión.
-2. **El cliente está sin enlace.** En `/report-utm/clientes` aparece «Sin enlace».
+2. **El cliente está sin enlace.** En `/admin/settings` aparece «Sin enlace».
    Sin enlace, cinco de las siete fuentes devuelven cero en silencio. Usa
    «Enlazar con…» en esa fila.
-3. **Los leads no cruzan con las campañas.** `/report-utm/cruce-campanas`. Si casi
+3. **Los leads no cruzan con las campañas.** `/cruce-campanas`. Si casi
    todo cae en «(sin campaña)», es etiquetado UTM, no un fallo: corrígelo ahí (por
    campaña, conjunto o anuncio) o revisa los campos ocultos del formulario de GHL
    ([doc 21](./21-auditoria-utms-ghl.md)).
-4. **La fuente está parada.** `/report-utm/salud` dice cuál y desde cuándo.
+4. **La fuente está parada.** `/admin/salud` dice cuál y desde cuándo.
 
 ## «Hay muchos menos leads que antes»
 
 Probablemente la regla «Qué leads cuentan» del cliente está activa. Es a propósito:
 los leads sin atribución (WhatsApp directo, perfil de Instagram) no cuentan.
 
-- Mira `/report-utm/leads` → pestaña **Excluidos**: ahí están, con el motivo.
+- Mira `/leads` → pestaña **Excluidos**: ahí están, con el motivo.
 - Si alguno sí debía contar, selecciónalo y «Volver a contar».
 - Si la regla está mal calibrada, cámbiala en la ficha del cliente y usa
   «Previsualizar sobre el histórico» antes de «Aplicar».
@@ -61,7 +61,7 @@ Meta paró la cuenta (pago rechazado, saldo pendiente o inhabilitada). El aviso
 llega a la campana y al grupo de WhatsApp del equipo una vez al día como mucho.
 
 - Revisa el pago en el Administrador de anuncios de Meta.
-- Tras pagar, la alerta desaparece de `/report-utm/salud` en la siguiente
+- Tras pagar, la alerta desaparece de `/admin/salud` en la siguiente
   sincronización.
 
 ## «El ROAS de Hotmart no tiene sentido»
@@ -80,7 +80,7 @@ llega a la campana y al grupo de WhatsApp del equipo una vez al día como mucho.
    con el header `X-Rutm-Ghl-Token`.
 2. La oportunidad tiene que estar en estado **won** (o el Workflow filtrar por la
    etapa de venta).
-3. Aparece en `/report-utm/ventas` y, en el dashboard, como `crm_ventas`.
+3. Aparece en `/ventas` y, en el dashboard, como `crm_ventas`.
 
 ## «Borré un cliente y sigue apareciendo»
 
@@ -126,7 +126,7 @@ npx tsx scripts/borrar-clientes-huerfanos.ts                        # lista y cu
 npx tsx scripts/borrar-clientes-huerfanos.ts --ids=<uuid>,<uuid> --apply
 ```
 
-O uno a uno con «Eliminar» en `/report-utm/clientes`.
+O uno a uno con «Eliminar» en `/admin/settings`.
 
 ## «No me deja eliminar un usuario»
 
@@ -143,7 +143,7 @@ El código está en GitHub. Para que otra persona (o un asistente) lo resuelva
 rápido, pásale:
 
 1. **Qué ves**: la pantalla, el cliente y el rango de fechas.
-2. **Qué dice el diagnóstico**: captura de `/report-utm/salud` y de `/admin/sync`.
+2. **Qué dice el diagnóstico**: captura de `/admin/salud` y de `/admin/sync`.
 3. **Qué documento aplica**: este runbook enlaza el doc de cada tema.
 
 Comprobaciones que puede correr quien toque el código:

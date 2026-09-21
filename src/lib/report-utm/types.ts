@@ -66,7 +66,8 @@ export type ReportUtmLeadEvent = {
   id: string;
   cliente_id: string;
   form_name: string | null;
-  form_id: string | null;
+  /** La página de leads ya no lo pide: no se pinta en ninguna vista. */
+  form_id?: string | null;
   form_plugin: string | null;
   lead_name: string | null;
   lead_email: string | null;
@@ -78,15 +79,17 @@ export type ReportUtmLeadEvent = {
   utm_term: string | null;
   utm_id: string | null;
   click_id: string | null;
-  visitor_id: string | null;
+  /** Igual que `form_id`: no se pinta y está a NULL en el 100 % de las filas. */
+  visitor_id?: string | null;
   session_id: string | null;
   page_url: string | null;
   referrer: string | null;
   ip_address: string | null;
   ip_country: string | null;
   user_agent: string | null;
-  first_touch: Record<string, unknown> | null;
-  last_touch: Record<string, unknown> | null;
+  // Sin `first_touch`/`last_touch`: eran una copia JSONB de las columnas `utm_*`
+  // de esta misma fila (medido: `campaign` coincidía en 89.486 de 89.489) y
+  // pesaban 39 MB, el 27 % de los datos de la tabla. Eliminadas en la 084.
   attribution_method: string | null;
   attribution_resolved_at: string | null;
   custom_data: Record<string, unknown> | null;

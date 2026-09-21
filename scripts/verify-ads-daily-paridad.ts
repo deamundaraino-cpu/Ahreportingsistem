@@ -18,6 +18,7 @@
  */
 
 import { config as loadEnv } from 'dotenv';
+import { salir } from './_salida';
 loadEnv({ path: '.env.local' });
 
 let fallos = 0;
@@ -241,7 +242,7 @@ async function main() {
 main()
   .then(() => {
     console.log(fallos === 0 ? '\n✓ TODO OK' : `\n✗ ${fallos} comprobación(es) fallida(s)`);
-    process.exit(fallos === 0 ? 0 : 1);
+    salir(fallos);
   })
   .catch((err) => {
     console.error('\n✗ Error inesperado:', err);

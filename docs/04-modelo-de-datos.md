@@ -227,7 +227,7 @@ CREATE TABLE public.leads_diarios (
 
 ### `report_templates` y `monthly_reports` (migración 004)
 
-Motor de reportes mensuales. Ver [doc 11](./11-reportes-mensuales.md).
+Motor de reportes mensuales. La interfaz se retiró al unificar Reporting y Report-UTM: la sustituyen los informes BI (`/informes`). Las tablas siguen en la base por si hace falta consultar el histórico.
 
 ```sql
 CREATE TABLE public.report_templates (

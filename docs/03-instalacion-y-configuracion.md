@@ -67,7 +67,7 @@ GOOGLE_SERVICE_ACCOUNT_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE K
 ### Módulo Report-UTM (opcional, feature flag)
 
 ```bash
-NEXT_PUBLIC_REPORT_UTM_ENABLED=true   # habilita las rutas /report-utm/*
+
 ```
 
 > GA4 y Hotmart **no usan variables de entorno**: sus credenciales se configuran **por cliente** en `config_api` desde `/admin/settings/[id]`. Ver [doc 08 · Integraciones](./08-integraciones.md).
@@ -113,7 +113,6 @@ EVOLUTION_INSTANCE=adshouse                        # nombre de la instancia
 | `META_APP_ID` / `META_APP_SECRET`       | servidor | si usas Meta OAuth    | OAuth + refresh tokens            |
 | `TIKTOK_APP_ID` / `TIKTOK_APP_SECRET`   | servidor | si usas TikTok OAuth  | OAuth                             |
 | `GOOGLE_SERVICE_ACCOUNT_EMAIL` / `_KEY` | servidor | si usas Sheets global | Importar leads                    |
-| `NEXT_PUBLIC_REPORT_UTM_ENABLED`        | público  | no                    | Activa Report-UTM                 |
 | `WHATSAPP_PROVIDER`                     | servidor | si usas WhatsApp      | `baileys` (default) o `evolution` |
 | `WHATSAPP_GATEWAY_URL`                  | servidor | si `baileys`          | URL del microservicio Baileys     |
 | `WHATSAPP_GATEWAY_API_KEY`              | servidor | si `baileys`          | Bearer compartido con el gateway  |

@@ -6,13 +6,14 @@ import {
   activateMetaLeadsAction,
   setMetaLeadsStatusAction,
   syncMetaLeadsNowAction,
-} from '@/app/(report-utm)/report-utm/clientes/[clienteId]/_actions';
+} from '@/app/(app)/admin/settings/[id]/_actions-conexiones';
 import { FeedbackLine, LastErrorAlert } from './FeedbackLine';
 import { IntegrationStatusBadge } from './StatusBadge';
+import { ACENTO } from './acento';
 
-const ACCENT = 'bg-sky-50 text-sky-700 dark:bg-sky-500/10 dark:text-sky-400';
-const ICON_BG = 'bg-sky-50 dark:bg-sky-500/10';
-const ICON_COLOR = 'text-sky-600 dark:text-sky-400';
+const ACCENT = ACENTO.badge;
+const ICON_BG = ACENTO.iconoFondo;
+const ICON_COLOR = ACENTO.iconoColor;
 
 type Integration = {
   id: string;
@@ -89,7 +90,7 @@ export function MetaLeadsCard({
   // Sin Meta conectado: precondición no cumplida.
   if (!metaConnected) {
     return (
-      <div className="rounded-2xl border border-border bg-card p-6 space-y-3">
+      <div className="rounded-xl border border-border bg-card shadow-sm p-6 space-y-3">
         {header}
         <div className="flex items-start gap-2 rounded-lg border border-amber-200 dark:border-amber-500/30 bg-amber-50/50 dark:bg-amber-500/5 p-3">
           <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />
@@ -108,12 +109,12 @@ export function MetaLeadsCard({
   // Conectado pero no activado.
   if (!integration) {
     return (
-      <div className="rounded-2xl border border-border bg-card p-6 space-y-4">
+      <div className="rounded-xl border border-border bg-card shadow-sm p-6 space-y-4">
         {header}
         <button
           onClick={onActivate}
           disabled={pending}
-          className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium text-white shadow-sm bg-sky-600 hover:bg-sky-700 transition-colors disabled:opacity-50"
+          className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium text-white shadow-sm bg-blue-600 hover:bg-blue-700 transition-colors disabled:opacity-50"
         >
           <Megaphone className="h-3.5 w-3.5" />
           {pending ? 'Activando…' : 'Activar Meta Lead Ads'}
@@ -129,7 +130,7 @@ export function MetaLeadsCard({
   const lastImported = Number(integration.config?.last_imported ?? 0);
 
   return (
-    <div className="rounded-2xl border border-border bg-card p-6 space-y-5">
+    <div className="rounded-xl border border-border bg-card shadow-sm p-6 space-y-5">
       <div className="flex items-start justify-between gap-4">
         {header}
         <IntegrationStatusBadge status={integration.status} activeCls={ACCENT} />
@@ -154,7 +155,7 @@ export function MetaLeadsCard({
           onClick={onSync}
           disabled={pending}
           className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium
-                               text-white bg-sky-600 hover:bg-sky-700 disabled:opacity-50 transition-colors"
+                               text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 transition-colors"
         >
           <RefreshCw className={`h-3.5 w-3.5 ${pending ? 'animate-spin' : ''}`} />
           {pending ? 'Sincronizando…' : 'Sincronizar ahora'}
@@ -167,7 +168,7 @@ export function MetaLeadsCard({
                                 border transition-colors disabled:opacity-50 ${
                                   isActive
                                     ? 'border-amber-200 dark:border-amber-500/30 text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-500/10'
-                                    : 'border-sky-200 dark:border-sky-500/30 text-sky-700 dark:text-sky-400 hover:bg-sky-50 dark:hover:bg-sky-500/10'
+                                    : 'border-blue-200 dark:border-blue-500/30 text-blue-700 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-500/10'
                                 }`}
         >
           <Power className="h-3.5 w-3.5" />

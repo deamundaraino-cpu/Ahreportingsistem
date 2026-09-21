@@ -8,7 +8,6 @@ import {
   Key,
   Plus,
   Trash2,
-  Copy,
   Check,
   Eye,
   EyeOff,
@@ -17,9 +16,10 @@ import {
   Terminal,
   Zap,
   Shield,
-  BookOpen,
 } from 'lucide-react';
 import { ALL_PERMISSIONS, PERMISSION_LABELS, type TokenPermission } from '@/lib/api-token-auth';
+import { CopyButton } from './CopyButton';
+import { McpDocs } from './McpDocs';
 
 interface ApiToken {
   id: string;
@@ -46,28 +46,6 @@ function formatDate(iso: string | null): string {
     hour: '2-digit',
     minute: '2-digit',
   });
-}
-
-function CopyButton({ value }: { value: string }) {
-  const [copied, setCopied] = useState(false);
-  const copy = async () => {
-    await navigator.clipboard.writeText(value);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
-  return (
-    <button
-      onClick={copy}
-      className="p-1.5 rounded hover:bg-white/10 transition-colors"
-      title="Copiar"
-    >
-      {copied ? (
-        <Check className="h-4 w-4 text-emerald-400" />
-      ) : (
-        <Copy className="h-4 w-4 text-zinc-400" />
-      )}
-    </button>
-  );
 }
 
 function NewTokenModal({
@@ -525,133 +503,7 @@ export function ApiTokensManager({ baseUrl }: Props) {
 
       {/* MCP Server tab */}
       {activeTab === 'mcp' && (
-        <div className="space-y-4">
-          <Card className="bg-card border-border">
-            <CardHeader>
-              <CardTitle className="text-foreground text-base flex items-center gap-2">
-                <Zap className="h-4 w-4 text-brand-blue dark:text-brand-blue-light" /> MCP Server —
-                Integración con IA
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3 text-sm text-foreground/90">
-              <p>
-                El servidor MCP permite que asistentes de IA como <strong>Claude</strong>,{' '}
-                <strong>Cursor</strong> o <strong>Windsurf</strong> consulten tus datos directamente
-                usando lenguaje natural.
-              </p>
-              <div className="bg-zinc-950 border border-zinc-800 rounded-lg p-3 space-y-1">
-                <div className="flex items-center justify-between">
-                  <span className="text-zinc-500 text-xs">Endpoint MCP</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <code className="text-emerald-300 text-sm font-mono flex-1">
-                    {appUrl}/api/mcp
-                  </code>
-                  <CopyButton value={`${appUrl}/api/mcp`} />
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="bg-card border-border">
-            <CardHeader>
-              <CardTitle className="text-foreground text-base flex items-center gap-2">
-                <BookOpen className="h-4 w-4 text-muted-foreground" /> Configurar en Claude Desktop
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3 text-sm">
-              <p className="text-muted-foreground">
-                Agrega esto a tu archivo{' '}
-                <code className="bg-muted px-1 rounded text-xs">claude_desktop_config.json</code>:
-              </p>
-              <div className="relative">
-                <pre className="bg-zinc-950 border border-zinc-800 rounded-lg p-3 text-xs text-zinc-300 overflow-x-auto">{`{
-  "mcpServers": {
-    "adshouse": {
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-fetch"],
-      "env": {
-        "MCP_SERVER_URL": "${appUrl}/api/mcp",
-        "MCP_AUTH_HEADER": "Authorization: Bearer ads_TU_TOKEN_AQUI"
-      }
-    }
-  }
-}`}</pre>
-                <div className="absolute top-2 right-2">
-                  <CopyButton
-                    value={`{\n  "mcpServers": {\n    "adshouse": {\n      "command": "npx",\n      "args": ["-y", "@modelcontextprotocol/server-fetch"],\n      "env": {\n        "MCP_SERVER_URL": "${appUrl}/api/mcp",\n        "MCP_AUTH_HEADER": "Authorization: Bearer ads_TU_TOKEN_AQUI"\n      }\n    }\n  }\n}`}
-                  />
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="bg-card border-border">
-            <CardHeader>
-              <CardTitle className="text-foreground text-base flex items-center gap-2">
-                <Terminal className="h-4 w-4 text-muted-foreground" /> Herramientas disponibles
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              {[
-                {
-                  name: 'list_clients',
-                  scope: 'read:clients',
-                  desc: 'Lista todos los clientes de la cuenta.',
-                },
-                {
-                  name: 'get_metrics',
-                  scope: 'read:metrics',
-                  desc: 'Métricas diarias por cliente y rango de fechas.',
-                },
-                {
-                  name: 'get_campaign_groups',
-                  scope: 'read:campaigns',
-                  desc: 'Grupos de campañas y sus mapeos.',
-                },
-                {
-                  name: 'get_summary',
-                  scope: 'read:metrics',
-                  desc: 'Resumen agregado: ROAS, CPC, CTR, ingresos totales.',
-                },
-              ].map((tool) => (
-                <div
-                  key={tool.name}
-                  className="flex items-start gap-3 p-3 rounded-lg bg-muted/40 border border-border"
-                >
-                  <code className="text-emerald-600 dark:text-emerald-400 text-xs font-mono mt-0.5 min-w-[160px]">
-                    {tool.name}
-                  </code>
-                  <div className="flex-1">
-                    <p className="text-sm text-foreground/90">{tool.desc}</p>
-                    <span className="text-[10px] text-muted-foreground/70 mt-0.5 block">
-                      {tool.scope}
-                    </span>
-                  </div>
-                </div>
-              ))}
-            </CardContent>
-          </Card>
-
-          <Card className="bg-card border-border">
-            <CardHeader>
-              <CardTitle className="text-foreground text-base flex items-center gap-2">
-                <Terminal className="h-4 w-4 text-muted-foreground" /> Test rápido con curl
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3 text-sm">
-              <p className="text-muted-foreground">
-                Prueba el servidor MCP directamente desde la terminal:
-              </p>
-              <div className="relative">
-                <pre className="bg-zinc-950 border border-zinc-800 rounded-lg p-3 text-xs text-zinc-300 overflow-x-auto whitespace-pre-wrap">{`curl -X POST ${appUrl}/api/mcp \\
-  -H "Authorization: Bearer ads_TU_TOKEN_AQUI" \\
-  -H "Content-Type: application/json" \\
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'`}</pre>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
+        <McpDocs appUrl={appUrl} onIrATokens={() => setActiveTab('tokens')} />
       )}
     </>
   );

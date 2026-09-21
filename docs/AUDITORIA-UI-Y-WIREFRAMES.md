@@ -65,8 +65,8 @@ APP AUTENTICADA — sidebar "AdsHouse Reporting"
 
 REPORT-UTM (feature flag, solo admin) — sidebar propio
 ├── /report-utm                Overview del módulo
-├── /report-utm/clientes       Clientes del módulo (+ detalle [clienteId])
-├── /report-utm/ventas         Log de ventas (+ detalle [saleId])
+├── /admin/settings       Clientes del módulo (+ detalle [clienteId])
+├── /ventas         Log de ventas (+ detalle [saleId])
 ├── /report-utm/atribucion     Analítica de atribución
 ├── /report-utm/links          Tracking links
 ├── /report-utm/pixel          Pixel & eventos
@@ -273,12 +273,12 @@ Estado de conexión (QR para vincular, conectado/desconectado/error), ruteo grup
 
 4 stat-cards (Clientes, Ventas trackeadas, Revenue 7d, Tracking links) + card "Clientes recientes" (5, con status pill y link Ver todos) + card "Roadmap del módulo" (fases 0–3).
 
-### 5.14 `/report-utm/clientes` y `[clienteId]`
+### 5.14 `/admin/settings` y `[clienteId]`
 
 - **Lista**: form de alta inline (nombre, slug, color, descripción) + tabla Cliente / Slug / Status / Creado / Abrir.
 - **Detalle**: header (nombre, slug, ID, link a ventas), 3 stats (Eventos, Revenue aprobado, Ticket promedio), card **Integración Hotmart** (estado, webhook URL copiable, secret), card **Webhooks salientes** (tabla nombre/URL/eventos/status/último disparo), tabla de últimas 10 ventas.
 
-### 5.15 `/report-utm/ventas` y `[saleId]`
+### 5.15 `/ventas` y `[saleId]`
 
 - **Lista**: barra de filtros (cliente, status approved/pending/refunded/chargeback, utm_source, desde/hasta, Limpiar/Aplicar) + tabla fecha / cliente / comprador / producto / source / campaign / tipo / status pill / badge atribución / monto / → detalle. Paginación de 50.
 - **Detalle**: datos de la venta + atribución resuelta + payload JSON crudo.

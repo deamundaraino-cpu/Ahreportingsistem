@@ -4,7 +4,7 @@ import { useState, useTransition } from 'react';
 import { Coins, Check, Loader2 } from 'lucide-react';
 import { MONEDAS_REPORTE, type MonedaReporte, type TasaGuardada } from '@/lib/moneda-reporte';
 import { addDaysISO, colombiaToday } from '@/lib/colombia-date';
-import { guardarMonedaReporteAction } from '@/app/(report-utm)/report-utm/clientes/_moneda';
+import { guardarMonedaReporteAction } from '@/app/(app)/admin/settings/[id]/_moneda';
 
 const NOMBRE: Record<MonedaReporte, string> = {
   USD: 'Dólar (USD)',
@@ -59,9 +59,9 @@ export function MonedaReporteCard({
   const vieja = !!tasa && tasa.fecha < addDaysISO(colombiaToday(), -2);
 
   return (
-    <div className="rounded-2xl border border-border bg-card p-6 space-y-3">
+    <div className="rounded-xl border border-border bg-card shadow-sm p-6 space-y-3">
       <div className="flex items-center gap-2">
-        <Coins className="h-4 w-4 text-emerald-500" />
+        <Coins className="h-4 w-4 text-blue-500" />
         <h2 className="text-sm font-semibold text-foreground">Moneda de reporte</h2>
       </div>
       <p className="text-xs text-muted-foreground max-w-2xl">
@@ -91,7 +91,7 @@ export function MonedaReporteCard({
           Guardar
         </button>
         {msg && (
-          <span className={`text-[11px] ${msg.ok ? 'text-emerald-600' : 'text-red-500'}`}>
+          <span className={`text-[11px] ${msg.ok ? 'text-blue-600' : 'text-red-500'}`}>
             {msg.texto}
           </span>
         )}

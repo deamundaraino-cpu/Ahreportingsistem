@@ -69,10 +69,8 @@ export default async function DashboardPage(props: {
   // Los clientes del dashboard (public.clientes) y los de report_utm son entidades
   // distintas: el puente es report_utm.clientes.public_cliente_id. Sin enlace no hay
   // informes que filtrar, así que el botón simplemente no se muestra.
-  const resolveInformesClienteId = async (): Promise<string | null> => {
-    if (process.env.NEXT_PUBLIC_REPORT_UTM_ENABLED !== 'true') return null;
-    return resolveRtmClienteId(clientId);
-  };
+  const resolveInformesClienteId = async (): Promise<string | null> =>
+    resolveRtmClienteId(clientId);
 
   const [{ userRole, allowed, userId }, dashboardData, initialBitacoras, informesClienteId] =
     await Promise.all([
@@ -111,7 +109,7 @@ export default async function DashboardPage(props: {
             />
             {informesClienteId && (
               <Link
-                href={`/report-utm/informes?cliente=${informesClienteId}`}
+                href={`/informes?cliente=${informesClienteId}`}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-emerald-500/30 bg-emerald-50 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-100 dark:hover:bg-emerald-500/20 transition-colors"
               >
                 <PieChart className="h-3.5 w-3.5" />

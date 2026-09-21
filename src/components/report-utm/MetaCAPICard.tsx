@@ -5,13 +5,14 @@ import { Zap, Eye, EyeOff, Save, FlaskConical } from 'lucide-react';
 import {
   saveMetaCAPIConfigAction,
   testMetaCAPIAction,
-} from '@/app/(report-utm)/report-utm/clientes/[clienteId]/_actions';
+} from '@/app/(app)/admin/settings/[id]/_actions-conexiones';
 import { FeedbackLine, LastErrorAlert } from './FeedbackLine';
 import { IntegrationStatusBadge } from './StatusBadge';
+import { ACENTO } from './acento';
 
-const ACCENT = 'bg-blue-50 text-blue-700 dark:bg-blue-500/10 dark:text-blue-400';
-const ICON_BG = 'bg-blue-50 dark:bg-blue-500/10';
-const ICON_COLOR = 'text-blue-600 dark:text-blue-400';
+const ACCENT = ACENTO.badge;
+const ICON_BG = ACENTO.iconoFondo;
+const ICON_COLOR = ACENTO.iconoColor;
 
 type Integration = {
   id: string;
@@ -73,7 +74,7 @@ export function MetaCAPICard({
   const isConfigured = Boolean(integration?.config?.pixel_id);
 
   return (
-    <div className="rounded-2xl border border-border bg-card p-6 space-y-5">
+    <div className="rounded-xl border border-border bg-card shadow-sm p-6 space-y-5">
       <div className="flex items-start justify-between gap-4">
         <div className="flex items-start gap-3">
           <div className={`h-10 w-10 rounded-lg flex items-center justify-center ${ICON_BG}`}>
