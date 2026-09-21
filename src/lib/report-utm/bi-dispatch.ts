@@ -169,6 +169,7 @@ export async function dispatchBiQuery(rawParams: ParsedBiQuery): Promise<Dispatc
       source: p.source,
       search: p.search,
       limit: p.limit,
+      incluir_excluidos: p.incluir_excluidos,
     });
     // `distinct` conserva su contrato histórico —un array de nombres— para
     // que un widget servido desde la caché del navegador siga funcionando.

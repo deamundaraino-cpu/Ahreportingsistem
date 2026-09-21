@@ -13,6 +13,7 @@ import {
   reclasificarLeadsCliente,
   type ResultadoReclasificacion,
 } from '@/lib/report-utm/lead-exclusion-db';
+import { leerFiltros, aplicarFiltrosLeads, hayFiltros } from '@/lib/report-utm/leads-filtros';
 
 const SIN_MIGRACION =
   'La exclusión de leads necesita la migración 079 en la base (migrations/079_leads_excluidos_y_mapeo_por_nivel.sql).';
@@ -61,6 +62,112 @@ export async function marcarLeadsAction(
 
   revalidatePath('/leads');
   return { ok: true, n: limpios.length };
+}
+
+/**
+ * Tope de la acción «todos los que coinciden».
+ *
+ * Es más alto que `MAX_IDS` porque ahí el límite lo pone el tamaño de la URL de
+ * PostgREST, y aquí no hay lista de ids. Pero sigue habiendo un tope, y por dos
+ * razones medidas, no por prudencia genérica:
+ *
+ *   · La acción corre dentro de una petición HTTP con `statement_timeout = 8 s`.
+ *   · Un UPDATE deja una tupla muerta por fila en una tabla de 171 MB cuyo
+ *     autovacuum ya hubo que retocar (migración 085). Marcar 50.000 leads de un
+ *     clic genera 50.000 tuplas muertas de golpe.
+ *
+ * Por encima de esto, la herramienta correcta es la regla de exclusión del
+ * cliente, que ya existe y reclasifica por lotes.
+ */
+const MAX_POR_FILTRO = 2000;
+/** Tamaño de lote del UPDATE. El mismo orden que `MAX_IDS`. */
+const LOTE = 500;
+
+/**
+ * Excluye o re-incluye TODOS los leads que coinciden con los filtros.
+ *
+ * Recibe los filtros, no una lista de ids: así la selección no está limitada a
+ * la página de 25 que se ve. La consulta la construye `aplicarFiltrosLeads`,
+ * igual que la página y el export — esta acción no arma filtros propios, y
+ * `verify-leads-filtros.ts` lo comprueba leyendo este archivo.
+ *
+ * Exige `clienteId` por lo mismo que la página: sin él, los filtros caros leen
+ * la tabla entera.
+ */
+export async function marcarLeadsPorFiltroAction(
+  params: Record<string, string | string[] | undefined>,
+  excluir: boolean
+): Promise<{ ok: boolean; n?: number; error?: string }> {
+  const { ok } = await checkWriteRole();
+  if (!ok) return { ok: false, error: 'No tienes permisos para excluir leads.' };
+
+  const f = leerFiltros(params);
+  if (!f.clienteId) {
+    return { ok: false, error: 'Elegí un cliente antes de marcar todos los que coinciden.' };
+  }
+  if (!hayFiltros(f)) {
+    // Sin filtros esto marcaría TODOS los leads del cliente. Es casi siempre un
+    // error, y deshacerlo a mano no es viable.
+    return { ok: false, error: 'Poné al menos un filtro: así marcarías todos los leads.' };
+  }
+
+  const db = await reportUtmAdminClient();
+  if (!(await columnaExcluidoDisponible(db))) return { ok: false, error: SIN_MIGRACION };
+
+  const opciones = { conExclusion: true, conEstado: true };
+
+  // Cuántos son, antes de tocar nada. Es el número que la UI ya enseñó, así que
+  // si no cuadra es que algo cambió mientras tanto.
+  const { count, error: eConteo } = await aplicarFiltrosLeads(
+    db.from('lead_events').select('id', { count: 'exact', head: true }),
+    f,
+    opciones
+  );
+  if (eConteo) return { ok: false, error: eConteo.message };
+  const total = count ?? 0;
+  if (total === 0) return { ok: true, n: 0 };
+  if (total > MAX_POR_FILTRO) {
+    return {
+      ok: false,
+      error: `Son ${total.toLocaleString()} leads y el tope por vez es ${MAX_POR_FILTRO.toLocaleString()}. Afiná el filtro, o usá la regla de exclusión del cliente.`,
+    };
+  }
+
+  const quien = await usuarioActual();
+  const ahora = new Date().toISOString();
+  const patch = excluir
+    ? { excluido: true, excluido_motivo: 'manual', excluido_at: ahora, excluido_por: quien }
+    : { excluido: false, excluido_motivo: null, excluido_at: ahora, excluido_por: quien };
+
+  // Por lotes de ids y no con un UPDATE ... WHERE <filtros>: el filtro incluye
+  // `excluido`, así que el primer lote cambia el conjunto bajo los pies del
+  // siguiente. Con los ids leídos ANTES, el conjunto está congelado.
+  const { data: filas, error: eIds } = await aplicarFiltrosLeads(
+    db.from('lead_events').select('id'),
+    f,
+    opciones
+  ).limit(MAX_POR_FILTRO);
+  if (eIds) return { ok: false, error: eIds.message };
+
+  const ids = (filas ?? []).map((r) => (r as { id: string }).id);
+  let hechos = 0;
+  for (let i = 0; i < ids.length; i += LOTE) {
+    const lote = ids.slice(i, i + LOTE);
+    const { error } = await db.from('lead_events').update(patch).in('id', lote);
+    if (error) {
+      // Se dice cuántos SÍ se marcaron: dejarlo en «falló» haría creer que no
+      // se tocó nada, y hay que saber que el trabajo quedó a medias.
+      return {
+        ok: false,
+        n: hechos,
+        error: `${error.message} (se marcaron ${hechos} antes de fallar)`,
+      };
+    }
+    hechos += lote.length;
+  }
+
+  revalidatePath('/leads');
+  return { ok: true, n: hechos };
 }
 
 /** Guarda la regla de exclusión del cliente en `report_utm.clientes.config`. */

@@ -1,0 +1,84 @@
+-- ════════════════════════════════════════════════════════════════
+-- Migration 088: /leads sin cliente elegido deja de recorrer la tabla
+-- ════════════════════════════════════════════════════════════════
+-- Síntoma: entrar en /leads sin elegir cliente daba «0 registros» y
+-- «canceling statement due to statement timeout». No era un dato que faltara:
+-- era la consulta cortada a los 8 s.
+--
+-- ── Por qué ──────────────────────────────────────────────────────
+-- Los dos índices que ordenan por fecha empiezan por `cliente_id`:
+--
+--     idx_rutm_lead_events_cliente  (cliente_id, created_at DESC)
+--     idx_lead_events_excluidos     (cliente_id, created_at DESC) WHERE excluido
+--
+-- Un `ORDER BY created_at DESC` SIN `cliente_id` no los puede usar, así que
+-- Postgres lee las 93.464 filas y las ordena. Medido el 2026-09-21:
+--
+--     consulta                sin cliente    con cliente
+--     listado de 25           12.914 ms       7,9 ms      (index scan)
+--     conteo exacto           17.212 ms       375 ms      (index only scan)
+--
+-- Unos 30 s contra un `statement_timeout` de 8 s. La página no podía funcionar.
+--
+-- ── El detalle que descarta otras hipótesis ──────────────────────
+-- El seq scan leyó 21.877 páginas con `Buffers: shared hit=21877` — TODAS desde
+-- caché, cero lecturas a disco— y aun así tardó 17 s. O sea que no es I/O, ni
+-- bloat (20 tuplas muertas), ni estadísticas rancias (ANALYZE del mismo día):
+-- es CPU de una instancia Micro saturada procesando 175 MB de filas anchas.
+--
+-- Por eso la solución no es «que vaya más rápido» sino que NO toque la tabla
+-- entera: con el índice, el `LIMIT 25` para a las ~26 entradas.
+--
+-- ── Por qué NO es parcial ────────────────────────────────────────
+-- Un `WHERE NOT excluido` ahorraría 1.431 filas de 93.464 —nada— y dejaría sin
+-- servir las pestañas «Excluidos» y «Todos», que tienen el mismo problema. Uno
+-- completo sirve a las tres: en «Excluidos» hay que recorrer ~1.700 entradas
+-- del índice para juntar 25, que sigue siendo instantáneo frente a 93.464 filas.
+--
+-- ── Coste ────────────────────────────────────────────────────────
+-- Un btree sobre un `timestamptz` de 93.464 filas son ~2,5 MB, sobre los 48 MB
+-- de índices que la tabla ya tiene. Es la parte barata de las dos: la otra
+-- mitad del arreglo no cuesta disco, porque el conteo pasa a ser estimado
+-- cuando no hay cliente (ver `page.tsx`).
+--
+-- ── OJO: NO apliques este archivo a pelo ─────────────────────────
+-- Un `CREATE INDEX` normal toma un lock SHARE que bloquea INSERT/UPDATE/DELETE,
+-- y el rol `authenticator` tiene `lock_timeout = 8s`: los INSERT de leads no
+-- esperan, **fallan**, y un lead perdido no vuelve. Es la misma lección de la
+-- migración 086.
+--
+-- `CREATE INDEX CONCURRENTLY` no puede correr dentro de un bloque de
+-- transacción (error 25001) y `sql-remoto.ts` manda un ARCHIVO como transacción
+-- implícita — pero una petición de UNA sola sentencia no lo es. Así que:
+--
+--     npx tsx scripts/sql-remoto.ts --query="CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_rutm_lead_events_created_at ON report_utm.lead_events (created_at DESC)"
+--     npx tsx scripts/sql-remoto.ts --query="ANALYZE report_utm.lead_events"
+--
+-- Tras eso este archivo queda como no-op: el `IF NOT EXISTS` no recrea nada, y
+-- aplicarlo directamente sigue siendo válido en un entorno nuevo o parado.
+--
+-- Si se corta a la mitad deja un índice con `indisvalid = false` que cuesta en
+-- cada INSERT y no sirve para leer. Comprobarlo con:
+--
+--     select indisvalid from pg_index where indexrelid = 'report_utm.idx_rutm_lead_events_created_at'::regclass;
+--
+-- y, si sale `false`, tirarlo con DROP INDEX CONCURRENTLY antes de reintentar.
+--
+-- El código funciona ANTES y DESPUÉS: sin el índice, /leads sigue pidiendo que
+-- elijas un cliente en vez de enseñar un error de timeout.
+--
+-- Idempotente.
+--
+-- REVERSIBLE:
+--   DROP INDEX CONCURRENTLY IF EXISTS report_utm.idx_rutm_lead_events_created_at;
+-- ════════════════════════════════════════════════════════════════
+
+CREATE INDEX IF NOT EXISTS idx_rutm_lead_events_created_at
+    ON report_utm.lead_events (created_at DESC);
+
+COMMENT ON INDEX report_utm.idx_rutm_lead_events_created_at IS
+    'Orden global por fecha en /leads sin cliente elegido. Los otros índices empiezan por cliente_id y no sirven. Ver migración 088.';
+
+-- Un índice recién creado sin estadísticas frescas puede no usarse: es lo que
+-- diagnosticó la 085. ANALYZE es barato y no bloquea.
+ANALYZE report_utm.lead_events;

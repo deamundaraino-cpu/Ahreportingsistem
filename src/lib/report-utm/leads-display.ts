@@ -9,6 +9,27 @@ export const PLUGIN_LABELS: Record<string, string> = {
   gohighlevel: 'GoHighLevel (CRM)',
 };
 
+/**
+ * Etiqueta de cada campo filtrable. Una sola copia: la usan los controles del
+ * formulario y los chips de filtros activos, que si no se llamarían distinto.
+ */
+export const ETIQUETAS_CAMPO: Record<string, string> = {
+  utm_source: 'UTM Source',
+  utm_medium: 'Medio',
+  utm_campaign: 'Campaña',
+  utm_content: 'Creativo',
+  utm_term: 'Término',
+  utm_id: 'UTM ID',
+  ip_country: 'País',
+  form_name: 'Formulario',
+  form_plugin: 'Origen',
+  attribution_method: 'Atribución',
+  clienteId: 'Cliente',
+  q: 'Búsqueda',
+  from: 'Desde',
+  to: 'Hasta',
+};
+
 /** Decodifica percent-encoding solo si el valor todavía viene codificado. */
 export function dec(v: string | null | undefined): string {
   if (!v) return '';

@@ -12,9 +12,14 @@ import {
   Radio,
   Search,
   AlertTriangle,
+  ArrowUpDown,
+  X,
 } from 'lucide-react';
 import { LeadsView } from '@/components/report-utm/LeadsView';
-import { PLUGIN_LABELS, dec } from '@/lib/report-utm/leads-display';
+import { LeadsFiltrosBar } from '@/components/report-utm/leads/LeadsFiltrosBar';
+import { LeadsCampoFormulario } from '@/components/report-utm/leads/LeadsCampoFormulario';
+import { LeadsVistasGuardadas } from '@/components/report-utm/leads/LeadsVistasGuardadas';
+import { PLUGIN_LABELS, ETIQUETAS_CAMPO, dec } from '@/lib/report-utm/leads-display';
 import {
   columnaExcluidoDisponible,
   MOTIVOS_EXCLUSION,
@@ -28,8 +33,14 @@ import {
   hayFiltros,
   urlLeads,
   urlExport,
+  aQueryString,
   METODOS_ATRIBUCION,
   MIN_BUSQUEDA,
+  faltaAcotarFiltrosCaros,
+  ascendente,
+  chipsFiltros,
+  presetsFecha,
+  presetActivo,
 } from '@/lib/report-utm/leads-filtros';
 
 export const dynamic = 'force-dynamic';
@@ -69,15 +80,39 @@ export default async function LeadsPage({
 
   const seleccion = conExclusion ? `${COLUMNAS_LEAD}, excluido, excluido_motivo` : COLUMNAS_LEAD;
 
-  // Página actual de leads. El `count: 'exact'` lo calcula Postgres sobre el
-  // conjunto filtrado entero, así que es independiente del `.range()`.
-  const qPagina = aplicarFiltrosLeads(
-    supabase.from('lead_events').select(seleccion, { count: 'exact' }),
-    f,
-    opciones
-  )
-    .order('created_at', { ascending: false })
-    .range(offset, offset + PAGE_SIZE - 1);
+  // `col IS NULL` no lo sirve ningún índice: sin `cliente_id` que acote, filtrar
+  // por presencia son 93.415 filas y 171 MB contra 224 MB de caché, el patrón
+  // exacto de la caída del 2026-09-20. Así que NO se lanza la consulta y se dice
+  // por qué — ignorar el filtro en silencio daría una lista que parece filtrada
+  // y no lo está, que es peor que no dar ninguna.
+  const sinAcotar = faltaAcotarFiltrosCaros(f);
+
+  // Conteo exacto SOLO con un cliente elegido.
+  //
+  // Medido el 2026-09-21: `count: 'exact'` sin `cliente_id` obliga a recorrer
+  // las 93.464 filas —17.212 ms, contra un `statement_timeout` de 8 s— porque
+  // los dos índices que ordenan por fecha empiezan por `cliente_id`. Con
+  // cliente son 375 ms por index only scan.
+  //
+  // La estimación del planificador cuesta cero y se desvía en 56 filas de
+  // 92.033 (0,06 %), que para una cabecera y una paginación es de sobra. Se
+  // marca como aproximada en pantalla: un número redondo presentado como exacto
+  // es justo la clase de mentira que esta página evita en todo lo demás.
+  const conteo = f.clienteId ? 'exact' : 'estimated';
+
+  // Página actual de leads. El conteo lo calcula Postgres sobre el conjunto
+  // filtrado entero, así que es independiente del `.range()`.
+  const qPagina = sinAcotar
+    ? null
+    : aplicarFiltrosLeads(
+        supabase.from('lead_events').select(seleccion, { count: conteo }),
+        f,
+        opciones
+      )
+        // Las dos direcciones las sirve el mismo índice
+        // `(cliente_id, created_at DESC)`, así que invertir el orden es gratis.
+        .order('created_at', { ascending: ascendente(f) })
+        .range(offset, offset + PAGE_SIZE - 1);
 
   // Agregados de las tarjetas. Tres cambios respecto a lo que había:
   //
@@ -97,7 +132,7 @@ export default async function LeadsPage({
   //   · con `?q=` tampoco: el desglose por UTM de una búsqueda por nombre no dice
   //     nada, y esto es un tercio de la carga de la página.
   const qStats =
-    f.q || !f.clienteId
+    f.q || !f.clienteId || sinAcotar
       ? null
       : aplicarFiltrosLeads(
           supabase.from('lead_events').select('utm_source, utm_campaign, utm_content'),
@@ -109,17 +144,18 @@ export default async function LeadsPage({
 
   // Excluidos con los mismos filtros, para la pestaña. `conEstado: false` deja
   // fuera la pestaña actual y el motivo. Usa el índice parcial de la 079.
-  const qExcluidos = conExclusion
-    ? aplicarFiltrosLeads(
-        supabase.from('lead_events').select('id', { count: 'exact', head: true }),
-        f,
-        { conExclusion, conEstado: false }
-      ).eq('excluido', true)
-    : null;
+  const qExcluidos =
+    conExclusion && !sinAcotar
+      ? aplicarFiltrosLeads(
+          supabase.from('lead_events').select('id', { count: 'exact', head: true }),
+          f,
+          { conExclusion, conEstado: false }
+        ).eq('excluido', true)
+      : null;
 
   // Un conteo por motivo, solo en la pestaña que los enseña.
   const qMotivos =
-    conExclusion && f.estado === 'excluidos'
+    conExclusion && f.estado === 'excluidos' && !sinAcotar
       ? MOTIVOS.map((m) =>
           aplicarFiltrosLeads(
             supabase.from('lead_events').select('id', { count: 'exact', head: true }),
@@ -146,16 +182,25 @@ export default async function LeadsPage({
   // vuelve peligroso: un 400 de PostgREST por una cadena `or` mal formada se vería
   // exactamente igual que «Sin leads todavía».
   const error =
-    resPagina.error?.message ??
+    resPagina?.error?.message ??
     resClientes.error?.message ??
     resStats?.error?.message ??
     resExcluidos?.error?.message ??
     resMotivos.find((r) => r.error)?.error?.message ??
     null;
 
+  // Un `statement_timeout` de PostgREST llega como 57014, y a veces con el
+  // mensaje vacío. Sin cliente elegido y sin el índice de la migración 088, el
+  // orden global por fecha lee la tabla entera y se corta a los 8 s — y el
+  // usuario veía «La consulta falló» con un mensaje en inglés que no dice qué
+  // hacer. Mientras la 088 no esté aplicada, al menos se explica.
+  const codigoPagina = (resPagina?.error as { code?: string } | null | undefined)?.code;
+  const timeoutSinCliente =
+    !f.clienteId && !!resPagina?.error && (codigoPagina === '57014' || error === '');
+
   const clientes = resClientes.data ?? [];
-  const leads = (resPagina.data ?? []) as unknown as ReportUtmLeadEvent[];
-  const total = resPagina.count ?? 0;
+  const leads = (resPagina?.data ?? []) as unknown as ReportUtmLeadEvent[];
+  const total = resPagina?.count ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const excluidos = conExclusion ? (resExcluidos?.count ?? 0) : null;
 
@@ -185,6 +230,9 @@ export default async function LeadsPage({
   );
 
   const filtrado = hayFiltros(f);
+  const chips = chipsFiltros(f);
+  const presets = presetsFecha();
+  const preset = presetActivo(f);
 
   return (
     <div className="space-y-6">
@@ -198,7 +246,15 @@ export default async function LeadsPage({
             <h1 className="text-2xl font-bold text-foreground">Leads</h1>
           </div>
           <p className="text-xs text-muted-foreground">
-            {total.toLocaleString()} registros · Página {f.page} de {totalPages}
+            {conteo === 'estimated' && total > 0 ? '~' : ''}
+            {total.toLocaleString()} registros
+            {conteo === 'estimated' && total > 0 && (
+              <span title="Estimación del planificador: el conteo exacto sin cliente obliga a recorrer la tabla entera.">
+                {' '}
+                (aprox.)
+              </span>
+            )}{' '}
+            · Página {f.page} de {totalPages}
             {f.q && ` · buscando «${f.q}»`}
           </p>
         </div>
@@ -219,10 +275,33 @@ export default async function LeadsPage({
             <AlertTriangle className="h-4 w-4 text-red-600 dark:text-red-400 mt-0.5 shrink-0" />
             <div>
               <p className="text-xs font-semibold text-red-700 dark:text-red-400">
-                La consulta falló, así que esta lista está incompleta o vacía.
+                {timeoutSinCliente
+                  ? 'Elegí un cliente: ordenar todos los leads por fecha se pasa del tiempo límite.'
+                  : 'La consulta falló, así que esta lista está incompleta o vacía.'}
               </p>
               <p className="text-[11px] text-red-700/80 dark:text-red-400/80 mt-0.5 break-all">
-                {error}
+                {timeoutSinCliente
+                  ? `Sin cliente no hay índice que dé el orden por fecha, así que habría que recorrer los ${total > 0 ? total.toLocaleString() : '93.000'} leads enteros. Lo arregla la migración 088.`
+                  : error}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {sinAcotar && (
+        <div className="rounded-2xl border border-amber-300 dark:border-amber-500/40 bg-amber-50 dark:bg-amber-500/10 px-4 py-3">
+          <div className="flex items-start gap-2">
+            <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />
+            <div>
+              <p className="text-xs font-semibold text-amber-700 dark:text-amber-400">
+                Elegí un cliente para filtrar por «tiene dato» o «está vacío».
+              </p>
+              <p className="text-[11px] text-amber-700/80 dark:text-amber-400/80 mt-0.5">
+                Buscar los leads a los que les falta un dato no lo puede resolver ningún índice: sin
+                un cliente que acote, habría que leer los {(93415).toLocaleString()} leads enteros.
+                No se ha lanzado la consulta, así que abajo no hay nada — no es que no haya
+                resultados.
               </p>
             </div>
           </div>
@@ -352,33 +431,10 @@ export default async function LeadsPage({
               </option>
             ))}
           </FilterSelect>
-          <FilterInput
-            name="form_name"
-            label="Formulario"
-            defaultValue={f.formName ?? ''}
-            placeholder="contiene…"
-          />
-          <FilterInput
-            name="utm_source"
-            label="UTM Source"
-            defaultValue={f.utmSource ?? ''}
-            placeholder="instagram"
-          />
-          <FilterInput
-            name="utm_campaign"
-            label="Campaña"
-            defaultValue={f.utmCampaign ?? ''}
-            placeholder="contiene…"
-            wide
-          />
-          <FilterInput
-            name="utm_content"
-            label="Creativo"
-            defaultValue={f.utmContent ?? ''}
-            placeholder="contiene…"
-          />
           <FilterInput name="from" label="Desde" defaultValue={f.from ?? ''} type="date" />
           <FilterInput name="to" label="Hasta" defaultValue={f.to ?? ''} type="date" />
+          {/* El orden viaja en el formulario para no perderse al filtrar. */}
+          {f.ordenTexto && <input type="hidden" name="orden" value={f.ordenTexto} />}
           <button
             type="submit"
             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-emerald-600 text-white hover:bg-emerald-700 transition-colors"
@@ -395,11 +451,105 @@ export default async function LeadsPage({
             </Link>
           )}
         </div>
+
+        <LeadsCampoFormulario
+          campo={f.campo}
+          op={f.campoCond?.op ?? 'eq'}
+          valor={f.campoCond?.valores[0] ?? ''}
+          clienteId={f.clienteId}
+          dateFrom={f.from}
+          dateTo={f.to}
+        />
+
+        <LeadsFiltrosBar
+          condiciones={f.condiciones}
+          con={f.con}
+          sin={f.sin}
+          clienteId={f.clienteId}
+          dateFrom={f.from}
+          dateTo={f.to}
+          avisoExcluidos={f.estado !== 'incluidos'}
+        />
       </form>
+
+      <LeadsVistasGuardadas qsActual={aQueryString(f, { page: undefined })} />
+
+      {/* Atajos de fecha y orden. Son enlaces de servidor: ni JS ni estado. */}
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+          Periodo
+        </span>
+        {presets.map((p) => (
+          <Link
+            key={p.id}
+            href={urlLeads(f, { from: p.from, to: p.to, page: undefined })}
+            className={`px-2.5 py-1 rounded-lg text-[11px] font-medium border transition-colors ${
+              preset === p.id
+                ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400'
+                : 'border-border text-muted-foreground hover:bg-accent'
+            }`}
+          >
+            {p.etiqueta}
+          </Link>
+        ))}
+        {(f.from || f.to) && (
+          <Link
+            href={urlLeads(f, { from: undefined, to: undefined, page: undefined })}
+            className="px-2.5 py-1 rounded-lg text-[11px] text-muted-foreground border border-border hover:bg-accent transition-colors"
+          >
+            Todo el histórico
+          </Link>
+        )}
+
+        <span className="ml-auto text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+          Orden
+        </span>
+        <Link
+          href={urlLeads(f, {
+            orden: f.orden === 'reciente' ? 'antiguo' : undefined,
+            page: undefined,
+          })}
+          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-medium border border-border text-muted-foreground hover:bg-accent transition-colors"
+        >
+          <ArrowUpDown className="h-3 w-3" />
+          {f.orden === 'reciente' ? 'Más recientes primero' : 'Más antiguos primero'}
+        </Link>
+      </div>
+
+      {/* Filtros puestos, cada uno con su aspa. Se deriva de los mismos datos
+          que la consulta, así que un filtro nuevo aparece aquí solo. */}
+      {chips.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2">
+          {chips.map((c) => (
+            <Link
+              key={c.clave}
+              href={urlLeads(f, { ...c.quitar, page: undefined })}
+              title="Quitar este filtro"
+              className="inline-flex items-center gap-1.5 pl-2.5 pr-2 py-1 rounded-full text-[11px] border border-border bg-muted text-foreground hover:bg-accent transition-colors"
+            >
+              <span className="text-muted-foreground">{ETIQUETAS_CAMPO[c.param] ?? c.param}:</span>
+              <span className="font-medium max-w-[16rem] truncate">{dec(c.texto)}</span>
+              <X className="h-3 w-3 text-muted-foreground" />
+            </Link>
+          ))}
+          <Link
+            href="/leads"
+            className="text-[11px] text-muted-foreground hover:text-foreground underline underline-offset-2"
+          >
+            quitar todos
+          </Link>
+        </div>
+      )}
 
       {/* Lista de leads: tabla o tarjetas (selector del usuario) */}
       {leads.length > 0 ? (
-        <LeadsView leads={leads} clienteMap={clienteMap} puedeExcluir={conExclusion} />
+        <LeadsView
+          leads={leads}
+          clienteMap={clienteMap}
+          puedeExcluir={conExclusion}
+          paramsFiltro={sp}
+          totalFiltrado={total}
+        />
       ) : (
         <div className="rounded-2xl border border-border bg-card overflow-hidden">
           <div className="px-6 py-16 text-center">

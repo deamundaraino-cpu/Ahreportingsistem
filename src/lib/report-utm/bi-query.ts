@@ -3286,6 +3286,14 @@ export interface ParamsValores {
   /** Búsqueda por subcadena, para cuando la lista viene truncada. */
   search?: string;
   limit?: number;
+  /**
+   * Contar también los leads excluidos (migración 087).
+   *
+   * Para un informe SIEMPRE es false: cuenta lo que cuenta. Lo pide /leads en
+   * sus pestañas «Excluidos» y «Todos», donde la lista por defecto ofrece justo
+   * los valores que NO están en lo que se está mirando.
+   */
+  incluir_excluidos?: boolean;
 }
 
 /** Cuántos valores pide el servidor por defecto. */
@@ -3308,6 +3316,9 @@ function claveCache(p: ParamsValores): string {
     p.source ?? 'leads',
     p.search ?? '',
     p.limit ?? LIMITE_VALORES,
+    // Sin esto, cambiar de pestaña antes de 60 s sirve la lista cacheada de
+    // «incluidos» a la pestaña «todos»: mismo TTL, misma clave, otra pregunta.
+    p.incluir_excluidos ? 1 : 0,
   ]);
 }
 
@@ -3397,6 +3408,10 @@ async function calcularValores(params: ParamsValores): Promise<ResultadoValores>
         p_columna: null,
         p_claves_json: campo.claves_origen,
         p_limite: 500,
+        // Solo se manda cuando se pide: así la llamada normal sigue siendo la de 7
+        // argumentos y funciona con o sin la migración 087. Mandarlo siempre daría
+        // PGRST202 hasta aplicarla, y con él todos los desplegables del BI.
+        ...(params.incluir_excluidos ? { p_incluir_excluidos: true } : {}),
       });
       if (error) return errorDeConsulta('bi_valores_conteo (campo de lead)', error);
 
@@ -3457,6 +3472,10 @@ async function calcularValores(params: ParamsValores): Promise<ResultadoValores>
         p_columna: null,
         p_claves_json: [fieldKey],
         p_limite: limite,
+        // Solo se manda cuando se pide: así la llamada normal sigue siendo la de 7
+        // argumentos y funciona con o sin la migración 087. Mandarlo siempre daría
+        // PGRST202 hasta aplicarla, y con él todos los desplegables del BI.
+        ...(params.incluir_excluidos ? { p_incluir_excluidos: true } : {}),
       });
       if (error) return errorDeConsulta('bi_valores_conteo (campo de formulario)', error);
       return desdeFilasRpc(data, limite, filtrarPorBusqueda);
@@ -3522,6 +3541,10 @@ async function calcularValores(params: ParamsValores): Promise<ResultadoValores>
       p_columna: col,
       p_claves_json: null,
       p_limite: limite,
+      // Solo se manda cuando se pide: así la llamada normal sigue siendo la de 7
+      // argumentos y funciona con o sin la migración 087. Mandarlo siempre daría
+      // PGRST202 hasta aplicarla, y con él todos los desplegables del BI.
+      ...(params.incluir_excluidos ? { p_incluir_excluidos: true } : {}),
     });
     // Una columna que la RPC no admite para esta tabla llega aquí como error:
     // es el caso del slicer de ventas pidiendo `form_name`. Eso SÍ es

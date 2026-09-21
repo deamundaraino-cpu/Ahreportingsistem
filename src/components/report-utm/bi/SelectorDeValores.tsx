@@ -35,6 +35,8 @@ interface Props {
   modo?: 'popover' | 'inline';
   disabled?: boolean;
   placeholder?: string;
+  /** Contar también los leads excluidos al listar (migración 087). */
+  incluirExcluidos?: boolean;
 }
 
 /** Cuántos valores se pintan antes de pedir «ver los demás». */
@@ -52,6 +54,7 @@ export function SelectorDeValores({
   modo = 'popover',
   disabled,
   placeholder,
+  incluirExcluidos,
 }: Props) {
   const [abierto, setAbierto] = useState(modo === 'inline');
   const [busqueda, setBusqueda] = useState('');
@@ -83,6 +86,7 @@ export function SelectorDeValores({
     dateTo,
     source,
     busqueda,
+    incluirExcluidos,
     activo: abierto,
   });
 

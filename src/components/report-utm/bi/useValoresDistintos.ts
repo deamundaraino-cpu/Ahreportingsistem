@@ -30,6 +30,8 @@ export interface OpcionesValores {
   source?: 'leads' | 'sales';
   busqueda?: string;
   limite?: number;
+  /** Contar también los excluidos (migración 087). Lo usa /leads. */
+  incluirExcluidos?: boolean;
   /**
    * No consulta hasta que valga `true`.
    *
@@ -53,6 +55,7 @@ export function useValoresDistintos(opts: OpcionesValores): EstadoValores {
     source,
     busqueda,
     limite,
+    incluirExcluidos,
     activo = true,
   } = opts;
 
@@ -99,6 +102,7 @@ export function useValoresDistintos(opts: OpcionesValores): EstadoValores {
       if (source) params.set('source', source);
       if (limite) params.set('limit', String(limite));
       if (buscarRemoto) params.set('search', q);
+      if (incluirExcluidos) params.set('incluir_excluidos', '1');
 
       fetch(`${queryBase}?${params}`, { signal: ctrl.signal })
         .then((r) => r.json())
@@ -140,7 +144,21 @@ export function useValoresDistintos(opts: OpcionesValores): EstadoValores {
     }
     lanzar();
     return () => abortRef.current?.abort();
-  }, [queryBase, dimension, clienteId, dateFrom, dateTo, source, busqueda, limite, inactivo, tick]);
+    // `incluirExcluidos` va en las dependencias: si no, cambiar de pestaña en
+    // /leads no vuelve a pedir la lista y se sigue viendo la de «incluidos».
+  }, [
+    queryBase,
+    dimension,
+    clienteId,
+    dateFrom,
+    dateTo,
+    source,
+    busqueda,
+    limite,
+    incluirExcluidos,
+    inactivo,
+    tick,
+  ]);
 
   if (inactivo) {
     return { valores: [], total: 0, truncado: false, cargando: false, motivo: null, recargar };
