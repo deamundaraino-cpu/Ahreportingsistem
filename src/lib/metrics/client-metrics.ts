@@ -27,6 +27,12 @@ import 'server-only';
  *      pregunta.
  *   3. Un fallo de base de datos lanza. Nunca devuelve `[]` ni `0`, que es lo
  *      que hace que un timeout se lea como "no hubo inversión".
+ *
+ * Y la moneda, igual que en el dashboard: Hotmart se guarda en USD y el gasto
+ * en la moneda de la cuenta publicitaria, así que las columnas `ventas_*` se
+ * convierten a la moneda de reporte del cliente con la tasa de cada día
+ * (`convertirFilasMetricas`). Sin eso el ROAS del MCP dividía dólares entre
+ * pesos chilenos mientras el dashboard ya daba la cifra buena.
  */
 
 import { createAdminClient } from '@/utils/supabase/server';
@@ -43,6 +49,11 @@ import {
 import { aggregateFormula, reagregarNoAditivas } from '@/lib/formula-engine';
 import { clampRangeToToday, colombiaToday } from '@/lib/date-utils';
 import { ApiError } from '@/lib/error-handler';
+import {
+  cargarConversor,
+  convertirFilasMetricas,
+  monedaDeClientePublico,
+} from '@/lib/moneda-reporte';
 
 /** Una fila diaria ya enriquecida y filtrada. */
 export type FilaMetricas = Record<string, unknown> & { fecha?: string };
@@ -67,6 +78,11 @@ export type MetricasCliente = {
   warnings: string[];
   rango: RangoAplicado;
   tab: TabResuelto | null;
+  /**
+   * Moneda de reporte del cliente (código ISO): la del gasto y la de los
+   * importes de Hotmart ya convertidos. Las gemelas `ventas_*_usd` siguen en USD.
+   */
+  moneda: string;
 };
 
 export type ParamsMetricasCliente = {
@@ -286,8 +302,25 @@ export async function getMetricasCliente(params: ParamsMetricasCliente): Promise
     ),
   ]);
 
+  // Moneda de reporte, por el mismo camino que `cargarMetricasEnriquecidas` del
+  // dashboard: convertir ANTES del merge, fila a fila con la tasa de su día, y
+  // dejar al lado la gemela sin convertir (`ventas_*_usd`). Con USD no se toca
+  // nada salvo añadir esas gemelas (iguales al original) y una tasa de 1.
+  const moneda = await monedaDeClientePublico(supabase, clienteId);
+  const conv = await cargarConversor(supabase, moneda, rango.from, rango.to);
+  const metricasEnMoneda = convertirFilasMetricas(metricas, conv);
+
+  if (conv.sinTasa.size > 0) {
+    const dias = [...conv.sinTasa].sort();
+    const muestra = dias.slice(0, 5).join(', ');
+    const resto = dias.length > 5 ? ` y ${dias.length - 5} día(s) más` : '';
+    warnings.push(
+      `Sin tasa de cambio USD→${conv.moneda} en ${muestra}${resto}: las ventas de Hotmart de esos días siguen en USD.`
+    );
+  }
+
   const base = mergeMetricasDelRango({
-    metricas,
+    metricas: metricasEnMoneda,
     leads,
     offlinePorFecha: agruparOfflinePorFecha(offline),
     sheetPorFecha: new Map(),
@@ -317,5 +350,5 @@ export async function getMetricasCliente(params: ParamsMetricasCliente): Promise
     warnings.push(`No hay datos sincronizados para ${rango.from} → ${rango.to}.`);
   }
 
-  return { rows, totals: calcularTotales(rows), warnings, rango, tab };
+  return { rows, totals: calcularTotales(rows), warnings, rango, tab, moneda: conv.moneda };
 }

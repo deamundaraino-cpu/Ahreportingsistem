@@ -119,7 +119,9 @@ export const FIELD_MAP: Record<string, string> = {
   funnel_principal_count: 'funnel_principal_count',
   funnel_principal_neto: 'funnel_principal_neto',
   funnel_principal_bruto: 'funnel_principal_bruto',
-  funnel_principal_price: 'funnel_principal_price', // precio público USD configurado en el tab
+  // Precio público del tab (configurado en USD), ya en la moneda de reporte y
+  // PROMEDIADO entre días, no sumado (ver `PROMEDIOS_DE_FILA`).
+  funnel_principal_price: 'funnel_principal_price',
   funnel_bump_count: 'funnel_bump_count',
   funnel_bump_neto: 'funnel_bump_neto',
   funnel_bump_bruto: 'funnel_bump_bruto',
@@ -184,7 +186,9 @@ export const MACRO_MAP: Record<string, string> = {
   meta_cost_per_thruplay: 'meta_spend / meta_video_thruplay',
   meta_cost_per_messaging_conversation: 'meta_spend / meta_messaging_conversations_started',
   meta_cost_per_result: 'meta_spend / meta_results',
-  meta_roas: '(ventas_principal + ventas_bump + ventas_upsell) / meta_spend',
+  // Incluye el DOWNSELL, como `total_roas` (auditoría del 2026-09-25): sin él,
+  // un cliente con downsell veía un ROAS de Meta más bajo que el real.
+  meta_roas: '(ventas_principal + ventas_bump + ventas_upsell + ventas_downsell) / meta_spend',
 
   // ── TikTok: macros derivadas ─────────────────────────────────────────
   tiktok_cpc: 'tiktok_spend / tiktok_clicks',
@@ -261,17 +265,62 @@ export const MACRO_MAP: Record<string, string> = {
   // ── Reembolsos ──────────────────────────────────────────────────────
   // Antes NO existían: la API se pedía filtrada a APPROVED+COMPLETE, así que
   // una venta devuelta contaba como facturación para siempre.
-  total_facturacion_neta_real:
-    '(ventas_principal + ventas_bump + ventas_upsell + ventas_downsell) - ventas_reembolsado',
+  //
+  // Auditoría del 2026-09-25: `ventas_*` YA excluye las ventas devueltas
+  // (`agregarDesdeHotmartVentas` solo suma las cobradas; lo devuelto va aparte a
+  // `ventas_reembolsado`). Restar `ventas_reembolsado` aquí lo descontaba DOS
+  // veces. La «neta real» es por tanto la neta; se conserva el id para no romper
+  // un layout que la tuviera.
+  total_facturacion_neta_real: 'ventas_principal + ventas_bump + ventas_upsell + ventas_downsell',
+  // Mismo motivo: el denominador tiene que ser lo facturado ANTES de devolver
+  // (neto cobrado + reembolsado), o devolver la mitad daba 100 %. Y en
+  // porcentaje (× 100), que es como lo formatea el catálogo; ningún layout
+  // guardado la usaba (inventario del 2026-09-25), así que nada la multiplicaba
+  // ya a mano. Misma definición que `hm_tasa_reembolso`.
   total_tasa_reembolso:
-    'ventas_reembolsado / (ventas_principal + ventas_bump + ventas_upsell + ventas_downsell)',
+    '(ventas_reembolsado / (ventas_principal + ventas_bump + ventas_upsell + ventas_downsell + ventas_reembolsado)) * 100',
 
   // ── Moneda de reporte: totales en dólares, sin convertir ────────────
   total_facturacion_neta_usd:
     'ventas_principal_usd + ventas_bump_usd + ventas_upsell_usd + ventas_downsell_usd',
   total_facturacion_bruta_usd:
     'ventas_principal_bruto_usd + ventas_bump_bruto_usd + ventas_upsell_bruto_usd + ventas_downsell_bruto_usd',
+
+  // ── Hotmart por campaña (`hm_*`): las derivadas del BI ──────────────
+  // Mismas definiciones que `derivadasHotmart` (hotmart/metricas.ts), para que
+  // `hm_cpa` diga lo mismo en una pestaña y en un informe. Las claves base las
+  // pone el cubo de ventas (`dashboard/hotmart-cubo.ts`) y siguen el filtro de
+  // campañas de la pestaña; el gasto es el de las dos plataformas, recortado por
+  // el mismo filtro. Todas empiezan por `hm_`: es lo que hace que el servidor
+  // sepa que tiene que cargar el cubo (`formulaUsaHotmart`).
+  //
+  // Una diferencia inevitable con el BI: aquí un ROAS con gasto y sin ventas da
+  // 0 (el motor es aritmética pura), allí «—».
+  hm_roas: 'hm_neto / (meta_spend + tiktok_spend)',
+  // Por TRANSACCIÓN cobrada: bumps y upsells cuentan aparte. Para el costo de
+  // conseguir un comprador, `hm_cpa_compra`.
+  hm_cpa: '(meta_spend + tiktok_spend) / hm_ventas',
+  hm_cpa_compra: '(meta_spend + tiktok_spend) / hm_compras',
+  hm_ticket_medio: 'hm_neto / hm_ventas',
+  hm_ticket_compra: 'hm_neto / hm_compras',
+  // Sobre lo facturado ANTES de devolver: `hm_neto` ya excluye lo reembolsado.
+  hm_tasa_reembolso: '(hm_neto_reembolsado / (hm_neto + hm_neto_reembolsado)) * 100',
+  hm_tasa_bump: '(hm_bumps / hm_compras) * 100',
 };
+
+/**
+ * Métricas de fila que son un PROMEDIO y no un total: el motor las reagrega como
+ * Σ`__num` / Σ`__den` (ver `reagregarNoAditivas`).
+ *
+ * `funnel_principal_price` es el precio público del principal, configurado en la
+ * pestaña. Se inyecta en CADA fila (en la moneda de reporte, con la tasa del
+ * día), así que sumarlo daba precio × días, y `funnel_facturacion_bruta` de un
+ * mes salía treinta veces el precio por las compras.
+ */
+export const PROMEDIOS_DE_FILA: ReadonlySet<string> = new Set([
+  CLAVE_TASA_CAMBIO,
+  'funnel_principal_price',
+]);
 
 // ── Semantic Aliases ─────────────────────────────────────────────────────────
 // High-level metric names that can be mapped to different data sources per layout.
@@ -748,8 +797,9 @@ export function aggregateFormula(
  * (`sf_x__num` / `sf_x__den`, o `__min` / `__max`), así que aquí basta con
  * detectarlos por el nombre y recalcular.
  *
- * Deliberadamente acotado a `sf_`/`sv_` y a `tasa_cambio` (que nace con su par
- * `__num`/`__den` en `convertirFilasMetricas`): cualquier otra métrica queda
+ * Deliberadamente acotado a `sf_`/`sv_` y a `PROMEDIOS_DE_FILA` (`tasa_cambio`,
+ * que nace con su par `__num`/`__den` en `convertirFilasMetricas`, y el precio
+ * del funnel que inyecta el dashboard): cualquier otra métrica queda
  * EXACTAMENTE como estaba. Eso incluye `meta_frequency`, `ga_bounce_rate` y
  * `ga_avg_session_duration`, que hoy también se suman mal — corregirlas cambiaría
  * cifras de dashboards que los clientes ya dieron por buenas, y es una decisión
@@ -760,7 +810,7 @@ export function reagregarNoAditivas(
   rows: Record<string, unknown>[]
 ): void {
   const esCampoDeSheet = (base: string) => base.startsWith('sf_') || base.startsWith('sv_');
-  const esPromedio = (base: string) => esCampoDeSheet(base) || base === CLAVE_TASA_CAMBIO;
+  const esPromedio = (base: string) => esCampoDeSheet(base) || PROMEDIOS_DE_FILA.has(base);
 
   for (const clave of Object.keys(totalRow)) {
     // Promedio: Σnumerador / Σdenominador, correcto a cualquier grano.

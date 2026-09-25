@@ -33,12 +33,14 @@
 // worker devuelve un registro vacío con `apiSuccess: false` y su red de
 // seguridad omite los campos del upsert, preservando lo que ya había.
 
-import { colombiaToday } from '../colombia-date';
+import { addDaysISO, colombiaToday } from '../colombia-date';
+import { fetchAllRows } from '../supabase-paginate';
 import { paginarHotmart, ventanaDiaColombia } from './cliente';
 import type { FamiliaErrorHotmart } from './cliente';
 import { parsearApi } from './parser';
 import { convertirLote } from './moneda';
 import { clasificarLote, guardarLote } from './persistencia';
+import { atribuirLote } from './atribucion-db';
 import { ESTADOS_COBRADOS, ESTADOS_DEVUELTOS } from './tipos';
 import type { FunnelHotmart } from './clasificador';
 import type { EstadoVenta, ItemComisiones, ItemHistorial, VentaHotmart } from './tipos';
@@ -153,7 +155,55 @@ export type ResultadoSync = {
   descartadas: number;
   sin_tasa: number;
   monedas: string[];
+  /** Items con un `status` que no sabemos traducir: no se guardan (ver parser). */
+  desconocidas?: number;
+  /**
+   * Fechas cuyo agregado cambió: la `fecha_venta` de lo escrito MÁS la fecha
+   * anterior de las ventas que se movieron de día (una aprobación posterior a
+   * la orden). El worker agrega la fecha pedida; las demás hay que reagregarlas
+   * aparte o la venta cuenta en los dos días.
+   */
+  fechasTocadas?: string[];
 };
+
+/**
+ * Estados que se piden EXPLÍCITAMENTE a `sales/history`.
+ *
+ * Sin `transaction_status`, la API solo devuelve las ventas COMPLETE (sondeo
+ * del 2026-09-25 con `diagnostico-hotmart --estados`: 88 de 88, cero
+ * REFUNDED/CANCELLED/EXPIRED). O sea que la sync diaria NUNCA veía un
+ * reembolso; solo la reconciliación semanal. La API acepta el parámetro
+ * repetido y devuelve la unión.
+ *
+ * OJO: un solo valor inválido tumba la petición entera con 400
+ * `invalid_parameter` — `BILLET_PRINTED` lo es (el válido es `PRINTED_BILLET`)
+ * y así empezó el incidente del 2026-08-18. Todos los de esta lista dieron 200
+ * en el sondeo. Si Hotmart retira alguno, `sincronizarDiaHotmart` reintenta sin
+ * filtro para no quedarse ciego.
+ */
+export const ESTADOS_API_SYNC = [
+  'APPROVED',
+  'COMPLETE',
+  'REFUNDED',
+  'CHARGEBACK',
+  'PARTIALLY_REFUNDED',
+  'PROTESTED',
+  'CANCELLED',
+  'EXPIRED',
+  'NO_FUNDS',
+  'BLOCKED',
+  'OVERDUE',
+  'WAITING_PAYMENT',
+  'PRINTED_BILLET',
+  'PROCESSING_TRANSACTION',
+  'PRE_ORDER',
+  'UNDER_ANALISYS',
+  'STARTED',
+] as const;
+
+export function paramsDeEstados(estados: readonly string[]): Array<[string, string]> {
+  return estados.map((e) => ['transaction_status', e] as [string, string]);
+}
 
 /**
  * Trae las ventas de un día y las persiste.
@@ -185,14 +235,26 @@ export async function sincronizarDiaHotmart(
     ['max_results', '100'],
   ];
 
-  // PASO 1 — historial. SIN filtro de estado: es lo que hace que los
-  // reembolsos existan.
-  const historial = await paginarHotmart<ItemHistorial>({
+  // PASO 1 — historial, pidiendo TODOS los estados (ver `ESTADOS_API_SYNC`):
+  // sin la lista, la API solo devuelve las COMPLETE y los reembolsos no
+  // existen para la sync diaria.
+  let historial = await paginarHotmart<ItemHistorial>({
     ruta: '/payments/api/v1/sales/history',
-    params: rango,
+    params: [...rango, ...paramsDeEstados(ESTADOS_API_SYNC)],
     token,
     log,
   });
+  if (!historial.completo && historial.familia === 'parametros') {
+    log(
+      `[Hotmart] ${fecha} la lista de estados dio «parámetro inválido» — se repite sin filtro (solo COMPLETE). Revisa ESTADOS_API_SYNC con diagnostico-hotmart --estados.`
+    );
+    historial = await paginarHotmart<ItemHistorial>({
+      ruta: '/payments/api/v1/sales/history',
+      params: rango,
+      token,
+      log,
+    });
+  }
 
   // PASO 2 — comisiones. Es lo único que dice cuánto se cobró de verdad.
   const comisiones = await paginarHotmart<ItemComisiones>({
@@ -213,43 +275,55 @@ export async function sincronizarDiaHotmart(
   }
 
   const ventas: VentaHotmart[] = [];
+  let desconocidas = 0;
   for (const item of historial.items) {
     const tx = item.purchase?.transaction;
     const r = parsearApi(item, tx ? porTx.get(String(tx)) : undefined, { origen: 'api' });
     if (r.ok) ventas.push(r.venta);
+    else if (r.motivo === 'ilegible' && r.detalle.startsWith('status desconocido')) desconocidas++;
+  }
+  if (desconocidas > 0) {
+    log(
+      `[Hotmart] ${fecha} ${desconocidas} transacción(es) con un status desconocido — NO se cuentan. Añádelo a ESTADO_POR_STATUS_API (eventos.ts).`
+    );
   }
 
-  if (ventas.length === 0) {
-    return {
-      completo,
-      motivo,
-      familia,
-      ventas: 0,
-      escritas: 0,
-      descartadas: 0,
-      sin_tasa: 0,
-      monedas: [],
-    };
-  }
-
-  if (!persistir) {
-    return {
-      completo,
-      motivo,
-      familia,
-      ventas: ventas.length,
-      escritas: 0,
-      descartadas: 0,
-      sin_tasa: 0,
-      monedas: [],
-    };
-  }
+  const vacio = {
+    completo,
+    motivo,
+    familia,
+    escritas: 0,
+    descartadas: 0,
+    sin_tasa: 0,
+    monedas: [],
+    desconocidas,
+    fechasTocadas: [],
+  };
+  if (ventas.length === 0) return { ...vacio, ventas: 0 };
+  if (!persistir) return { ...vacio, ventas: ventas.length };
 
   clasificarLote(ventas, funnels);
+  // Atribución por lead ANTES de guardar: la tupla viaja en la misma
+  // escritura. Sin la migración 089 no hace nada.
+  await atribuirLote(db, clienteId, ventas, log);
   // La tasa diaria de las monedas de REPORTE ya no se precarga aquí: solo
   // corría los días con ventas, y un cliente sin ventas se quedaba sin tasas.
   // La guarda `capturarTasasDelDia` al inicio de cada corrida del worker.
   const fx = await convertirLote(db, ventas, fecha);
+
+  // La fecha que tenían ANTES las ventas que ya existían: si una aprobación
+  // la mueve, el día viejo también hay que reagregarlo.
+  const fechasTocadas = new Set<string>(ventas.map((v) => v.fecha_venta));
+  const { data: previas } = await db
+    .from('hotmart_ventas')
+    .select('transaction_id, fecha_venta')
+    .eq('cliente_id', clienteId)
+    .in(
+      'transaction_id',
+      ventas.map((v) => v.transaction_id)
+    );
+  for (const p of previas ?? []) if (p?.fecha_venta) fechasTocadas.add(String(p.fecha_venta));
+
   const guardado = await guardarLote(db, clienteId, ventas);
 
   if (fx.sin_tasa > 0) {
@@ -267,6 +341,8 @@ export async function sincronizarDiaHotmart(
     descartadas: guardado.descartadas,
     sin_tasa: fx.sin_tasa,
     monedas: fx.monedas,
+    desconocidas,
+    fechasTocadas: Array.from(fechasTocadas).sort(),
   };
 }
 
@@ -311,17 +387,21 @@ export async function agregarDesdeHotmartVentas(
   const registro = registroVacio();
   for (const f of funnels) registro.by_tab[f.tab_id] = desgloseVacio();
 
-  const { data, error } = await db
-    .from('hotmart_ventas')
-    .select(
-      'tipo, tab_id, estado, clasificacion_origen, producto_nombre, moneda, bruto, bruto_usd, neto_productor_usd, neto_afiliado_usd, neto_coproductor_usd'
-    )
-    .eq('cliente_id', clienteId)
-    .eq('fecha_venta', fecha);
-
-  if (error) throw new Error(`agregarDesdeHotmartVentas: ${error.message}`);
-
-  const filas: FilaVenta[] = data ?? [];
+  // Paginado: PostgREST corta en 1.000 filas y un día de lanzamiento puede
+  // pasar de ahí. `estricto`: un agregado a medias sustituiría uno correcto.
+  const filas = (await fetchAllRows(
+    () =>
+      db
+        .from('hotmart_ventas')
+        .select(
+          'id, tipo, tab_id, estado, clasificacion_origen, producto_nombre, moneda, bruto, bruto_usd, neto_productor_usd, neto_afiliado_usd, neto_coproductor_usd'
+        )
+        .eq('cliente_id', clienteId)
+        .eq('fecha_venta', fecha),
+    1000,
+    200000,
+    { estricto: true }
+  )) as unknown as FilaVenta[];
   const precioPorTab = new Map<string, number | undefined>(
     funnels.map((f) => [f.tab_id, f.principal_price_usd])
   );
@@ -425,23 +505,30 @@ export async function reclasificarRango(
   desde: string,
   hasta: string,
   funnels: FunnelHotmart[]
-): Promise<{ revisadas: number; cambiadas: number }> {
-  const { data, error } = await db
-    .from('hotmart_ventas')
-    .select(
-      'id, oferta_codigo, es_order_bump, parent_transaction_id, producto_nombre, tipo, tab_id, clasificacion_origen'
-    )
-    .eq('cliente_id', clienteId)
-    .gte('fecha_venta', desde)
-    .lte('fecha_venta', hasta);
+): Promise<{ revisadas: number; cambiadas: number; fechas: string[] }> {
+  const filas = (await fetchAllRows(
+    () =>
+      db
+        .from('hotmart_ventas')
+        .select(
+          'id, fecha_venta, oferta_codigo, es_order_bump, parent_transaction_id, producto_nombre, tipo, tab_id, clasificacion_origen'
+        )
+        .eq('cliente_id', clienteId)
+        .gte('fecha_venta', desde)
+        .lte('fecha_venta', hasta),
+    1000,
+    200000,
+    { estricto: true }
+  )) as Array<Record<string, any>>;
 
-  if (error) throw new Error(`reclasificarRango: ${error.message}`);
-
-  const filas = data ?? [];
-  const copia = filas.map((f: Record<string, unknown>) => ({ ...f })) as unknown as VentaHotmart[];
+  const copia = filas.map((f) => ({ ...f })) as unknown as VentaHotmart[];
   clasificarLote(copia, funnels);
 
   let cambiadas = 0;
+  // Las fechas cuyo agregado cambia: el llamante las reagrega. Antes el
+  // dashboard seguía con la clasificación vieja hasta que el worker volviera a
+  // descargar ESE día, cosa que para el histórico no pasaba nunca.
+  const fechas = new Set<string>();
   for (let i = 0; i < filas.length; i++) {
     const antes = filas[i];
     const ahora = copia[i];
@@ -459,10 +546,12 @@ export async function reclasificarRango(
         clasificacion_origen: ahora.clasificacion_origen,
         actualizado_at: new Date().toISOString(),
       })
+      .eq('cliente_id', clienteId)
       .eq('id', antes.id);
     cambiadas++;
+    if (antes.fecha_venta) fechas.add(String(antes.fecha_venta));
   }
-  return { revisadas: filas.length, cambiadas };
+  return { revisadas: filas.length, cambiadas, fechas: Array.from(fechas).sort() };
 }
 
 // ────────────────────────────────────────────────────────────────
@@ -510,32 +599,71 @@ export async function reconciliarReembolsos(
 
   const fechas = new Set<string>();
   let actualizadas = 0;
+  const ahora = new Date();
 
+  const ventas: VentaHotmart[] = [];
   for (const item of res.items) {
-    const r = parsearApi(item, undefined, { origen: 'reconciliacion' });
-    if (!r.ok) continue;
-    const v = r.venta;
+    const r = parsearApi(item, undefined, { origen: 'reconciliacion', ahora });
+    if (r.ok) ventas.push(r.venta);
+  }
 
-    const { data: existente } = await db
+  // Una sola lectura por lote en vez de un SELECT por transacción (N+1).
+  const existentes = new Map<
+    string,
+    {
+      id: string;
+      estado: string;
+      fecha_venta: string;
+      evento_ts: string;
+      reembolsada_at: string | null;
+    }
+  >();
+  for (let i = 0; i < ventas.length; i += 200) {
+    const { data } = await db
       .from('hotmart_ventas')
-      .select('id, estado, fecha_venta')
+      .select('id, transaction_id, estado, fecha_venta, evento_ts, reembolsada_at')
       .eq('cliente_id', clienteId)
-      .eq('transaction_id', v.transaction_id)
-      .maybeSingle();
+      .in(
+        'transaction_id',
+        ventas.slice(i, i + 200).map((v) => v.transaction_id)
+      );
+    for (const e of data ?? []) existentes.set(String(e.transaction_id), e);
+  }
 
+  for (const v of ventas) {
+    const existente = existentes.get(v.transaction_id);
     if (!existente) continue;
     if (existente.estado === v.estado) continue;
 
-    await db
+    // `evento_ts` NUNCA retrocede. Antes se escribía `approved_date` (la API no
+    // tiene instante de evento): la marca se movía hacia atrás, por debajo del
+    // `creation_date` de un webhook, y un reintento tardío del
+    // PURCHASE_APPROVED pasaba la guarda y resucitaba la venta.
+    const eventoTs = new Date(
+      Math.max(Date.parse(existente.evento_ts) || 0, ahora.getTime())
+    ).toISOString();
+    const devuelta = ESTADOS_DEVUELTOS.includes(v.estado);
+
+    // UPDATE condicional sobre el estado leído: si el webhook lo cambió entre
+    // la lectura y ahora, no se pisa.
+    const { error } = await db
       .from('hotmart_ventas')
       .update({
         estado: v.estado,
-        reembolsada_at: v.reembolsada_at ?? v.evento_ts,
-        evento_ts: v.evento_ts,
+        // La fecha en que lo VEMOS reembolsado (la API no da la del reembolso),
+        // conservando la primera si ya había una.
+        reembolsada_at: devuelta ? (existente.reembolsada_at ?? ahora.toISOString()) : null,
+        evento_ts: eventoTs,
         origen: 'reconciliacion',
-        actualizado_at: new Date().toISOString(),
+        actualizado_at: ahora.toISOString(),
       })
-      .eq('id', existente.id);
+      .eq('cliente_id', clienteId)
+      .eq('id', existente.id)
+      .eq('estado', existente.estado);
+    if (error) {
+      log(`[Hotmart] Reconciliación: no se pudo actualizar ${v.transaction_id}: ${error.message}`);
+      continue;
+    }
 
     actualizadas++;
     fechas.add(existente.fecha_venta);
@@ -550,4 +678,44 @@ export async function reconciliarReembolsos(
     actualizadas,
     fechas: Array.from(fechas).sort(),
   };
+}
+
+// ────────────────────────────────────────────────────────────────
+// 5. Barrido de aprobaciones tardías
+// ────────────────────────────────────────────────────────────────
+
+/**
+ * Vuelve a pedir los últimos `dias` días.
+ *
+ * `sales/history` filtra por fecha de ORDEN (comprobado el 2026-09-25 con
+ * `diagnostico-hotmart --claves`), mientras que `fecha_venta` es la de
+ * APROBACIÓN. El worker solo re-pide ayer y hoy, así que un pago aprobado dos
+ * días después de la orden (boleto, pix, transferencia) no entraba nunca por la
+ * sync diaria. En Cris la demora máxima medida fue de ~8 minutos; por eso 3
+ * días bastan y cuestan 6 peticiones.
+ *
+ * Devuelve las fechas a reagregar; no reagrega él mismo.
+ */
+export async function barrerAprobacionesTardias(
+  db: Db,
+  clienteId: string,
+  token: string,
+  funnels: FunnelHotmart[],
+  dias = 3,
+  log: (msg: string) => void = () => {}
+): Promise<{ completo: boolean; ventas: number; escritas: number; fechasTocadas: string[] }> {
+  const hoy = colombiaToday();
+  const fechas = new Set<string>();
+  let completo = true;
+  let ventas = 0;
+  let escritas = 0;
+  for (let i = 0; i < dias; i++) {
+    const fecha = addDaysISO(hoy, -i);
+    const r = await sincronizarDiaHotmart(db, clienteId, fecha, token, funnels, log);
+    completo &&= r.completo;
+    ventas += r.ventas;
+    escritas += r.escritas;
+    for (const f of r.fechasTocadas ?? []) fechas.add(f);
+  }
+  return { completo, ventas, escritas, fechasTocadas: Array.from(fechas).sort() };
 }

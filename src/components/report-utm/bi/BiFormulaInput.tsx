@@ -94,6 +94,26 @@ function buildGroups(
     'ventas_bump_bruto',
     'ventas_upsell_bruto',
     'ventas_cerradas',
+    // Ventas por transacción (public.hotmart_ventas). Sin listarlas aquí caían
+    // por descarte en el grupo de «campaña» (eventos de Meta/TikTok).
+    'hm_ventas',
+    'hm_compras',
+    'hm_bumps',
+    'hm_neto',
+    'hm_bruto',
+    'hm_reembolsos',
+    'hm_neto_reembolsado',
+    'hm_tasa_reembolso',
+    'hm_roas',
+    'hm_cpa',
+    'hm_cpa_compra',
+    'hm_ticket_medio',
+    'hm_ticket_compra',
+    'hm_tasa_bump',
+    'hm_conversion',
+    'hm_neto_usd',
+    'hm_bruto_usd',
+    'hm_tasa_cambio',
   ]);
   const ga = of(['ga_sessions', 'ga_bounce_rate', 'ga_avg_session_duration']);
   const offline = of(['offline_leads', 'offline_ventas', 'offline_revenue', 'offline_total']);

@@ -183,10 +183,12 @@ export type MarcaExclusion = {
 // tumba TODAS las lecturas de leads —informes, dashboard, salud— con un error
 // de PostgREST. Al revés tampoco pasa nada: la columna existe y nadie la usa.
 //
-// Por eso cada lector pregunta aquí antes de filtrar. La respuesta se cachea: un
-// `true` no puede volver a ser `false` (nadie borra la columna), así que se
-// guarda para siempre; un `false` se re-pregunta pasado un rato para que la app
-// empiece a filtrar sola en cuanto alguien aplique la migración, sin reiniciar.
+// Por eso cada lector pregunta aquí antes de filtrar (`columnaExcluidoDisponible`
+// si necesita el booleano, `filtroLeadsQueCuentan` si solo quiere filtrar una
+// consulta). La respuesta se cachea: un `true` no puede volver a ser `false`
+// (nadie borra la columna), así que se guarda para siempre; un `false` se
+// re-pregunta pasado un rato para que la app empiece a filtrar sola en cuanto
+// alguien aplique la migración, sin reiniciar.
 
 const REINTENTO_SIN_COLUMNA_MS = 5 * 60_000;
 let columnaExcluido: { disponible: boolean; ts: number } | null = null;
@@ -219,16 +221,55 @@ export async function columnaExcluidoDisponible(
   }
 }
 
+/** Lo único que `aplicar` necesita de la consulta: poder encadenar un `.eq()`. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type ConsultaFiltrable = { eq: (...args: any[]) => unknown };
+
+/** El filtro «solo los leads que cuentan», con la detección ya resuelta. */
+export type FiltroLeadsQueCuentan = {
+  /** `true` si la columna existe y `aplicar` añade `excluido = false`. */
+  activo: boolean;
+  /**
+   * SÍNCRONO: devuelve el MISMO builder, sin ejecutarlo, con el filtro puesto
+   * (o intacto si la columna no existe). No lleva `await` delante.
+   */
+  aplicar: <Q extends ConsultaFiltrable>(q: Q) => Q;
+};
+
 /**
- * Aplica `excluido = false` a una consulta de `lead_events` si la columna existe.
- * Uso: `q = await soloLeadsQueCuentan(db, q)`.
+ * Pregunta una vez si existe la columna y devuelve el filtro listo para aplicar
+ * a cualquier consulta de `lead_events`:
+ *
+ *   const cuentan = await filtroLeadsQueCuentan(db);
+ *   const { data } = await cuentan.aplicar(rtm.from('lead_events').select('id')).limit(100);
+ *
+ * El `await` va sobre la DETECCIÓN, nunca sobre la consulta. La versión anterior
+ * (`q = await soloLeadsQueCuentan(db, q)`) era async y devolvía el builder de
+ * PostgREST, que es un thenable: la promesa lo adopta, así que el `await`
+ * EJECUTABA la consulta y entregaba `{ data, error }` en vez del builder. El
+ * siguiente `.limit()` reventaba («q.limit is not a function»; pasó en
+ * `medirCruce` de `salud-fuentes-db.ts`). Por eso esta función devuelve un objeto
+ * plano, que no es thenable, y `aplicar` es síncrona.
  */
-export async function soloLeadsQueCuentan<Q extends { eq: (c: string, v: unknown) => Q }>(
+export async function filtroLeadsQueCuentan(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  db: any,
-  q: Q
-): Promise<Q> {
-  return (await columnaExcluidoDisponible(db)) ? q.eq('excluido', false) : q;
+  db: any
+): Promise<FiltroLeadsQueCuentan> {
+  const activo = await columnaExcluidoDisponible(db);
+  return {
+    activo,
+    aplicar: <Q extends ConsultaFiltrable>(q: Q): Q => {
+      // Si llega el resultado de una consulta ya ejecutada (`{ data, error }`),
+      // se dice alto y claro aquí, no tres líneas más abajo con un
+      // «q.limit is not a function».
+      if (!q || typeof q.eq !== 'function') {
+        throw new TypeError(
+          'filtroLeadsQueCuentan().aplicar espera el builder de PostgREST SIN ejecutar (sin `await` delante).'
+        );
+      }
+      return activo ? (q.eq('excluido', false) as Q) : q;
+    },
+  };
 }
 
 /** Solo para las comprobaciones: olvida lo aprendido sobre la columna. */

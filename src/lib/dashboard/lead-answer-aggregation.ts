@@ -403,9 +403,14 @@ function filtroVacio(
  * ranking y las gráficas. Eso trae gratis los grupos de campaña, los ocho
  * operadores y la combinación Y/O de los filtros compuestos de pestaña. Una
  * reimplementación aquí habría divergido a la primera pestaña con `__cf:`.
+ *
+ * Solo mira el diccionario, así que sirve igual para el cubo de ventas de
+ * Hotmart (`hotmart-cubo.ts`), que usa la misma codificación: una venta y un lead
+ * de la misma campaña tienen que pasar o no pasar el filtro JUNTOS, o el costo por
+ * venta dividiría cifras recortadas por criterios distintos.
  */
 export function campanasPermitidas(
-  ds: LeadAnswerDatasetLite,
+  ds: Pick<LeadAnswerDatasetLite, 'campanas' | 'campanaIds'>,
   keyword: AnyCampaignFilter,
   campaignFilter: CampaignFilterSpec | undefined,
   campaignGroups: any[] | undefined

@@ -1,5 +1,5 @@
 {
-  "generado": "2026-09-14T20:07:48.243Z",
+  "generado": "2026-09-25T13:31:34.328Z",
   "rango": {
     "desde": "2026-08-01",
     "hasta": "2026-08-31"
@@ -820,6 +820,262 @@
           {
             "__dim": "[30|07][CBO][REORGANIZACION][CAPTACION][ VENTAS][JULIO/AGOSTO]",
             "leads_count": 39
+          }
+        ]
+      },
+      {
+        "caso": "hotmart por venta (hm)",
+        "filas": [
+          {
+            "__dim": null,
+            "hm_ventas": 38,
+            "hm_neto": 233487.41,
+            "hm_bruto": 474883.58,
+            "hm_reembolsos": 0,
+            "hm_neto_reembolsado": 0,
+            "hm_roas": 0.14,
+            "hm_cpa": 42431.45,
+            "hm_ticket_medio": 6144.41,
+            "hm_neto_usd": 253.8,
+            "hm_bruto_usd": 516.23
+          }
+        ]
+      },
+      {
+        "caso": "hm por campaña",
+        "filas": [
+          {
+            "__dim": "(sin campaña)",
+            "hm_ventas": 38,
+            "hm_neto": 233487.41,
+            "spend": 0,
+            "hm_roas": null
+          },
+          {
+            "__dim": "[13|08][CBO][REORGANIZACION][CAPTACION][ VENTAS][AGOSTO TANDA 9]",
+            "hm_ventas": 0,
+            "hm_neto": 0,
+            "spend": 405325,
+            "hm_roas": null
+          },
+          {
+            "__dim": "[30|07][CBO][REORGANIZACION][CAPTACION][ VENTAS][JULIO/AGOSTO]",
+            "hm_ventas": 0,
+            "hm_neto": 0,
+            "spend": 240136,
+            "hm_roas": null
+          },
+          {
+            "__dim": "F2[5|08][ASESORIA TRIBUTARIA][C LEADS][AGENDAMIENTO][VIDS][P FRIO][ABO][AGO]",
+            "hm_ventas": 0,
+            "hm_neto": 0,
+            "spend": 144759,
+            "hm_roas": null
+          },
+          {
+            "__dim": "F2[20|08][CBO][ASESORIA TRIBUTARIA][C LEADS][AGENDAMIENTO][VIDS][P. FRIO INT][AGO] - ADS GANADORES TODOS - LAND DAVID",
+            "hm_ventas": 0,
+            "hm_neto": 0,
+            "spend": 125444,
+            "hm_roas": null
+          },
+          {
+            "__dim": "[12/07][EBOOK][VENTAS][HOTMART][PERPETUO][ADS GANADORES/NUEVOS JUL] - Copia",
+            "hm_ventas": 0,
+            "hm_neto": 0,
+            "spend": 118655,
+            "hm_roas": null
+          },
+          {
+            "__dim": "[12/08][EBOOK][VENTAS][HOTMART][CHILE][P. FRIO][RE TEST ADS]",
+            "hm_ventas": 0,
+            "hm_neto": 0,
+            "spend": 96411,
+            "hm_roas": null
+          },
+          {
+            "__dim": "F2[23|07][ASESORIA TRIBUTARIA][C LEADS][AGENDAMIENTO][VIDS][P FRIO][ABO][JUL]",
+            "hm_ventas": 0,
+            "hm_neto": 0,
+            "spend": 84757,
+            "hm_roas": null
+          },
+          {
+            "__dim": "F2[24|08][CBO][ASESORIA TRIBUTARIA][C LEADS][AGENDAMIENTO][VIDS][P. FRIO INT][AGO] - ADS X TANDAS - LAND DANIEL",
+            "hm_ventas": 0,
+            "hm_neto": 0,
+            "spend": 81171,
+            "hm_roas": null
+          },
+          {
+            "__dim": "F2[27|08][CBO][ASESORIA TRIBUTARIA][C LEADS][AGENDAMIENTO][IMGS][P. FRIO INT][AGO] - ADS IMGS TANDA 1- LAND DAVID",
+            "hm_ventas": 0,
+            "hm_neto": 0,
+            "spend": 44930,
+            "hm_roas": null
+          },
+          {
+            "__dim": "F2[19|08][CBO][ASESORIA TRIBUTARIA][C LEADS][AGENDAMIENTO][VIDS][P. FRIO INT][AGO] - ADS GANADORES TODOS",
+            "hm_ventas": 0,
+            "hm_neto": 0,
+            "spend": 43207,
+            "hm_roas": null
+          },
+          {
+            "__dim": "[EBOOK] [VENTAS] [TESTEO DE PUBLICOS] [ABO] [FRIO] [PAGINA B] - 19 AGOSTO - DAVID",
+            "hm_ventas": 0,
+            "hm_neto": 0,
+            "spend": 39073,
+            "hm_roas": null
+          },
+          {
+            "__dim": "[EBOOK] [VENTAS] [TESTEO DE PUBLICOS] [ABO] [FRIO] [PAGINA A] - 19 AGOSTO - DAVID",
+            "hm_ventas": 0,
+            "hm_neto": 0,
+            "spend": 38959,
+            "hm_roas": null
+          },
+          {
+            "__dim": "F2[20|08][CBO][ASESORIA TRIBUTARIA][C LEADS][AGENDAMIENTO][VIDS][P. FRIO INT][AGO] - ADS GANADORES TODOS - LAND DANIEL",
+            "hm_ventas": 0,
+            "hm_neto": 0,
+            "spend": 36649,
+            "hm_roas": null
+          },
+          {
+            "__dim": "F2[19|08][CBO][ASESORIA TRIBUTARIA][C LEADS][AGENDAMIENTO][VIDS][P. FRIO SIMILARES][AGO] - ADS GANADORES TODOS",
+            "hm_ventas": 0,
+            "hm_neto": 0,
+            "spend": 33217,
+            "hm_roas": null
+          },
+          {
+            "__dim": "[11/08][EBOOK][VENTAS][HOTMART][PERPETUO][ADS GANADORES/NUEVOS JUL] - OBJ COSTO X RESULTADO",
+            "hm_ventas": 0,
+            "hm_neto": 0,
+            "spend": 29770,
+            "hm_roas": null
+          },
+          {
+            "__dim": "F2[14|08][CBO][ASESORIA TRIBUTARIA][C LEADS][AGENDAMIENTO][VIDS][P FRIO][AGO] - TANDA 9",
+            "hm_ventas": 0,
+            "hm_neto": 0,
+            "spend": 29556,
+            "hm_roas": null
+          },
+          {
+            "__dim": "[12/08][EBOOK][VENTAS][HOTMART][CHILE][P. FRIO][ADS TANDA 3]",
+            "hm_ventas": 0,
+            "hm_neto": 0,
+            "spend": 10342,
+            "hm_roas": null
+          },
+          {
+            "__dim": "[3/08][EBOOK][VENTAS][HOTMART][PERPETUO][ADS GANADORES/NUEVOS JUL] - Copia 2",
+            "hm_ventas": 0,
+            "hm_neto": 0,
+            "spend": 10034,
+            "hm_roas": null
+          }
+        ]
+      },
+      {
+        "caso": "hm por día",
+        "filas": [
+          {
+            "__dim": "2026-08-01",
+            "hm_ventas": 2,
+            "hm_neto": 12371.78
+          },
+          {
+            "__dim": "2026-08-02",
+            "hm_ventas": 3,
+            "hm_neto": 21366.7
+          },
+          {
+            "__dim": "2026-08-03",
+            "hm_ventas": 2,
+            "hm_neto": 12384
+          },
+          {
+            "__dim": "2026-08-04",
+            "hm_ventas": 2,
+            "hm_neto": 14580.29
+          },
+          {
+            "__dim": "2026-08-05",
+            "hm_ventas": 6,
+            "hm_neto": 32380.08
+          },
+          {
+            "__dim": "2026-08-08",
+            "hm_ventas": 3,
+            "hm_neto": 16041.21
+          },
+          {
+            "__dim": "2026-08-11",
+            "hm_ventas": 3,
+            "hm_neto": 21102.69
+          },
+          {
+            "__dim": "2026-08-12",
+            "hm_ventas": 4,
+            "hm_neto": 15989.91
+          },
+          {
+            "__dim": "2026-08-13",
+            "hm_ventas": 1,
+            "hm_neto": 8862.98
+          },
+          {
+            "__dim": "2026-08-14",
+            "hm_ventas": 2,
+            "hm_neto": 17739.42
+          },
+          {
+            "__dim": "2026-08-15",
+            "hm_ventas": 1,
+            "hm_neto": 8870.58
+          },
+          {
+            "__dim": "2026-08-19",
+            "hm_ventas": 1,
+            "hm_neto": 8866.55
+          },
+          {
+            "__dim": "2026-08-20",
+            "hm_ventas": 2,
+            "hm_neto": 11697.27
+          },
+          {
+            "__dim": "2026-08-26",
+            "hm_ventas": 3,
+            "hm_neto": 15492.96
+          },
+          {
+            "__dim": "2026-08-31",
+            "hm_ventas": 3,
+            "hm_neto": 15740.99
+          }
+        ]
+      },
+      {
+        "caso": "hm por tipo",
+        "filas": [
+          {
+            "__dim": "principal",
+            "hm_ventas": 19,
+            "hm_neto": 169485.96
+          },
+          {
+            "__dim": "bump",
+            "hm_ventas": 18,
+            "hm_neto": 64001.45
+          },
+          {
+            "__dim": "upsell",
+            "hm_ventas": 1,
+            "hm_neto": 0
           }
         ]
       }
@@ -1655,6 +1911,177 @@
             "leads_count": 1511
           }
         ]
+      },
+      {
+        "caso": "hotmart por venta (hm)",
+        "filas": [
+          {
+            "__dim": null,
+            "hm_ventas": 0,
+            "hm_neto": 0,
+            "hm_bruto": 0,
+            "hm_reembolsos": 0,
+            "hm_neto_reembolsado": 0,
+            "hm_roas": null,
+            "hm_cpa": null,
+            "hm_ticket_medio": null,
+            "hm_neto_usd": 0,
+            "hm_bruto_usd": 0
+          }
+        ]
+      },
+      {
+        "caso": "hm por campaña",
+        "filas": [
+          {
+            "__dim": "V8[D][10|08][DUA y PIAR][COLOMBIA][C LEADS][CBO][P. FRIO] - ADS V1",
+            "hm_ventas": 0,
+            "hm_neto": 0,
+            "spend": 1790993,
+            "hm_roas": null
+          },
+          {
+            "__dim": "V2[20/08][SEXUALIDAD][C LEADS][P. FRIO AVG][COLOMBIA][CBO] ADS TANDA 2 JUL",
+            "hm_ventas": 0,
+            "hm_neto": 0,
+            "spend": 1427207,
+            "hm_roas": null
+          },
+          {
+            "__dim": "V7[19|08][AUTISMO][COLOMBIA][C LEADS][P FRIO][ADVANTAGE][CBO] - ADS TANDA 1 JUL",
+            "hm_ventas": 0,
+            "hm_neto": 0,
+            "spend": 1381070,
+            "hm_roas": null
+          },
+          {
+            "__dim": "[V1][13|08][SISTEMAS DE GESTION][COLOMBIA][C LEADS][CBO][25-45][ANDROMEDA]",
+            "hm_ventas": 0,
+            "hm_neto": 0,
+            "spend": 1379942,
+            "hm_roas": null
+          },
+          {
+            "__dim": "V7[19|08][AUTISMO][MEXICO][C LEADS][P FRIO][ADVANTAGE][CBO] - ADS TANDA 1 JUL",
+            "hm_ventas": 0,
+            "hm_neto": 0,
+            "spend": 1346581,
+            "hm_roas": null
+          },
+          {
+            "__dim": "V4[19|08][CBO][NEUROEMOCION][COLOMBIA][C LEADS][P. FRIO] - ADS ANTIGUOS",
+            "hm_ventas": 0,
+            "hm_neto": 0,
+            "spend": 1325914,
+            "hm_roas": null
+          },
+          {
+            "__dim": "V2[20/08][SEXUALIDAD][C LEADS][P. FRIO AVG][MEXICO][CBO] ADS TANDA 2 JUL",
+            "hm_ventas": 0,
+            "hm_neto": 0,
+            "spend": 1313330,
+            "hm_roas": null
+          },
+          {
+            "__dim": "[V6][11|08][PRIMEROS AUXILIOS PSICOLOGICOS][COLOMBIA][C LEADS][CBO][25-45][ANDROMEDA]",
+            "hm_ventas": 0,
+            "hm_neto": 0,
+            "spend": 1310265,
+            "hm_roas": null
+          },
+          {
+            "__dim": "[V1][13|08][SISTEMAS DE GESTION][MEXICO][C LEADS][CBO][25-45][ANDROMEDA]",
+            "hm_ventas": 0,
+            "hm_neto": 0,
+            "spend": 1285437,
+            "hm_roas": null
+          },
+          {
+            "__dim": "[D][V8][6|08][DOCENCIA UNIV][COLOMBIA][CLEADS LAND][ABO][P. FRIO]",
+            "hm_ventas": 0,
+            "hm_neto": 0,
+            "spend": 1194904,
+            "hm_roas": null
+          },
+          {
+            "__dim": "V4 [D][30-07][PSICOLOGIA INFANTIL][COLOMBIA][C LEADS LAND][ABO][P.FRIO]",
+            "hm_ventas": 0,
+            "hm_neto": 0,
+            "spend": 1097904,
+            "hm_roas": null
+          },
+          {
+            "__dim": "V4[19|08][CBO][NEUROEMOCION][MEXICO][C LEADS][P. FRIO] - ADS ANTIGUOS",
+            "hm_ventas": 0,
+            "hm_neto": 0,
+            "spend": 1061707,
+            "hm_roas": null
+          },
+          {
+            "__dim": "[V5][D][4|08][NEURO_CLINICA][MEXICO][CLEADS][CBO][P. FRIO]",
+            "hm_ventas": 0,
+            "hm_neto": 0,
+            "spend": 1059625,
+            "hm_roas": null
+          },
+          {
+            "__dim": "V7[19|08][AUTISMO][CHILE][C LEADS][P FRIO][ADVANTAGE][CBO] - ADS TANDA 1 JUL",
+            "hm_ventas": 0,
+            "hm_neto": 0,
+            "spend": 1056372,
+            "hm_roas": null
+          },
+          {
+            "__dim": "[V5][D][4|08][NEURO_CLINICA][COLOMBIA][CLEADS][CBO][P. FRIO]",
+            "hm_ventas": 0,
+            "hm_neto": 0,
+            "spend": 1049379,
+            "hm_roas": null
+          },
+          {
+            "__dim": "V4 [D][30-07][PSICOLOGIA INFANTIL][MEXICO][C LEADS LAND][ABO][P.FRIO]",
+            "hm_ventas": 0,
+            "hm_neto": 0,
+            "spend": 1024995,
+            "hm_roas": null
+          },
+          {
+            "__dim": "[D][V8][6|08][DOCENCIA UNIV][MEXICO][CLEADS LAND][ABO][P. FRIO]",
+            "hm_ventas": 0,
+            "hm_neto": 0,
+            "spend": 991045,
+            "hm_roas": null
+          },
+          {
+            "__dim": "[V6][11|08][PRIMEROS AUXILIOS PSICOLOGICOS][MEXICO][C LEADS][CBO][25-45][ANDROMEDA]",
+            "hm_ventas": 0,
+            "hm_neto": 0,
+            "spend": 942004,
+            "hm_roas": null
+          },
+          {
+            "__dim": "[V1][13|08][SISTEMAS DE GESTION][CHILE][C LEADS][CBO][25-45][ANDROMEDA]",
+            "hm_ventas": 0,
+            "hm_neto": 0,
+            "spend": 890177,
+            "hm_roas": null
+          },
+          {
+            "__dim": "V4[19|08][CBO][NEUROEMOCION][CHILE][C LEADS][P. FRIO] - ADS ANTIGUOS",
+            "hm_ventas": 0,
+            "hm_neto": 0,
+            "spend": 795005,
+            "hm_roas": null
+          }
+        ]
+      },
+      {
+        "caso": "hm por día",
+        "filas": []
+      },
+      {
+        "caso": "hm por tipo",
+        "filas": []
       }
     ],
     "ece4f094-7825-49b4-9f23-39a4a8db5685": [
@@ -2089,6 +2516,86 @@
       },
       {
         "caso": "Top-3 campañas",
+        "filas": []
+      },
+      {
+        "caso": "hotmart por venta (hm)",
+        "filas": [
+          {
+            "__dim": null,
+            "hm_ventas": 0,
+            "hm_neto": 0,
+            "hm_bruto": 0,
+            "hm_reembolsos": 0,
+            "hm_neto_reembolsado": 0,
+            "hm_roas": null,
+            "hm_cpa": null,
+            "hm_ticket_medio": null,
+            "hm_neto_usd": 0,
+            "hm_bruto_usd": 0
+          }
+        ]
+      },
+      {
+        "caso": "hm por campaña",
+        "filas": [
+          {
+            "__dim": "[EXPORENTACORTA][INSCRIPCIONES][GENERAL_FELIPE]",
+            "hm_ventas": 0,
+            "hm_neto": 0,
+            "spend": 566,
+            "hm_roas": null
+          },
+          {
+            "__dim": "[EXPORENTACORTA][INSCRIPCIONES][TIPO_AWARNESS] - Copia",
+            "hm_ventas": 0,
+            "hm_neto": 0,
+            "spend": 458,
+            "hm_roas": null
+          },
+          {
+            "__dim": "[CL][FORM-LAS CONDES][COMUNAS][CLIENTES POTENCIALES] [CBO] [CHILE]",
+            "hm_ventas": 0,
+            "hm_neto": 0,
+            "spend": 262,
+            "hm_roas": null
+          },
+          {
+            "__dim": "[CL][FORM-SANTA VICTORIA][CYBER][CLIENTES POTENCIALES] [CBO] [CHILE]",
+            "hm_ventas": 0,
+            "hm_neto": 0,
+            "spend": 94,
+            "hm_roas": null
+          },
+          {
+            "__dim": "[EXPORENTACORTA][INSCRIPCIONES][INMOBILIARIO]",
+            "hm_ventas": 0,
+            "hm_neto": 0,
+            "spend": 70,
+            "hm_roas": null
+          },
+          {
+            "__dim": "[CL][FORM-DISTRITO BUSTAMANTE][PROYECTOS][CLIENTES POTENCIALES] [CBO] [CHILE] Julio",
+            "hm_ventas": 0,
+            "hm_neto": 0,
+            "spend": 49,
+            "hm_roas": null
+          },
+          {
+            "__dim": "[CL][FORM-DISTRITO BUSTAMANTE][CYBER][CLIENTES POTENCIALES] [CBO] [CHILE]",
+            "hm_ventas": 0,
+            "hm_neto": 0,
+            "spend": 44,
+            "hm_roas": null
+          }
+        ]
+      },
+      {
+        "caso": "hm por día",
+        "filas": []
+      },
+      {
+        "caso": "hm por tipo",
         "filas": []
       }
     ]

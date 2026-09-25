@@ -7,9 +7,11 @@ import { evaluateFormula, formatValue } from '@/lib/formula-engine';
 import {
   aggregateRankingRows,
   dimensionSoportaRespuestas,
+  dimensionSoportaHotmart,
   leadsFueraDeRanking,
 } from '@/lib/ranking-aggregation';
 import { formulaUsaRespuestas } from '@/lib/dashboard/lead-answer-aggregation';
+import { formulaUsaHotmart } from '@/lib/dashboard/hotmart-cubo';
 import { useMonedaReporte } from './MonedaReporteContext';
 
 interface Props {
@@ -121,16 +123,27 @@ export function RankingTableBlock({
    * «n/a» — un 0 afirmaría que no hubo leads, que es falso.
    */
   const columnasNoAplican = useMemo(() => {
-    if (dimensionSoportaRespuestas(def.dimension)) return new Set<number>();
+    // Las ventas de Hotmart por campaña (`hm_*`) siguen la misma regla, pero
+    // también se sirven en campañas de TikTok (ver `dimensionSoportaHotmart`).
+    const respuestas = !dimensionSoportaRespuestas(def.dimension);
+    const hotmart = !dimensionSoportaHotmart(def.dimension);
     return new Set(
-      def.columns.map((c, i) => (formulaUsaRespuestas(c.formula) ? i : -1)).filter((i) => i >= 0)
+      def.columns
+        .map((c, i) =>
+          (respuestas && formulaUsaRespuestas(c.formula)) ||
+          (hotmart && formulaUsaHotmart(c.formula))
+            ? i
+            : -1
+        )
+        .filter((i) => i >= 0)
     );
   }, [def.dimension, def.columns]);
 
   const MOTIVO_NO_APLICA =
-    'Los contactos de Report-UTM se resuelven a CAMPAÑA, no a anuncio ni a conjunto: ' +
-    'un formulario no sabe qué anuncio trajo al visitante. Cambia la dimensión de la ' +
-    'tabla a «Campañas» para ver esta columna.';
+    'Los contactos de Report-UTM y las ventas de Hotmart por campaña se resuelven a ' +
+    'CAMPAÑA, no a anuncio ni a conjunto: un formulario o una venta no saben qué ' +
+    'anuncio trajo al visitante. Cambia la dimensión de la tabla a «Campañas» para ' +
+    'ver esta columna.';
 
   /** Contactos que no cuelgan de ninguna fila de la tabla. Se declaran al pie. */
   const fueraDeTabla = useMemo(

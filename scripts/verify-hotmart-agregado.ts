@@ -25,23 +25,38 @@ function seccion(t: string) {
   console.log(`\n── ${t} ${'─'.repeat(Math.max(0, 60 - t.length))}`);
 }
 
-/** Doble mínimo del cliente de Supabase: solo lo que usa la función. */
+/**
+ * Doble mínimo del cliente de Supabase: solo lo que usa la función.
+ *
+ * La agregación pagina con `fetchAllRows` (keyset sobre `id`): la primera
+ * página trae todas las filas y la siguiente, pedida con `.gt('id', …)`, vuelve
+ * vacía.
+ */
 function dbCon(filas: Array<Record<string, unknown>>) {
   return {
     from() {
+      let siguiente = false;
       const q = {
         select: () => q,
         eq: () => q,
+        order: () => q,
+        limit: () => q,
+        gt: () => {
+          siguiente = true;
+          return q;
+        },
         then: (res: (v: { data: unknown[]; error: null }) => unknown) =>
-          res({ data: filas, error: null }),
+          res({ data: siguiente ? [] : filas, error: null }),
       };
       return q;
     },
   };
 }
 
+let idVenta = 0;
 function venta(p: Record<string, unknown> = {}) {
   return {
+    id: `v-${++idVenta}`,
     tipo: 'principal',
     tab_id: null,
     estado: 'aprobada',

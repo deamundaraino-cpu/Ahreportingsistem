@@ -22,7 +22,7 @@ export const SALES_SOURCE: DataSource = {
   clientKey: { scope: 'report_utm' },
   grainKind: 'row',
   grain: ['id'],
-  joinAxes: ['date', 'platform', 'campaign', 'adset', 'ad', 'lead_column', 'sales_column'],
+  joinAxes: ['date', 'platform', 'campaign', 'adset', 'ad', 'utm', 'lead_column', 'sales_column'],
   dateColumn: 'created_at',
   dateType: 'timestamptz',
   fields: [

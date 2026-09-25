@@ -21,6 +21,10 @@ import { leerJsonRespuesta, esTimeoutDeFetch } from '@/lib/fetch-json';
 import { internalFetch, internalCronFetch } from '@/lib/internal-fetch';
 import { resolveRtmClienteId } from '@/lib/report-utm/campaign-resolver';
 import { formulaUsaRespuestas, camposEnFormula } from '@/lib/dashboard/lead-answer-aggregation';
+import { formulaUsaHotmart } from '@/lib/dashboard/hotmart-cubo';
+import type { HotmartCuboLite } from '@/lib/dashboard/hotmart-cubo';
+import { cargarCuboHotmart } from '@/lib/hotmart/cubo-db';
+import { funnelCambio } from '@/lib/hotmart/funnel-cambio';
 import { BUCKET_OTROS } from '@/lib/report-utm/lead-campos';
 import type { LeadAnswerCampoResumen } from '@/lib/dashboard/metric-catalog';
 import { loadLeadCampos, loadLeadSegmentos, saveLeadCampo } from '@/lib/report-utm/lead-campos-db';
@@ -585,6 +589,51 @@ function recolectarBloquesRespuesta(
   return out;
 }
 
+/** Lo que tiene fórmulas en un layout, una pestaña o una plantilla. */
+type FuenteDeFormulas = {
+  columnas?: { formula?: string | null }[] | null;
+  tarjetas?: { formula?: string | null; targetFormula?: string | null }[] | null;
+  graficos?: { valueFormulas?: string[] | null }[] | null;
+  ranking_tables?: { columns?: { formula?: string | null }[] | null }[] | null;
+  custom_metrics?: { formula?: string | null }[] | null;
+};
+
+/**
+ * Visita TODAS las fórmulas del layout, de sus pestañas y de las plantillas que
+ * estas referencian. Es el recorrido que comparten los detectores de uso
+ * (`layoutUsaRespuestasLead`, `layoutUsaHotmart`): si cada uno recorriera por su
+ * cuenta, el día que se añada un tipo de bloque uno lo miraría y el otro no, y
+ * sus métricas saldrían vacías solo en ese bloque.
+ */
+function recorrerFormulas(
+  layout: FuenteDeFormulas | null | undefined,
+  tabs: (FuenteDeFormulas & { plantilla_id?: string | null })[] | null | undefined,
+  plantillas: (FuenteDeFormulas & { id?: string })[] | null | undefined,
+  usa: (f: string) => void
+): void {
+  const visitar = (f: string | null | undefined) => {
+    if (f) usa(f);
+  };
+  const revisar = (fuente: FuenteDeFormulas | null | undefined) => {
+    if (!fuente) return;
+    for (const c of fuente.columnas ?? []) visitar(c?.formula);
+    for (const c of fuente.tarjetas ?? []) {
+      visitar(c?.formula);
+      visitar(c?.targetFormula);
+    }
+    for (const g of fuente.graficos ?? []) for (const f of g?.valueFormulas ?? []) visitar(f);
+    for (const r of fuente.ranking_tables ?? [])
+      for (const c of r?.columns ?? []) visitar(c?.formula);
+    for (const m of fuente.custom_metrics ?? []) visitar(m?.formula);
+  };
+
+  revisar(layout);
+  for (const t of tabs ?? []) revisar(t);
+
+  const plantillasUsadas = new Set((tabs ?? []).map((t) => t?.plantilla_id).filter(Boolean));
+  for (const p of plantillas ?? []) if (plantillasUsadas.has(p?.id)) revisar(p);
+}
+
 /**
  * ¿Alguna fórmula del cliente usa las métricas de Report-UTM (`utm_leads` o
  * `lf__*`)?
@@ -599,14 +648,6 @@ function recolectarBloquesRespuesta(
  * Mismo patrón y misma razón que `layoutUsaSheetFilter`, incluidas las pestañas
  * y las plantillas que estas referencian.
  */
-type FuenteDeFormulas = {
-  columnas?: { formula?: string | null }[] | null;
-  tarjetas?: { formula?: string | null; targetFormula?: string | null }[] | null;
-  graficos?: { valueFormulas?: string[] | null }[] | null;
-  ranking_tables?: { columns?: { formula?: string | null }[] | null }[] | null;
-  custom_metrics?: { formula?: string | null }[] | null;
-};
-
 function layoutUsaRespuestasLead(
   layout: FuenteDeFormulas | null | undefined,
   tabs: (FuenteDeFormulas & { plantilla_id?: string | null })[] | null | undefined,
@@ -623,31 +664,32 @@ function layoutUsaRespuestasLead(
   let usaTotales = false;
   const claves = new Set<string>();
 
-  const usa = (f: string | null | undefined) => {
-    if (!f) return;
+  recorrerFormulas(layout, tabs, plantillas, (f) => {
     if (formulaUsaRespuestas(f)) usaTotales = true;
     for (const c of camposEnFormula(f, clavesCatalogo, segmentos)) claves.add(c);
-  };
-
-  const revisar = (fuente: FuenteDeFormulas | null | undefined) => {
-    if (!fuente) return;
-    for (const c of fuente.columnas ?? []) usa(c?.formula);
-    for (const c of fuente.tarjetas ?? []) {
-      usa(c?.formula);
-      usa(c?.targetFormula);
-    }
-    for (const g of fuente.graficos ?? []) for (const f of g?.valueFormulas ?? []) usa(f);
-    for (const r of fuente.ranking_tables ?? []) for (const c of r?.columns ?? []) usa(c?.formula);
-    for (const m of fuente.custom_metrics ?? []) usa(m?.formula);
-  };
-
-  revisar(layout);
-  for (const t of tabs ?? []) revisar(t);
-
-  const plantillasUsadas = new Set((tabs ?? []).map((t) => t?.plantilla_id).filter(Boolean));
-  for (const p of plantillas ?? []) if (plantillasUsadas.has(p?.id)) revisar(p);
+  });
 
   return { usaTotales, claves: [...claves] };
+}
+
+/**
+ * ¿Alguna fórmula del cliente usa las ventas de Hotmart por campaña (`hm_*`)?
+ *
+ * Decide si se carga el cubo de ventas: leer `hotmart_ventas` y resolver cada
+ * venta a su campaña no es gratis, y casi ningún layout lo necesita. Las macros
+ * derivadas (`hm_roas`, `hm_cpa`…) empiezan también por `hm_`, así que una
+ * tarjeta que solo use una macro se detecta igual (ver `formulaUsaHotmart`).
+ */
+function layoutUsaHotmart(
+  layout: FuenteDeFormulas | null | undefined,
+  tabs: (FuenteDeFormulas & { plantilla_id?: string | null })[] | null | undefined,
+  plantillas: (FuenteDeFormulas & { id?: string })[] | null | undefined
+): boolean {
+  let usa = false;
+  recorrerFormulas(layout, tabs, plantillas, (f) => {
+    if (!usa && formulaUsaHotmart(f)) usa = true;
+  });
+  return usa;
 }
 
 /**
@@ -882,6 +924,12 @@ async function cargarMetricasEnriquecidas(
     leadAnswerFormulas?: boolean;
     /** Claves del catálogo que mencionan las fórmulas del layout. */
     leadAnswerClaves?: string[];
+    /**
+     * ¿Alguna fórmula usa las ventas de Hotmart por campaña (`hm_*`)? Ver
+     * `layoutUsaHotmart`. Sin esto no se lee `hotmart_ventas` y `hotmartCubo`
+     * sale null.
+     */
+    hotmartCubo?: boolean;
   }
 ): Promise<{
   metrics: any[];
@@ -890,6 +938,8 @@ async function cargarMetricasEnriquecidas(
   sheetCampos: SheetCampoResumen[];
   sheetVistas: SheetVistaResumen[];
   leadAnswers: LeadAnswerDataset;
+  /** Ventas de Hotmart por (día × campaña), o null si ninguna fórmula las usa. */
+  hotmartCubo: HotmartCuboLite | null;
   /** Moneda de reporte del cliente: la de los importes de Hotmart ya convertidos. */
   moneda: string;
 }> {
@@ -900,7 +950,37 @@ async function cargarMetricasEnriquecidas(
   const enRango = (q: any, col: string) =>
     startStr === 'all' ? q.lte(col, endStr) : q.gte(col, startStr).lte(col, endStr);
 
-  const [metricas, leads, offline, sheetData, leadAnswers] = await Promise.all([
+  // Moneda de reporte (reunión del 2026-09-08): las columnas de dinero de
+  // Hotmart están en USD y el gasto en la moneda de la cuenta. Se convierten
+  // aquí, fila a fila con la tasa de su día, porque este es el ÚNICO camino de
+  // carga —dashboard, espejo público, archivo y periodo anterior— y así todos
+  // dan el mismo ROAS. Con moneda USD no se toca nada.
+  //
+  // Arranca en paralelo con las lecturas: el cubo de ventas la necesita para
+  // convertir cada venta con la tasa de SU fecha, igual que el BI.
+  const monedaReporte = import('@/lib/moneda-reporte').then(
+    async ({ cargarConversor, convertirFilasMetricas, monedaDeClientePublico }) => {
+      const moneda = await monedaDeClientePublico(supabase, clienteId);
+      const conv = await cargarConversor(supabase, moneda, startStr, endStr);
+      return { conv, convertirFilasMetricas };
+    }
+  );
+  // Se espera más abajo, cuando ya terminaron las lecturas: sin un manejador
+  // puesto desde ya, un fallo mientras tanto sería un rechazo «no manejado» que
+  // Node trata como fatal. El `await` de abajo lo sigue relanzando igual.
+  monedaReporte.catch(() => {});
+
+  // `all` abarca desde 2020: resolver seis años de campañas reventaría el
+  // presupuesto de la carga. Mismo recorte que el cubo de respuestas, y el
+  // mismo motivo; las `ventas_*` de cuenta siguen cubriendo el rango entero.
+  const cuboDesde = startStr === 'all' ? addDaysISO(endStr, -365) : startStr;
+  const hotmartCuboPromise: Promise<HotmartCuboLite | null> = opts?.hotmartCubo
+    ? monedaReporte.then(({ conv }) =>
+        cargarCuboHotmart(supabase, clienteId, cuboDesde, endStr, conv)
+      )
+    : Promise.resolve(null);
+
+  const [metricas, leads, offline, sheetData, leadAnswers, hotmartCubo] = await Promise.all([
     fetchAllRows(() =>
       enRango(supabase.from('metricas_diarias').select('*').eq('cliente_id', clienteId), 'fecha')
     ),
@@ -922,17 +1002,10 @@ async function cargarMetricasEnriquecidas(
       opts?.leadAnswerFormulas ?? false,
       opts?.leadAnswerClaves ?? []
     ),
+    hotmartCuboPromise,
   ]);
 
-  // Moneda de reporte (reunión del 2026-09-08): las columnas de dinero de
-  // Hotmart están en USD y el gasto en la moneda de la cuenta. Se convierten aquí,
-  // fila a fila con la tasa de su día, porque este es el ÚNICO camino de carga
-  // —dashboard, espejo público, archivo y periodo anterior— y así todos dan el
-  // mismo ROAS. Con moneda USD no se toca nada.
-  const { cargarConversor, convertirFilasMetricas, monedaDeClientePublico } =
-    await import('@/lib/moneda-reporte');
-  const moneda = await monedaDeClientePublico(supabase, clienteId);
-  const conv = await cargarConversor(supabase, moneda, startStr, endStr);
+  const { conv, convertirFilasMetricas } = await monedaReporte;
 
   // Ventas cerradas en el CRM de GoHighLevel (webhook de venta): `crm_ventas`
   // y `crm_revenue` en cada día. Se inyectan ANTES del merge para que viajen
@@ -965,6 +1038,9 @@ async function cargarMetricasEnriquecidas(
     sheetCampos: sheetData.campos,
     sheetVistas: sheetData.vistas,
     leadAnswers,
+    // Mismo razonamiento que `leadAnswers`: un cubo (día × campaña), hermano
+    // de `metrics`. Lo recorta el navegador por la pestaña activa.
+    hotmartCubo,
     moneda: conv.moneda,
   };
 }
@@ -1071,11 +1147,14 @@ export async function getDashboardData(clientId: string, startStr: string, endSt
   // con campos de Sheet, offline o leads se quedaban sin comparativo en silencio.
   // Sus `offline_rows` solo se traen si algo filtra por Sheet (ver helper).
   const previoNecesitaFilasOffline = layoutUsaSheetFilter(layout, tabsRes.data, allLayoutsRes.data);
+  // Las ventas de Hotmart por campaña solo se cargan si alguna fórmula las usa.
+  const usaHotmart = layoutUsaHotmart(layout, tabsRes.data, allLayoutsRes.data);
   const [actual, previo] = await Promise.all([
     cargarMetricasEnriquecidas(supabase, cliente.id, startStr, endStr, {
       leadAnswerBlocks,
       leadAnswerFormulas: leadAnswerUso.usaTotales,
       leadAnswerClaves: leadAnswerUso.claves,
+      hotmartCubo: usaHotmart,
     }),
     rangoPrevio
       ? cargarMetricasEnriquecidas(supabase, cliente.id, rangoPrevio.desde, rangoPrevio.hasta, {
@@ -1083,6 +1162,7 @@ export async function getDashboardData(clientId: string, startStr: string, endSt
           leadAnswerBlocks,
           leadAnswerFormulas: leadAnswerUso.usaTotales,
           leadAnswerClaves: leadAnswerUso.claves,
+          hotmartCubo: usaHotmart,
         })
       : Promise.resolve(null),
   ]);
@@ -1115,6 +1195,9 @@ export async function getDashboardData(clientId: string, startStr: string, endSt
     campaignGroups: campaignGroupsRes.data || [],
     leadAnswers,
     prevLeadAnswers: previo?.leadAnswers ?? null,
+    // Ventas de Hotmart por (día × campaña); null si ninguna fórmula usa `hm_*`.
+    hotmartCubo: actual.hotmartCubo,
+    prevHotmartCubo: previo?.hotmartCubo ?? null,
     leadAnswerCatalogo,
     // Moneda de los importes de Hotmart: los bloques la pintan («CLP …»).
     moneda: actual.moneda,
@@ -1289,6 +1372,30 @@ export async function saveClienteTab(
     baseFields.hotmart_funnel = payload.hotmart_funnel;
   }
 
+  // ¿Hay que reclasificar el histórico? Solo si el cliente TIENE Hotmart y el
+  // embudo cambió de verdad. Antes se encolaba en cada guardado que trajera
+  // `hotmart_funnel` —es decir, en casi todos, porque el formulario lo manda
+  // siempre—, aunque llegara igual, aunque llegara `null` y aunque el cliente no
+  // tuviera Hotmart: un año de ventas reescrito para nada. Se decide ANTES de
+  // escribir, que es cuando todavía se puede leer el embudo anterior.
+  let reclasificar = false;
+  if (payload.hotmart_funnel !== undefined) {
+    const [{ data: cli }, anterior] = await Promise.all([
+      supabase.from('clientes').select('config_api').eq('id', clienteId).maybeSingle(),
+      payload.id
+        ? supabase
+            .from('cliente_tabs')
+            .select('hotmart_funnel')
+            .eq('id', payload.id)
+            .eq('cliente_id', clienteId)
+            .maybeSingle()
+        : Promise.resolve({ data: null }),
+    ]);
+    reclasificar =
+      hotmartConectado((cli as any)?.config_api) &&
+      funnelCambio((anterior.data as any)?.hotmart_funnel ?? null, payload.hotmart_funnel);
+  }
+
   if (payload.id) {
     const { error } = await supabase
       .from('cliente_tabs')
@@ -1322,7 +1429,7 @@ export async function saveClienteTab(
   // Se encola una reclasificación en vez de recalcularla aquí: reescribe
   // `tipo`/`tab_id` de todo el histórico leyendo `hotmart_ventas`, sin gastar
   // una sola petición a la API de Hotmart.
-  if (payload.hotmart_funnel !== undefined) {
+  if (reclasificar) {
     after(async () => {
       try {
         const hoy = colombiaToday();
@@ -2117,6 +2224,7 @@ export async function getMirrorDashboardData(token: string, from?: string, to?: 
           // layout de la pestaña y las pestañas visibles. Es suficiente: lo que se
           // comparte con el cliente es lo que hay en ese layout.
           leadAnswerFormulas: layoutUsaRespuestasLead(layout, r.data, null).usaTotales,
+          hotmartCubo: layoutUsaHotmart(layout, r.data, null),
         })
       ),
       supabase
@@ -2177,6 +2285,8 @@ export async function getMirrorDashboardData(token: string, from?: string, to?: 
       // no muestran variación. Es coherente con el resto del enlace público, que
       // tampoco compara tarjetas.
       prevLeadAnswers: null,
+      hotmartCubo: enriquecido.hotmartCubo,
+      prevHotmartCubo: null,
       weeks,
       layout,
       tabs: allTabs,

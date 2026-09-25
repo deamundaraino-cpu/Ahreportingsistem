@@ -21,22 +21,23 @@ Eso es todo. El resto de esta guía son las consecuencias.
 
 ---
 
-## Parte 1 · Las siete fuentes
+## Parte 1 · Las ocho fuentes
 
 | Fuente                   | Qué mide                                                                     | Grano         | Cruza por                                                                                             |
 | ------------------------ | ---------------------------------------------------------------------------- | ------------- | ----------------------------------------------------------------------------------------------------- |
 | **Leads**                | Contactos, uno por fila (formulario web, Meta Lead Ads o CRM de GoHighLevel) | fila          | fecha · plataforma · campaña · conjunto · anuncio · **cualquier columna suya** · campos de formulario |
-| **Ventas**               | Transacciones, una por fila                                                  | fila          | fecha · plataforma · campaña · conjunto · anuncio · columnas de venta                                 |
+| **Ventas**               | Transacciones de `sales_events` (GHL…), una por fila; **sin Hotmart**        | fila          | fecha · plataforma · campaña · conjunto · anuncio · UTM · columnas de venta                           |
+| **Ventas Hotmart**       | Transacciones de `hotmart_ventas`, una por fila (`hm_*`)                     | fila          | fecha · plataforma · campaña · conjunto · anuncio · UTM · columnas de venta                           |
 | **Anuncios**             | Gasto y métricas de plataforma                                               | día × entidad | fecha · plataforma · campaña · conjunto · anuncio                                                     |
-| **Cuenta**               | GA4, Hotmart, métricas manuales                                              | día           | **solo fecha**                                                                                        |
+| **Cuenta**               | GA4, Hotmart de cuenta (`ventas_*`), métricas manuales                       | día           | **solo fecha**                                                                                        |
 | **Conversiones offline** | Totales diarios de un Sheet                                                  | día           | **solo fecha**                                                                                        |
 | **Campos de Sheet**      | Columnas de un Sheet convertidas en métricas                                 | día / fila    | fecha · valor del campo · campaña · conjunto · anuncio                                                |
 | **Suscripciones**        | Foto actual de Hotmart                                                       | foto          | **ninguno** (solo el total)                                                                           |
 
 ### Por qué el grano importa
 
-- **Grano de fila** (Leads, Ventas) — se pueden **contar** y sirven de **eje de una
-  tabla dinámica**. Son las únicas.
+- **Grano de fila** (Leads, Ventas, Ventas Hotmart) — se pueden **contar** y sirven
+  de **eje de una tabla dinámica**. Son las únicas.
 - **Grano de día** (Anuncios, Cuenta, Offline, Sheet) — vienen preagregadas. Se
   suman, pero no se pueden repartir por algo que la fila no sabe.
 - **Foto** (Suscripciones) — no tiene eje temporal. Solo tiene sentido en el total
@@ -144,6 +145,65 @@ búsqueda use índice (funciona sin ella, pero con un seq scan de 171 MB).
 Un lead que no cruza **no se funde en un cubo común**: se queda como su propia
 fila con gasto 0 y la UI la marca. Es deliberado — fundirlas escondía justo el
 problema que hay que arreglar.
+
+### El eje `utm`
+
+Las UTM crudas —`Source`, `Medium`, `UTM ID` y `Campaña UTM (crudo)`— son un eje
+propio, `utm`, desde el 2026-09-25: las tienen leads, ventas de `sales_events` y
+ventas de Hotmart. El resto de columnas de lead (país IP, formulario, campos de
+formulario) sigue en `lead_column`, que solo tienen los leads. Con un único eje,
+abrir el cruce por source a Hotmart habría abierto también el cruce por formulario.
+
+### Ventas de Hotmart por campaña (`hm_*`)
+
+La fuente `hotmart` lee `public.hotmart_ventas` (una fila por transacción) y resuelve
+cada venta a su campaña con el **mismo resolver que los leads**, a partir de su tupla
+UTM: la que trajo Hotmart o la heredada del lead del mismo comprador (ver
+[doc 08](./08-integraciones.md#atribución-de-dónde-sale-la-campaña-de-una-venta)). En el
+BI sus tokens son `hotmart.*`; en fórmulas y en el dashboard, los alias planos `hm_*`.
+La definición de cada medida es **una sola**, `src/lib/hotmart/metricas.ts`, y la usan
+por igual el motor del BI y las pestañas.
+
+| Métrica                                 | Qué es                                                                                                 |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `hm_ventas`                             | Transacciones cobradas: el bump y el upsell de un comprador cuentan aparte                             |
+| `hm_compras`                            | **Pedidos** cobrados: ni bump, upsell, downsell o suscripción, ni order bump, ni con transacción padre |
+| `hm_bumps`                              | Order bumps cobrados                                                                                   |
+| `hm_neto` · `hm_bruto`                  | Facturación en la moneda de reporte (`hm_neto_usd` · `hm_bruto_usd`, en dólares)                       |
+| `hm_reembolsos` · `hm_neto_reembolsado` | Devoluciones y chargebacks, imputados a la fecha de la **venta**                                       |
+| `hm_roas` · `hm_cpa`                    | Neto ÷ gasto · gasto ÷ ventas                                                                          |
+| `hm_cpa_compra` · `hm_ticket_compra`    | Gasto ÷ compras · neto ÷ compras: lo que cuesta y lo que deja cada comprador                           |
+| `hm_ticket_medio`                       | Neto ÷ ventas                                                                                          |
+| `hm_tasa_reembolso`                     | Reembolsado ÷ (neto + reembolsado): sobre lo facturado **antes** de devolver                           |
+| `hm_tasa_bump`                          | Bumps ÷ compras                                                                                        |
+| `hm_conversion`                         | Compras ÷ leads del mismo período (no sigue a cada lead hasta su compra). Solo en el BI                |
+
+**Compras frente a ventas.** En Cris tributario (julio–agosto de 2026) hubo 88 ventas
+= 53 principales + 34 bumps + 1 upsell. El gasto entre 88 da un CPA ~40 % más bajo
+que lo que cuesta de verdad conseguir un comprador: para eso está `hm_cpa_compra`.
+`hm_compras` se define por exclusión, no como `tipo = 'principal'`, para no caer a 0
+en un cliente sin embudo configurado.
+
+**En el BI** la fuente respeta los filtros planos, los avanzados y los de entidad
+(campaña, conjunto, anuncio), y sirve de eje de tabla dinámica. Un filtro o una
+dimensión que solo tienen los leads (país IP, formulario, campos de formulario) la
+deja vacía: una venta no tiene esas columnas. Sus dimensiones propias: Tipo de venta,
+Oferta, Producto, País y Método de pago (Hotmart).
+
+**`sales.*` ya no incluye Hotmart.** El webhook espeja cada venta de Hotmart en
+`sales_events`, y contarla también allí, en su moneda original, la sumaría dos veces.
+`sales.*` excluye `platform = 'hotmart'`; esas ventas se miden solo con `hm_*`.
+
+**En las pestañas del dashboard**, las `hm_*` las pone el cubo de ventas
+(`src/lib/hotmart/cubo-db.ts` → `src/lib/dashboard/hotmart-cubo.ts`), que sigue el
+filtro de campañas de la pestaña y, encima, el de cada tarjeta o columna. Es la
+diferencia con `ventas_*`, `total_*` y `funnel_*`, que son de **cuenta**: en una
+pestaña filtrada por campaña dividían toda la facturación del cliente entre un gasto
+ya recortado. Sin filtro cuentan todas las ventas, también las `(sin campaña)`; con
+filtro, solo las que cruzan con una campaña que pasa. En las tablas de ranking por
+campaña (de Meta o de TikTok) cada campaña lleva sus `hm_*`; por anuncio o conjunto
+no aplican. Las macros derivadas están en
+[doc 09](./09-motor-de-formulas.md#macros-de-hotmart-auditoría-del-2026-09-25).
 
 ---
 
@@ -324,7 +384,8 @@ Merece la pena conocerlas para no perder tiempo:
 | Conversiones offline por campaña                           | Ídem — usa un **campo de Sheet**, que sí cruza |
 | Suscripciones en una serie temporal                        | Es una foto, no una serie                      |
 | Contar filas de una fuente diaria                          | Solo el grano de fila se cuenta                |
-| ROAS real hoy                                              | `sales_events` está vacío (ver Parte 7)        |
+| ROAS de Hotmart **por campaña**, hoy                       | Las ventas aún no traen campaña (ver Parte 7)  |
+| CPA o ROAS de Hotmart **por producto**                     | Anuncios no sabe qué producto se vendió        |
 
 > **Ojo con la primera fila.** Lo que no se puede es _repartir_ el gasto entre las
 > respuestas. **Dividir** el gasto total del ámbito por un segmento de lead sí se
@@ -343,7 +404,7 @@ Lo más común. El selector atenúa los campos incompatibles; si ya lo guardaste
 widget muestra el aviso. Solución: cambia la dimensión o quita esa métrica.
 
 **2. El cliente no está enlazado.**
-Sin `public_cliente_id`, cinco de las siete fuentes son invisibles y devuelven
+Sin `public_cliente_id`, seis de las ocho fuentes son invisibles y devuelven
 cero **en silencio**. Se ve de un vistazo en `/admin/salud`. Se arregla en
 `/admin/settings`.
 
@@ -369,9 +430,20 @@ no «cero».
 
 Conviene saberlo antes de prometerle un informe a un cliente:
 
-- **Ventas — vacía.** No hay ninguna transacción en la base. Todo lo que dependa
-  de ella (ROAS, CPA, ingresos, tasa de conversión) devuelve vacío. Para los
-  negocios que cierran fuera de una pasarela, la vía es el CRM del Sheet.
+- **Ventas Hotmart — con datos, pero casi sin campaña** (2026-09-25).
+  `hotmart_ventas` tiene las ventas que trae la API (88 de Cris tributario en
+  julio–agosto de 2026), así que facturación, ROAS y CPA **totales** funcionan. Pero
+  hasta esa fecha ninguna tenía UTM: Hotmart no guarda las `utm_*` del checkout, el
+  parser no leía el `src` que da la API (`tracking.source`) y el webhook no se llegó
+  a configurar en ningún cliente. Por campaña, casi todo cae en `(sin campaña)`. Las
+  vías: `sck={{ad.id}}` en el enlace del checkout (la recomendada: cruza por ID
+  exacto), la tupla empaquetada en `src` (se despliega al guardar; lo ya guardado la
+  recupera al volver a descargarse) y la herencia del lead del mismo email o
+  teléfono, que exige la migración 089 (pendiente). Ver
+  [doc 08](./08-integraciones.md#atribución-de-dónde-sale-la-campaña-de-una-venta).
+- **Ventas (`sales_events`)** — las del CRM de GoHighLevel y el espejo del webhook de
+  Hotmart, que `sales.*` no cuenta. Para los negocios que cierran fuera de una
+  pasarela, la vía es el CRM del Sheet.
 - **GA4** — configurado en 1 de 8 clientes.
 - **Conversiones offline** — 3 clientes, todo de tipo `lead` y sin importe.
 - **Suscripciones** — 2 clientes.
@@ -411,6 +483,9 @@ Las que conviene conocer:
 - **`verify-bi-sheet-por-campana`** — que agrupar un campo de Sheet por campaña
   conserve el total.
 - **`verify-bi-registry`** — que el catálogo y el motor no se separen.
+- **`verify-hotmart-*`** — parser, atribución, webhook, credenciales y cubo de las
+  pestañas (en `test:puro`). La migración 089 se prueba aparte, sin dejar nada
+  escrito: `npx tsx scripts/verify-hotmart-089.ts`.
 
 ---
 
@@ -433,6 +508,14 @@ pero aparecen en las fórmulas y en los informes guardados.
 `<agg>` es `count`, `sum`, `avg`, `min` o `max`. La agregación viaja **dentro**
 del token para que un widget guardado siga midiendo lo mismo aunque después
 cambies la agregación por defecto del campo.
+
+Las métricas de Hotmart no son por cliente, pero también tienen dos nombres: el
+token del BI `hotmart.<medida>` (`hotmart.compras`, `hotmart.cpa_compra`…) y el alias
+plano `hm_<medida>` (`hm_compras`, `hm_cpa_compra`…), que es el que se escribe en
+fórmulas y en el dashboard. La tabla completa está en la
+[Parte 2](#ventas-de-hotmart-por-campaña-hm_). Las `hotmart_*` (`hotmart_revenue`,
+`hotmart_roas`…) siguen apuntando a la fuente Cuenta a propósito: repuntarlas a
+`hotmart_ventas` movería números de informes ya entregados.
 
 ---
 

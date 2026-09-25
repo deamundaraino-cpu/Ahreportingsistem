@@ -1,6 +1,6 @@
 # 08 · Integraciones externas
 
-La aplicación integra cinco fuentes de datos. Cada cliente configura sus credenciales en `config_api` desde `/admin/settings/[id]`. Meta y TikTok se conectan vía OAuth; GA4 y Hotmart con credenciales manuales; Google Sheets con cuenta de servicio.
+La aplicación integra cinco fuentes de datos. Cada cliente configura sus credenciales en `config_api` desde `/admin/settings/[id]`. Meta y TikTok se conectan vía OAuth; Hotmart vía OAuth (HotConnect) o con credenciales; GA4 con credenciales manuales; Google Sheets con cuenta de servicio.
 
 El sincronizador principal (`/api/worker`) consulta todas estas APIs a diario y consolida en `metricas_diarias`. Ver [doc 14 · Cron y workers](./14-cron-y-workers.md).
 
@@ -76,24 +76,194 @@ El worker obtiene **sesiones** y eventos del sitio. Se guardan en `ga_sessions`.
 
 ## Hotmart
 
-**API**: Hotmart API (sales/history, sales/commissions).
+**API**: Hotmart Payments API (`/payments/api/v1/sales/history` y `sales/commissions`
+en `developers.hotmart.com`; el token se pide a `api-sec-vlc.hotmart.com`). Código:
+`src/lib/hotmart/`.
 
-### Configuración (manual, por cliente)
+Las ventas viven en **`public.hotmart_ventas`**, una fila por transacción (ver
+[doc 04](./04-modelo-de-datos.md#hotmart_ventas-migraciones-065-y-089)). La alimentan
+la API (sync diaria, backfill y reconciliación) y el webhook (en vivo) con el mismo
+parser (`src/lib/hotmart/parser.ts`), y `metricas_diarias` se agrega **desde la
+tabla**, nunca desde la respuesta de la API.
 
-En `config_api`: `hotmart_basic` (basic auth) o `hotmart_api_key` (client credentials).
+### Conexión (por cliente)
+
+Dos modos, según `config_api.hotmart_auth_mode`:
+
+| Modo               | Claves en `config_api`                                                                     | Token                                                                                              |
+| ------------------ | ------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------- |
+| HotConnect (OAuth) | `hotmart_access_token_enc`, `hotmart_refresh_token_enc`, `hotmart_token_expires_at`        | Lo renueva `/api/cron/refresh-hotmart-tokens` (< 30 min del vencimiento) o `obtenerToken` en línea |
+| Credenciales       | `hotmart_client_id` + `hotmart_client_secret_enc`, o `hotmart_basic_enc` (Basic ya armado) | `obtenerToken` pide uno nuevo en cada corrida                                                      |
+
+- **Los secretos se guardan cifrados** (`*_enc`, con `RUTM_ENCRYPTION_KEY`).
+  `hotmart_client_id` va en claro: identifica la credencial, no la autoriza. Las
+  claves planas (`hotmart_client_secret`, `hotmart_basic`, `hotmart_token`) son las
+  heredadas: se leen si existen y se migran a su `*_enc` la primera vez que consiguen
+  token (`parcheMigracionCredenciales`), dejando la plana en `null`. La ficha del
+  cliente nunca recibe los secretos: llegan enmascarados y solo se reescriben si se
+  teclea uno nuevo.
+- `hotmart_token_enc` (el «Access Token Temporal» del formulario) **no lo usa la
+  sincronización**.
+- **Probar conexión** parte de la config guardada con lo tecleado encima y usa el
+  mismo `obtenerToken` que el worker. Antes leía el access token en claro —`null`
+  tras el cifrado— y marcaba como caídas conexiones de HotConnect que funcionaban.
+- **Carrera de refresco.** El cron y el refresco en línea pueden gastar el mismo
+  refresh token, que Hotmart rota en cada uso: el segundo recibe `invalid_grant`
+  aunque la conexión esté sana. Antes de darla por muerta, los dos releen
+  `config_api` (`renovadoPorOtro`); el cron lo anota como `skipped_concurrent`.
+
+### Estados que se piden a la API
+
+`sales/history` **sin** `transaction_status` solo devuelve las ventas `COMPLETE`
+(sondeo del 2026-09-25 con `diagnostico-hotmart --estados`: 88 de 88, ningún
+reembolso), así que la sync diaria nunca veía una devolución. Ahora pide la lista
+explícita `ESTADOS_API_SYNC` (`sync.ts`) con el parámetro repetido, y la API devuelve
+la unión.
+
+- **Un solo valor inválido tumba la petición entera** con 400 `invalid_parameter`:
+  `BILLET_PRINTED` no existe (el válido es `PRINTED_BILLET`), y así empezó el
+  incidente del 2026-08-18. Si vuelve a pasar, `sincronizarDiaHotmart` repite la
+  petición sin filtro (solo `COMPLETE`, para no quedarse ciega) y lo deja en el log.
+  La lista se revisa con `npm run diagnostico:hotmart -- --estados`.
+- **Un status que no está en el mapa no cuenta.** `ESTADO_POR_STATUS_API`
+  (`eventos.ts`) traduce cada status a un `estado`; uno desconocido se descarta y se
+  avisa en el log. Antes caía a «aprobada», y `NO_FUNDS` o `BLOCKED` entraban como
+  facturación cobrada. Las traducciones que no son obvias:
+
+| Status de la API                                                                                  | `estado`    | Por qué                                                                           |
+| ------------------------------------------------------------------------------------------------- | ----------- | --------------------------------------------------------------------------------- |
+| `PROTESTED`                                                                                       | `aprobada`  | En disputa: el dinero sigue cobrado hasta que Hotmart resuelva                    |
+| `PARTIALLY_REFUNDED`                                                                              | `aprobada`  | La venta sigue en pie y el importe devuelto no se conoce; queda en `estado_crudo` |
+| `NO_FUNDS`, `BLOCKED`                                                                             | `cancelada` | Rechazo del medio de pago: no se cobró ni se cobrará                              |
+| `PRINTED_BILLET`, `PROCESSING_TRANSACTION`, `PRE_ORDER`, `OVERDUE`, `WAITING_PAYMENT`, `STARTED`… | `pendiente` | Todavía no es dinero                                                              |
+
+En el webhook, `PURCHASE_PROTEST` y `PURCHASE_OUT_OF_SHOPPING_CART` **no son
+ventas** (`EVENTOS_NO_VENTA`): se responden con 200 y no tocan nada. Antes el primero
+bajaba una venta cobrada a pendiente y el segundo guardaba carritos abandonados.
 
 ### Datos sincronizados
 
-El worker obtiene ventas (estados `APPROVED`/`COMPLETE`) y comisiones, y las **clasifica por embudo** según los patrones configurados en cada tab (`hotmart_funnel`):
-
-- `principal_names`, `bump_names`, `upsell_names` (soportan `%`/`_` tipo SQL LIKE).
+El worker trae historial y comisiones de cada día, los guarda en `hotmart_ventas` y
+agrega desde ella (`agregarDesdeHotmartVentas`). Cada venta se **clasifica por
+embudo** con la configuración de la pestaña (`hotmart_funnel`), en cascada: código de
+oferta mapeado, flag de order bump de Hotmart, transacción padre y, como red de
+seguridad, los patrones de nombre `principal_names`, `bump_names`, `upsell_names`
+(soportan `%`/`_` tipo SQL LIKE).
 
 Se consolidan en:
 
-- Totales: `ventas_principal/bump/upsell` (neto), `*_bruto`, `*_count`, `hotmart_pagos_iniciados`.
+- Totales: `ventas_principal/bump/upsell/downsell` (neto, solo lo cobrado),
+  `*_bruto`, `*_count`, `ventas_reembolsado(_count)`, `hotmart_pagos_iniciados`.
 - JSONB: `hotmart_funnel_data` (desglose `by_tab` + `extras`).
 
-> Hotmart aparece **dos veces** en el sistema: (1) aquí como fuente de ventas agregadas en el reporting principal, y (2) en el módulo Report-UTM como webhook de eventos de venta con atribución. Son flujos independientes. Desde el 2026-09-12 los dos se configuran en la misma pantalla: `/admin/settings/[id]`, sección «Captación y atribución».
+Quien cambie la tabla por otro camino (reclasificar, reconciliar, el webhook, una
+aprobación que mueve la venta de día) **reagrega** esas fechas con
+`reagregarFechasHotmart` (`src/lib/hotmart/reagregar.ts`). Antes el dashboard se
+quedaba con la foto vieja hasta que el worker volviera a descargar ese día.
+
+> La API y el webhook **ya no son flujos independientes**: los dos escriben en
+> `hotmart_ventas`, y el webhook además espeja en `report_utm.sales_events` (crudo y
+> atribución del píxel). Por eso las métricas `sales.*` del BI excluyen
+> `platform = 'hotmart'`: esas ventas se cuentan en la fuente `hotmart` (`hm_*`), ya
+> convertidas y con reembolsos. Los dos se configuran en la misma pantalla:
+> `/admin/settings/[id]`, sección «Captación y atribución».
+
+### Webhook (ventas en vivo)
+
+Tarjeta **«Hotmart · Webhook»** de `/admin/settings/[id]`. **Hasta el 2026-09-25
+ningún cliente llegó a configurarlo**: la tarjeta pedía registrar en Hotmart un
+secreto nuestro como hottok, pero el hottok lo genera Hotmart (uno fijo por cuenta,
+no editable), así que un evento real no podía pasar la validación. Alta en tres
+pasos:
+
+1. En Hotmart, **Herramientas → Webhook (API y notificaciones)** → nueva
+   configuración, **versión 2.0.0**, con la URL que muestra la tarjeta
+   (`/api/report-utm/webhooks/hotmart/{id}`, el id de `report_utm.clientes`). Eventos:
+   `PURCHASE_APPROVED`, `PURCHASE_COMPLETE`, `PURCHASE_CANCELED`, `PURCHASE_REFUNDED`,
+   `PURCHASE_CHARGEBACK`, `PURCHASE_EXPIRED`, `PURCHASE_DELAYED` y
+   `PURCHASE_BILLET_PRINTED`. El resto se ignora con 200.
+2. Copiar el **hottok** que muestra esa misma pantalla y pegarlo en la tarjeta
+   **antes** de activar el webhook. Se guarda cifrado en
+   `report_utm.integrations.config.hottok_enc` (más `hottok_final`, los cuatro
+   últimos caracteres, para reconocerlo). Sin hottok los eventos se rechazan.
+3. Esperar un evento real y comprobar «Último evento recibido». **No usar el envío de
+   prueba de Hotmart**: manda una compra ficticia que entraría como venta.
+
+**Autenticación** (`src/lib/report-utm/webhook-auth.ts`): la cabecera
+`X-HOTMART-HOTTOK` (o `body.hottok`) se compara con el hottok pegado. Quedan dos vías
+heredadas contra **nuestro** secreto, en «Avanzado» de la tarjeta: HMAC-SHA256 del
+cuerpo en `X-Hotmart-Signature` (Hotmart no firma así; sirve para integraciones
+propias) y `?hottok=<secreto>` en la URL, que no se anuncia porque el secreto acaba
+en los logs.
+
+Con cada evento:
+
+- Escribe en `hotmart_ventas` (guarda de `guardar_hotmart_venta`) y reagrega en el
+  acto las fechas afectadas de `metricas_diarias`.
+- Espeja en `sales_events` **solo si el evento se aplicó como el más reciente**: un
+  reintento viejo no pisa el status ni avisa a nadie.
+- Notificación y webhooks salientes, **una vez por estado**: con la 089, reclamando
+  `hotmart_ventas.notificado_estado` con un UPDATE condicional; sin ella, comparando
+  con el status previo de `sales_events`. `PURCHASE_COMPLETE` ya no manda una segunda
+  «Venta aprobada».
+- `PURCHASE_CANCELED` queda como `status = 'canceled'` en `sales_events` (antes
+  `refunded`): no cuenta como reembolso ni avisa «Venta reembolsada».
+- Sin divisa en el payload, `currency` queda `null` (antes se asumía BRL) y no se
+  envía la conversión a Meta CAPI ni a Google Ads.
+- Google Ads solo recibe un `gclid` explícito, y Meta CAPI solo un `fbclid` explícito.
+
+### Atribución: de dónde sale la campaña de una venta
+
+Hotmart **no guarda las `utm_*` del checkout**: solo `src`, `sck` y `xcod` (en la
+API, `tracking.source` es el `src` y `tracking.external_code` el `xcod`). El parser
+(`extraerOrigen`) arma la tupla UTM así:
+
+1. Las `utm_*` explícitas del payload, si las hay, mandan.
+2. **`src` empaquetado.** Sin UTM explícitas, `desplegarSrc` despliega un `src` con la
+   forma `campaña-ubicación-red-anuncio-conjunto` —la convención de las landings de
+   Cris tributario,
+   `{{campaign.name}}-{{placement}}-{{site_source_name}}-{{ad.name}}-{{adset.name}}`—
+   en `utm_campaign`, `utm_source`, `utm_medium`, `utm_content` y `utm_term`. Es la
+   misma convención de sus leads, así que ventas y leads cruzan con el mismo
+   resolver. El ancla es la ubicación (`Instagram_Feed`) seguida de la red (`ig`,
+   `fb`…); un `src` con otra forma se guarda tal cual en `utm_source`.
+3. **`sck` (o `src`) con un ID de anuncio** —solo dígitos, 10 o más— va a `utm_id`, y
+   el resolver lo cruza por ID exacto. **Recomendación: añadir `sck={{ad.id}}` al
+   enlace del checkout en el anuncio**; es la forma de atribuir sin configurar nada
+   más.
+4. `click_id` solo sale de `fbclid` / `gclid` / `ttclid` / `click_id`. Ya **no** cae a
+   `xcod`, que es un código libre del productor.
+
+Una venta con campaña o ID de anuncio propios queda con
+`atribucion_metodo = 'tracking'`. Sin ellos, **hereda la tupla de un lead**
+(`src/lib/hotmart/atribucion.ts`):
+
+- La del **último lead del mismo email** anterior a la compra (180 días atrás, con 5
+  minutos de margen) → `lead_email`; si no hay, la del mismo teléfono (últimos 9
+  dígitos) → `lead_telefono`. Solo leads no excluidos y con campaña.
+- Un bump, upsell o downsell hereda la de **su compra principal** → `padre`.
+- La tupla viaja en bloque (nunca la campaña de un origen con el anuncio de otro) y un
+  lead nunca pisa un tracking.
+
+Corre antes de guardar en la sync, el backfill y el webhook, y a diario sobre los
+últimos 30 días (job `hotmart_reconciliar`) para las ventas cuyo lead llegó después.
+Para el histórico:
+
+```bash
+npx tsx --conditions=react-server scripts/atribuir-hotmart-leads.ts            # en seco: cobertura, sin escribir
+npx tsx --conditions=react-server scripts/atribuir-hotmart-leads.ts --aplicar  # escribe (exige la 089)
+```
+
+Admite `--cliente=<uuid de public.clientes>`, `--desde=` y `--hasta=` (por defecto,
+el último año).
+
+> **Migración 089 (`migrations/089_hotmart_atribucion_y_guarda.sql`): pendiente de
+> aplicar** a 2026-09-25. Sin ella el código funciona como antes: las UTM de
+> `src`/`sck` se guardan igual, pero la herencia del lead no escribe nada, la guarda
+> de `guardar_hotmart_venta` sigue siendo «todo o nada» y los avisos se deduplican por
+> el status previo de `sales_events`. Se prueba sin dejar rastro con
+> `npx tsx scripts/verify-hotmart-089.ts`: la migración y sus casos corren en una
+> transacción que se aborta.
 
 ### Moneda de reporte
 
@@ -111,6 +281,11 @@ Todo lo de Hotmart se etiqueta «Hotmart:» en los selectores, con unidades `(#)
 importes `($)` separados. `hotmart_pagos_iniciados` se etiqueta «GA4: Pagos
 iniciados»: son las vistas de la página de pago medidas por GA4, no un dato de
 Hotmart. El downsell y los reembolsos se suman igual en el BI y en el dashboard.
+
+Las `ventas_*` son de **cuenta**: no saben de campañas. Para ROAS, CPA o ticket
+**por campaña** —en una pestaña filtrada o en un informe— están las claves `hm_*`,
+que salen de `hotmart_ventas` y siguen el filtro de campañas. Ver
+[doc 18](./18-fuentes-y-cruces.md#ventas-de-hotmart-por-campaña-hm_).
 
 ---
 
@@ -548,9 +723,9 @@ disparador de ventas no cambian. Mapeo de endpoints en `src/lib/whatsapp/provide
 | Meta Ads                             | OAuth (env app + token por cliente)                                              | `/admin/settings/[id]`                           | `meta_*`, `meta_campaigns/ads/adsets/forms`                                             |
 | TikTok Ads                           | OAuth (env app + token por cliente)                                              | `/admin/settings/[id]`                           | `tiktok_*`, `tiktok_campaigns/ads/adgroups`                                             |
 | GA4                                  | Cuenta de servicio por cliente                                                   | `config_api.ga_*`                                | `ga_sessions`                                                                           |
-| Hotmart (reporting)                  | Basic/API key por cliente                                                        | `config_api.hotmart_*` + funnel por tab          | `ventas_*`, `hotmart_funnel_data`                                                       |
+| Hotmart (API)                        | HotConnect (OAuth) o client id + secret / Basic, cifrados                        | `config_api.hotmart_*` + funnel por tab          | `hotmart_ventas` → `ventas_*`, `hotmart_funnel_data`                                    |
 | Google Sheets — Leads                | RETIRADA (migración 059)                                                         | `config_api.google_sheets` (respaldo)            | `leads`, `leads_diarios` (solo lectura)                                                 |
 | Campos de Sheet                      | — (capa sobre lo anterior)                                                       | `sheet_campos`, `sheet_campo_vistas`             | `sheet_campo_valores_diarios`                                                           |
 | Google Sheets (conversiones offline) | OAuth de la agencia (o cuenta de servicio)                                       | `config_api.google_sheets_conversiones[].tabs[]` | `conversiones_offline`, `conversiones_offline_diarias`, `conversiones_offline_sync_log` |
-| Hotmart (Report-UTM)                 | Webhook HMAC                                                                     | `report_utm.integrations`                        | `report_utm.sales_events`                                                               |
+| Hotmart (webhook)                    | Hottok de Hotmart en `X-HOTMART-HOTTOK`                                          | `report_utm.integrations` (`config.hottok_enc`)  | `hotmart_ventas` + espejo en `report_utm.sales_events`                                  |
 | WhatsApp                             | Gateway Baileys (Bearer) **o** Evolution API (apikey), según `WHATSAPP_PROVIDER` | `/admin/whatsapp` + envs del proveedor           | `whatsapp_groups/routes/messages` (+ `session` solo en baileys)                         |

@@ -19,6 +19,10 @@ import 'server-only';
  *     valor real.
  *   · CTR y CPC tienen UNA definición. Antes cambiaban de fórmula y de redondeo
  *     según se pasara o no una palabra clave.
+ *   · Cada respuesta lleva `moneda`: los importes (gasto, ventas de Hotmart ya
+ *     convertidas, CPL, CPC, CPM) están en la moneda de reporte del cliente, que
+ *     no siempre es USD (Cris reporta en CLP). Sin ella, el modelo pintaba «$»
+ *     delante de unos pesos chilenos.
  */
 
 import { z } from 'zod';
@@ -45,6 +49,14 @@ const periodoSchema = {
 };
 
 const clienteIdSchema = z.string().uuid().describe('UUID del cliente.');
+
+/**
+ * Coletilla de las descripciones de toda herramienta que devuelve dinero: dónde
+ * mirar la moneda. La comparten `campanas.ts` y `analisis.ts`.
+ */
+export const NOTA_MONEDA =
+  ' Los importes van en la moneda del campo `moneda` (código ISO, p. ej. CLP): ' +
+  'cítalos con ese código, no con «$» a secas.';
 
 const tabIdSchema = z
   .string()
@@ -104,7 +116,8 @@ const getMetrics: AnyAgentTool = {
   description:
     'Métricas diarias de un cliente en un periodo. Devuelve una fila por día. ' +
     'Para ver solo una estrategia, pasa `tab_id` (de get_tabs). ' +
-    'Si buscas totales del periodo en vez de la serie diaria, usa get_summary.',
+    'Si buscas totales del periodo en vez de la serie diaria, usa get_summary.' +
+    NOTA_MONEDA,
   input: z.object({
     client_id: clienteIdSchema,
     tab_id: tabIdSchema,
@@ -129,6 +142,7 @@ const getMetrics: AnyAgentTool = {
     return {
       period: { from: res.rango.from, to: res.rango.to, etiqueta: periodo.etiqueta },
       tab: res.tab,
+      moneda: res.moneda,
       metrics: res.rows.map(proyectar),
       warnings: res.warnings,
     };
@@ -142,7 +156,8 @@ const getSummary: AnyAgentTool = {
     'Totales agregados de un cliente en un periodo: inversión, impresiones, clics, leads, ' +
     'ventas y las métricas derivadas (CPL, CPC, CPM, CTR, ROAS). Las derivadas se recalculan ' +
     'sobre los totales, no se promedian los valores diarios. ' +
-    'Para ver solo una estrategia, pasa `tab_id` (de get_tabs).',
+    'Para ver solo una estrategia, pasa `tab_id` (de get_tabs).' +
+    NOTA_MONEDA,
   input: z.object({
     client_id: clienteIdSchema,
     tab_id: tabIdSchema,
@@ -170,6 +185,7 @@ const getSummary: AnyAgentTool = {
     return {
       period: { from: res.rango.from, to: res.rango.to, etiqueta: periodo.etiqueta },
       tab: res.tab,
+      moneda: res.moneda,
       dias_con_datos: res.rows.length,
       totales: {
         meta_spend: t.meta_spend ?? 0,
@@ -206,7 +222,8 @@ const compararPeriodos: AnyAgentTool = {
   description:
     'Compara los totales de un periodo con los del periodo inmediatamente anterior de la misma ' +
     'duración, y devuelve la variación porcentual de cada métrica. Es la herramienta para ' +
-    'preguntas de tendencia: "cómo vamos respecto a la semana pasada", "qué ha cambiado".',
+    'preguntas de tendencia: "cómo vamos respecto a la semana pasada", "qué ha cambiado".' +
+    NOTA_MONEDA,
   input: z.object({
     client_id: clienteIdSchema,
     tab_id: tabIdSchema,
@@ -271,6 +288,9 @@ const compararPeriodos: AnyAgentTool = {
       periodo_actual: { from: actual.rango.from, to: actual.rango.to, etiqueta: periodo.etiqueta },
       periodo_previo: { from: previo.rango.from, to: previo.rango.to },
       tab: actual.tab,
+      // Mismo cliente en los dos periodos, así que la misma moneda: cada uno
+      // convierte sus ventas con la tasa de sus propios días.
+      moneda: actual.moneda,
       variacion,
       warnings: [...actual.warnings, ...previo.warnings],
     };

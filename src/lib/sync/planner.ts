@@ -112,6 +112,20 @@ export async function planDiario(db: any, opts?: { triggeredBy?: string }): Prom
     }
   }
 
+  /**
+   * Reconciliación de Hotmart A DIARIO (antes, solo en la semanal).
+   *
+   * La sync del día pide las compras de ayer y hoy, y `sales/history` filtra
+   * por fecha de COMPRA: un reembolso de hoy sobre una venta de hace dos
+   * semanas no aparece nunca en ella. Esperar al domingo dejaba hasta siete
+   * días de facturación inflada. Además el job barre aprobaciones tardías y
+   * atribuye por lead lo reciente que quedó sin campaña. Es barato: un cliente
+   * con Hotmart, unas pocas páginas.
+   */
+  const hm = await planHotmartReconciliacion(db, { triggeredBy: `${triggeredBy}:hotmart` });
+  total += hm.encolados;
+  if (hm.encolados > 0) detalle.hotmart_reconciliar = hm.encolados;
+
   return { encolados: total, detalle };
 }
 

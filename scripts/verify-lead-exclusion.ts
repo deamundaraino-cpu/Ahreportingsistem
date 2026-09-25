@@ -19,6 +19,7 @@ import {
   MOTIVOS_AUTOMATICOS,
   MOTIVOS_EXCLUSION,
   columnaExcluidoDisponible,
+  filtroLeadsQueCuentan,
   _reiniciarDeteccionColumna,
 } from '../src/lib/report-utm/lead-exclusion';
 
@@ -194,11 +195,102 @@ async function comprobarDeteccion() {
   _reiniciarDeteccionColumna();
 }
 
-comprobarDeteccion().then(() => {
-  console.log(
-    fallos === 0
-      ? '\n✅ Exclusión de leads: todas las comprobaciones pasan\n'
-      : `\n❌ ${fallos} comprobación(es) fallaron\n`
+// ── 7. El filtro devuelve el builder, no lo ejecuta ───────────────────
+//
+// La API anterior (`q = await soloLeadsQueCuentan(db, q)`) era async y devolvía
+// el builder, que es un thenable: el `await` lo ejecutaba y entregaba
+// `{ data, error }`, y el `.limit()` siguiente reventaba en `medirCruce`.
+
+/** Builder de mentira con la forma de PostgREST: encadenable y thenable. */
+function builderFalso() {
+  const estado = { ejecutada: 0, filtros: [] as Array<[string, unknown]> };
+  const b = {
+    estado,
+    eq(c: string, v: unknown) {
+      estado.filtros.push([c, v]);
+      return b;
+    },
+    limit() {
+      return b;
+    },
+    then(resolver: (r: { data: unknown[]; error: null }) => unknown) {
+      estado.ejecutada++;
+      return Promise.resolve(resolver({ data: [], error: null }));
+    },
+  };
+  return b;
+}
+
+async function comprobarFiltroNoEjecuta() {
+  console.log('\n7. El filtro no ejecuta la consulta');
+
+  _reiniciarDeteccionColumna();
+  const cuentan = await filtroLeadsQueCuentan(dbFalsa({ error: null }));
+  check(
+    'el `await` entrega el filtro, no algo thenable',
+    typeof (cuentan as { then?: unknown }).then !== 'function'
   );
-  process.exit(fallos === 0 ? 0 : 1);
-});
+  check('con la columna, el filtro está activo', cuentan.activo === true);
+
+  const q = builderFalso();
+  const r = cuentan.aplicar(q);
+  check('aplicar devuelve el MISMO builder', r === q);
+  check('sigue siendo un builder: `.limit()` existe', typeof r.limit === 'function');
+  check('y NO se ha ejecutado', q.estado.ejecutada === 0);
+  check(
+    'con `excluido = false` puesto',
+    JSON.stringify(q.estado.filtros) === JSON.stringify([['excluido', false]])
+  );
+
+  let avisa = false;
+  try {
+    cuentan.aplicar({ data: [], error: null } as unknown as ReturnType<typeof builderFalso>);
+  } catch (e) {
+    avisa = e instanceof TypeError;
+  }
+  check('pasarle un resultado ya ejecutado lanza un TypeError claro', avisa);
+
+  _reiniciarDeteccionColumna();
+  const sinColumna = await filtroLeadsQueCuentan(dbFalsa({ error: { code: '42703' } }));
+  const q2 = builderFalso();
+  const r2 = sinColumna.aplicar(q2);
+  check('sin la columna, el filtro está inactivo', sinColumna.activo === false);
+  check(
+    'y aplicar deja el builder intacto y sin ejecutar',
+    r2 === q2 && q2.estado.filtros.length === 0 && q2.estado.ejecutada === 0
+  );
+
+  // Con el builder de verdad de supabase-js. Sin `await` no sale a la red, así
+  // que basta con una URL que no responde.
+  _reiniciarDeteccionColumna();
+  const { createClient } = await import('@supabase/supabase-js');
+  const sb = createClient('http://127.0.0.1:9', 'clave-de-prueba', {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+  const real = sb.schema('report_utm').from('lead_events').select('id').eq('cliente_id', 'c1');
+  const rReal = cuentan.aplicar(real);
+  const url = String((rReal as unknown as { url?: URL }).url ?? '');
+  check(
+    'con el builder real de supabase-js sigue siendo builder (`.limit()` encadena)',
+    rReal === real &&
+      typeof rReal.limit === 'function' &&
+      typeof rReal.limit(1).range === 'function'
+  );
+  check('y lleva el filtro en la URL', url.includes('excluido=eq.false'), url);
+  _reiniciarDeteccionColumna();
+}
+
+comprobarDeteccion()
+  .then(comprobarFiltroNoEjecuta)
+  .then(() => {
+    console.log(
+      fallos === 0
+        ? '\n✅ Exclusión de leads: todas las comprobaciones pasan\n'
+        : `\n❌ ${fallos} comprobación(es) fallaron\n`
+    );
+    process.exit(fallos === 0 ? 0 : 1);
+  })
+  .catch((e) => {
+    console.error('ERROR:', e instanceof Error ? e.message : e);
+    process.exit(1);
+  });

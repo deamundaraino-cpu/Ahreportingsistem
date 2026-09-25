@@ -4,6 +4,48 @@ import { colombiaToday, colombiaYesterday } from '@/lib/date-utils';
 import { enrichMetaRow, enrichTikTokRow, parseTabFilter } from '@/lib/campaign-filter';
 import { notifyUsers } from '@/lib/notifications/notify';
 import { sendWhatsAppNotification } from '@/lib/whatsapp/notify';
+import {
+  cargarConversor,
+  convertirFilasMetricas,
+  monedaDeClientePublico,
+  prefijoMoneda,
+  simboloMoneda,
+  type ConversorMoneda,
+} from '@/lib/moneda-reporte';
+
+/**
+ * Columnas de facturación neta de Hotmart que forman los ingresos. Es la misma
+ * definición que `total_facturacion_neta` del motor de fórmulas: principal,
+ * bump, upsell y downsell. Nada más — en particular NO `VENTAS_CERRADAS` de
+ * `metricas_manuales`, que es un CONTEO de ventas y no dinero.
+ */
+export const COLUMNAS_INGRESOS = [
+  'ventas_principal',
+  'ventas_bump',
+  'ventas_upsell',
+  'ventas_downsell',
+] as const;
+
+/**
+ * Ingresos de Hotmart de un conjunto de filas de `metricas_diarias`, en la
+ * moneda de reporte del cliente.
+ *
+ * Hotmart se guarda en USD y el gasto en la moneda de la cuenta publicitaria:
+ * comparar uno con otro sin convertir daba, en Cris (CLP), un ROAS ~900 veces
+ * menor que el real. La conversión es la del dashboard (`convertirFilasMetricas`,
+ * fila a fila con la tasa de su día), así que la alerta y la pantalla dan la
+ * misma cifra. Cada fila necesita su `fecha` para elegir la tasa.
+ */
+export function ingresosEnMonedaReporte(
+  filas: Array<Record<string, unknown>>,
+  conv: ConversorMoneda
+): number {
+  let total = 0;
+  for (const fila of convertirFilasMetricas(filas, conv)) {
+    for (const col of COLUMNAS_INGRESOS) total += Number(fila[col]) || 0;
+  }
+  return total;
+}
 
 export interface RuleRow {
   id: string;
@@ -136,6 +178,10 @@ export async function evaluateAlertRules(
           .select('id, nombre, campaign_group_mappings(campaign_id, campaign_name_pattern)')
           .eq('cliente_id', clientId);
 
+        // Moneda de reporte del cliente: la del gasto, y a la que se convierten
+        // los ingresos de Hotmart (guardados en USD) antes de compararlos.
+        const moneda = await monedaDeClientePublico(db, clientId);
+
         for (const tab of activeTabs) {
           evaluated++;
 
@@ -161,7 +207,7 @@ export async function evaluateAlertRules(
               .select(
                 'fecha, meta_spend, tiktok_spend, meta_campaigns, tiktok_campaigns, ' +
                   'ga_sessions, hotmart_pagos_iniciados, ventas_principal, ventas_bump, ' +
-                  'ventas_upsell, metricas_manuales'
+                  'ventas_upsell, ventas_downsell'
               )
               .eq('cliente_id', clientId)
               .gte('fecha', start)
@@ -180,10 +226,10 @@ export async function evaluateAlertRules(
 
             // G. Aggregate metrics filtered by this tab's keyword/filtro compuesto
             let totalSpend = 0;
-            let totalRevenue = 0;
             let totalLeads = 0;
+            const filas = (metricsRows ?? []) as unknown as Array<Record<string, any>>;
 
-            for (const row of (metricsRows ?? []) as any[]) {
+            for (const row of filas) {
               const enrichedRow = enrichTikTokRow(
                 enrichMetaRow(row, keywordFilter, campaignGroups ?? []),
                 keywordFilter,
@@ -192,17 +238,22 @@ export async function evaluateAlertRules(
               totalSpend +=
                 (Number(enrichedRow.meta_spend) || 0) + (Number(enrichedRow.tiktok_spend) || 0);
 
-              const manuales = (row.metricas_manuales as Record<string, number>) ?? {};
-              const ventasCerradas = Number(manuales['VENTAS_CERRADAS'] ?? 0);
-              totalRevenue +=
-                (Number(row.ventas_principal) || 0) +
-                (Number(row.ventas_bump) || 0) +
-                (Number(row.ventas_upsell) || 0) +
-                ventasCerradas;
-
               totalLeads +=
                 (Number(enrichedRow.meta_leads) || 0) +
                 (Number(enrichedRow.tiktok_conversions) || 0);
+            }
+
+            // Ingresos en la moneda del gasto. Solo se carga el conversor si la
+            // regla los necesita: el resto de métricas no tocan dinero de Hotmart.
+            let totalRevenue = 0;
+            if (rule.metric === 'revenue' || rule.metric === 'roas') {
+              const conv = await cargarConversor(db, moneda, start, end);
+              totalRevenue = ingresosEnMonedaReporte(filas, conv);
+              if (conv.sinTasa.size > 0) {
+                console.warn(
+                  `[rules-engine] Sin tasa USD→${conv.moneda} en ${conv.sinTasa.size} día(s) para ${clientName}: esos ingresos quedan en USD.`
+                );
+              }
             }
 
             // H. Calculate the target metric value
@@ -265,6 +316,7 @@ export async function evaluateAlertRules(
                 actualValue,
                 start,
                 end,
+                moneda,
                 totalSpend,
                 tabBudget
               );
@@ -353,9 +405,14 @@ async function fireAlert(
   actualValue: number,
   start: string,
   end: string,
+  moneda: string,
   totalSpend?: number,
   tabBudget?: number | null
 ) {
+  // Los importes llevan su moneda: «$» mientras el cliente reporte en dólares,
+  // el código ISO («CLP 233,487») en cuanto reporta en otra.
+  const prefijo = prefijoMoneda(simboloMoneda(moneda, moneda));
+  const esDinero = rule.metric === 'spend' || rule.metric === 'revenue' || rule.metric === 'cpl';
   const metricLabels: Record<string, string> = {
     budget_percentage: 'Porcentaje de Presupuesto',
     roas: 'ROAS',
@@ -390,16 +447,18 @@ async function fireAlert(
   if (rule.metric === 'budget_percentage') {
     title = `Alerta: Presupuesto al ${fmtVal}%`;
     const spendStr = totalSpend
-      ? `$${totalSpend.toLocaleString('en-US', { maximumFractionDigits: 0 })}`
+      ? `${prefijo}${totalSpend.toLocaleString('en-US', { maximumFractionDigits: 0 })}`
       : '—';
     const budgetStr = tabBudget
-      ? `$${tabBudget.toLocaleString('en-US', { maximumFractionDigits: 0 })}`
+      ? `${prefijo}${tabBudget.toLocaleString('en-US', { maximumFractionDigits: 0 })}`
       : '—';
     message = `Cliente: ${clientName} — pestaña "${tabName}" alcanzó el ${fmtVal}% del presupuesto (${spendStr} de un objetivo de ${budgetStr}).`;
   } else {
     title = `Alerta: ${metricLabels[rule.metric] || rule.metric}`;
     const periodStr = windowLabels[rule.time_window] ?? `${start} al ${end}`;
-    message = `Cliente: ${clientName} — pestaña "${tabName}" tiene ${metricLabels[rule.metric] || rule.metric} de ${fmtVal}, que es ${rule.operator} al límite de ${fmtThreshold} (Periodo: ${periodStr}).`;
+    const valor = esDinero ? `${prefijo}${fmtVal}` : fmtVal;
+    const limite = esDinero ? `${prefijo}${fmtThreshold}` : fmtThreshold;
+    message = `Cliente: ${clientName} — pestaña "${tabName}" tiene ${metricLabels[rule.metric] || rule.metric} de ${valor}, que es ${rule.operator} al límite de ${limite} (Periodo: ${periodStr}).`;
   }
 
   // In-App Notification

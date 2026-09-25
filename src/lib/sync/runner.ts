@@ -268,7 +268,12 @@ async function recordRun(
       finished_at: new Date().toISOString(),
       duracion_ms: Date.now() - startedAt,
       estado,
-      filas_escritas: results.filter((r: any) => r?.status === 'ok').length,
+      // Un worker que sabe cuántas filas escribió lo dice en `filas_escritas`
+      // (Hotmart). Los demás cuentan resultados `ok`, uno por día sincronizado.
+      filas_escritas:
+        typeof body?.filas_escritas === 'number'
+          ? body.filas_escritas
+          : results.filter((r: any) => r?.status === 'ok').length,
       filas_saltadas: results.filter((r: any) => String(r?.status ?? '').startsWith('skipped'))
         .length,
       stats: {

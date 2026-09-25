@@ -20,7 +20,8 @@ import type {
   SenalSheetSync,
 } from './salud-fuentes';
 import { atribucionDeFila } from '@/lib/sheets/atribucion';
-import { soloLeadsQueCuentan } from './lead-exclusion';
+import { hotmartConectado, type ConfigHotmart } from '@/lib/hotmart/cliente';
+import { columnaExcluidoDisponible } from './lead-exclusion';
 import { columnasCruceLead } from './lead-ids';
 
 /** Días hacia atrás sobre los que se mide el cruce UTM ↔ campaña. */
@@ -63,6 +64,38 @@ async function ultimaFecha(
   const cruda = fila?.[columnaFecha];
   return cruda
     ? { ultimaFecha: String(cruda).slice(0, 10), estado: 'con_datos' }
+    : { ultimaFecha: null, estado: 'vacia' };
+}
+
+/**
+ * Último sync CORRECTO de Hotmart de un cliente, como fecha de Colombia.
+ *
+ * Se mide por `metricas_diarias.source_synced_at->>'hotmart'`, que el worker solo
+ * avanza cuando Hotmart respondió bien. Medirlo por la última `fecha_venta` de
+ * `hotmart_ventas` confundía «no hubo ventas» con «la fuente está parada»: Cris
+ * no vendió nada en septiembre de 2026, el sync corrió cada día y el panel lo
+ * marcaba como fuente muerta.
+ *
+ * Un cliente tiene una fila por día, así que ordenar por la clave del JSON no
+ * necesita índice propio: el filtro por `cliente_id` ya lo acota.
+ */
+async function ultimoSyncHotmart(
+  db: Db,
+  pid: string
+): Promise<{ ultimaFecha: string | null; estado: EstadoFuente }> {
+  const { data, error } = await db
+    .from('metricas_diarias')
+    .select('hotmart:source_synced_at->>hotmart')
+    .eq('cliente_id', pid)
+    .not('source_synced_at->>hotmart', 'is', null)
+    .order('source_synced_at->>hotmart', { ascending: false })
+    .limit(1);
+
+  if (error) return { ultimaFecha: null, estado: 'desconocida' };
+
+  const cruda = ((data ?? [])[0] as { hotmart?: string | null } | undefined)?.hotmart;
+  return cruda
+    ? { ultimaFecha: colombiaDateOf(cruda), estado: 'con_datos' }
     : { ultimaFecha: null, estado: 'vacia' };
 }
 
@@ -113,8 +146,10 @@ export async function recogerSenales(cliente: {
   const subs = pid
     ? await ultimaFecha(db, 'hotmart_subscriptions_snapshot', 'captured_date', { cliente_id: pid })
     : { ultimaFecha: null, estado: 'vacia' as EstadoFuente };
+  // Frescura del SYNC, no de la última venta: un mes sin ventas no es una
+  // fuente parada.
   const hotmart = pid
-    ? await ultimaFecha(db, 'hotmart_ventas', 'fecha_venta', { cliente_id: pid })
+    ? await ultimoSyncHotmart(db, pid)
     : { ultimaFecha: null, estado: 'vacia' as EstadoFuente };
 
   // ── Qué tiene configurado el cliente ─────────────────────────────
@@ -126,6 +161,10 @@ export async function recogerSenales(cliente: {
     config = (data?.config_api ?? {}) as Record<string, unknown>;
   }
   const tiene = (k: string) => Object.prototype.hasOwnProperty.call(config, k);
+  // Criterio único de «tiene Hotmart» (el mismo del worker): HotConnect, Basic,
+  // client_id + secret y las credenciales cifradas `*_enc`. Mirar claves sueltas
+  // dejaba fuera a unos clientes u otros según la fuente.
+  const conHotmart = hotmartConectado(config as ConfigHotmart);
 
   const { data: integRaw } = await db
     .schema('report_utm')
@@ -219,23 +258,21 @@ export async function recogerSenales(cliente: {
       label: 'Suscripciones',
       ...subs,
       toleranciaDias: TOLERANCIA_DIAS.subs,
-      configurada: tiene('hotmart_client_id'),
+      // El worker captura el snapshot a diario en cuanto obtiene un token de
+      // Hotmart, sea cual sea el modo de conexión.
+      configurada: conHotmart,
       requierePuente: true,
     },
     {
       id: 'hotmart',
-      label: 'Ventas Hotmart',
+      label: 'Sync Hotmart',
       ...hotmart,
       toleranciaDias: TOLERANCIA_DIAS.hotmart,
       // Distinta de `sales`: aquella depende de que alguien configure el
-      // webhook y puede estar legítimamente en silencio. Esta la escribe el
-      // worker cada día en cuanto haya credenciales de Hotmart, así que dos
-      // días sin datos ya merecen aviso.
-      configurada:
-        tiene('hotmart_client_id') ||
-        tiene('hotmart_basic') ||
-        tiene('hotmart_access_token_enc') ||
-        tiene('hotmart_refresh_token_enc'),
+      // webhook y puede estar legítimamente en silencio. Esta mide el último
+      // sync correcto del worker, que corre cada día en cuanto hay credenciales
+      // de Hotmart —haya ventas o no—, así que dos días sin sync ya merecen aviso.
+      configurada: conHotmart,
       requierePuente: true,
     },
   ];
@@ -282,7 +319,12 @@ async function medirCruce(
     .select(cols.join(','))
     .eq('cliente_id', clienteId)
     .gte('created_at', `${desde}T00:00:00Z`);
-  q = await soloLeadsQueCuentan(db, q);
+  // No `q = await soloLeadsQueCuentan(db, q)`: esa función es async y devuelve
+  // la consulta, que es un thenable; la promesa lo ADOPTA, así que el `await`
+  // ejecuta la consulta y entrega `{ data, error }` en vez del builder, y el
+  // `.limit()` de abajo reventaba («q.limit is not a function») con todo
+  // cliente enlazado. El filtro se aplica aquí, sin envolver el builder.
+  if (await columnaExcluidoDisponible(db)) q = q.eq('excluido', false);
   const { data } = await q.limit(MUESTRA_LEADS);
 
   const leads = (data ?? []) as Array<Record<string, string | null>>;

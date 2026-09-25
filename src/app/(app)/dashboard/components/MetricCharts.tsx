@@ -34,9 +34,15 @@ import { es } from 'date-fns/locale';
 import type { ChartDef, TabCampaignFilter } from '@/lib/layout-types';
 import { enrichMetaRow } from '@/lib/campaign-filter';
 import { enrichOfflineRow } from '@/lib/offline-filter';
-import { aggregateRankingRows, dimensionSoportaRespuestas } from '@/lib/ranking-aggregation';
+import {
+  aggregateRankingRows,
+  dimensionSoportaRespuestas,
+  dimensionSoportaHotmart,
+} from '@/lib/ranking-aggregation';
 import { reDerivarRespuestas } from '@/lib/dashboard/lead-answer-row';
+import { reDerivarHotmart } from '@/lib/dashboard/hotmart-cubo-row';
 import { formulaUsaRespuestas } from '@/lib/dashboard/lead-answer-aggregation';
+import { formulaUsaHotmart } from '@/lib/dashboard/hotmart-cubo';
 
 // ─── Palette ──────────────────────────────────────────────────────────────────
 const PALETTE: Record<string, string> = {
@@ -176,6 +182,9 @@ function buildGroupedData(
       // pintaba los contactos de todo el cliente contra un gasto recortado.
       const leads = reDerivarRespuestas(r, campaignFilter!);
       if (leads) r = { ...r, ...leads };
+      // Y lo mismo con las ventas de Hotmart por campaña (`hm_*`).
+      const ventas = reDerivarHotmart(r, campaignFilter!);
+      if (ventas) r = { ...r, ...ventas };
     }
     if (sheetFilter) {
       r = enrichOfflineRow(r, sheetFilter);
@@ -571,15 +580,18 @@ function SingleMetricChart({
    * Se apartan ANTES de construir los datos. La alternativa —dejarlas pasar—
    * las pinta en 0 por la coerción de `null → 0` de más abajo, y una línea
    * plana en cero afirma que no hubo leads, que es falso: el cubo resuelve el
-   * lead a campaña, no a anuncio.
+   * lead a campaña, no a anuncio. Las ventas de Hotmart por campaña (`hm_*`),
+   * igual: se resuelven a campaña, no a anuncio ni a conjunto.
    */
-  const formulasNoAplicables = useMemo(
-    () =>
-      chart.dimension && !dimensionSoportaRespuestas(chart.dimension)
-        ? todasLasFormulas.filter(formulaUsaRespuestas)
-        : [],
-    [chart.dimension, todasLasFormulas]
-  );
+  const formulasNoAplicables = useMemo(() => {
+    const dim = chart.dimension;
+    if (!dim) return [];
+    return todasLasFormulas.filter(
+      (f) =>
+        (formulaUsaRespuestas(f) && !dimensionSoportaRespuestas(dim)) ||
+        (formulaUsaHotmart(f) && !dimensionSoportaHotmart(dim))
+    );
+  }, [chart.dimension, todasLasFormulas]);
   const formulas = useMemo(
     () => todasLasFormulas.filter((f) => !formulasNoAplicables.includes(f)),
     [todasLasFormulas, formulasNoAplicables]
@@ -693,7 +705,8 @@ function SingleMetricChart({
               {formulasNoAplicables.length === 1
                 ? 'Serie omitida'
                 : `${formulasNoAplicables.length} series omitidas`}
-              : los contactos de formulario solo se resuelven a campaña, no a anuncio ni a conjunto.
+              : los contactos de formulario y las ventas de Hotmart por campaña solo se resuelven a
+              campaña, no a anuncio ni a conjunto.
             </p>
           )}
           <div className="flex flex-wrap gap-2.5 mt-2">

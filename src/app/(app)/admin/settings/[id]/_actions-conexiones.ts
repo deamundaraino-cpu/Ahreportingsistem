@@ -28,7 +28,14 @@ const S2S_ALLOWED_ROLES = REPORT_UTM_WRITE_ROLES;
 // Iba en claro desde la migración 012 aunque `encryption.ts` ya se importaba en
 // este mismo archivo para los tokens de Meta y Google. La columna en claro se
 // pone a NULL para que el cifrado no quede decorativo.
+//
+// Las tres acciones de Hotmart no comprobaban el rol (las de S2S y GHL sí):
+// cualquier sesión podía rotar el secreto o pausar la ingesta de un cliente.
 export async function activateHotmartIntegrationAction(clienteId: string): Promise<ActionResult> {
+  const role = await getUserRole();
+  if (!role || !S2S_ALLOWED_ROLES.has(role))
+    return { ok: false, error: `Sin permisos para activar Hotmart (rol: ${role ?? 'ninguno'})` };
+
   const supabase = await reportUtmClient();
   const secret = generateWebhookSecret();
 
@@ -50,7 +57,85 @@ export async function activateHotmartIntegrationAction(clienteId: string): Promi
   return { ok: true, secret };
 }
 
+/**
+ * Guarda el HOTTOK que genera Hotmart (Herramientas → Webhook). Es lo que
+ * Hotmart manda en la cabecera `X-HOTMART-HOTTOK` y contra lo que valida el
+ * webhook; nuestro secreto generado solo sirve para HMAC y la URL heredada.
+ *
+ * Se guarda cifrado en `config.hottok_enc`, con los cuatro últimos caracteres
+ * en claro (`config.hottok_final`) para que la tarjeta pueda mostrar «…abcd».
+ * Se FUNDE con el `config` existente: pisarlo borraría cualquier otra clave.
+ * Si la integración no existe se crea, igual que al activarla.
+ */
+export async function guardarHottokHotmartAction(
+  clienteId: string,
+  hottok: string
+): Promise<SimpleResult> {
+  const role = await getUserRole();
+  if (!role || !S2S_ALLOWED_ROLES.has(role))
+    return {
+      ok: false,
+      error: `Sin permisos para configurar Hotmart (rol: ${role ?? 'ninguno'})`,
+    };
+
+  const valor = String(hottok ?? '').trim();
+  if (!valor) return { ok: false, error: 'Pegá el hottok que muestra Hotmart' };
+  if (/\s/.test(valor))
+    return { ok: false, error: 'El hottok no lleva espacios: copialo de nuevo desde Hotmart' };
+  if (valor.length < 8 || valor.length > 256)
+    return { ok: false, error: 'Ese valor no tiene el largo de un hottok de Hotmart' };
+
+  let hottokEnc: string;
+  try {
+    hottokEnc = encrypt(valor);
+  } catch {
+    return { ok: false, error: 'Error cifrando el hottok — verificá RUTM_ENCRYPTION_KEY' };
+  }
+  const claves = { hottok_enc: hottokEnc, hottok_final: valor.slice(-4) };
+
+  const supabase = await reportUtmClient();
+  const { data: actual, error: lecturaError } = await supabase
+    .from('integrations')
+    .select('id, config')
+    .eq('cliente_id', clienteId)
+    .eq('tipo', 'hotmart')
+    .maybeSingle();
+  if (lecturaError) return { ok: false, error: lecturaError.message };
+
+  if (actual) {
+    const { error } = await supabase
+      .from('integrations')
+      .update({
+        config: { ...((actual.config ?? {}) as Record<string, unknown>), ...claves },
+        last_error: null,
+      })
+      .eq('id', actual.id);
+    if (error) return { ok: false, error: error.message };
+  } else {
+    const { error } = await supabase.from('integrations').upsert(
+      {
+        cliente_id: clienteId,
+        tipo: 'hotmart',
+        webhook_secret_enc: encrypt(generateWebhookSecret()),
+        webhook_secret: null,
+        config: claves,
+        status: 'active',
+        last_error: null,
+      },
+      { onConflict: 'cliente_id,tipo' }
+    );
+    if (error) return { ok: false, error: error.message };
+  }
+
+  revalidatePath('/admin/settings/[id]', 'page');
+  return { ok: true };
+}
+
 export async function rotateHotmartSecretAction(clienteId: string): Promise<ActionResult> {
+  const role = await getUserRole();
+  if (!role || !S2S_ALLOWED_ROLES.has(role))
+    return { ok: false, error: `Sin permisos para rotar el secreto (rol: ${role ?? 'ninguno'})` };
+
   const supabase = await reportUtmClient();
   const secret = generateWebhookSecret();
 
@@ -70,6 +155,10 @@ export async function setHotmartIntegrationStatusAction(
   clienteId: string,
   status: 'active' | 'inactive'
 ): Promise<ActionResult> {
+  const role = await getUserRole();
+  if (!role || !S2S_ALLOWED_ROLES.has(role))
+    return { ok: false, error: `Sin permisos para cambiar el estado (rol: ${role ?? 'ninguno'})` };
+
   const supabase = await reportUtmClient();
   const { error } = await supabase
     .from('integrations')

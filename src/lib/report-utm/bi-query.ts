@@ -63,7 +63,17 @@ import {
   sheetViewAlias,
   isLeadFieldDim,
   parseLeadFieldDim,
+  NON_ATTRIBUTABLE_FIELDS,
 } from './bi-metadata';
+import {
+  COLUMNAS_APORTE,
+  aporteDeVenta,
+  aporteVacio,
+  derivadasHotmart,
+  sumarAporte,
+  type AporteHotmart,
+  type FilaAporte,
+} from '@/lib/hotmart/metricas';
 import { colombiaDateOf, colombiaRangeBounds } from '@/lib/colombia-date';
 import {
   loadResolver,
@@ -122,6 +132,9 @@ const SALES_ONLY_DIMS = new Set([
 /** Métricas físicas de `public.hotmart_ventas`. */
 const HOTMART_METRICS = [
   'hm_ventas',
+  // Pedidos (sin bumps ni upsells) y order bumps: ver `src/lib/hotmart/metricas.ts`.
+  'hm_compras',
+  'hm_bumps',
   'hm_neto',
   'hm_bruto',
   'hm_reembolsos',
@@ -138,6 +151,10 @@ const HOTMART_ALL_METRICS = [
   'hm_roas',
   'hm_cpa',
   'hm_ticket_medio',
+  'hm_cpa_compra',
+  'hm_ticket_compra',
+  'hm_tasa_bump',
+  'hm_conversion',
 ] as const;
 
 /**
@@ -333,7 +350,8 @@ export async function runBiQuery(params: BiQueryParams): Promise<BiQueryRow[]> {
   // catálogo en la migración 045 (era un duplicado exacto de leads_count), pero
   // un campo calculado guardado puede seguir nombrándola.
   const needsLeads =
-    (requires(['leads_count', 'leads_total', 'cpl', 'conversion_rate']) ||
+    // `hm_conversion` = compras de Hotmart ÷ leads: necesita el denominador.
+    (requires(['leads_count', 'leads_total', 'cpl', 'conversion_rate', 'hm_conversion']) ||
       isFieldDimQuery ||
       fieldMetrics.length > 0 ||
       leadSegs.length > 0) &&
@@ -378,6 +396,7 @@ export async function runBiQuery(params: BiQueryParams): Promise<BiQueryRow[]> {
       // El ROAS y el CPA reales de Hotmart necesitan el gasto como denominador.
       'hm_roas',
       'hm_cpa',
+      'hm_cpa_compra',
     ]);
   // Offline (día×cliente) y suscripciones (snapshot) son globales/por fecha,
   // no cruzan por dimensiones de lead/venta/anuncio.
@@ -759,7 +778,7 @@ function liftLeadFieldFilters<
 // por tabla: los leads tienen todas las dimensiones de lead; las ventas solo
 // UTMs + plataforma (no país/formulario/campos). Una condición sobre un campo
 // no disponible en esa tabla se ignora (no restringe) → el grupo O sigue.
-type AdvTable = 'leads' | 'sales';
+type AdvTable = 'leads' | 'sales' | 'hotmart';
 const LEAD_ADV_COLS = new Set([
   'utm_source',
   'utm_medium',
@@ -806,6 +825,14 @@ function advCellValue(
     const rf = (row.raw_fields as Record<string, unknown> | null) ?? null;
     return rf && rf[fk] !== null && rf[fk] !== undefined ? String(rf[fk]) : '';
   }
+  if (table === 'hotmart') {
+    // Una venta de Hotmart viene siempre de la plataforma `hotmart`; el resto
+    // de campos se traducen a su columna (`product_name` → `producto_nombre`).
+    if (field === 'platform') return 'hotmart';
+    const col = HOTMART_FILTER_COL[field];
+    if (!col) return undefined;
+    return row[col] !== null && row[col] !== undefined ? String(row[col]) : '';
+  }
   const cols = table === 'sales' ? SALES_ADV_COLS : LEAD_ADV_COLS;
   if (!cols.has(field)) return undefined;
   return row[field] !== null && row[field] !== undefined ? String(row[field]) : '';
@@ -849,6 +876,11 @@ export function collectAdvancedColumns(
       if (!c.field || !c.value || !c.value.trim()) continue;
       if (parseFieldDim(c.field) !== null || parseLeadFieldDim(c.field) !== null) {
         if (table === 'leads') needsRawFields = true;
+        continue;
+      }
+      if (table === 'hotmart') {
+        const col = HOTMART_FILTER_COL[c.field];
+        if (col) cols.add(col);
         continue;
       }
       const set = table === 'sales' ? SALES_ADV_COLS : LEAD_ADV_COLS;
@@ -1196,6 +1228,10 @@ async function querySalesDirect(
 
   const applyBase = (q: any) => {
     q = rangoColombia(q, dateFrom, dateTo).eq('status', 'approved');
+    // Las ventas de Hotmart que el webhook refleja en `sales_events` se cuentan
+    // en la fuente `hotmart` (`hm_*`), convertidas y con reembolsos. Contarlas
+    // también aquí, en su moneda original, las sumaría dos veces.
+    q = q.neq('platform', 'hotmart');
     if (params.cliente_id) q = q.eq('cliente_id', params.cliente_id);
     return applyDimFilters(q, params.filters, filterKey);
   };
@@ -1223,17 +1259,170 @@ async function querySalesDirect(
     .sort((a, b) => b.revenue - a.revenue);
 }
 
-/** Una fila agregada de `public.hotmart_ventas`. */
-export interface HotmartRow {
-  dim: string | null;
-  ventas: number;
-  neto: number;
-  bruto: number;
-  reembolsos: number;
-  neto_reembolsado: number;
-  /** Neto y bruto SIN convertir a la moneda de reporte: en dólares. */
-  neto_usd: number;
-  bruto_usd: number;
+/**
+ * Una fila agregada de `public.hotmart_ventas`: la clave de la fila y lo que
+ * suman sus ventas. Las medidas son las de `aporteDeVenta`
+ * (`src/lib/hotmart/metricas.ts`), la misma definición que usan las pestañas.
+ */
+export type HotmartRow = { dim: string | null } & AporteHotmart;
+
+/**
+ * Filtro plano / condición avanzada → columna de `hotmart_ventas`.
+ *
+ * Hasta la auditoría del 2026-09-25 `queryHotmartDirect` no aplicaba NINGÚN
+ * filtro: un widget filtrado por campaña recortaba el gasto y dejaba toda la
+ * facturación de Hotmart, así que `hm_roas` salía inflado. Las claves de venta
+ * de `sales_events` (`product_name`…) se traducen a sus columnas de aquí.
+ */
+const HOTMART_FILTER_COL: Readonly<Record<string, string>> = {
+  utm_source: 'utm_source',
+  utm_medium: 'utm_medium',
+  utm_campaign: 'utm_campaign',
+  utm_content: 'utm_content',
+  utm_term: 'utm_term',
+  utm_id: 'utm_id',
+  product_name: 'producto_nombre',
+  transaction_type: 'tipo',
+  customer_country: 'comprador_pais',
+  ...HOTMART_DIM_COL,
+};
+
+/** Dimensión de venta → columna, incluidas las de `sales_events`. */
+const HOTMART_DIM_COL_VENTAS: Readonly<Record<string, string>> = {
+  ...HOTMART_DIM_COL,
+  product_name: 'producto_nombre',
+  transaction_type: 'tipo',
+  customer_country: 'comprador_pais',
+};
+
+/**
+ * ¿La clave es de lead o de formulario? Una venta de Hotmart no tiene país IP,
+ * formulario, método de atribución del pixel ni campos de formulario. La
+ * plataforma NO cuenta: se evalúa contra la constante `hotmart`.
+ */
+function claveSoloDeLead(k: string): boolean {
+  return (
+    k !== 'platform' &&
+    (NON_ATTRIBUTABLE_FIELDS.has(k) ||
+      isFieldDim(k) ||
+      isLeadFieldDim(k) ||
+      parseSheetDim(k) !== null)
+  );
+}
+
+/**
+ * ¿Hay un filtro que una venta de Hotmart no puede cumplir? Entonces la fuente
+ * no devuelve nada: ignorar el filtro mostraría TODAS las ventas junto a unos
+ * leads recortados, y el ROAS se leería como si fuera de ese segmento.
+ */
+function filtroSoloDeLeads(params: BiQueryParams): boolean {
+  for (const [k, v] of Object.entries(params.filters ?? {})) {
+    if (v && String(v).trim() && claveSoloDeLead(k)) return true;
+  }
+  return !!params.advancedFilter?.groups?.some((g) =>
+    g.conditions?.some((c) => c.value && c.value.trim() && claveSoloDeLead(c.field))
+  );
+}
+
+/** Valor de una fila de Hotmart para una dimensión. */
+function hotmartDimValue(
+  r: Record<string, unknown>,
+  dimension: BiDimension,
+  grouping: DateGrouping | undefined,
+  resolver: CampaignResolver | null,
+  nocross?: Set<string>
+): string {
+  if (dimension === 'platform') return 'hotmart';
+  const col = HOTMART_DIM_COL_VENTAS[dimension];
+  if (col) return String(r[col] ?? '(sin dato)');
+  return getDimValue(r, dimension, grouping, [], resolver, nocross, 'fecha_venta');
+}
+
+/**
+ * Lee las ventas de Hotmart de un cliente y rango, ya FILTRADAS, con las
+ * columnas que piden las dimensiones dadas. La usan el motor por filas y el
+ * pivot, para que filtren y agrupen igual.
+ */
+async function leerVentasHotmart(
+  params: BiQueryParams,
+  dateFrom: string,
+  dateTo: string,
+  resolver: CampaignResolver | null,
+  dims: BiDimension[]
+): Promise<Record<string, unknown>[]> {
+  const publicId = params.cliente_id ? await resolvePublicClienteId(params.cliente_id) : null;
+  // Sin puente no hay datos que leer. Devolver [] hace que `mergeResults` deje
+  // las métricas en null y que el diagnóstico diga `no_public_link`.
+  if (params.cliente_id && !publicId) return [];
+  if (filtroSoloDeLeads(params)) return [];
+  // Agrupar ventas por una dimensión de lead no tiene sentido: todas caerían
+  // en «(sin valor)» y se leerían como un segmento real.
+  if (dims.some((d) => d !== 'none' && d !== 'date' && claveSoloDeLead(d))) return [];
+
+  // La plataforma de una venta de Hotmart es siempre `hotmart`.
+  const plat = params.filters?.platform;
+  if (plat && plat.trim()) {
+    const { op, value } = parseFilterValue(plat);
+    const vals = op === 'eq' && value.includes(',') ? parseSeleccion(value) : [value];
+    if (!vals.some((v) => matchFilterCondition('hotmart', op, v))) return [];
+  }
+
+  const plan = buildEntityFilterPlan(params, resolver);
+  const adv = plan.restAdvanced;
+  const advCols = collectAdvancedColumns(adv, 'hotmart');
+  const hasAdv = advancedFilterHasConditions(adv) && advCols.cols.length > 0;
+
+  const cols = new Set<string>(['id', ...COLUMNAS_APORTE]);
+  for (const d of dims) {
+    const col =
+      HOTMART_DIM_COL_VENTAS[d] ??
+      (d === 'utm_campaign_raw' ? 'utm_campaign' : HOTMART_FILTER_COL[d]);
+    if (col) cols.add(col);
+    // Para cruzar por campaña/anuncio/conjunto hace falta el UTM de la venta:
+    // el resolver lo traduce al nombre real de la entidad.
+    if (unifiedTarget(d)) for (const c of UTM_RESOLVE_COLS) cols.add(c);
+  }
+  if (plan.inMemory) for (const c of UTM_RESOLVE_COLS) cols.add(c);
+  for (const c of advCols.cols) cols.add(c);
+
+  // Con resolver, el filtro de entidad se evalúa en memoria sobre el nombre
+  // resuelto (igual que en leads y ventas): sale del SQL.
+  const aplicaEnSql = (k: string) =>
+    k in HOTMART_FILTER_COL && !(plan.inMemory && ENTITY_FILTER_FIELDS.has(k));
+
+  const supabase = await createAdminClient();
+  let data = await fetchAllRows(() => {
+    let q = supabase
+      .from('hotmart_ventas')
+      .select(Array.from(cols).join(','))
+      .gte('fecha_venta', dateFrom)
+      .lte('fecha_venta', dateTo);
+    if (publicId) q = q.eq('cliente_id', publicId);
+    for (const [k, raw] of Object.entries(params.filters ?? {})) {
+      if (raw && aplicaEnSql(k)) q = applyOneFilter(q, HOTMART_FILTER_COL[k], raw);
+    }
+    return q;
+  });
+  if (hasAdv) data = data.filter((r) => evalAdvancedRow(r, adv, 'hotmart'));
+  if (plan.inMemory) data = data.filter((r) => rowPassesEntityFilters(r, plan, resolver!));
+  return data;
+}
+
+/** Convierte USD → moneda de reporte con la tasa del día de cada venta. */
+async function conversorHotmart(
+  params: BiQueryParams,
+  dateFrom: string,
+  dateTo: string
+): Promise<(usd: number, fecha: string) => number> {
+  const supabase = await createAdminClient();
+  // Moneda de reporte del cliente: Hotmart está en USD y el gasto en la moneda
+  // de la cuenta. Cada venta se convierte con la tasa de SU fecha (congelada en
+  // `fx_rates`), así el ROAS divide dos cifras en la misma moneda.
+  const moneda = params.cliente_id
+    ? await monedaDeClienteUtm(supabase, params.cliente_id)
+    : ('USD' as const);
+  const conv = await cargarConversor(supabase, moneda, dateFrom, dateTo);
+  return (usd, fecha) => conv.convertir(usd, fecha);
 }
 
 /**
@@ -1246,7 +1435,7 @@ export interface HotmartRow {
  *     vuelve a hacer aritmética de zonas. Aquí se acaban las tres definiciones
  *     de "fecha de venta" que competían en el módulo.
  *  2. NO filtra `status = 'approved'` de forma dura. Los estados se separan en
- *     el acumulador para poder devolver, en la misma pasada, lo cobrado y lo
+ *     `aporteDeVenta` para poder devolver, en la misma pasada, lo cobrado y lo
  *     devuelto. Con el filtro duro los reembolsos eran invisibles.
  *  3. Cuelga de `public.clientes` vía el puente `public_cliente_id`: sin él, la
  *     fuente no es legible y el motor debe reportarlo, no devolver ceros.
@@ -1258,90 +1447,20 @@ async function queryHotmartDirect(
   resolver: CampaignResolver | null = null,
   nocross: Set<string> = new Set()
 ): Promise<HotmartRow[]> {
-  const publicId = params.cliente_id ? await resolvePublicClienteId(params.cliente_id) : null;
-  // Sin puente no hay datos que leer. Devolver [] hace que `mergeResults` deje
-  // las métricas en null y que el diagnóstico diga `no_public_link`.
-  if (params.cliente_id && !publicId) return [];
-
-  const supabase = await createAdminClient();
-  const unified = unifiedTarget(params.dimension);
-  const dimCol = HOTMART_DIM_COL[params.dimension];
-
-  const selectCols = new Set<string>([
-    'id',
-    'fecha_venta',
-    'estado',
-    'neto_productor_usd',
-    'bruto_usd',
-  ]);
-  if (dimCol) selectCols.add(dimCol);
-  // Para cruzar por campaña/anuncio/conjunto hace falta el UTM de la venta: el
-  // resolver lo traduce al nombre real de la entidad.
-  if (unified) for (const c of UTM_RESOLVE_COLS) selectCols.add(c);
-
-  let q = supabase
-    .from('hotmart_ventas')
-    .select(Array.from(selectCols).join(','))
-    .gte('fecha_venta', dateFrom)
-    .lte('fecha_venta', dateTo);
-  if (publicId) q = q.eq('cliente_id', publicId);
-
-  // Moneda de reporte del cliente: Hotmart está en USD y el gasto en la moneda
-  // de la cuenta. Cada venta se convierte con la tasa de SU fecha (congelada en
-  // `fx_rates`), así el ROAS divide dos cifras en la misma moneda.
-  const moneda = params.cliente_id
-    ? await monedaDeClienteUtm(supabase, params.cliente_id)
-    : ('USD' as const);
-  const conv = await cargarConversor(supabase, moneda, dateFrom, dateTo);
-
-  const data = await fetchAllRows(() => q);
+  const data = await leerVentasHotmart(params, dateFrom, dateTo, resolver, [params.dimension]);
+  if (data.length === 0) return [];
+  const convertir = await conversorHotmart(params, dateFrom, dateTo);
 
   const map = new Map<string, HotmartRow>();
   for (const r of data as Record<string, unknown>[]) {
-    const dim = dimCol
-      ? String(r[dimCol] ?? '(sin dato)')
-      : getDimValue(
-          r,
-          params.dimension,
-          params.date_grouping,
-          [],
-          resolver,
-          nocross,
-          'fecha_venta'
-        );
-
-    const entry = map.get(dim) ?? {
-      dim,
-      ventas: 0,
-      neto: 0,
-      bruto: 0,
-      reembolsos: 0,
-      neto_reembolsado: 0,
-      neto_usd: 0,
-      bruto_usd: 0,
-    };
-    const estado = String(r.estado ?? '');
-    // USD → moneda de reporte con la tasa del día de ESTA venta (identidad si
-    // el cliente reporta en USD).
-    const fechaVenta = String(r.fecha_venta ?? '');
-    const neto = conv.convertir(Number(r.neto_productor_usd ?? 0) || 0, fechaVenta);
-    const bruto = conv.convertir(Number(r.bruto_usd ?? 0) || 0, fechaVenta);
-
-    if (estado === 'reembolsada' || estado === 'chargeback') {
-      entry.reembolsos += 1;
-      entry.neto_reembolsado += neto;
-    } else if (estado === 'aprobada' || estado === 'completa') {
-      entry.ventas += 1;
-      entry.neto += neto;
-      entry.bruto += bruto;
-      entry.neto_usd += Number(r.neto_productor_usd ?? 0) || 0;
-      entry.bruto_usd += Number(r.bruto_usd ?? 0) || 0;
-    }
-    // Pendiente / expirada / cancelada: todavía no es dinero, no se cuenta.
+    const dim = hotmartDimValue(r, params.dimension, params.date_grouping, resolver, nocross);
+    const entry = map.get(dim) ?? { dim, ...aporteVacio() };
+    // Pendiente / expirada / cancelada aportan cero: todavía no es dinero.
+    sumarAporte(entry, aporteDeVenta(r as FilaAporte, convertir));
     map.set(dim, entry);
   }
 
-  return Array.from(map.values()).sort((a, b) => b.neto - a.neto);
+  return Array.from(map.values()).sort((a, b) => b.hm_neto - a.hm_neto);
 }
 
 interface AdRow {
@@ -2656,31 +2775,45 @@ function mergeResults(
     // A diferencia de las tres de arriba, estas SÍ se reparten por campaña:
     // vienen de una tabla con una fila por venta y sus propios UTM.
     const hm = hotmartData.find((r) => (r.dim ?? 'total') === key);
-    const hmVentas = hm?.ventas ?? 0;
-    const hmNeto = round2(hm?.neto ?? 0);
-    const hmReembolsado = round2(hm?.neto_reembolsado ?? 0);
-    if (params.metrics.includes('hm_ventas')) row.hm_ventas = hmVentas;
-    if (params.metrics.includes('hm_neto')) row.hm_neto = hmNeto;
-    if (params.metrics.includes('hm_bruto')) row.hm_bruto = round2(hm?.bruto ?? 0);
-    if (params.metrics.includes('hm_reembolsos')) row.hm_reembolsos = hm?.reembolsos ?? 0;
-    if (params.metrics.includes('hm_neto_reembolsado')) row.hm_neto_reembolsado = hmReembolsado;
-    // Mismo criterio de null que el resto de ratios: sin denominador el valor
-    // es DESCONOCIDO, no cero. Un 0 se lee como "no se devolvió nada" / "no se
-    // recuperó nada", que es una afirmación que no podemos hacer.
-    if (params.metrics.includes('hm_tasa_reembolso'))
-      row.hm_tasa_reembolso = hmNeto > 0 ? round2((hmReembolsado / hmNeto) * 100) : null;
-    if (params.metrics.includes('hm_roas'))
-      row.hm_roas = spend > 0 && hmNeto > 0 ? round2(hmNeto / spend) : null;
-    if (params.metrics.includes('hm_cpa'))
-      row.hm_cpa = spend > 0 && hmVentas > 0 ? round2(spend / hmVentas) : null;
-    if (params.metrics.includes('hm_ticket_medio'))
-      row.hm_ticket_medio = hmVentas > 0 ? round2(hmNeto / hmVentas) : null;
-    // Moneda de reporte: la facturación sin convertir (en dólares) y la tasa
-    // del grupo. Sin cliente la tasa es desconocida (null), no 1.
-    if (params.metrics.includes('hm_neto_usd')) row.hm_neto_usd = round2(hm?.neto_usd ?? 0);
-    if (params.metrics.includes('hm_bruto_usd')) row.hm_bruto_usd = round2(hm?.bruto_usd ?? 0);
-    if (params.metrics.includes('hm_tasa_cambio'))
-      row.hm_tasa_cambio = tasa ? tasa.deClave(key) : null;
+    // Las medidas redondeadas UNA vez: las derivadas se calculan sobre lo mismo
+    // que se muestra, igual que el resto de ratios del motor.
+    const hmBase = {
+      hm_ventas: hm?.hm_ventas ?? 0,
+      hm_compras: hm?.hm_compras ?? 0,
+      hm_bumps: hm?.hm_bumps ?? 0,
+      hm_neto: round2(hm?.hm_neto ?? 0),
+      hm_neto_reembolsado: round2(hm?.hm_neto_reembolsado ?? 0),
+    };
+    // Una sola definición de cada denominador (`derivadasHotmart`), la misma
+    // que usan las pestañas. La tasa de reembolso divide entre lo facturado
+    // ANTES de devolver: dividir solo entre el neto (que ya excluye lo
+    // devuelto) daba 100 % cuando se devolvía la mitad.
+    const hmDer = derivadasHotmart(hmBase, spend, leads_count);
+    const r2 = (v: number | null) => (v === null ? null : round2(v));
+    const hmFila: Record<string, number | null> = {
+      ...hmBase,
+      hm_bruto: round2(hm?.hm_bruto ?? 0),
+      hm_reembolsos: hm?.hm_reembolsos ?? 0,
+      // Mismo criterio de null que el resto de ratios: sin denominador el
+      // valor es DESCONOCIDO, no cero. Un 0 se lee como "no se devolvió nada"
+      // / "no se recuperó nada", que es una afirmación que no podemos hacer.
+      hm_tasa_reembolso: r2(hmDer.hm_tasa_reembolso),
+      hm_roas: r2(hmDer.hm_roas),
+      hm_cpa: r2(hmDer.hm_cpa),
+      hm_cpa_compra: r2(hmDer.hm_cpa_compra),
+      hm_ticket_medio: r2(hmDer.hm_ticket_medio),
+      hm_ticket_compra: r2(hmDer.hm_ticket_compra),
+      hm_tasa_bump: r2(hmDer.hm_tasa_bump),
+      hm_conversion: r2(hmDer.hm_conversion),
+      // Moneda de reporte: la facturación sin convertir (en dólares) y la tasa
+      // del grupo. Sin cliente la tasa es desconocida (null), no 1.
+      hm_neto_usd: round2(hm?.hm_neto_usd ?? 0),
+      hm_bruto_usd: round2(hm?.hm_bruto_usd ?? 0),
+      hm_tasa_cambio: tasa ? tasa.deClave(key) : null,
+    };
+    for (const [k, v] of Object.entries(hmFila)) {
+      if ((params.metrics as string[]).includes(k)) row[k] = v;
+    }
 
     // Conversiones offline
     const off = offlineData.find((r) => (r.dim ?? 'total') === key);
@@ -2774,18 +2907,10 @@ function mergeResults(
       // identificador ausente en una expresión sigue valiendo 0, que es el
       // comportamiento con el que se guardaron los campos calculados
       // existentes. Los null explícitos los aporta la fila, no esta tabla.
-      baseValues.hm_ventas = hmVentas;
-      baseValues.hm_neto = hmNeto;
-      baseValues.hm_bruto = round2(hm?.bruto ?? 0);
-      baseValues.hm_reembolsos = hm?.reembolsos ?? 0;
-      baseValues.hm_neto_reembolsado = hmReembolsado;
-      baseValues.hm_tasa_reembolso = hmNeto > 0 ? round2((hmReembolsado / hmNeto) * 100) : 0;
-      baseValues.hm_roas = spend > 0 ? round2(hmNeto / spend) : 0;
-      baseValues.hm_cpa = hmVentas > 0 && spend > 0 ? round2(spend / hmVentas) : 0;
-      baseValues.hm_ticket_medio = hmVentas > 0 ? round2(hmNeto / hmVentas) : 0;
-      baseValues.hm_neto_usd = round2(hm?.neto_usd ?? 0);
-      baseValues.hm_bruto_usd = round2(hm?.bruto_usd ?? 0);
-      baseValues.hm_tasa_cambio = (tasa ? tasa.deClave(key) : null) ?? 0;
+      // Sale del MISMO objeto que la fila (`hmFila`): antes eran dos cálculos
+      // gemelos que había que tocar a la vez, y la tasa de reembolso llegó a
+      // divergir entre la tabla y los campos calculados.
+      for (const [k, v] of Object.entries(hmFila)) baseValues[k] = v ?? 0;
       baseValues.offline_leads = off?.offline_leads ?? 0;
       baseValues.offline_ventas = off?.offline_ventas ?? 0;
       baseValues.offline_revenue = round2(off?.offline_revenue ?? 0);
@@ -2940,6 +3065,26 @@ export async function runPivotQuery(
       ? await loadResolver(params.cliente_id, dateFrom, dateTo)
       : null;
 
+  // Ventas de Hotmart: se leen de `hotmart_ventas` con los MISMOS filtros y la
+  // misma agrupación que el motor por filas. Antes toda métrica que no fuera
+  // `sales_count`/`revenue` caía a `lead_events`, así que `hm_ventas` apilado
+  // por una segunda dimensión contaba LEADS.
+  if ((HOTMART_METRICS as readonly string[]).includes(metric)) {
+    const data = await leerVentasHotmart(params, dateFrom, dateTo, resolver, [dim1, dim2]);
+    const convertir = await conversorHotmart(params, dateFrom, dateTo);
+    const agrupacion = params.date_grouping ?? 'day';
+    const pivotHm = new Map<string, Map<string, number>>();
+    for (const r of data) {
+      const k1 = hotmartDimValue(r, dim1, agrupacion, resolver);
+      const k2 = hotmartDimValue(r, dim2, agrupacion, resolver);
+      if (!pivotHm.has(k1)) pivotHm.set(k1, new Map());
+      const inner = pivotHm.get(k1)!;
+      const add = aporteDeVenta(r as FilaAporte, convertir)[metric as keyof AporteHotmart] ?? 0;
+      inner.set(k2, (inner.get(k2) ?? 0) + add);
+    }
+    return armarPivot(pivotHm, params.limit);
+  }
+
   const cols = new Set<string>(['id', 'created_at']);
   if (isSales) {
     cols.add('amount');
@@ -2998,7 +3143,8 @@ export async function runPivotQuery(
     // que perdía las filas con microsegundos en ese último segundo.
 
     q = rangoColombia(q, dateFrom, dateTo);
-    if (isSales) q = q.eq('status', 'approved');
+    // Sin Hotmart: sus ventas van por la fuente `hotmart` (ver querySalesDirect).
+    if (isSales) q = q.eq('status', 'approved').neq('platform', 'hotmart');
     if (filtrarExcluidos) q = q.eq('excluido', false);
     if (params.cliente_id) q = q.eq('cliente_id', params.cliente_id);
     return applyDimFilters(q, params.filters, isSales ? salesFilterKey : leadFilterKey);
@@ -3013,12 +3159,10 @@ export async function runPivotQuery(
 
   const grouping = params.date_grouping ?? 'day';
   const pivot = new Map<string, Map<string, number>>();
-  const seriesSet = new Set<string>();
 
   for (const r of data as unknown as Record<string, unknown>[]) {
     const k1 = getDimValue(r, dim1, grouping, leadCampos, resolver);
     const k2 = getDimValue(r, dim2, grouping, leadCampos, resolver);
-    seriesSet.add(k2);
     if (!pivot.has(k1)) pivot.set(k1, new Map());
     const inner = pivot.get(k1)!;
     let add = metric === 'revenue' ? Number(r.amount ?? 0) : 1;
@@ -3037,6 +3181,18 @@ export async function runPivotQuery(
     inner.set(k2, (inner.get(k2) ?? 0) + add);
   }
 
+  return armarPivot(pivot, params.limit);
+}
+
+/**
+ * Del mapa fila → serie → valor a la respuesta del pivot: Top-8 series por
+ * total (para no saturar el gráfico) y filas ordenadas por total y recortadas.
+ * Compartido por leads/ventas y por Hotmart.
+ */
+function armarPivot(
+  pivot: Map<string, Map<string, number>>,
+  limit: number | undefined
+): { rows: BiPivotRow[]; seriesKeys: string[] } {
   // Top-N series (por total) para no saturar el gráfico
   const seriesTotals = new Map<string, number>();
   for (const inner of pivot.values()) {
@@ -3060,7 +3216,7 @@ export async function runPivotQuery(
     return bt - at;
   });
 
-  return { rows: rows.slice(0, params.limit ?? 15), seriesKeys };
+  return { rows: rows.slice(0, limit ?? 15), seriesKeys };
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────

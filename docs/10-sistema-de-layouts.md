@@ -146,6 +146,8 @@ Cada tab define en `hotmart_funnel` los patrones de nombre que clasifican las ve
 
 El worker usa esos patrones para llenar `hotmart_funnel_data.by_tab[tabId]`, que el `DashboardClient` inyecta como campos `funnel_*` en cada fila para que el motor de fórmulas calcule ROAS, ROI, % de conversión, etc. del embudo. Ver [doc 09](./09-motor-de-formulas.md).
 
+Las `funnel_*`, igual que `ventas_*` y `total_*`, son de **cuenta**: no se recortan por el filtro de campañas de la pestaña. Para ventas de Hotmart **por campaña** están las claves `hm_*` (`hm_compras`, `hm_roas`, `hm_cpa_compra`…), que sí siguen el filtro de la pestaña, el `campaignFilter` de cada tarjeta y columna, y se reparten por campaña en las tablas de ranking. Ver [doc 18](./18-fuentes-y-cruces.md#ventas-de-hotmart-por-campaña-hm_).
+
 ## Desglose por respuesta de formulario (`LeadAnswerBlockDef`)
 
 Responde **«cuántos leads contestaron A, cuántos B y cuántos C»** en una pregunta

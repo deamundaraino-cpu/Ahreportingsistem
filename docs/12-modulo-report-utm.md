@@ -63,13 +63,14 @@ El plugin empaquetado vive en `public/report-utm.zip` —lo regenera `wordpress-
 
 `POST /api/report-utm/webhooks/hotmart/[clienteId]`:
 
-1. Valida la **firma** del webhook (ver auth abajo).
-2. Parsea el payload tolerante a versiones (`hotmart-parser.ts`).
-3. Hace `upsert` en `report_utm.sales_events` (dedupe por `cliente_id + platform + platform_sale_id`).
-4. **Resuelve atribución** multi-touch (ver abajo).
-5. Emite **webhooks salientes** a suscriptores (fire-and-forget).
+1. Valida el **hottok** de Hotmart (ver auth abajo).
+2. Parsea el payload con el parser compartido (`src/lib/hotmart/parser.ts`).
+3. Guarda en `public.hotmart_ventas`, la verdad de dinero y clasificación, y reagrega `metricas_diarias`.
+4. Solo si el evento se aplicó como el más reciente, hace `upsert` en `report_utm.sales_events` (dedupe por `cliente_id + platform + platform_sale_id`): un reintento viejo no pisa el status.
+5. **Resuelve atribución** multi-touch (ver abajo).
+6. Emite **webhooks salientes** y notificaciones, una vez por estado.
 
-Códigos: 201 ok · 404 sin integración · 403 pausada · 401 firma inválida · 422 payload inválido · 500 error BD. `GET` es health-check de la URL. Log de ventas en `/ventas`.
+Códigos: 201 ok · 200 evento que no es venta o evento antiguo · 400 cuerpo vacío o JSON inválido · 404 sin integración · 403 pausada · 401 hottok inválido · 413 cuerpo grande · 422 payload ilegible · 429 rate limit · 500 error BD. `GET` es health-check de la URL. Log de ventas en `/ventas`. Alta paso a paso en [doc 08](./08-integraciones.md#webhook-ventas-en-vivo).
 
 ## Cookies de atribución
 
@@ -107,23 +108,27 @@ AttributionResult = {
 
 ## Verificación de firma (webhook entrante)
 
-`src/lib/report-utm/webhook-auth.ts` → `verifyWebhookSignature()`. Dos métodos:
+`src/lib/report-utm/webhook-auth.ts` → `verifyWebhookSignature()`. En el webhook de Hotmart:
 
-- **HMAC** (recomendado): `x-hotmart-signature` = `HMAC-SHA256(secret, rawBody)`.
-- **Hottok** (legacy): `x-hotmart-hottok`, `?hottok=` o `body.hottok` comparado contra el secreto.
+- **Hottok de Hotmart** (la vía normal): `x-hotmart-hottok` o `body.hottok` comparado con el hottok que genera Hotmart —uno fijo por cuenta, no editable— y que el usuario pega en la tarjeta (`integrations.config.hottok_enc`, cifrado).
+- **HMAC** (heredado, para integraciones propias; Hotmart no firma así): `x-hotmart-signature` = `HMAC-SHA256(secret, rawBody)` con **nuestro** secreto.
+- **`?hottok=<secreto>`** en la URL, contra nuestro secreto (heredado, no se anuncia: el secreto acaba en los logs).
 
-Usa `crypto.timingSafeEqual` (anti timing-attack). `generateWebhookSecret()` crea secretos de 32 bytes.
+Hasta el 2026-09-25 la cabecera se comparaba con nuestro secreto, que Hotmart no conoce: ningún evento real podía validar y `sales_events` no tenía filas de Hotmart. Para GHL y S2S (sin hottok de Hotmart) se conserva lo de siempre: cabecera, query o body contra nuestro secreto.
+
+La comparación es en tiempo constante y tampoco filtra la longitud (compara los SHA-256 de ambos lados). `generateWebhookSecret()` crea secretos de 32 bytes.
 
 ## Parser de Hotmart
 
-`src/lib/report-utm/hotmart-parser.ts` → `parseHotmartPayload()`. Tolerante a múltiples formas (v2 `data.purchase`, v1 `event.data.purchase`, `purchase` directo). Mapea el evento a `status`:
+El parser es `src/lib/hotmart/parser.ts` (el mismo de la API; ver [doc 08](./08-integraciones.md#hotmart)). `src/lib/report-utm/hotmart-parser.ts` solo traduce la venta al formato heredado de `sales_events` (`aEventoLegacy`) y aloja las decisiones puras del webhook (qué se espeja, qué se avisa). El `status` de `sales_events`:
 
-- `PURCHASE_APPROVED`/`COMPLETE` → `approved`
-- `PURCHASE_BILLET_PRINTED`/`PROTEST`/`DELAYED` → `pending`
-- `PURCHASE_REFUNDED`/`CANCELED` → `refunded`
+- `PURCHASE_APPROVED`/`COMPLETE` → `approved` (el `COMPLETE` no vuelve a avisar)
+- `PURCHASE_BILLET_PRINTED`/`DELAYED`/`WAITING_PAYMENT`/`EXPIRED` → `pending`
+- `PURCHASE_REFUNDED` → `refunded`
+- `PURCHASE_CANCELED` → `canceled` (antes `refunded`: inflaba la tasa de devoluciones y avisaba «Venta reembolsada»). No tiene webhook saliente ni notificación
 - `PURCHASE_CHARGEBACK` → `chargeback`
 
-Extrae monto, moneda, producto, comprador, `transaction_type` (bump/upsell/subscription) y UTMs/click IDs.
+`PURCHASE_PROTEST`, el carrito abandonado, las suscripciones y Hotmart Club no son ventas: 200 y se ignoran. Sin divisa en el payload, `currency` es `null` (antes se asumía BRL). A Google Ads solo va un `gclid` explícito y a Meta CAPI solo un `fbclid` explícito (`clickIdsExplicitos`).
 
 ## Webhooks salientes
 

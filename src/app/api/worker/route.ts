@@ -6,7 +6,14 @@ import { createClient as createSSRClient } from '@/utils/supabase/server';
 import { getAgencyAccessToken, hasAgencyGoogleConnection } from '@/lib/integrations/google-auth';
 import { notifyUsers } from '@/lib/notifications/notify';
 import { colombiaToday, colombiaYesterday } from '@/lib/date-utils';
-import { metaFetch, tiktokFetch, hotmartFetch, ga4Run, setRetryDeadline } from '@/lib/rate-limit';
+import {
+  conDeadline,
+  metaFetch,
+  tiktokFetch,
+  hotmartFetch,
+  ga4Run,
+  setRetryDeadline,
+} from '@/lib/rate-limit';
 import { evaluateAlertRules } from '@/lib/notifications/rules-engine';
 // La conversión de moneda de Hotmart se hace ahora en `src/lib/hotmart/moneda.ts`,
 // en lote y con el mismo invariante de siempre: sin tasa el importe es NULL,
@@ -16,7 +23,7 @@ import { expandirFila } from '@/lib/ads/ads-daily-writer';
 import { agruparPorForma, plataformasOmitidas } from '@/lib/sync/upsert-batches';
 import { hotmartConectado, obtenerToken } from '@/lib/hotmart/cliente';
 import { cargarFunnels } from '@/lib/hotmart/persistencia';
-import { capturarTasasDelDia } from '@/lib/fx';
+import { capturarTasasDelDia, getUsdRate } from '@/lib/fx';
 import {
   agregarDesdeHotmartVentas,
   desgloseVacio,
@@ -25,6 +32,8 @@ import {
   type RegistroHotmart,
 } from '@/lib/hotmart/sync';
 import type { FunnelHotmart } from '@/lib/hotmart/clasificador';
+import { decidirGuardaHotmart, tieneDatosHotmart } from '@/lib/hotmart/guarda';
+import { reagregarFechasHotmart } from '@/lib/hotmart/reagregar';
 
 // Vercel Hobby corta las funciones a 60s: pedir 300 no las alarga, solo hacía que
 // los presupuestos internos (270s) nunca dispararan y la función muriera a mitad
@@ -220,7 +229,15 @@ function parseMetaActions(actions: any): MetaActionTotals {
   return { fam, exact };
 }
 
+// El plazo de reintentos es de ESTA petición. Con el global de antes, el plazo
+// que dejaba esta ruta caducado dejaba sin reintentos a `/api/worker/hotmart` y
+// a cualquier otro job que corriera después en el mismo proceso (el sync-worker
+// del VPS reutiliza el servidor).
 export async function GET(request: Request) {
+  return conDeadline(Date.now() + 50_000, () => sincronizar(request));
+}
+
+async function sincronizar(request: Request) {
   const authError = requireCronAuth(request);
   if (authError) return authError;
 
@@ -441,28 +458,42 @@ export async function GET(request: Request) {
       // Antes eran ~80 líneas inline aquí, duplicadas casi literalmente en el
       // cron de refresco de tokens.
       let hotmartAccessToken: string | null = null;
-      try {
-        const auth = await obtenerToken(config);
-        hotmartAccessToken = auth.token;
-        if (auth.token) {
-          platformLogs.hotmart = 'Preparado';
-          // Escritura ATÓMICA: el read-modify-write anterior reescribía el
-          // JSONB entero y pisaba lo que el cron de refresco guardara a la vez.
-          if (auth.parche) {
-            await adminSupabase.rpc('fusionar_config_api', {
-              p_cliente_id: cliente.id,
-              p_parche: auth.parche,
-            });
-            log(`[Cliente ${cliente.nombre}] Token de Hotmart refrescado y persistido cifrado.`);
+      // Solo si el job pide Hotmart: un backfill acotado a Meta no tiene por qué
+      // pedir (y refrescar) un token ni escribir el snapshot de suscripciones.
+      if (wantsPlatform('hotmart'))
+        try {
+          const auth = await obtenerToken(config, {
+            // Si el refresco falla porque otro proceso (el cron) ya rotó el
+            // refresh token, se relee la config y se usa el suyo.
+            releer: async () =>
+              (
+                await adminSupabase
+                  .from('clientes')
+                  .select('config_api')
+                  .eq('id', cliente.id)
+                  .maybeSingle()
+              ).data?.config_api,
+          });
+          hotmartAccessToken = auth.token;
+          if (auth.token) {
+            platformLogs.hotmart = 'Preparado';
+            // Escritura ATÓMICA: el read-modify-write anterior reescribía el
+            // JSONB entero y pisaba lo que el cron de refresco guardara a la vez.
+            if (auth.parche) {
+              await adminSupabase.rpc('fusionar_config_api', {
+                p_cliente_id: cliente.id,
+                p_parche: auth.parche,
+              });
+              log(`[Cliente ${cliente.nombre}] Token de Hotmart refrescado y persistido cifrado.`);
+            }
+          } else if (auth.motivo) {
+            log(`[Cliente ${cliente.nombre}] Hotmart: ${auth.motivo}`);
+            platformLogs.hotmart = 'Error Auth';
           }
-        } else if (auth.motivo) {
-          log(`[Cliente ${cliente.nombre}] Hotmart: ${auth.motivo}`);
-          platformLogs.hotmart = 'Error Auth';
+        } catch (err: any) {
+          log(`[Cliente ${cliente.nombre}] Catch Token Hotmart: ${err.message}`);
+          platformLogs.hotmart = 'Fallo Critico';
         }
-      } catch (err: any) {
-        log(`[Cliente ${cliente.nombre}] Catch Token Hotmart: ${err.message}`);
-        platformLogs.hotmart = 'Fallo Critico';
-      }
 
       // ¿El cliente TIENE Hotmart conectado? Distingue "sin configurar" (escribir
       // ceros es correcto) de "configurado pero la auth falló" (hay que preservar).
@@ -509,8 +540,10 @@ export async function GET(request: Request) {
             inactive = 0,
             canceled = 0,
             total = 0;
-          let activeRecurringValue = 0;
-          let currency = '';
+          // El valor recurrente se acumula POR MONEDA: sumar reales con dólares
+          // daba un número sin unidad. Al final se pasa todo a USD.
+          const recurrentePorMoneda: Record<string, number> = {};
+          let incompleto = false;
 
           let pageToken = '';
           let hasNext = true;
@@ -525,9 +558,17 @@ export async function GET(request: Request) {
             const res = await hotmartFetch(url.toString(), {
               headers: { Authorization: `Bearer ${hotmartAccessToken}` },
             });
+            // Un 4xx/5xx sin `error` en el cuerpo se tomaba por una página
+            // vacía y se guardaba un snapshot a cero encima del bueno.
+            if (!res.ok) {
+              log(`[Hotmart Subs] HTTP ${res.status} — snapshot incompleto, no se guarda.`);
+              incompleto = true;
+              break;
+            }
             const data = await res.json();
             if (data.error || data.message) {
               log(`[Hotmart Subs] API Error: ${JSON.stringify(data)}`);
+              incompleto = true;
               break;
             }
             const items: any[] = Array.isArray(data.items) ? data.items : [];
@@ -545,11 +586,12 @@ export async function GET(request: Request) {
               if (!byProduct[prodName]) byProduct[prodName] = { active: 0, recurring_value: 0 };
               if (group === 'active') {
                 const val = Number(it.price?.value ?? it.plan?.recurrency_value ?? 0) || 0;
-                const cur = String(it.price?.currency_code ?? '');
-                if (cur && !currency) currency = cur;
-                activeRecurringValue += val;
+                const cur = String(it.price?.currency_code ?? 'USD').toUpperCase() || 'USD';
+                recurrentePorMoneda[cur] = (recurrentePorMoneda[cur] ?? 0) + val;
                 byProduct[prodName].active++;
+                // Por producto se deja en su moneda original, con la moneda al lado.
                 byProduct[prodName].recurring_value += val;
+                (byProduct[prodName] as any).currency = cur;
               }
             }
             pageToken = data.page_info?.next_page_token;
@@ -562,6 +604,20 @@ export async function GET(request: Request) {
           }
 
           const capturedDate = colombiaToday();
+          // Todo a USD con la tasa del día (`usd_rate` = USD por 1 unidad).
+          let activeRecurringValue = 0;
+          const sinTasa: string[] = [];
+          for (const [cur, val] of Object.entries(recurrentePorMoneda)) {
+            const { rate } = await getUsdRate(adminSupabase, cur, capturedDate);
+            if (rate == null) sinTasa.push(cur);
+            else activeRecurringValue += val * rate;
+          }
+          if (sinTasa.length > 0) {
+            log(
+              `[Hotmart Subs] ${cliente.nombre}: sin tasa de cambio para ${sinTasa.join(', ')} — ese valor recurrente queda fuera del total en USD.`
+            );
+          }
+          if (incompleto) throw new Error('snapshot incompleto: se conserva el anterior');
           await adminSupabase.from('hotmart_subscriptions_snapshot').upsert(
             {
               cliente_id: cliente.id,
@@ -572,8 +628,8 @@ export async function GET(request: Request) {
               inactive_count: inactive,
               canceled_count: canceled,
               total_count: total,
-              active_recurring_value: activeRecurringValue,
-              currency: currency || null,
+              active_recurring_value: Math.round(activeRecurringValue * 100) / 100,
+              currency: 'USD',
               by_status: byStatus,
               by_product: byProduct,
             },
@@ -1819,6 +1875,11 @@ export async function GET(request: Request) {
       // Por eso, si `completo === false` NO se agrega: se devuelve un registro
       // vacío con `apiSuccess: false` y la red de seguridad de siempre omite los
       // campos de Hotmart del upsert, preservando lo que ya había.
+      // Fechas cuyo agregado cambió por ventas que se MOVIERON de día (una
+      // aprobación posterior a la orden). Las del rango se agregan en el bucle;
+      // las de fuera se reagregan al final, o la venta contaría en los dos días.
+      const fechasHotmartTocadas = new Set<string>();
+
       async function fetchHotmart(targetDate: string): Promise<RegistroHotmart> {
         if (!hotmartAccessToken) {
           log(`[Hotmart] Sin accessToken generado.`);
@@ -1838,6 +1899,8 @@ export async function GET(request: Request) {
             hotmartFunnels,
             log
           );
+
+          for (const f of sync.fechasTocadas ?? []) fechasHotmartTocadas.add(f);
 
           if (!sync.completo) {
             log(
@@ -2087,7 +2150,7 @@ export async function GET(request: Request) {
       const { data: existingHashRows } = await adminSupabase
         .from('metricas_diarias')
         .select(
-          'fecha, sync_hash, meta_spend, tiktok_spend, meta_campaigns, tiktok_campaigns, ventas_principal, ventas_bump, ventas_upsell, ventas_principal_count, ga_sessions, source_synced_at'
+          'fecha, sync_hash, meta_spend, tiktok_spend, meta_campaigns, tiktok_campaigns, ventas_principal, ventas_bump, ventas_upsell, ventas_downsell, ventas_principal_count, ventas_bump_count, ventas_upsell_count, ventas_downsell_count, ventas_reembolsado, ventas_reembolsado_count, ga_sessions, source_synced_at'
         )
         .eq('cliente_id', cliente.id)
         .in('fecha', datesToSync);
@@ -2129,11 +2192,21 @@ export async function GET(request: Request) {
       const hasTikTokData = (r: any) =>
         Number(r?.tiktok_spend) > 0 ||
         (Array.isArray(r?.tiktok_campaigns) && r.tiktok_campaigns.length > 0);
-      const hasHotmartData = (r: any) =>
-        Number(r?.ventas_principal) > 0 ||
-        Number(r?.ventas_bump) > 0 ||
-        Number(r?.ventas_upsell) > 0 ||
-        Number(r?.ventas_principal_count) > 0;
+      // Incluye downsell y reembolsos: un día cuyo único pedido se reembolsó
+      // también «tenía datos» (ver `src/lib/hotmart/guarda.ts`).
+      const hasHotmartData = (r: any) => tieneDatosHotmart(r ?? null);
+
+      // Primera venta del cliente en `hotmart_ventas`. Desde esa fecha la tabla
+      // es la verdad y su cero es un cero de verdad; antes, los datos son del
+      // worker viejo y la guarda de cero/caída sigue protegiéndolos.
+      const { data: primeraVenta } = await adminSupabase
+        .from('hotmart_ventas')
+        .select('fecha_venta')
+        .eq('cliente_id', cliente.id)
+        .order('fecha_venta', { ascending: true })
+        .limit(1)
+        .maybeSingle();
+      const primeraFechaTabla: string | null = primeraVenta?.fecha_venta ?? null;
       const hasGa4Data = (r: any) => Number(r?.ga_sessions) > 0;
 
       // ─── Ventana de refresco: NO re-descargar fechas ya guardadas ───
@@ -2365,22 +2438,22 @@ export async function GET(request: Request) {
           // Se descuentan los reembolsos del día antes de comparar: si el
           // recuento baja porque hubo devoluciones, eso NO es una anomalía,
           // es exactamente lo que este trabajo pretende reflejar.
-          const ventasPrevias =
-            Number(prevRow?.ventas_principal_count ?? 0) +
-            Number(prevRow?.ventas_bump_count ?? 0) +
-            Number(prevRow?.ventas_upsell_count ?? 0) +
-            Number(prevRow?.ventas_downsell_count ?? 0);
-          const ventasAhora = hotmartRecord.ventas_count + hotmartRecord.reembolsado_count;
+          // La decisión vive en `src/lib/hotmart/guarda.ts` (pura, probada). Para
+          // las fechas que `hotmart_ventas` cubre, la tabla manda: su cero es
+          // real (un día cuyo único pedido se reembolsó, o una venta que se movió
+          // de día al aprobarse). Antes la guarda conservaba el conteo viejo y
+          // la venta contaba dos veces.
+          const guarda = decidirGuardaHotmart(
+            prevRow ?? null,
+            hotmartRecord,
+            primeraFechaTabla !== null && targetDate >= primeraFechaTabla
+          );
+          const ventasPrevias = guarda.ventasPrevias;
+          const ventasAhora = guarda.ventasAhora;
           const caidaRelativa =
-            hotmartConfigured &&
-            !hotmartApiFailed &&
-            ventasPrevias >= 5 &&
-            ventasAhora < ventasPrevias * 0.6;
+            hotmartConfigured && !hotmartApiFailed && guarda.motivo === 'caida_relativa';
 
-          const hotmartInconsistent =
-            hotmartConfigured &&
-            !hotmartApiFailed &&
-            ((hotmartRecord.ventas_count === 0 && hasHotmartData(prevRow)) || caidaRelativa);
+          const hotmartInconsistent = hotmartConfigured && !hotmartApiFailed && guarda.preservar;
           const hotmartFailed = hotmartApiFailed || hotmartInconsistent;
 
           const ga4ApiFailed = gaRecord.configured && !gaRecord.apiSuccess;
@@ -2444,6 +2517,8 @@ export async function GET(request: Request) {
             isEmptyTikTok &&
             hotmartRecord.principal === 0 &&
             hotmartRecord.ventas_count === 0 &&
+            // Un día con solo reembolsos NO está vacío: hay que escribirlo.
+            hotmartRecord.reembolsado_count === 0 &&
             gaRecord.sessions === 0;
           if (isAllEmpty && daysAgo > 2 && existingHashMap.has(targetDate)) {
             log(
@@ -2755,6 +2830,19 @@ export async function GET(request: Request) {
             );
           }
         }
+      }
+
+      // Ventas que cambiaron de día fuera del rango de este job: se reagrega
+      // ese otro día desde la tabla (nunca lanza; si falla, lo corrige el
+      // siguiente sync que lo incluya).
+      const fueraDelRango = Array.from(fechasHotmartTocadas).filter(
+        (f) => !datesToSync.includes(f)
+      );
+      if (fueraDelRango.length > 0) {
+        await reagregarFechasHotmart(adminSupabase, cliente.id, fueraDelRango, {
+          funnels: hotmartFunnels,
+          log,
+        });
       }
 
       // Fechas verificadas cuyo contenido no cambió: solo se refresca la marca de

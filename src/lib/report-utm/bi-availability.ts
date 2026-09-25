@@ -10,6 +10,7 @@
 // marcarlas (no las oculta: el trafficker puede querer dejarlas configuradas
 // para cuando la fuente empiece a alimentarse).
 
+import { esBump, esCompra, type FilaAporte } from '@/lib/hotmart/metricas';
 import { createAdminClient } from '@/utils/supabase/server';
 import { fetchAllRows } from '@/lib/supabase-paginate';
 import {
@@ -137,6 +138,8 @@ export async function getMetricAvailability(
     .gte('created_at', colombiaRangeBounds(dateFrom, dateTo).gte)
     .lt('created_at', colombiaRangeBounds(dateFrom, dateTo).lt)
     .eq('status', 'approved')
+    // Las de Hotmart cuentan en la fuente `hotmart` (hm_*), no aquí.
+    .neq('platform', 'hotmart')
     .limit(1000);
   // Paginado: con `.limit(1000)` un cliente con años de agregados podía marcar
   // columnas de Sheet como «sin datos» si sus filas caían fuera de la primera
@@ -161,7 +164,7 @@ export async function getMetricAvailability(
   // como "esta fuente tiene datos".
   let hotmartQ = db
     .from('hotmart_ventas')
-    .select('estado, neto_productor_usd, bruto_usd')
+    .select('estado, tipo, es_order_bump, parent_transaction_id, neto_productor_usd, bruto_usd')
     .gte('fecha_venta', dateFrom)
     .lte('fecha_venta', dateTo)
     .limit(2000);
@@ -190,6 +193,9 @@ export async function getMetricAvailability(
       bump('hm_neto_reembolsado', Number(v.neto_productor_usd ?? 0));
     } else if (estado === 'aprobada' || estado === 'completa') {
       bump('hm_ventas', 1);
+      // Misma definición de compra y de bump que el motor (metricas.ts).
+      if (esCompra(v as FilaAporte)) bump('hm_compras', 1);
+      if (esBump(v as FilaAporte)) bump('hm_bumps', 1);
       bump('hm_neto', Number(v.neto_productor_usd ?? 0));
       bump('hm_bruto', Number(v.bruto_usd ?? 0));
       bump('hm_neto_usd', Number(v.neto_productor_usd ?? 0));
@@ -322,8 +328,10 @@ export async function getMetricAvailability(
         break;
       // Ventas de Hotmart por transacción: las derivadas exigen sus DOS
       // partes, igual que cpl/cpa. Con una sola, el número es engañoso.
+      // Un 0 % es un valor válido: basta con que haya algo facturado (antes
+      // exigía reembolsos y la métrica desaparecía justo cuando iba bien).
       case 'hm_tasa_reembolso':
-        out[metric] = has('hm_neto') && has('hm_neto_reembolsado');
+        out[metric] = has('hm_neto') || has('hm_neto_reembolsado');
         break;
       case 'hm_roas':
         out[metric] = has('spend') && has('hm_neto');
@@ -333,6 +341,18 @@ export async function getMetricAvailability(
         break;
       case 'hm_ticket_medio':
         out[metric] = has('hm_neto') && has('hm_ventas');
+        break;
+      case 'hm_cpa_compra':
+        out[metric] = has('spend') && has('hm_compras');
+        break;
+      case 'hm_ticket_compra':
+        out[metric] = has('hm_neto') && has('hm_compras');
+        break;
+      case 'hm_tasa_bump':
+        out[metric] = has('hm_compras');
+        break;
+      case 'hm_conversion':
+        out[metric] = has('hm_compras') && has('leads_count');
         break;
       // La tasa existe haya o no ventas (con el cliente en dólares vale 1).
       case 'hm_tasa_cambio':

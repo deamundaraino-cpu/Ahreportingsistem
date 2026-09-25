@@ -1,5 +1,6 @@
 import type { CampaignFilterOperator, CampaignFilterSpec, TabCampaignFilter } from './layout-types';
 import { reDerivarRespuestas } from './dashboard/lead-answer-row';
+import { reDerivarHotmart } from './dashboard/hotmart-cubo-row';
 
 /** Filtro admitido en todo el pipeline: string simple, un spec, o compuesto Y/O. */
 export type AnyCampaignFilter = string | CampaignFilterSpec | TabCampaignFilter | undefined;
@@ -345,6 +346,11 @@ export function applyCompoundFilter(
   // salía hundido sin ningún aviso.
   const leads = reDerivarRespuestas(out, campaignFilter);
   if (leads) out = { ...out, ...leads };
+  // Ventas de Hotmart por campaña (`hm_*`): mismo mecanismo y mismo motivo. Sin
+  // esto, `meta_spend / hm_compras` con filtro propio dividía el gasto de UNA
+  // campaña entre las compras de toda la pestaña.
+  const ventas = reDerivarHotmart(out, campaignFilter);
+  if (ventas) out = { ...out, ...ventas };
   return out;
 }
 

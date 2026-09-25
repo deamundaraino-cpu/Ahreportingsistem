@@ -94,6 +94,8 @@ import { RankingTableBlock } from './RankingTableBlock';
 import { LeadAnswerBlock } from './LeadAnswerBlock';
 import type { LeadAnswerDatasetLite } from '@/lib/dashboard/lead-answer-aggregation';
 import { refDeCubo, clavesYRefDelDia } from '@/lib/dashboard/lead-answer-row';
+import { refDeCuboHotmart, clavesHotmartYRefDelDia } from '@/lib/dashboard/hotmart-cubo-row';
+import type { HotmartCuboLite } from '@/lib/dashboard/hotmart-cubo';
 import { TabArchiveView } from './TabArchiveView';
 import { MonedaReporteProvider, useMonedaReporte } from './MonedaReporteContext';
 
@@ -156,6 +158,30 @@ function inyectarRespuestas(
   // permite que una tarjeta o una columna con `campaignFilter` propio recalcule
   // estas cifras en vez de arrastrar las de toda la pestaña. Ver lead-answer-row.
   return filas.map((row: any) => ({ ...row, ...clavesYRefDelDia(ref, String(row.fecha ?? '')) }));
+}
+
+/**
+ * Añade a cada fila las ventas de Hotmart POR CAMPAÑA (`hm_ventas`,
+ * `hm_compras`, `hm_neto`…), recortadas por el filtro de la pestaña.
+ *
+ * Mismo patrón y misma razón que `inyectarRespuestas`: el recorte lo decide la
+ * pestaña activa, y la fila se lleva el cubo por referencia para que una
+ * tarjeta o columna con `campaignFilter` propio lo vuelva a recortar. A
+ * diferencia de `ventas_*` —que son de toda la cuenta—, estas claves dividen
+ * bien entre el gasto filtrado de la pestaña.
+ */
+function inyectarHotmart(
+  filas: any[],
+  ds: HotmartCuboLite | null | undefined,
+  keyword: string | TabCampaignFilter,
+  campaignGroups: any[] | undefined
+): any[] {
+  const ref = refDeCuboHotmart(ds, keyword, campaignGroups);
+  if (!ref) return filas;
+  return filas.map((row: any) => ({
+    ...row,
+    ...clavesHotmartYRefDelDia(ref, String(row.fecha ?? '')),
+  }));
 }
 
 // ─── Helper Functions ────────────────────────────────────────────────────────
@@ -1101,6 +1127,16 @@ function DynamicDashboard({
       }
 
       const landingSessions = fb?.landing_sessions ?? 0;
+      // Precio público del funnel de la pestaña (bruta = precio × compras). Se
+      // configura en USD y el resto de la fila ya está en la moneda de reporte:
+      // se convierte con la tasa del DÍA (sin tasa, `tasa_cambio` no existe y
+      // el precio se queda en USD, igual que cualquier importe sin tasa). Y va
+      // con su par `__num`/`__den` porque es un PROMEDIO: sumarlo entre días
+      // daba precio × días (ver `PROMEDIOS_DE_FILA`).
+      const tasaDia = Number(row.tasa_cambio);
+      const precio =
+        Number(activeTabObj?.hotmart_funnel?.principal_price_usd ?? 0) *
+        (Number.isFinite(tasaDia) && tasaDia > 0 ? tasaDia : 1);
       return {
         ...row,
         // Si hay landing pages configuradas, reemplazar ga_sessions con las sesiones del funnel
@@ -1108,8 +1144,9 @@ function DynamicDashboard({
         funnel_principal_count: fb?.principal?.count ?? 0,
         funnel_principal_neto: fb?.principal?.net ?? 0,
         funnel_principal_bruto: fb?.principal?.gross ?? 0,
-        // Precio público configurado en el funnel del tab (para calcular bruta = precio × count)
-        funnel_principal_price: Number(activeTabObj?.hotmart_funnel?.principal_price_usd ?? 0),
+        funnel_principal_price: precio,
+        funnel_principal_price__num: precio,
+        funnel_principal_price__den: 1,
         funnel_bump_count: fb?.bump?.count ?? 0,
         funnel_bump_neto: fb?.bump?.net ?? 0,
         funnel_bump_bruto: fb?.bump?.gross ?? 0,
@@ -1124,8 +1161,20 @@ function DynamicDashboard({
       };
     });
 
-    return inyectarRespuestas(conFunnel, data.leadAnswers, effectiveKeyword, data.campaignGroups);
-  }, [baseRows, effectiveKeyword, activeTabObj, data.campaignGroups, data.leadAnswers]);
+    return inyectarHotmart(
+      inyectarRespuestas(conFunnel, data.leadAnswers, effectiveKeyword, data.campaignGroups),
+      data.hotmartCubo,
+      effectiveKeyword,
+      data.campaignGroups
+    );
+  }, [
+    baseRows,
+    effectiveKeyword,
+    activeTabObj,
+    data.campaignGroups,
+    data.leadAnswers,
+    data.hotmartCubo,
+  ]);
 
   // Previous period rows (no tab date filter needed — already a different date range)
   const prevFilteredMetrics = useMemo(() => {
@@ -1138,14 +1187,20 @@ function DynamicDashboard({
       )
     );
     // El periodo anterior recibe las MISMAS claves: sin esto, una tarjeta con
-    // `utm_leads` mostraría su delta contra cero y siempre diría "+100%".
-    return inyectarRespuestas(
-      enriched,
-      data.prevLeadAnswers,
+    // `utm_leads` (o `hm_*`) mostraría su delta contra cero y siempre diría "+100%".
+    return inyectarHotmart(
+      inyectarRespuestas(enriched, data.prevLeadAnswers, effectiveKeyword, data.campaignGroups),
+      data.prevHotmartCubo,
       effectiveKeyword,
       data.campaignGroups
     );
-  }, [prevMetrics, effectiveKeyword, data.campaignGroups, data.prevLeadAnswers]);
+  }, [
+    prevMetrics,
+    effectiveKeyword,
+    data.campaignGroups,
+    data.prevLeadAnswers,
+    data.prevHotmartCubo,
+  ]);
 
   /**
    * Las mismas filas que `baseRows`, pero con las claves de Report-UTM SIN el
@@ -1157,14 +1212,25 @@ function DynamicDashboard({
    * `rawMetrics` que no es raw y volvería a descuadrar en silencio.
    */
   const baseRowsConRespuestas = useMemo(
-    () => inyectarRespuestas(baseRows, data.leadAnswers, '', data.campaignGroups),
-    [baseRows, data.leadAnswers, data.campaignGroups]
+    () =>
+      inyectarHotmart(
+        inyectarRespuestas(baseRows, data.leadAnswers, '', data.campaignGroups),
+        data.hotmartCubo,
+        '',
+        data.campaignGroups
+      ),
+    [baseRows, data.leadAnswers, data.hotmartCubo, data.campaignGroups]
   );
 
   /** Referencia del cubo con el filtro de la pestaña, para las filas de relleno. */
   const refCuboPestana = useMemo(
     () => refDeCubo(data.leadAnswers, effectiveKeyword, data.campaignGroups),
     [data.leadAnswers, effectiveKeyword, data.campaignGroups]
+  );
+  /** Ídem para las ventas de Hotmart por campaña. */
+  const refHotmartPestana = useMemo(
+    () => refDeCuboHotmart(data.hotmartCubo, effectiveKeyword, data.campaignGroups),
+    [data.hotmartCubo, effectiveKeyword, data.campaignGroups]
   );
 
   /**
@@ -2182,6 +2248,8 @@ function DynamicDashboard({
                                       // estas claves ese día mostraba `—` en vez de sus contactos, que el
                                       // cubo sí conoce.
                                       ...clavesYRefDelDia(refCuboPestana, dayStr),
+                                      // Lo mismo con las ventas de Hotmart por campaña.
+                                      ...clavesHotmartYRefDelDia(refHotmartPestana, dayStr),
                                     };
                                     weekRows.push(raw);
 

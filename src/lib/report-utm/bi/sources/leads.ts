@@ -23,7 +23,7 @@ export const LEADS_SOURCE: DataSource = {
   clientKey: { scope: 'report_utm' },
   grainKind: 'row',
   grain: ['id'],
-  joinAxes: ['date', 'platform', 'campaign', 'adset', 'ad', 'lead_column', 'lead_raw'],
+  joinAxes: ['date', 'platform', 'campaign', 'adset', 'ad', 'utm', 'lead_column', 'lead_raw'],
   dateColumn: 'created_at',
   // timestamptz: hay que convertir a día local antes de agrupar. Lo hace el
   // motor con `colombiaDateOf` (bi-query.ts), y el recorte del rango con
@@ -104,13 +104,14 @@ export const LEADS_SOURCE: DataSource = {
     // Agrupa por la columna TAL CUAL, sin resolver. Solo para auditar los
     // UTM que llegan. La traducción nombre→columna vivía repetida en 5
     // sitios del motor; ahora está solo aquí.
-    dimension(S, 'utm_campaign_raw', 'Campaña UTM (crudo)', 'lead_column', 'leads', {
+    dimension(S, 'utm_campaign_raw', 'Campaña UTM (crudo)', 'utm', 'leads', {
       column: 'utm_campaign',
       resolve: 'entity_raw',
     }),
-    dimension(S, 'utm_source', 'Source', 'lead_column', 'leads'),
-    dimension(S, 'utm_medium', 'Medium', 'lead_column', 'leads'),
-    dimension(S, 'utm_id', 'UTM ID', 'lead_column', 'leads', { highCardinality: true }),
+    // Eje `utm`: las ventas (sales_events y Hotmart) también las tienen.
+    dimension(S, 'utm_source', 'Source', 'utm', 'leads'),
+    dimension(S, 'utm_medium', 'Medium', 'utm', 'leads'),
+    dimension(S, 'utm_id', 'UTM ID', 'utm', 'leads', { highCardinality: true }),
     dimension(S, 'date', 'Fecha', 'date', 'leads', { column: 'created_at', resolve: 'date_trunc' }),
     dimension(S, 'ip_country', 'País', 'lead_column', 'leads'),
     dimension(S, 'form_name', 'Formulario', 'lead_column', 'leads'),

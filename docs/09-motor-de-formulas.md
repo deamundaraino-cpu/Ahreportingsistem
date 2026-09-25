@@ -21,8 +21,9 @@ Una fórmula puede mezclar tres tipos de identificadores, que se resuelven en ca
 - **GA4**: `ga_sessions`, `ga_bounce_rate`, `ga_avg_session_duration`.
 - **TikTok**: `tiktok_spend`, `tiktok_impressions`, `tiktok_clicks`, `tiktok_conversions`.
 - **Hotmart**: `hotmart_pagos_iniciados`, `hotmart_clics_link`.
-- **Ventas globales**: `ventas_principal/bump/upsell` (+ `_count`, `_bruto`), `ventas_cerradas`.
-- **Funnel del tab activo** (inyectados por `DashboardClient` desde `hotmart_funnel_data.by_tab[tabId]`): `funnel_principal_neto`, `funnel_principal_count`, `funnel_principal_price`, `funnel_bump_neto`, `funnel_upsell_neto`, `funnel_upsell_visits`, `funnel_pagos_iniciados`, etc.
+- **Ventas globales** (de cuenta, sin campaña): `ventas_principal/bump/upsell/downsell` (+ `_count`, `_bruto`, `_usd`), `ventas_reembolsado(_count)`, `ventas_cerradas`.
+- **Funnel del tab activo** (inyectados por `DashboardClient` desde `hotmart_funnel_data.by_tab[tabId]`): `funnel_principal_neto`, `funnel_principal_count`, `funnel_principal_price`, `funnel_bump_neto`, `funnel_upsell_neto`, `funnel_upsell_visits`, `funnel_pagos_iniciados`, etc. `funnel_principal_price` es el precio público configurado en USD, ya convertido a la moneda de reporte con la tasa de cada día y **promediado** entre días, no sumado (`PROMEDIOS_DE_FILA`): sumado daba precio × días, y `funnel_facturacion_bruta` de un mes salía treinta veces más alta.
+- **Hotmart por campaña (`hm_*`)**: `hm_ventas`, `hm_compras`, `hm_bumps`, `hm_neto`, `hm_bruto`, `hm_reembolsos`, `hm_neto_reembolsado`, `hm_neto_usd`, `hm_bruto_usd`. No están en `FIELD_MAP`: las pone en cada fila el cubo de ventas (`src/lib/dashboard/hotmart-cubo.ts`, desde `hotmart_ventas`) **recortadas por el filtro de campañas de la pestaña**, y el `campaignFilter` de una tarjeta o columna las recorta otra vez. Solo se cargan si alguna fórmula del layout usa una clave `hm_` (`formulaUsaHotmart`). Si el cubo no se pudo cargar entero, no se adjunta y salen «—» en vez de 0. Detalle en [doc 18](./18-fuentes-y-cruces.md#ventas-de-hotmart-por-campaña-hm_).
 - **Leads (Google Sheets)**: `leads_totales`, `leads_calificados`, `leads_no_calificados`, `tasa_calificacion`.
 
 ### 2. Macros (`MACRO_MAP`)
@@ -36,7 +37,7 @@ meta_cpc  = meta_spend / meta_clicks
 meta_cpm  = (meta_spend / meta_impressions) * 1000
 meta_ctr  = (meta_clicks / meta_impressions) * 100
 meta_cpl  = meta_spend / meta_leads
-meta_roas = (ventas_principal + ventas_bump + ventas_upsell) / meta_spend
+meta_roas = (ventas_principal + ventas_bump + ventas_upsell + ventas_downsell) / meta_spend
 tiktok_cpc = tiktok_spend / tiktok_clicks
 
 funnel_facturacion_neta = funnel_principal_neto + funnel_bump_neto + funnel_upsell_neto
@@ -45,11 +46,36 @@ funnel_roi   = ((funnel_…_neto sumados) - meta_spend) / meta_spend
 funnel_costo_compra = meta_spend / funnel_principal_count
 funnel_pct_pagos_compras = (funnel_principal_count / funnel_pagos_iniciados) * 100
 
-total_facturacion_neta = ventas_principal + ventas_bump + ventas_upsell
-total_roas = (ventas_principal + ventas_bump + ventas_upsell) / meta_spend
+total_facturacion_neta = ventas_principal + ventas_bump + ventas_upsell + ventas_downsell
+total_roas = (ventas_principal + ventas_bump + ventas_upsell + ventas_downsell) / (meta_spend + tiktok_spend)
 ```
 
 La expansión detecta **referencias circulares** y devuelve `'0'` para romper ciclos.
+
+#### Macros de Hotmart (auditoría del 2026-09-25)
+
+Las `hm_*` repiten las derivadas del BI (`derivadasHotmart`, `src/lib/hotmart/metricas.ts`)
+para que `hm_cpa` diga lo mismo en una pestaña y en un informe. El gasto es el de las
+dos plataformas, recortado por el mismo filtro que las ventas:
+
+```
+hm_roas           = hm_neto / (meta_spend + tiktok_spend)
+hm_cpa            = (meta_spend + tiktok_spend) / hm_ventas       # por transacción: bumps y upsells cuentan aparte
+hm_cpa_compra     = (meta_spend + tiktok_spend) / hm_compras      # por comprador
+hm_ticket_medio   = hm_neto / hm_ventas
+hm_ticket_compra  = hm_neto / hm_compras
+hm_tasa_reembolso = (hm_neto_reembolsado / (hm_neto + hm_neto_reembolsado)) * 100
+hm_tasa_bump      = (hm_bumps / hm_compras) * 100
+```
+
+Una diferencia inevitable con el BI: aquí un ROAS con gasto y sin ventas da 0 (el
+motor es aritmética pura); allí, «—».
+
+Corregidas en la misma auditoría, conservando el id para no romper layouts:
+
+- **`meta_roas`** incluye el downsell, como `total_roas`.
+- **`total_facturacion_neta_real`** es ya la neta (`ventas_principal + … + ventas_downsell`): `ventas_*` solo suma lo cobrado y lo devuelto va aparte a `ventas_reembolsado`, así que restarlo lo descontaba dos veces.
+- **`total_tasa_reembolso`** divide entre lo facturado **antes** de devolver (neto + reembolsado) y va en porcentaje (× 100): con el neto solo, devolver la mitad daba 100 %. Misma definición que `hm_tasa_reembolso`.
 
 ### 3. Alias semánticos (`SEMANTIC_ALIASES`)
 

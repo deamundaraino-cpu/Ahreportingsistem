@@ -315,8 +315,12 @@ function firmaDeCampos(campos: LeadCampoDef[]): string {
  * Índice nombre de campaña → `campaign_id`, para que el diccionario del dataset
  * pueda llevar el id. Lo necesitan los grupos de campaña del dashboard, que
  * mapean por id además de por patrón de nombre.
+ *
+ * Exportado para el cubo de ventas de Hotmart (`hotmart/cubo-db.ts`): los dos
+ * cubos tienen que dar el MISMO id a la misma campaña, o un grupo de campañas
+ * recortaría leads y ventas de forma distinta.
  */
-function idsPorNombre(resolver: CampaignResolver | null): Map<string, string | null> {
+export function idsPorNombre(resolver: CampaignResolver | null): Map<string, string | null> {
   const out = new Map<string, string | null>();
   if (!resolver) return out;
   for (const agg of resolver.index.campaigns.values()) {

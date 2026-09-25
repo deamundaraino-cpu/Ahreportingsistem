@@ -117,5 +117,6 @@ curl -X POST https://reportes.adshouse.cloud/api/mcp \
 - Rangos inclusivos y con hoy incluido: `last_7_days` son 7 días.
 - Tope de **180 días**; un rango mayor o con fechas futuras se recorta y se avisa en `warnings` en vez de fallar.
 - `warnings` distingue «no hubo inversión» de «no pude mirar».
+- Los importes (gasto, CPL, CPC, ventas de Hotmart) van en la **moneda de reporte** del cliente, que no siempre es USD: cada respuesta con dinero lleva `moneda` (código ISO) y las descripciones piden citarla con ese código. Las ventas de Hotmart se convierten con la tasa de cada día, como en el dashboard; un día sin tasa se queda en USD y se avisa en `warnings`.
 
 > El servidor MCP usa la _service role key_ (omite RLS), así que el alcance real lo imponen los tres ejes de autorización del registro, no las políticas RLS. La paridad de cifras con el dashboard la comprueba `scripts/verify-mcp-paridad.ts`.

@@ -8,7 +8,7 @@ Todos los endpoints HTTP viven en `src/app/api/**/route.ts`. Cada uno aplica su 
 | -------------------------------------- | ------------------------------------------------------------------------ |
 | API pública v1, MCP                    | `Authorization: Bearer ads_…` (token de API con permisos; solo cabecera) |
 | Cron / workers                         | `Authorization: Bearer $CRON_SECRET`                                     |
-| Webhook Hotmart                        | Firma HMAC (`x-hotmart-signature`) o token legacy (`x-hotmart-hottok`)   |
+| Webhook Hotmart                        | Hottok de Hotmart en `X-HOTMART-HOTTOK` (o HMAC / `?hottok=` heredados)  |
 | Pixel, health                          | Público (sin auth)                                                       |
 | Resto (sync, tokens, reports, reorder) | Sesión Supabase                                                          |
 
@@ -48,12 +48,15 @@ Grupos de campañas (filtrable por `?client_id=`).
 
 ### `GET /api/v1/metrics` — `read:metrics`
 
-Métricas diarias. Params: `client_id` (req.), `from` (def. -30d), `to` (def. hoy), `limit` (def. 90, máx. 365).
+Métricas diarias, una fila por día en orden ascendente. Params: `client_id` (req., UUID), `from` (def. hoy − 30 días), `to` (def. hoy), `limit` (días, def. 90, máx. 365). «Hoy» es el de Colombia.
+
+Las cifras salen de `getMetricasCliente` (`src/lib/metrics/client-metrics.ts`), el mismo camino que el dashboard, el MCP y el agente. Antes la ruta leía las columnas crudas de `metricas_diarias` y no cuadraba con ellos.
 
 ```json
 {
   "client": { "id": "uuid", "name": "…" },
   "period": { "from": "YYYY-MM-DD", "to": "YYYY-MM-DD" },
+  "moneda": "CLP",
   "metrics": [
     {
       "fecha": "YYYY-MM-DD",
@@ -65,11 +68,24 @@ Métricas diarias. Params: `client_id` (req.), `from` (def. -30d), `to` (def. ho
       "ventas_principal": 0,
       "ventas_bump": 0,
       "ventas_upsell": 0,
-      "ventas_cerradas": 0
+      "ventas_cerradas": 0,
+      "ventas_principal_usd": 0,
+      "ventas_bump_usd": 0,
+      "ventas_upsell_usd": 0
     }
-  ]
+  ],
+  "warnings": []
 }
 ```
+
+Las claves de siempre se conservan, pero **cuatro cambiaron de significado**:
+
+- `meta_spend`, `meta_impressions`, `meta_clicks` — suma del array `meta_campaigns[]`, como el dashboard, no la columna. Si la paginación de Meta se truncó y no cuadran, el día se avisa en `warnings`.
+- `ventas_principal`, `ventas_bump`, `ventas_upsell` — en la **moneda de reporte** del cliente (`moneda`, código ISO), convertidas con la tasa de cada día. Antes iban en USD; el USD sigue en las nuevas `ventas_*_usd`. Un día sin tasa conocida se queda en USD y se avisa en `warnings`.
+- `ventas_cerradas` — el valor cargado a mano (`metricas_manuales.VENTAS_CERRADAS`). La columna homónima está obsoleta desde la migración 045 y valía siempre 0.
+- `period` — el rango **aplicado** (sin días futuros y como mucho `limit` días), no el eco de los parámetros. Si `limit` recorta el rango, también se avisa en `warnings`.
+
+Errores: `client_id` ausente o que no es UUID, fechas que no existen (`2026-02-31`) o `limit` no positivo dan **400** `VALIDATION_ERROR` (antes, 500 de la base de datos). Un cliente ajeno al token, **404**.
 
 ### `GET /api/v1/ad-thumbnails`
 
@@ -139,6 +155,10 @@ Requieren `Authorization: Bearer $CRON_SECRET`. Programación en [doc 14](./14-c
 
 Sincronizador principal (Meta, TikTok, Hotmart, GA4). Params: `date` | (`start`+`end`) | `client_id`. `maxDuration` 300s. Hace `upsert` en `metricas_diarias` con desgloses JSONB. Devuelve un resumen por cliente.
 
+### `GET /api/worker/hotmart`
+
+Job de Hotmart: `modo` = `backfill` | `reclasificar` | `reconciliar`, con `cliente_id`, `desde`, `hasta`. Escribe en `hotmart_ventas` y reagrega `metricas_diarias`. Devuelve `{ ok, errores, results[], debugLogs, filas_escritas, partial, resumeFrom, … }`. Detalle en [doc 14](./14-cron-y-workers.md#apiworkerhotmart--backfill-reclasificación-y-reconciliación-de-hotmart).
+
 ### `GET /api/worker/backfill-campaign-ids`
 
 Utilidad para rellenar `campaign_id` faltantes en métricas históricas. Params: `client_id` (req.), `days` (def. 90). Delega en `/api/worker`.
@@ -163,7 +183,7 @@ Reagrega `sales_events` → `hourly_metrics`. Params: `hours` (def. 24, máx. 72
 
 ### `POST /api/report-utm/webhooks/hotmart/[clienteId]`
 
-Recibe ventas de Hotmart. Valida firma (HMAC o hottok), parsea el payload (`hotmart-parser`), hace `upsert` en `report_utm.sales_events` (dedupe por `cliente_id+platform+platform_sale_id`), resuelve atribución multi-touch y emite webhooks salientes. Códigos: 201 ok, 404 sin integración, 403 pausada, 401 firma inválida, 422 payload inválido, 500 error BD. `GET` sirve como health-check de la URL. Detalle en [doc 12](./12-modulo-report-utm.md).
+Recibe ventas de Hotmart. Valida el hottok que genera Hotmart (cabecera `X-HOTMART-HOTTOK`, contra el que el usuario pegó en la tarjeta; HMAC y `?hottok=` quedan como vías heredadas), parsea con `src/lib/hotmart/parser.ts`, guarda en `public.hotmart_ventas` y reagrega `metricas_diarias`. Solo si el evento se aplicó como el más reciente lo espeja en `report_utm.sales_events` (dedupe por `cliente_id+platform+platform_sale_id`), resuelve atribución multi-touch y avisa (webhooks salientes y notificaciones, una vez por estado). Códigos: 201 ok · 200 evento que no es venta o evento antiguo (ignorado) · 400 cuerpo vacío o JSON inválido · 404 sin integración o sin credencial · 403 pausada · 401 hottok inválido · 413 cuerpo > 256 KB · 422 payload ilegible · 429 rate limit · 500 error BD. `GET` sirve como health-check de la URL. Alta y detalle en [doc 08](./08-integraciones.md#webhook-ventas-en-vivo).
 
 ### `POST /api/report-utm/webhooks/ghl/[clienteId]`
 
@@ -209,11 +229,12 @@ Resuelve el slug de tracking → destino con UTMs. Setea cookies de atribución 
 | `/api/auth/meta` `/callback`                   | GET             | OAuth                        |
 | `/api/auth/tiktok` `/callback`                 | GET             | OAuth                        |
 | `/api/worker`                                  | GET             | CRON_SECRET                  |
+| `/api/worker/hotmart`                          | GET             | CRON_SECRET                  |
 | `/api/worker/backfill-campaign-ids`            | GET             | CRON_SECRET                  |
 | `/api/cron/refresh-meta-tokens`                | GET             | CRON_SECRET                  |
 | `/api/cron/report-utm/aggregate`               | GET/POST        | CRON_SECRET                  |
 | `/api/report-utm/pixel/event`                  | POST/OPTIONS    | público                      |
-| `/api/report-utm/webhooks/hotmart/[clienteId]` | GET/POST        | HMAC/hottok                  |
+| `/api/report-utm/webhooks/hotmart/[clienteId]` | GET/POST        | hottok de Hotmart            |
 | `/api/report-utm/webhooks/ghl/[clienteId]`     | GET/POST        | token compartido / HMAC      |
 | `/api/cron/sync-ghl-leads`                     | GET/POST        | CRON_SECRET                  |
 | `/api/admin/sync-conversiones-offline`         | GET/POST        | sesión                       |

@@ -26,10 +26,8 @@ export const ESTADO_POR_EVENTO: Readonly<Record<string, EstadoVenta>> = {
   PURCHASE_APPROVED: 'aprobada',
   PURCHASE_COMPLETE: 'completa',
   PURCHASE_BILLET_PRINTED: 'pendiente',
-  PURCHASE_PROTEST: 'pendiente',
   PURCHASE_DELAYED: 'pendiente',
   PURCHASE_WAITING_PAYMENT: 'pendiente',
-  PURCHASE_OUT_OF_SHOPPING_CART: 'pendiente',
   PURCHASE_REFUNDED: 'reembolsada',
   PURCHASE_CHARGEBACK: 'chargeback',
   PURCHASE_CANCELED: 'cancelada',
@@ -44,6 +42,13 @@ export const ESTADO_POR_EVENTO: Readonly<Record<string, EstadoVenta>> = {
  * correcto, y la integración no debe marcarse como rota por ellos.
  */
 export const EVENTOS_NO_VENTA: ReadonlySet<string> = new Set([
+  // Carrito abandonado: nadie pagó nada, y a veces llega sin transacción (el
+  // parser devolvía 422). Guardarlo como venta pendiente inflaba la tabla.
+  'PURCHASE_OUT_OF_SHOPPING_CART',
+  // Disputa abierta por el comprador. NO cambia el estado: el dinero sigue
+  // cobrado hasta que Hotmart resuelva, y el desenlace llega como
+  // PURCHASE_REFUNDED o PURCHASE_CHARGEBACK. Antes bajaba la venta a pendiente.
+  'PURCHASE_PROTEST',
   'SUBSCRIPTION_CANCELLATION',
   'SWITCH_PLAN',
   'UPDATE_SUBSCRIPTION_CHARGE_DATE',
@@ -63,15 +68,28 @@ export const ESTADO_POR_STATUS_API: Readonly<Record<string, EstadoVenta>> = {
   COMPLETE: 'completa',
   BILLET_PRINTED: 'pendiente',
   WAITING_PAYMENT: 'pendiente',
+  PRINTED_BILLET: 'pendiente',
   UNDER_ANALISYS: 'pendiente',
   UNDER_ANALYSIS: 'pendiente',
-  PROTESTED: 'pendiente',
+  PROCESSING_TRANSACTION: 'pendiente',
+  PRE_ORDER: 'pendiente',
+  OVERDUE: 'pendiente',
   DELAYED: 'pendiente',
+  // En disputa: el dinero sigue cobrado hasta que se resuelva (ver
+  // PURCHASE_PROTEST arriba). Como pendiente, restaba una venta real.
+  PROTESTED: 'aprobada',
+  // Reembolso PARCIAL: la venta sigue existiendo y el importe devuelto no se
+  // conoce desde aquí. Se cuenta como cobrada y `estado_crudo` lo deja a la
+  // vista para auditarlo.
+  PARTIALLY_REFUNDED: 'aprobada',
   REFUNDED: 'reembolsada',
   CHARGEBACK: 'chargeback',
   CANCELLED: 'cancelada',
   CANCELED: 'cancelada',
   EXPIRED: 'expirada',
+  // Rechazos del medio de pago: el pedido no se cobró y ya no se cobrará.
+  NO_FUNDS: 'cancelada',
+  BLOCKED: 'cancelada',
   STARTED: 'pendiente',
   DLOCAL_ANALYSIS: 'pendiente',
 };

@@ -170,6 +170,45 @@ const CASOS: Caso[] = [
     limit: 3,
     sort: 'desc',
   },
+  // Ventas de Hotmart por transacción (`hm_*`, public.hotmart_ventas). Hasta la
+  // auditoría del 2026-09-25 no había ni un caso: una regresión en la fuente
+  // que alimenta el ROAS real pasaba sin que nada avisara.
+  {
+    nombre: 'hotmart por venta (hm)',
+    metrics: [
+      'hm_ventas',
+      'hm_neto',
+      'hm_bruto',
+      'hm_reembolsos',
+      'hm_neto_reembolsado',
+      'hm_roas',
+      'hm_cpa',
+      'hm_ticket_medio',
+      'hm_neto_usd',
+      'hm_bruto_usd',
+    ],
+    dimension: 'none',
+  },
+  {
+    nombre: 'hm por campaña',
+    metrics: ['hm_ventas', 'hm_neto', 'spend', 'hm_roas'],
+    dimension: 'utm_campaign',
+    limit: 20,
+    sort: 'desc',
+  },
+  {
+    nombre: 'hm por día',
+    metrics: ['hm_ventas', 'hm_neto'],
+    dimension: 'date',
+    date_grouping: 'day',
+  },
+  {
+    nombre: 'hm por tipo',
+    metrics: ['hm_ventas', 'hm_neto'],
+    dimension: 'hm_tipo',
+    limit: 10,
+    sort: 'desc',
+  },
 ];
 
 interface FilaGuardada {

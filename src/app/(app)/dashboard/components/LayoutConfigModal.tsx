@@ -155,7 +155,12 @@ export function FormulaInput({
     if (activeTab === 'meta') return m.id.startsWith('meta_');
     if (activeTab === 'tiktok') return m.id.startsWith('tiktok_');
     if (activeTab === 'ventas')
-      return m.id.startsWith('ventas_') || m.id.startsWith('total_') || m.id.startsWith('funnel_');
+      return (
+        m.id.startsWith('ventas_') ||
+        m.id.startsWith('total_') ||
+        m.id.startsWith('funnel_') ||
+        m.id.startsWith('hm_')
+      );
     if (activeTab === 'ga4') return m.id.startsWith('ga_');
     if (activeTab === 'offline')
       return (

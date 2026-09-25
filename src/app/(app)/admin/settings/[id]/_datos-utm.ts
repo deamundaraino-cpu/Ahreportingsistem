@@ -3,7 +3,7 @@ import { cache } from 'react';
 import { headers } from 'next/headers';
 import { reportUtmClient } from '@/lib/report-utm/client';
 import { createClient, createAdminClient } from '@/utils/supabase/server';
-import type { ReportUtmIntegration } from '@/lib/report-utm/types';
+import type { ReportUtmHotmartIntegracion, ReportUtmIntegration } from '@/lib/report-utm/types';
 import type { ClienteGoals } from '@/lib/report-utm/bi-metadata';
 import { monedaDeClienteUtm, ultimasTasasGuardadas } from '@/lib/moneda-reporte';
 import type { MonedaReporte, TasaGuardada } from '@/lib/moneda-reporte';
@@ -19,13 +19,34 @@ type IntegS2S = Pick<
   'id' | 'cliente_id' | 'status' | 'last_sync_at' | 'last_error'
 >;
 
+type HotmartFila = Pick<
+  ReportUtmIntegration,
+  'id' | 'cliente_id' | 'status' | 'config' | 'last_sync_at' | 'last_error'
+>;
+
+/** La fila de Hotmart sin `config`: del hottok solo sale si existe y su final. */
+function hotmartSegura(fila: HotmartFila | null): ReportUtmHotmartIntegracion | null {
+  if (!fila) return null;
+  const config = (fila.config ?? {}) as Record<string, unknown>;
+  const final = typeof config.hottok_final === 'string' ? config.hottok_final : null;
+  return {
+    id: fila.id,
+    cliente_id: fila.cliente_id,
+    status: fila.status,
+    last_sync_at: fila.last_sync_at,
+    last_error: fila.last_error,
+    hottok_configurado: typeof config.hottok_enc === 'string' && config.hottok_enc.length > 0,
+    hottok_final: final,
+  };
+}
+
 export interface DatosUtm {
   metaLeads: Integ | null;
   metaCapi: Integ | null;
   googleAds: Integ | null;
   ghl: Integ | null;
   s2s: IntegS2S | null;
-  hotmart: ReportUtmIntegration | null;
+  hotmart: ReportUtmHotmartIntegracion | null;
   outbound: unknown[];
   metaConnected: boolean;
   webhookOrigin: string;
@@ -80,12 +101,10 @@ export const cargarDatosUtm = cache(
       migracionExclusion,
     ] = await Promise.all([
       supabase.from('clientes').select('slug, config').eq('id', rtmClienteId).maybeSingle(),
-      supabase
-        .from('integrations')
-        .select('*')
-        .eq('cliente_id', rtmClienteId)
-        .eq('tipo', 'hotmart')
-        .maybeSingle<ReportUtmIntegration>(),
+      // Nada de `select('*')`: iba entero a un componente de cliente, con
+      // `webhook_secret_enc` incluido. `config` se lee solo para derivar si hay
+      // hottok, y no sale de aquí (ver `hotmartSegura`).
+      integ('hotmart', 'id, cliente_id, status, config, last_sync_at, last_error'),
       integ('meta'),
       integ('google'),
       integ('s2s', 'id, cliente_id, status, last_sync_at, last_error'),
@@ -137,7 +156,7 @@ export const cargarDatosUtm = cache(
       googleAds: (googleAds as Integ | null) ?? null,
       ghl: (ghl as Integ | null) ?? null,
       s2s: (s2s as IntegS2S | null) ?? null,
-      hotmart: hotmart ?? null,
+      hotmart: hotmartSegura(hotmart as HotmartFila | null),
       outbound: outbound ?? [],
       metaConnected,
       webhookOrigin: `${proto}://${host}`,

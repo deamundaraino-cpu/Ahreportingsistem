@@ -1,7 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { NextResponse } from 'next/server';
 import { requireCronAuth } from '@/lib/cron-auth';
-import { metaFetch, tiktokFetch, setRetryDeadline } from '@/lib/rate-limit';
+import { conDeadline, metaFetch, tiktokFetch, setRetryDeadline } from '@/lib/rate-limit';
 import {
   construirResumen,
   normalizarFilas,
@@ -338,9 +338,12 @@ async function run(request: Request) {
   });
 }
 
+// Cada petición lleva su propio plazo de reintentos: el `setRetryDeadline` de
+// `run` solo afecta a ESTE contexto y no deja un plazo caducado en el proceso
+// para el siguiente job (el sync-worker del VPS reutiliza el mismo servidor).
 export async function GET(request: Request) {
-  return run(request);
+  return conDeadline(Date.now() + 45_000, () => run(request));
 }
 export async function POST(request: Request) {
-  return run(request);
+  return conDeadline(Date.now() + 45_000, () => run(request));
 }

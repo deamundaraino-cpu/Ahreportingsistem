@@ -4,7 +4,12 @@ import { requireCronAuth } from '@/lib/cron-auth';
 import { createClient as createSSRClient } from '@/utils/supabase/server';
 import { notifyUsers } from '@/lib/notifications/notify';
 import { cifrarSecreto } from '@/lib/secretos';
-import { refreshTokenDe, HOTMART_AUTH_BASE } from '@/lib/hotmart/cliente';
+import {
+  refreshTokenDe,
+  renovadoPorOtro,
+  HOTMART_AUTH_BASE,
+  TIMEOUT_TOKEN_MS,
+} from '@/lib/hotmart/cliente';
 
 const TOKEN_URL = `${HOTMART_AUTH_BASE}/security/oauth/token`;
 
@@ -80,10 +85,42 @@ export async function GET(request: Request) {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: params.toString(),
+        signal: AbortSignal.timeout(TIMEOUT_TOKEN_MS),
       });
       const data = await res.json();
 
       if (data.error || !data.access_token) {
+        // Antes de dar la conexión por muerta: ¿la renovó otro mientras tanto?
+        // El worker refresca en línea a 60 s del vencimiento con el MISMO
+        // refresh token, y Hotmart lo rota en cada uso; el que llega segundo
+        // recibe `invalid_grant` aunque la conexión esté sana. Esta lista se
+        // leyó al empezar la corrida, así que también puede estar vieja.
+        const { data: fila, error: errRelectura } = await supabase
+          .from('clientes')
+          .select('config_api')
+          .eq('id', cliente.id)
+          .maybeSingle();
+        if (!errRelectura && renovadoPorOtro(config, fila?.config_api)) {
+          results.push({
+            id: cliente.id,
+            nombre: cliente.nombre,
+            status: 'skipped_concurrent',
+            detail: 'Otro proceso renovó el token a la vez',
+          });
+          continue;
+        }
+        if (errRelectura) {
+          // Sin poder comprobarlo no se marca `expired`: pediría reconectar una
+          // conexión que quizá está bien. La próxima corrida lo verá.
+          results.push({
+            id: cliente.id,
+            nombre: cliente.nombre,
+            status: 'error',
+            detail: `Refresco fallido y relectura imposible: ${errRelectura.message}`,
+          });
+          continue;
+        }
+
         // Refresh token vencido o revocado: marcar para que la UI pida reconexión.
         // Vía RPC para no reescribir el JSONB entero y pisar lo que el worker
         // pueda estar guardando a la vez.

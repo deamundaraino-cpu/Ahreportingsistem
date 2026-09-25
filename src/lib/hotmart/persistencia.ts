@@ -72,6 +72,14 @@ export function aFilaJson(clienteId: string, venta: VentaHotmart): Record<string
     raw_payload: venta.raw_payload ?? null,
     origen: venta.origen,
     sales_event_id: null,
+    // Migración 089. Solo si vienen definidas: una clave ausente deja la
+    // decisión a la RPC, y la RPC anterior a la 089 las ignora.
+    ...(venta.estado_crudo !== undefined && { estado_crudo: venta.estado_crudo }),
+    ...(venta.atribucion_metodo !== undefined && {
+      atribucion_metodo: venta.atribucion_metodo,
+      atribucion_lead_id: venta.atribucion_lead_id ?? null,
+      atribucion_at: venta.atribucion_at ?? null,
+    }),
   };
 }
 

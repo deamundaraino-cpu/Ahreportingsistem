@@ -153,6 +153,15 @@ export type BiMetric =
   | 'hm_roas'
   | 'hm_cpa'
   | 'hm_ticket_medio'
+  // Pedidos frente a transacciones (auditoría 2026-09-25): `hm_ventas` cuenta
+  // el bump y el upsell de un comprador como ventas aparte; `hm_compras` cuenta
+  // pedidos. El CPA por comprador es gasto ÷ compras.
+  | 'hm_compras'
+  | 'hm_bumps'
+  | 'hm_cpa_compra'
+  | 'hm_ticket_compra'
+  | 'hm_tasa_bump'
+  | 'hm_conversion'
   // Moneda de reporte: la facturación SIN convertir (en dólares) y la tasa con
   // la que se convierte.
   | 'hm_neto_usd'
@@ -301,6 +310,8 @@ export const ADDITIVE_METRICS: ReadonlySet<string> = new Set<string>([
   // fuente (tasa de reembolso, ROAS, CPA, ticket medio) NO están aquí: se
   // recalculan sobre los totales de sus operandos.
   'hm_ventas',
+  'hm_compras',
+  'hm_bumps',
   'hm_neto',
   'hm_bruto',
   'hm_reembolsos',
@@ -343,6 +354,8 @@ export const FUNNEL_STAGE_METRICS = [
   'purchases',
   'sales_count',
   'hm_ventas',
+  // Pedidos: siempre ≤ ventas (cada bump es una venta más del mismo pedido).
+  'hm_compras',
 ] as const;
 
 /** Etapas por defecto del embudo cuando el widget no configura ninguna. */
@@ -368,6 +381,8 @@ export const PIVOT_METRICS: BiMetric[] = [
   // hacer; los ratios de la misma fuente quedan fuera porque no se pueden
   // sumar por celda.
   'hm_ventas',
+  'hm_compras',
+  'hm_bumps',
   'hm_neto',
   'hm_bruto',
   'hm_reembolsos',
@@ -913,6 +928,39 @@ export const METRIC_META: Record<BiMetric, MetricMetaEntry> = {
     group: 'hotmart',
     breakdown: 'any',
   },
+  hm_compras: {
+    label: 'Compras Hotmart (#)',
+    format: 'number',
+    group: 'hotmart',
+    breakdown: 'any',
+  },
+  hm_bumps: { label: 'Order bumps (#)', format: 'number', group: 'hotmart', breakdown: 'any' },
+  // Hereda el límite del gasto, igual que hm_cpa.
+  hm_cpa_compra: {
+    label: 'CPA por compra (Hotmart)',
+    format: 'currency',
+    group: 'hotmart',
+    breakdown: 'campaign',
+  },
+  hm_ticket_compra: {
+    label: 'Ticket por compra',
+    format: 'currency',
+    group: 'hotmart',
+    breakdown: 'any',
+  },
+  hm_tasa_bump: {
+    label: 'Tasa de order bump',
+    format: 'percent',
+    group: 'hotmart',
+    breakdown: 'any',
+  },
+  // Compras ÷ leads: el desglose derivado es el de sus dos hojas (`any`).
+  hm_conversion: {
+    label: 'Conversión lead → compra',
+    format: 'percent',
+    group: 'hotmart',
+    breakdown: 'any',
+  },
   // ── Conversiones offline (Google Sheets del cliente) ──
   offline_leads: {
     label: 'Leads offline (Sheet)',
@@ -991,9 +1039,11 @@ export const RECOMMENDED_METRICS: BiMetric[] = [
   'cpc',
   'cpm',
   'hm_ventas',
+  'hm_compras',
   'hm_neto',
   'hm_roas',
   'hm_cpa',
+  'hm_cpa_compra',
 ];
 
 /**
@@ -2429,11 +2479,22 @@ export const METRIC_GLOSSARY: Record<string, string> = {
     'Cantidad de ventas del período que acabaron reembolsadas o en contracargo. Se cuentan en la fecha de la VENTA, no en la del reembolso.',
   hm_neto_reembolsado:
     'Dinero neto de las ventas del período que acabaron devueltas. Se imputa a la fecha de la venta original para que el retorno de la campaña refleje lo que de verdad dejó.',
-  hm_tasa_reembolso: 'Qué porcentaje de la facturación acabó devuelta. Cuanto MÁS BAJO, mejor.',
+  hm_tasa_reembolso:
+    'Qué porcentaje de lo facturado acabó devuelto (reembolsado ÷ facturado antes de devolver). Cuanto MÁS BAJO, mejor.',
+  hm_compras:
+    'Pedidos cobrados de Hotmart: cada comprador cuenta UNA vez aunque añada order bumps o upsells. Es el número con el que se calcula el costo por comprador.',
+  hm_bumps: 'Order bumps cobrados: productos añadidos al pedido en el mismo checkout.',
+  hm_cpa_compra:
+    'Cuánto costó, en promedio, conseguir cada comprador (gasto ÷ compras). A diferencia del CPA por venta, no se abarata con los bumps y upsells. Cuanto MÁS BAJO, mejor.',
+  hm_ticket_compra:
+    'Facturación neta dividida entre las compras: cuánto deja cada comprador sumando lo que añadió al pedido.',
+  hm_tasa_bump: 'Qué porcentaje de las compras añadió un order bump.',
+  hm_conversion:
+    'Qué porcentaje de los leads del período terminó comprando en Hotmart (compras ÷ leads). Compara el mismo período, no sigue a cada lead hasta su compra.',
   hm_roas:
     'Retorno de la inversión publicitaria con las ventas atribuidas a cada campaña: por cada $1 invertido, cuántos $ se facturaron. Cuanto MÁS ALTO, mejor. A diferencia del ROAS de cuenta, este SÍ se reparte por campaña.',
   hm_cpa:
-    'Cuánto costó, en promedio, cada venta de Hotmart atribuida a la campaña. Cuanto MÁS BAJO, mejor.',
+    'Cuánto costó, en promedio, cada venta de Hotmart atribuida a la campaña. Cuenta los order bumps y upsells como ventas aparte; para el costo por comprador usa «CPA por compra». Cuanto MÁS BAJO, mejor.',
   hm_ticket_medio:
     'Facturación neta dividida entre el número de ventas: cuánto deja, en promedio, cada compra.',
   hm_neto_usd:
@@ -2526,6 +2587,7 @@ export const LOWER_IS_BETTER = new Set([
   'frequency',
   'hotmart_cpa',
   'hm_cpa',
+  'hm_cpa_compra',
   'hm_reembolsos',
   'hm_neto_reembolsado',
   'hm_tasa_reembolso',
@@ -2561,6 +2623,7 @@ const GOAL_BY_METRIC: Record<string, { key: keyof ClienteGoals; mustNotExceed: b
   hotmart_cpa: { key: 'cpa_max', mustNotExceed: true },
   hotmart_roas: { key: 'roas_min', mustNotExceed: false },
   hm_cpa: { key: 'cpa_max', mustNotExceed: true },
+  hm_cpa_compra: { key: 'cpa_max', mustNotExceed: true },
   hm_roas: { key: 'roas_min', mustNotExceed: false },
   leads_count: { key: 'leads_target', mustNotExceed: false },
   spend: { key: 'budget', mustNotExceed: true },

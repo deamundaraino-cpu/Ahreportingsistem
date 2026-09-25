@@ -168,8 +168,10 @@ seccion('Traducción de tokens legados');
 const legacyMetrics = Object.keys(METRIC_META) as BiMetric[];
 check(
   `METRIC_META tiene ${legacyMetrics.length} métricas`,
-  // 86 + las 3 de la moneda de reporte (hm_neto_usd, hm_bruto_usd, hm_tasa_cambio).
-  legacyMetrics.length === 89,
+  // 86 + las 3 de la moneda de reporte (hm_neto_usd, hm_bruto_usd, hm_tasa_cambio)
+  // + las 6 de compras de la auditoría de Hotmart (hm_compras, hm_bumps,
+  // hm_cpa_compra, hm_ticket_compra, hm_tasa_bump, hm_conversion).
+  legacyMetrics.length === 95,
   String(legacyMetrics.length)
 );
 
@@ -411,8 +413,8 @@ check(
 
 const conGlosario = Object.keys(METRIC_GLOSSARY).length;
 check(
-  `el registro amplía el glosario de ${conGlosario} a las 89 métricas`,
-  REG.measures().length === 89 && sinHelp.length === 0
+  `el registro amplía el glosario de ${conGlosario} a las 95 métricas`,
+  REG.measures().length === 95 && sinHelp.length === 0
 );
 
 // ════════════════════════════════════════════════════════════

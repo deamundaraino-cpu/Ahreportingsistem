@@ -24,7 +24,8 @@ type Sale = {
   platform: string;
   platform_sale_id: string;
   amount: number | string;
-  currency: string;
+  /** Null cuando Hotmart no informó la moneda: se muestra el importe sin código. */
+  currency: string | null;
   status: string;
   transaction_type: string | null;
   product_name: string | null;
@@ -124,7 +125,7 @@ export default async function SaleDetailPage({ params }: { params: Promise<{ sal
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div className="rounded-2xl border border-border bg-card p-5 space-y-3">
           <h2 className="text-sm font-semibold text-foreground">Venta</h2>
-          <KV label="Monto" value={`${sale.currency} ${Number(sale.amount).toFixed(2)}`} bold />
+          <KV label="Monto" value={importeConMoneda(sale)} bold />
           <KV label="Status" value={sale.status} />
           <KV label="Tipo" value={sale.transaction_type ?? 'principal'} />
           <KV label="Producto" value={sale.product_name ?? '—'} />
@@ -231,7 +232,7 @@ export default async function SaleDetailPage({ params }: { params: Promise<{ sal
               </div>
               <div className="flex-1 pt-0.5">
                 <span className="text-[10px] font-semibold uppercase tracking-wider text-amber-600 dark:text-amber-400">
-                  venta · {sale.currency} {Number(sale.amount).toFixed(2)}
+                  venta · {importeConMoneda(sale)}
                 </span>
                 <p className="text-xs text-foreground/90 mt-0.5">
                   {sale.product_name ?? sale.platform}
@@ -384,4 +385,10 @@ function TouchCard({
       )}
     </div>
   );
+}
+
+/** El importe con su código de moneda, o solo el importe si no se conoce. */
+function importeConMoneda(sale: { currency: string | null; amount: unknown }): string {
+  const importe = Number(sale.amount).toFixed(2);
+  return sale.currency ? `${sale.currency} ${importe}` : importe;
 }

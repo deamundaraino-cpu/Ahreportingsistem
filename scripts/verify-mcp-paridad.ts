@@ -17,8 +17,14 @@
  *      casa NINGUNA campaña y devuelve gasto 0 sin error: el agente informaría
  *      de que la estrategia no gastó nada.
  *
+ *   3. MONEDA. Hotmart se guarda en USD y el gasto en la moneda de la cuenta.
+ *      El dashboard convierte las ventas a la moneda de reporte del cliente
+ *      (`convertirFilasMetricas`); `getMetricasCliente` no lo hacía, y el ROAS
+ *      del MCP dividía dólares entre pesos chilenos en Cris.
+ *
  * Este script recorre las pestañas reales del proyecto y comprueba que el
- * camino nuevo entiende lo que el viejo no entendía.
+ * camino nuevo entiende lo que el viejo no entendía. Y que las herramientas del
+ * agente/MCP que devuelven dinero dicen en qué moneda (`moneda`).
  *
  * Requiere base de datos (forma parte de `test:datos`).
  */
@@ -252,7 +258,169 @@ async function main() {
     );
   }
 
-  // ── 4. Aislamiento por cliente y tope de rango ───────────────────────────
+  // ── 4. Moneda de reporte ─────────────────────────────────────────────────
+  console.log('\n── Moneda de reporte ────────────────────────────────────────');
+
+  const { cargarConversor, leerMonedaReporte } = await import('../src/lib/moneda-reporte');
+  const { data: utmData, error: errUtm } = await sb
+    .schema('report_utm')
+    .from('clientes')
+    .select('nombre, public_cliente_id, config')
+    .not('public_cliente_id', 'is', null);
+  if (errUtm) throw new Error('No se pudieron leer los clientes UTM: ' + errUtm.message);
+
+  const utm = (utmData ?? []) as Array<{
+    nombre: string;
+    public_cliente_id: string;
+    config: unknown;
+  }>;
+  const enOtraMoneda = utm.filter((u) => leerMonedaReporte(u.config) !== 'USD');
+  check('hay algún cliente que reporta en otra moneda que cubrir', enOtraMoneda.length > 0);
+
+  const COLS_VENTA = ['ventas_principal', 'ventas_bump', 'ventas_upsell'] as const;
+  type FilaVenta = { fecha: string } & Partial<Record<(typeof COLS_VENTA)[number], number | null>>;
+
+  for (const u of enOtraMoneda) {
+    const moneda = leerMonedaReporte(u.config);
+    const res = await getMetricasCliente({
+      clienteId: u.public_cliente_id,
+      from: desde,
+      to: hasta,
+    });
+    check(`[${u.nombre}] el resultado declara su moneda (${moneda})`, res.moneda === moneda);
+
+    // Lo esperado, calculado aparte desde la tabla: USD crudo y convertido día
+    // a día con la tasa de su fecha, como `cargarMetricasEnriquecidas`.
+    const { data: crudo } = await sb
+      .from('metricas_diarias')
+      .select('fecha, ventas_principal, ventas_bump, ventas_upsell')
+      .eq('cliente_id', u.public_cliente_id)
+      .gte('fecha', res.rango.from)
+      .lte('fecha', res.rango.to);
+    const conv = await cargarConversor(sb, moneda, res.rango.from, res.rango.to);
+    let usd = 0;
+    let convertido = 0;
+    for (const f of (crudo ?? []) as FilaVenta[]) {
+      for (const c of COLS_VENTA) {
+        const v = Number(f[c] ?? 0) || 0;
+        usd += v;
+        convertido += v ? conv.convertir(v, f.fecha) : 0;
+      }
+    }
+    if (usd <= 0) {
+      console.log(`  · [${u.nombre}] sin ventas de Hotmart en el periodo, no es concluyente`);
+      continue;
+    }
+
+    const t = res.totals;
+    const ventasUsd = COLS_VENTA.reduce((s, c) => s + Number(t[`${c}_usd`] ?? 0), 0);
+    const ventas = COLS_VENTA.reduce((s, c) => s + Number(t[c] ?? 0), 0);
+    check(
+      `[${u.nombre}] las gemelas \`ventas_*_usd\` conservan el USD de la tabla`,
+      Math.abs(ventasUsd - usd) < Math.max(0.01, usd * 1e-6),
+      `gemelas=${ventasUsd.toFixed(2)} tabla=${usd.toFixed(2)}`
+    );
+    check(
+      `[${u.nombre}] \`ventas_*\` sale convertido a ${moneda}, como en el dashboard`,
+      // Y distinto del USD: con una tasa cargada, la conversión tiene que notarse.
+      Math.abs(ventas - convertido) < Math.max(0.05, convertido * 1e-6) &&
+        Math.abs(ventas - usd) > 0.01,
+      `mcp=${ventas.toFixed(2)} esperado=${convertido.toFixed(2)} usd=${usd.toFixed(2)}`
+    );
+
+    const spend = Number(t.meta_spend ?? 0);
+    if (spend > 0) {
+      const esperado = ventas / spend;
+      check(
+        `[${u.nombre}] ROAS = ventas en ${moneda} / gasto (no USD / ${moneda})`,
+        Math.abs(Number(t.meta_roas ?? NaN) - esperado) < Math.max(1e-4, esperado * 1e-4),
+        `roas=${t.meta_roas} esperado=${esperado.toFixed(4)}`
+      );
+    }
+  }
+
+  // Las herramientas del agente/MCP tienen que DECIR la moneda: sin ella el
+  // modelo lee «233487» y le pone un «$» delante.
+  if (enOtraMoneda.length > 0) {
+    const { getTool } = await import('../src/lib/agent/registry');
+    const u = enOtraMoneda[0];
+    const moneda = leerMonedaReporte(u.config);
+    const ctx = {
+      userId: 'verify-mcp-paridad',
+      role: 'admin' as const,
+      level: 'consulta' as const,
+      allowedClientIds: 'all' as const,
+      permissions: [],
+      db: sb,
+      origin: 'mcp' as const,
+      conversationId: null,
+      tokenId: null,
+    };
+    const entrada = { client_id: u.public_cliente_id, preset: 'last_7_days' };
+    for (const nombre of [
+      'get_metrics',
+      'get_summary',
+      'compare_periods',
+      'list_campaigns',
+      'get_campaign_performance',
+      'analyze_performance',
+    ]) {
+      const tool = getTool(nombre);
+      if (!tool) {
+        check(`[${nombre}] está registrada`, false);
+        continue;
+      }
+      const salida = (await tool.handler(
+        nombre === 'get_campaign_performance' ? { ...entrada, campaign_id: 'x' } : entrada,
+        ctx
+      )) as { moneda?: unknown };
+      check(
+        `[${nombre}] declara la moneda de ${u.nombre} (${moneda})`,
+        salida.moneda === moneda,
+        String(salida.moneda)
+      );
+    }
+
+    const diario = getTool('daily_traffic_report');
+    if (diario) {
+      const salida = (await diario.handler({ client_id: u.public_cliente_id }, ctx)) as {
+        informes: Array<{ moneda?: unknown; error?: string }>;
+      };
+      const conDatos = salida.informes.filter((i) => !i.error);
+      if (conDatos.length === 0) {
+        console.log(`  · [daily_traffic_report] ${u.nombre} sin gasto ayer, no es concluyente`);
+      } else {
+        check(
+          `[daily_traffic_report] cada informe declara su moneda (${moneda})`,
+          conDatos.every((i) => i.moneda === moneda),
+          JSON.stringify(conDatos.map((i) => i.moneda))
+        );
+      }
+    }
+  }
+
+  // Un cliente en USD: la conversión es la identidad y las gemelas son iguales.
+  const enUsd = utm.find((u) => leerMonedaReporte(u.config) === 'USD');
+  if (enUsd) {
+    const res = await getMetricasCliente({
+      clienteId: enUsd.public_cliente_id,
+      from: desde,
+      to: hasta,
+    });
+    check(
+      `[${enUsd.nombre}] un cliente sin moneda configurada reporta en USD`,
+      res.moneda === 'USD'
+    );
+    const vp = Number(res.totals.ventas_principal ?? 0);
+    const vpUsd = Number(res.totals.ventas_principal_usd ?? vp);
+    check(
+      `[${enUsd.nombre}] en USD la gemela coincide con la columna`,
+      Math.abs(vp - vpUsd) < 0.01,
+      `${vp} vs ${vpUsd}`
+    );
+  }
+
+  // ── 5. Aislamiento por cliente y tope de rango ───────────────────────────
   console.log('\n── Garantías de la capa ─────────────────────────────────────');
 
   let lanzo = false;
