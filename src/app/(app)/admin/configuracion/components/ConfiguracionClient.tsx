@@ -63,6 +63,7 @@ import {
   updateBrandingSettings,
 } from '../_actions';
 import { type RuleRow } from '@/lib/notifications/rules-engine';
+import { formatearMoneda } from '@/lib/moneda-reporte';
 
 interface Props {
   initialRules: RuleRow[];
@@ -1550,7 +1551,7 @@ export function ConfiguracionClient({
                   <div className="flex justify-between font-mono border-t border-border/50 pt-1.5">
                     <span className="text-muted-foreground font-sans">Gasto en periodo:</span>
                     <span className="text-foreground font-semibold">
-                      ${testResult.totalSpend.toLocaleString('en-US', { maximumFractionDigits: 0 })}
+                      {formatearMoneda(testResult.totalSpend, testResult.moneda ?? 'USD')}
                     </span>
                   </div>
                   <div className="flex justify-between font-mono">
@@ -1560,22 +1561,25 @@ export function ConfiguracionClient({
                   <div className="flex justify-between font-mono">
                     <span className="text-muted-foreground font-sans">Ingresos en periodo:</span>
                     <span className="text-foreground font-semibold">
-                      $
-                      {testResult.totalRevenue.toLocaleString('en-US', {
-                        maximumFractionDigits: 0,
-                      })}
+                      {formatearMoneda(testResult.totalRevenue, testResult.moneda ?? 'USD')}
                     </span>
                   </div>
                   {testResult.tabBudget && (
                     <div className="flex justify-between font-mono">
                       <span className="text-muted-foreground font-sans">Presupuesto Objetivo:</span>
                       <span className="text-foreground font-semibold">
-                        $
-                        {testResult.tabBudget.toLocaleString('en-US', { maximumFractionDigits: 0 })}
+                        {formatearMoneda(testResult.tabBudget, testResult.moneda ?? 'USD')}
                       </span>
                     </div>
                   )}
                 </div>
+
+                {testResult.diasSinTasa > 0 && (
+                  <p className="text-[11px] text-muted-foreground">
+                    Sin tasa de cambio para {testResult.diasSinTasa} día(s): esos ingresos de
+                    Hotmart quedaron en USD.
+                  </p>
+                )}
 
                 {/* Budget warning banner */}
                 {testResult.budgetWarning && (

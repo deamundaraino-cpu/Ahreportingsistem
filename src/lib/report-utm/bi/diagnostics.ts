@@ -185,9 +185,12 @@ export function hasDiagnostics(d: QueryDiagnostics | undefined): boolean {
  * `no_public_link` es plomería interna de la agencia: al cliente no le dice nada
  * y además revela cómo está montado el sistema por dentro. Se traduce a
  * «no configurado», que es lo que significa para él. El resto de motivos sí son
- * información legítima: explican por qué una celda está vacía.
+ * información legítima: explican por qué una celda está vacía. La moneda de
+ * reporte y el aviso de tasas de cambio viajan tal cual.
  */
-export function sanitizeForClient(d: QueryDiagnostics | undefined): QueryDiagnostics | undefined {
+export function sanitizeForClient<
+  T extends QueryDiagnostics & { moneda?: string; tasas?: unknown },
+>(d: T | undefined): (QueryDiagnostics & Pick<T, 'moneda' | 'tasas'>) | undefined {
   if (!d) return undefined;
   const neutralizar = (r: SkipReason): SkipReason =>
     r.kind === 'no_public_link' ? { kind: 'not_configured' } : r;
@@ -199,5 +202,9 @@ export function sanitizeForClient(d: QueryDiagnostics | undefined): QueryDiagnos
     skipped: d.skipped.map((s) => ({ ...s, reason: neutralizar(s.reason) })),
     // Se omite a propósito: el estado del enlace es asunto interno.
     hasPublicLink: true,
+    // La moneda y los días sin tasa SÍ son del cliente: sin ellos un enlace
+    // público pinta pesos chilenos con «$» y dos decimales.
+    ...(d.moneda ? { moneda: d.moneda } : {}),
+    ...(d.tasas ? { tasas: d.tasas } : {}),
   };
 }

@@ -21,9 +21,20 @@ import {
   formatearMoneda,
   monedaDeMetrica,
   simboloMoneda,
+  monedaAjustada,
+  monedasDeCuentasMeta,
+  monedaDeCuentasMeta,
+  resolverMonedaReporte,
+  avisoDeTasas,
+  unirAvisosTasas,
+  textoAvisoTasas,
+  precioUsdEnFila,
+  cargarConversor,
 } from '../src/lib/moneda-reporte';
 import { aggregateFormula, formatValue } from '../src/lib/formula-engine';
-import { fuenteParaFecha } from '../src/lib/fx';
+import { fuenteParaFecha, huecosFx } from '../src/lib/fx';
+import { sanitizeForClient } from '../src/lib/report-utm/bi/diagnostics';
+import { buildSummarySentences } from '../src/lib/report-utm/bi/resumen';
 import { interpretarEstadoCuenta } from '../src/lib/meta/estado-cuenta';
 import { cuentasMetaDe, mensajeAlerta } from '../src/lib/meta/alerta-cuenta';
 import { leerVentaGhl, esVentaGanada, numero } from '../src/lib/report-utm/ghl-ventas';
@@ -208,7 +219,7 @@ check(
 );
 check(
   'dashboard: «$» se pinta como CLP sin decimales',
-  formatValue(233487, { prefix: '$', decimals: 2, moneda: 'CLP' }) === 'CLP 233,487',
+  formatValue(233487, { prefix: '$', decimals: 2, moneda: 'CLP' }) === 'CLP 233.487',
   formatValue(233487, { prefix: '$', decimals: 2, moneda: 'CLP' })
 );
 check(
@@ -358,9 +369,245 @@ const aplicadas = aplicarMetaCustomConv([{ dimension_value: 'Camp A', spend: 100
 check('se suma a la fila existente', (aplicadas[0] as Record<string, unknown>)[tok] === 5);
 check('y añade la campaña que solo tenía conversiones', aplicadas.length === 2);
 
-console.log(
-  fallos === 0
-    ? '\n✅ Moneda, cuentas de Meta, ventas del CRM y conversiones: todas las comprobaciones pasan\n'
-    : `\n❌ ${fallos} comprobación(es) fallaron\n`
+// ── 6. Moneda efectiva: ajuste > cuenta de Meta > USD ─────────────────
+console.log('\n6. Moneda efectiva');
+const metaClp = {
+  meta_accounts: [{ account_id: 'act_111' }, { account_id: '222' }],
+  meta_estado_cuentas: { '111': { moneda: 'clp' }, '222': { moneda: 'CLP' } },
+};
+check(
+  'monedasDeCuentasMeta: distintas y en mayúsculas',
+  monedasDeCuentasMeta(metaClp).join() === 'CLP'
 );
-process.exit(fallos === 0 ? 0 : 1);
+check('monedaDeCuentasMeta: todas en CLP → CLP', monedaDeCuentasMeta(metaClp) === 'CLP');
+check(
+  'una cuenta ya quitada no decide la moneda',
+  monedaDeCuentasMeta({
+    meta_accounts: [{ account_id: 'act_111' }],
+    meta_estado_cuentas: { '111': { moneda: 'COP' }, '999': { moneda: 'CLP' } },
+  }) === 'COP'
+);
+check(
+  'cuenta única por meta_account_id',
+  monedaDeCuentasMeta({
+    meta_account_id: 'act_5',
+    meta_estado_cuentas: { '5': { moneda: 'MXN' } },
+  }) === 'MXN'
+);
+const mezcla = {
+  meta_estado_cuentas: { a: { moneda: 'CLP' }, b: { moneda: 'COP' } },
+};
+check('monedas mezcladas → null (no se adivina)', monedaDeCuentasMeta(mezcla) === null);
+check(
+  'moneda que no se ofrece como moneda de reporte → null',
+  monedaDeCuentasMeta({ meta_estado_cuentas: { a: { moneda: 'GBP' } } }) === null
+);
+check(
+  'sin estado de cuentas → []',
+  monedasDeCuentasMeta({}).length === 0 && monedasDeCuentasMeta(null).length === 0
+);
+
+let res = resolverMonedaReporte({ moneda_reporte: 'USD' }, metaClp);
+check(
+  'el ajuste gana a Meta (y se conservan las monedas de Meta para avisar)',
+  res.moneda === 'USD' && res.origen === 'ajuste' && res.monedasMeta.join() === 'CLP'
+);
+res = resolverMonedaReporte({}, metaClp);
+check('sin ajuste: la de Meta', res.moneda === 'CLP' && res.origen === 'meta');
+res = resolverMonedaReporte(null, mezcla);
+check(
+  'Meta mezclada: USD por defecto',
+  res.moneda === 'USD' && res.origen === 'defecto' && res.monedasMeta.join() === 'CLP,COP'
+);
+check(
+  'monedaAjustada: sin ajuste → null',
+  monedaAjustada({}) === null && monedaAjustada({ moneda_reporte: 'cop' }) === 'COP'
+);
+
+// ── 7. Días sin tasa: visibles ────────────────────────────────────────
+console.log('\n7. Días sin tasa');
+const convAvisos = crearConversor('CLP', [
+  { fecha: '2026-09-14', usd_rate: 1 / 950 },
+  { fecha: '2026-09-16', usd_rate: 1 / 960 },
+]);
+convAvisos.convertir(10, '2026-09-14');
+convAvisos.convertir(10, '2026-09-15');
+convAvisos.convertir(0, '2026-09-17');
+check('el día con su tasa no se marca', !convAvisos.aproximadas.has('2026-09-14'));
+check('el día sin tasa propia se marca como aproximado', convAvisos.aproximadas.has('2026-09-15'));
+check('un importe 0 no marca nada', !convAvisos.aproximadas.has('2026-09-17'));
+check(
+  'el aproximado usa la ANTERIOR más cercana (950)',
+  convAvisos.convertir(1, '2026-09-15') === 950
+);
+const aviso = avisoDeTasas(convAvisos);
+check(
+  'avisoDeTasas lo resume',
+  aviso?.aproximadas.join() === '2026-09-15' && aviso.sinTasa.length === 0
+);
+check('sin días raros, sin aviso', avisoDeTasas(conversorIdentidad()) === null);
+check(
+  'textoAvisoTasas',
+  textoAvisoTasas(aviso) === 'Sin tasa de cambio para 1 día (15-09): se usó la más cercana.',
+  String(textoAvisoTasas(aviso))
+);
+const unidos = unirAvisosTasas([
+  aviso,
+  { sinTasa: ['2026-09-01'], aproximadas: ['2026-09-15'] },
+  null,
+]);
+check(
+  'unirAvisosTasas junta sin duplicar',
+  unidos?.aproximadas.join() === '2026-09-15' && unidos?.sinTasa.join() === '2026-09-01'
+);
+check(
+  'el texto nombra también los que quedaron en USD',
+  String(textoAvisoTasas(unidos)).includes('quedaron en USD')
+);
+
+// ── 8. Precio del funnel en días sin tasa ─────────────────────────────
+console.log('\n8. Precio del funnel por fila');
+const conTasa = precioUsdEnFila(97, 950, 'CLP');
+check(
+  'con tasa: convertido y con su par num/den',
+  conTasa.valor === 92150 && conTasa.num === 92150 && conTasa.den === 1
+);
+const sinTasaFila = precioUsdEnFila(97, undefined, 'CLP');
+check(
+  'sin tasa: no aporta al promedio (antes colaba 97 USD entre pesos)',
+  sinTasaFila.valor === 0 && sinTasaFila.den === undefined
+);
+check('cliente en USD: no necesita tasa', precioUsdEnFila(97, undefined, 'USD').num === 97);
+const filasPrecio = [
+  {
+    funnel_principal_price: 92150,
+    funnel_principal_price__num: 92150,
+    funnel_principal_price__den: 1,
+  },
+  { funnel_principal_price: 0 },
+];
+check(
+  'el promedio del rango ignora la fila sin tasa',
+  aggregateFormula('funnel_principal_price', filasPrecio) === 92150,
+  String(aggregateFormula('funnel_principal_price', filasPrecio))
+);
+
+// ── 9. Huecos de fx_rates de la última semana ─────────────────────────
+console.log('\n9. Relleno de huecos de tasas');
+const guardadas = [
+  { fecha: '2026-09-24', moneda: 'CLP' },
+  { fecha: '2026-09-24', moneda: 'COP' },
+  { fecha: '2026-09-23', moneda: 'CLP' },
+];
+const huecos = huecosFx(guardadas, '2026-09-25', ['USD', 'CLP', 'COP'], 3);
+check(
+  'detecta solo lo que falta, sin contar hoy ni USD',
+  JSON.stringify(huecos) ===
+    JSON.stringify([
+      { fecha: '2026-09-23', monedas: ['COP'] },
+      { fecha: '2026-09-22', monedas: ['CLP', 'COP'] },
+    ]),
+  JSON.stringify(huecos)
+);
+check(
+  'sin huecos, nada que pedir',
+  huecosFx(
+    [
+      { fecha: '2026-09-24', moneda: 'CLP' },
+      { fecha: '2026-09-23', moneda: 'CLP' },
+    ],
+    '2026-09-25',
+    ['CLP'],
+    2
+  ).length === 0
+);
+
+// ── 10. El enlace público conserva la moneda ──────────────────────────
+console.log('\n10. BI público y resumen');
+const saneado = sanitizeForClient({
+  unavailable: {},
+  skipped: [],
+  hasPublicLink: false,
+  moneda: 'CLP',
+  tasas: { sinTasa: [], aproximadas: ['2026-09-15'] },
+});
+check(
+  'sanitizeForClient conserva moneda y tasas',
+  saneado?.moneda === 'CLP' && saneado?.tasas?.aproximadas[0] === '2026-09-15'
+);
+check('y sigue ocultando el estado del enlace', saneado?.hasPublicLink === true);
+const soloDiag = sanitizeForClient({ unavailable: {}, skipped: [], hasPublicLink: true });
+check('sin moneda no inventa la clave', soloDiag !== undefined && !('moneda' in soloDiag));
+const frases = buildSummarySentences({ spend: 185000, leads_count: 50, cpl: 3700 }, {}, 'CLP');
+check(
+  'el resumen del BI pinta la moneda del cliente',
+  frases[0].includes('CLP 185.000') && frases[0].includes('CLP 3.700'),
+  frases[0]
+);
+check(
+  'en dólares, igual que siempre',
+  buildSummarySentences({ spend: 1850, leads_count: 5 }, {})[0].includes('$1.850')
+);
+
+// ── 11. cargarConversor para rangos viejos ────────────────────────────
+function dbTasas(filas: Array<{ fecha: string; usd_rate: number }>) {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const q = (): any => {
+    const filtros: Array<(f: { fecha: string }) => boolean> = [];
+    let desc = false;
+    let lim = Infinity;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const b: any = {
+      select: () => b,
+      eq: () => b,
+      gte: (_c: string, v: string) => (filtros.push((f) => f.fecha >= v), b),
+      gt: (_c: string, v: string) => (filtros.push((f) => f.fecha > v), b),
+      lte: (_c: string, v: string) => (filtros.push((f) => f.fecha <= v), b),
+      order: (_c: string, o?: { ascending?: boolean }) => ((desc = o?.ascending === false), b),
+      limit: (n: number) => ((lim = n), b),
+      then: (ok: (r: unknown) => unknown) => {
+        const out = filas
+          .filter((f) => filtros.every((p) => p(f)))
+          .sort((a, c) => (desc ? -1 : 1) * a.fecha.localeCompare(c.fecha))
+          .slice(0, lim);
+        return Promise.resolve({ data: out, error: null }).then(ok);
+      },
+    };
+    return b;
+  };
+  return { from: q };
+}
+
+async function asincronas() {
+  console.log('\n11. cargarConversor: rango sin tasas en su ventana');
+  const tabla = [
+    { fecha: '2025-01-10', usd_rate: 1 / 800 },
+    { fecha: '2026-09-20', usd_rate: 1 / 950 },
+  ];
+  const viejo = await cargarConversor(dbTasas(tabla), 'CLP', '2025-06-01', '2025-06-30');
+  check(
+    'usa la más cercana ANTERIOR al rango (800), no la última de la tabla (950)',
+    viejo.tasa('2025-06-15') === 800,
+    String(viejo.tasa('2025-06-15'))
+  );
+  const antiguo = await cargarConversor(dbTasas(tabla), 'CLP', '2024-01-01', '2024-01-31');
+  check(
+    'sin ninguna anterior, la primera posterior (800)',
+    antiguo.tasa('2024-01-15') === 800,
+    String(antiguo.tasa('2024-01-15'))
+  );
+}
+
+asincronas()
+  .catch((e) => {
+    fallos++;
+    console.error('ERROR:', e instanceof Error ? e.stack : e);
+  })
+  .finally(() => {
+    console.log(
+      fallos === 0
+        ? '\n✅ Moneda, cuentas de Meta, ventas del CRM y conversiones: todas las comprobaciones pasan\n'
+        : `\n❌ ${fallos} comprobación(es) fallaron\n`
+    );
+    process.exit(fallos === 0 ? 0 : 1);
+  });

@@ -383,12 +383,16 @@ export const SEMANTIC_ALIASES: Record<
   '$funnel.principal_neto': {
     label: 'Funnel — Neto Principal',
     defaultSource: 'funnel_principal_neto',
-    options: [{ value: 'funnel_principal_neto', label: 'Funnel — Neto Principal (USD)' }],
+    options: [
+      { value: 'funnel_principal_neto', label: 'Funnel — Neto Principal (moneda del cliente)' },
+    ],
   },
   '$funnel.principal_bruto': {
     label: 'Funnel — Bruto Principal',
     defaultSource: 'funnel_principal_bruto',
-    options: [{ value: 'funnel_principal_bruto', label: 'Funnel — Bruto Principal (USD)' }],
+    options: [
+      { value: 'funnel_principal_bruto', label: 'Funnel — Bruto Principal (moneda del cliente)' },
+    ],
   },
   '$funnel.bump_count': {
     label: 'Funnel — # Order Bumps',
@@ -398,7 +402,9 @@ export const SEMANTIC_ALIASES: Record<
   '$funnel.bump_neto': {
     label: 'Funnel — Neto Order Bump',
     defaultSource: 'funnel_bump_neto',
-    options: [{ value: 'funnel_bump_neto', label: 'Funnel — Neto Order Bump (USD)' }],
+    options: [
+      { value: 'funnel_bump_neto', label: 'Funnel — Neto Order Bump (moneda del cliente)' },
+    ],
   },
   '$funnel.upsell_count': {
     label: 'Funnel — # Upsells',
@@ -408,7 +414,7 @@ export const SEMANTIC_ALIASES: Record<
   '$funnel.upsell_neto': {
     label: 'Funnel — Neto Upsell',
     defaultSource: 'funnel_upsell_neto',
-    options: [{ value: 'funnel_upsell_neto', label: 'Funnel — Neto Upsell (USD)' }],
+    options: [{ value: 'funnel_upsell_neto', label: 'Funnel — Neto Upsell (moneda del cliente)' }],
   },
   '$funnel.upsell_visits': {
     label: 'Funnel — Visitas Pág. Upsell',
@@ -882,12 +888,18 @@ export function formatValue(
   // otra moneda se pinta su código y sus decimales («CLP 233.487»); en dólares,
   // exactamente igual que siempre. Un prefijo `USD ` (gemelas sin convertir) no
   // se toca.
+  //
+  // En otra moneda, además, con los separadores del BI (es-AR, «CLP 233.487»,
+  // igual que `formatearMoneda`): la misma cifra no debe leerse distinta en un
+  // informe y en una pestaña. En dólares no cambia nada.
   const moneda = String(opts.moneda || 'USD').toUpperCase();
+  let locale = 'en-US';
   if (prefix === '$' && moneda !== 'USD') {
     prefix = `${moneda} `;
     decimals = decimalesDe(moneda);
+    locale = 'es-AR';
   }
-  const formatted = value.toLocaleString('en-US', {
+  const formatted = value.toLocaleString(locale, {
     minimumFractionDigits: decimals,
     maximumFractionDigits: decimals,
   });

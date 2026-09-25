@@ -5,8 +5,8 @@ import { reportUtmClient } from '@/lib/report-utm/client';
 import { createClient, createAdminClient } from '@/utils/supabase/server';
 import type { ReportUtmHotmartIntegracion, ReportUtmIntegration } from '@/lib/report-utm/types';
 import type { ClienteGoals } from '@/lib/report-utm/bi-metadata';
-import { monedaDeClienteUtm, ultimasTasasGuardadas } from '@/lib/moneda-reporte';
-import type { MonedaReporte, TasaGuardada } from '@/lib/moneda-reporte';
+import { resolverMonedaDeClienteUtm, ultimasTasasGuardadas } from '@/lib/moneda-reporte';
+import type { MonedaReporte, MonedaResuelta, TasaGuardada } from '@/lib/moneda-reporte';
 import {
   columnaExcluidoDisponible,
   leerRegla,
@@ -52,7 +52,8 @@ export interface DatosUtm {
   webhookOrigin: string;
   /** Slug del cliente en report_utm: es lo que se pega en el plugin de WordPress. */
   slug: string | null;
-  moneda: MonedaReporte;
+  /** Moneda efectiva, su origen (ajuste, Meta o defecto) y las monedas de Meta. */
+  moneda: MonedaResuelta;
   ultimasTasas: Partial<Record<MonedaReporte, TasaGuardada>>;
   reglaExclusion: ReglaExclusion;
   migracionExclusion: boolean;
@@ -117,7 +118,7 @@ export const cargarDatosUtm = cache(
         )
         .eq('cliente_id', rtmClienteId)
         .order('created_at', { ascending: false }),
-      monedaDeClienteUtm(admin, rtmClienteId),
+      resolverMonedaDeClienteUtm(admin, rtmClienteId),
       // `fx_rates` vive en `public`: el cliente de arriba es el de report_utm.
       ultimasTasasGuardadas(admin),
       columnaExcluidoDisponible(supabase),

@@ -183,6 +183,64 @@ export async function capturarTasasDelDia(db: any, hoy: string = colombiaToday()
   } catch {
     // Una API de FX caída no debe tumbar la sincronización.
   }
+  try {
+    await rellenarHuecosRecientes(db, hoy);
+  } catch {
+    // Igual: el relleno es un extra, nunca un motivo para fallar.
+  }
+}
+
+/** Cuántos días hacia atrás revisa `rellenarHuecosRecientes`. */
+export const DIAS_RELLENO_FX = 7;
+
+/**
+ * Días de los últimos `DIAS_RELLENO_FX` (sin contar hoy) a los que les falta la
+ * tasa de alguna moneda de reporte, con las monedas que faltan. Puro.
+ */
+export function huecosFx(
+  guardadas: Array<{ fecha: string; moneda: string }>,
+  hoy: string,
+  monedas: readonly string[] = MONEDAS_REPORTE,
+  dias: number = DIAS_RELLENO_FX
+): Array<{ fecha: string; monedas: string[] }> {
+  const quiero = monedas.map((m) => m.toUpperCase()).filter((m) => m !== 'USD');
+  const tengo = new Set(
+    guardadas.map((g) => `${String(g.fecha).slice(0, 10)}|${String(g.moneda).toUpperCase()}`)
+  );
+  const out: Array<{ fecha: string; monedas: string[] }> = [];
+  for (let i = 1; i <= dias; i++) {
+    const fecha = addDaysISO(hoy, -i);
+    const faltan = quiero.filter((m) => !tengo.has(`${fecha}|${m}`));
+    if (faltan.length > 0) out.push({ fecha, monedas: faltan });
+  }
+  return out;
+}
+
+/**
+ * Un día que el worker no corrió (caída, despliegue) se quedaba sin tasa para
+ * siempre, y sus ventas se convertían con la de otro día. Aquí se rellenan los
+ * huecos de la última semana con la cotización HISTÓRICA de cada día
+ * (`fuenteParaFecha`). Solo inserta lo que falta: una tasa guardada no se
+ * reescribe nunca, porque es la que congeló las ventas de ese día.
+ *
+ * Lo normal es que no falte nada: entonces cuesta una consulta y ninguna
+ * llamada a la API.
+ */
+async function rellenarHuecosRecientes(db: any, hoy: string): Promise<void> {
+  const desde = addDaysISO(hoy, -DIAS_RELLENO_FX);
+  const { data, error } = await db
+    .from('fx_rates')
+    .select('fecha, moneda')
+    .gte('fecha', desde)
+    .lt('fecha', hoy)
+    .in(
+      'moneda',
+      [...MONEDAS_REPORTE].filter((m) => m !== 'USD')
+    );
+  if (error) return;
+  for (const h of huecosFx((data ?? []) as Array<{ fecha: string; moneda: string }>, hoy)) {
+    await preloadUsdRates(db, h.monedas, h.fecha);
+  }
 }
 
 /** Los tres niveles de respaldo, sin memo. `cur` ya viene en mayúsculas y no es USD. */

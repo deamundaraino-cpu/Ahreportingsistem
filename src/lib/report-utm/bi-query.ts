@@ -3,6 +3,7 @@ import { fetchAllRows } from '@/lib/supabase-paginate';
 import { columnaExcluidoDisponible } from './lead-exclusion';
 import { escLike, patronLike } from './leads-filtros';
 import { COLUMNAS_ID, SELECT_IDS_VENTA, columnasIdDisponibles } from './lead-ids';
+import { registrarConversor } from './bi/avisos-tasas';
 import {
   cargarConversor,
   clavesDeRango,
@@ -1421,7 +1422,7 @@ async function conversorHotmart(
   const moneda = params.cliente_id
     ? await monedaDeClienteUtm(supabase, params.cliente_id)
     : ('USD' as const);
-  const conv = await cargarConversor(supabase, moneda, dateFrom, dateTo);
+  const conv = registrarConversor(await cargarConversor(supabase, moneda, dateFrom, dateTo));
   return (usd, fecha) => conv.convertir(usd, fecha);
 }
 
@@ -1932,7 +1933,7 @@ async function queryAdsScalar(
   const monedaAds = params.cliente_id
     ? await monedaDeClienteUtm(db, params.cliente_id)
     : ('USD' as const);
-  const convAds = await cargarConversor(db, monedaAds, dateFrom, dateTo);
+  const convAds = registrarConversor(await cargarConversor(db, monedaAds, dateFrom, dateTo));
   const USD_COLS = new Set<string>(COLUMNAS_USD_METRICAS);
 
   const grouping = params.date_grouping ?? 'day';
@@ -2623,12 +2624,17 @@ async function querySubsLatest(
     .limit(1)
     .maybeSingle();
   if (!data) return null;
+  // El MRR se guarda en USD (el worker lo suma desde la moneda de cada
+  // suscripción). Se lee en la moneda de reporte con la tasa del día de la foto,
+  // igual que una venta con la de su fecha.
+  const fechaFoto = String(data.captured_date ?? dateTo).slice(0, 10);
+  const convertir = await conversorHotmart(params, fechaFoto, fechaFoto);
   return {
     subs_active: Number(data.active_count ?? 0),
     subs_delayed: Number(data.delayed_count ?? 0),
     subs_canceled: Number(data.canceled_count ?? 0),
     subs_total: Number(data.total_count ?? 0),
-    subs_mrr: Number(data.active_recurring_value ?? 0),
+    subs_mrr: convertir(Number(data.active_recurring_value ?? 0), fechaFoto),
   };
 }
 

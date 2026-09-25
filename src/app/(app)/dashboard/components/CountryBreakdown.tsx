@@ -5,6 +5,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Globe, ChevronDown, ChevronUp, TrendingUp, DollarSign } from 'lucide-react';
 import { aggregateByCountry, type CountryMetrics } from '@/lib/country-parser';
 import type { TabCampaignFilter } from '@/lib/layout-types';
+import { decimalesDe, prefijoMoneda, simboloMoneda } from '@/lib/moneda-reporte';
+import { useMonedaReporte } from './MonedaReporteContext';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -38,6 +40,11 @@ function CountryRow({
   rank: number;
 }) {
   const [expanded, setExpanded] = useState(false);
+  // Gasto en la moneda de reporte del cliente: «$» en USD, «CLP » en pesos
+  // (sin centavos en las monedas que no los usan).
+  const moneda = useMonedaReporte();
+  const pre = prefijoMoneda(simboloMoneda(null, moneda));
+  const dec = (d: number) => Math.min(d, decimalesDe(moneda));
   const barColor = BAR_COLORS[rank % BAR_COLORS.length];
   const spendPct = totalSpend > 0 ? (cm.spend / totalSpend) * 100 : 0;
 
@@ -70,7 +77,9 @@ function CountryRow({
         <div className="hidden md:flex items-center gap-6 shrink-0">
           <div className="text-right">
             <p className="text-xs text-muted-foreground/70">Gasto</p>
-            <p className="text-sm font-semibold text-foreground">{fmt(cm.spend, '$', '', 2)}</p>
+            <p className="text-sm font-semibold text-foreground">
+              {fmt(cm.spend, pre, '', dec(2))}
+            </p>
           </div>
           <div className="text-right">
             <p className="text-xs text-muted-foreground/70">Leads</p>
@@ -79,7 +88,7 @@ function CountryRow({
           <div className="text-right">
             <p className="text-xs text-muted-foreground/70">CPL</p>
             <p className="text-sm font-semibold text-foreground">
-              {cm.cpl !== null ? fmt(cm.cpl, '$', '', 2) : '-'}
+              {cm.cpl !== null ? fmt(cm.cpl, pre, '', dec(2)) : '-'}
             </p>
           </div>
           <div className="text-right">
@@ -117,7 +126,7 @@ function CountryRow({
                       <span className="text-emerald-600 dark:text-emerald-400 font-medium">
                         {ad.results} res.
                       </span>
-                      <span className="text-muted-foreground/70">{fmt(ad.spend, '$', '', 0)}</span>
+                      <span className="text-muted-foreground/70">{fmt(ad.spend, pre, '', 0)}</span>
                     </div>
                   </div>
                 ))}
@@ -144,7 +153,7 @@ function CountryRow({
                     </span>
                     <div className="shrink-0 text-right space-x-2">
                       <span className="text-amber-600 dark:text-amber-400 font-medium">
-                        {fmt(ad.spend, '$', '', 0)}
+                        {fmt(ad.spend, pre, '', 0)}
                       </span>
                       <span className="text-muted-foreground/70">{ad.results} res.</span>
                     </div>
@@ -157,7 +166,7 @@ function CountryRow({
           {/* Mobile fallback for key metrics */}
           <div className="md:hidden col-span-1 flex gap-4 flex-wrap text-xs">
             <span className="text-muted-foreground/70">
-              Gasto: <strong className="text-foreground">{fmt(cm.spend, '$', '', 2)}</strong>
+              Gasto: <strong className="text-foreground">{fmt(cm.spend, pre, '', dec(2))}</strong>
             </span>
             <span className="text-muted-foreground/70">
               Leads: <strong className="text-foreground">{cm.leads}</strong>
@@ -165,7 +174,7 @@ function CountryRow({
             <span className="text-muted-foreground/70">
               CPL:{' '}
               <strong className="text-foreground">
-                {cm.cpl !== null ? fmt(cm.cpl, '$', '', 2) : '-'}
+                {cm.cpl !== null ? fmt(cm.cpl, pre, '', dec(2)) : '-'}
               </strong>
             </span>
           </div>

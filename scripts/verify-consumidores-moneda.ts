@@ -20,8 +20,10 @@
 import { salir } from './_salida';
 import {
   COLUMNAS_INGRESOS,
+  cumpleCondicion,
   evaluateAlertRules,
   ingresosEnMonedaReporte,
+  medirRegla,
   type RuleRow,
 } from '../src/lib/notifications/rules-engine';
 import {
@@ -328,6 +330,105 @@ async function motorDeAlertas() {
   );
   r = await evaluar(regla('pub-cris', 'leads', '>=', 50));
   check('leads: sin moneda y sin tocar', r.disparo && !r.mensaje.includes('CLP'), r.mensaje);
+
+  // ── 4b. «Probar regla» mide igual que la evaluación real ───────────
+  // `testRule` (ajustes) ya no tiene su propia suma: llama a `medirRegla`, la
+  // misma función que usa `evaluateAlertRules`. Antes sumaba USD contra CLP,
+  // olvidaba el downsell y sumaba VENTAS_CERRADAS como dinero.
+  console.log('\n4b. Probar regla = evaluación real (medirRegla)');
+  const medir = async (
+    clientId: string,
+    metric: RuleRow['metric'],
+    tabBudget: number | null = null
+  ) => {
+    _limpiarCacheMoneda();
+    const { db } = dbFalsa(TABLAS);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return medirRegla(db as any, {
+      clientId,
+      metric,
+      start: '2026-08-01',
+      end: '2026-08-02',
+      keywordFilter: '',
+      campaignGroups: [],
+      tabBudget,
+    });
+  };
+  let m = await medir('pub-cris', 'revenue');
+  check(
+    `Cris: ingresos en CLP, con downsell y sin VENTAS_CERRADAS (${INGRESOS_CLP})`,
+    m.actualValue === INGRESOS_CLP && m.moneda === 'CLP',
+    JSON.stringify(m)
+  );
+  m = await medir('pub-cris', 'roas');
+  check('Cris: ROAS en la misma moneda', cerca(m.actualValue ?? NaN, INGRESOS_CLP / GASTO_CLP));
+  m = await medir('pub-usd', 'revenue');
+  check('cliente USD: ingresos con downsell', m.actualValue === INGRESOS_USD && m.moneda === 'USD');
+  m = await medir('pub-cris', 'budget_percentage');
+  check('sin presupuesto el % no se puede medir (null, no 0)', m.actualValue === null);
+  m = await medir('pub-cris', 'budget_percentage', 370000);
+  check(
+    'con presupuesto: gasto / objetivo',
+    cerca(m.actualValue ?? NaN, (GASTO_CLP / 370000) * 100)
+  );
+  check(
+    'cumpleCondicion: los cuatro operadores',
+    cumpleCondicion(2, '>', 1) &&
+      !cumpleCondicion(1, '>', 1) &&
+      cumpleCondicion(1, '>=', 1) &&
+      cumpleCondicion(0, '<', 1) &&
+      cumpleCondicion(1, '<=', 1)
+  );
+
+  // ── 4c. Sin ajuste, la moneda de la cuenta de Meta ──────────────────
+  console.log('\n4c. Sin moneda_reporte: la de la cuenta de Meta');
+  const conMeta: Record<string, Tablas> = {
+    public: {
+      ...TABLAS.public,
+      clientes: [
+        ...TABLAS.public.clientes,
+        {
+          id: 'pub-meta',
+          nombre: 'Cliente sin ajuste',
+          config_api: {
+            meta_accounts: [{ account_id: 'act_111', token: 't' }],
+            meta_estado_cuentas: {
+              '111': { moneda: 'CLP' },
+              // Cuenta ya quitada: no debe decidir la moneda.
+              '999': { moneda: 'COP' },
+            },
+          },
+        },
+      ],
+      metricas_diarias: [
+        ...TABLAS.public.metricas_diarias,
+        ...FILAS_CRIS.map((f) => ({ ...f, cliente_id: 'pub-meta' })),
+      ],
+    },
+    report_utm: {
+      clientes: [
+        ...TABLAS.report_utm.clientes,
+        { id: 'rtm-meta', public_cliente_id: 'pub-meta', config: {} },
+      ],
+    },
+  };
+  _limpiarCacheMoneda();
+  const { db: dbMeta } = dbFalsa(conMeta);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const mm = await medirRegla(dbMeta as any, {
+    clientId: 'pub-meta',
+    metric: 'revenue',
+    start: '2026-08-01',
+    end: '2026-08-02',
+    keywordFilter: '',
+    campaignGroups: [],
+    tabBudget: null,
+  });
+  check(
+    'sin ajuste toma CLP de la cuenta de Meta y convierte los ingresos',
+    mm.moneda === 'CLP' && mm.actualValue === INGRESOS_CLP,
+    JSON.stringify(mm)
+  );
 }
 
 // ── 5. Flags de conexión ──────────────────────────────────────────────

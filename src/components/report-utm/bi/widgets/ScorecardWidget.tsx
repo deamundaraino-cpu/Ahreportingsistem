@@ -22,9 +22,15 @@ import { fetchClienteGoals } from '@/lib/report-utm/client-goals';
 import { useBiQueryBase } from '../BiQueryContext';
 import { appendWidgetFilters, widgetFilterSignature } from '../widgetQuery';
 import { HelpTip } from '../HelpTip';
-import { readUnavailable, readValue, UnavailableNote } from '../widgetDiagnostics';
+import {
+  readTasas,
+  readUnavailable,
+  readValue,
+  TasasNote,
+  UnavailableNote,
+} from '../widgetDiagnostics';
 import type { WidgetUnavailable } from '../widgetDiagnostics';
-import { decimalesDe, monedaDeMetrica, simboloMoneda } from '@/lib/moneda-reporte';
+import { decimalesDe, monedaDeMetrica, simboloMoneda, type AvisoTasas } from '@/lib/moneda-reporte';
 
 interface Props {
   title: string;
@@ -77,6 +83,7 @@ export function ScorecardWidget({ title, config, filters, calculatedFields = [] 
   const [goals, setGoals] = useState<ClienteGoals | null>(null);
   /** Motivo por el que esta métrica no se pudo medir, si es el caso. */
   const [naInfo, setNaInfo] = useState<WidgetUnavailable | null>(null);
+  const [avisoTasas, setAvisoTasas] = useState<AvisoTasas | null>(null);
   /** Moneda de reporte del cliente (viaja en `meta` de la respuesta). */
   const [monedaCliente, setMonedaCliente] = useState<string | null>(null);
 
@@ -131,6 +138,7 @@ export function ScorecardWidget({ title, config, filters, calculatedFields = [] 
         const na = readUnavailable(json.meta, metric);
         setNaInfo(na);
         setMonedaCliente(json.meta?.moneda ?? null);
+        setAvisoTasas(readTasas(json.meta));
         if (compare) {
           setValue(readValue(json.data?.current?.[0], metric, na));
           setPrev(readValue(json.data?.previous?.[0], metric, na));
@@ -246,6 +254,7 @@ export function ScorecardWidget({ title, config, filters, calculatedFields = [] 
           )}
           {/* El «—» de arriba dice QUE no se pudo medir; esto dice POR QUÉ. */}
           <UnavailableNote info={naInfo} />
+          <TasasNote aviso={avisoTasas} />
         </div>
       )}
       <p className="text-[10px] text-muted-foreground/60 uppercase tracking-wider">{label}</p>

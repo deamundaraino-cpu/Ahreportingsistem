@@ -11,9 +11,10 @@
 // real eran indistinguibles en pantalla — y de ahí venían los siete banners
 // escritos a mano para explicar un cero a posteriori.
 
-import { AlertCircle } from 'lucide-react';
+import { AlertCircle, Coins } from 'lucide-react';
 import type { QueryDiagnostics } from '@/lib/report-utm/bi/diagnostics';
 import { explainSkipReason } from '@/lib/report-utm/bi/diagnostics';
+import { textoAvisoTasas, type AvisoTasas } from '@/lib/moneda-reporte';
 
 export interface WidgetUnavailable {
   /** Texto en español, listo para mostrar. */
@@ -91,4 +92,26 @@ export function readValue(
   if (v === undefined || v === '') return 0;
   const n = Number(v);
   return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * Días convertidos sin su tasa de cambio (`meta.tasas`). La cifra se pinta
+ * igual —con la tasa más cercana, o en USD si no había ninguna—, pero se dice.
+ */
+export function readTasas(meta: { tasas?: AvisoTasas } | undefined): AvisoTasas | null {
+  const t = meta?.tasas;
+  return t && (t.sinTasa?.length || t.aproximadas?.length)
+    ? { sinTasa: t.sinTasa ?? [], aproximadas: t.aproximadas ?? [] }
+    : null;
+}
+
+export function TasasNote({ aviso }: { aviso: AvisoTasas | null }) {
+  const texto = textoAvisoTasas(aviso);
+  if (!texto) return null;
+  return (
+    <p className="flex items-start gap-1 text-[10px] leading-snug text-muted-foreground">
+      <Coins className="h-3 w-3 shrink-0 mt-[1px]" />
+      <span>{texto}</span>
+    </p>
+  );
 }

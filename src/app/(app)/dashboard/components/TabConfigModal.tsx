@@ -700,8 +700,8 @@ export function TabConfigModal({
                                         {o.producto_nombre || '(sin nombre)'}
                                       </div>
                                       <div className="text-muted-foreground/60 font-mono truncate">
-                                        {codigo ?? 'sin código de oferta'} · {o.ventas} venta(s) · $
-                                        {o.bruto_usd.toFixed(0)}
+                                        {codigo ?? 'sin código de oferta'} · {o.ventas} venta(s) ·
+                                        USD {o.bruto_usd.toFixed(0)}
                                       </div>
                                     </div>
                                     {codigo ? (

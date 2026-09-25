@@ -16,7 +16,8 @@ import {
 } from './bi-metadata';
 import { resolvePublicClienteId } from './campaign-resolver';
 import { createAdminClient } from '@/utils/supabase/server';
-import { monedaDeClienteUtm } from '@/lib/moneda-reporte';
+import { monedaDeClienteUtm, type AvisoTasas } from '@/lib/moneda-reporte';
+import { conAvisosDeTasas } from './bi/avisos-tasas';
 import { computeDiagnostics } from './bi/diagnostics';
 import type { QueryDiagnostics } from './bi/diagnostics';
 import type { ParsedBiQuery } from './bi-query-params';
@@ -32,8 +33,11 @@ export interface DispatchResult {
    *
    * `moneda` es la moneda de reporte del cliente: con ella los widgets pintan
    * «CLP 233.487» en vez de un «$» que no dice qué moneda es.
+   *
+   * `tasas` lista los días que se convirtieron sin su tasa de cambio propia (o
+   * sin ninguna): el widget lo avisa en vez de sustituirla en silencio.
    */
-  meta?: QueryDiagnostics & { moneda?: string };
+  meta?: MetaConsulta;
   error?: string;
   status?: number;
 }
@@ -111,6 +115,21 @@ async function diagnosticarConMoneda(
   return moneda ? { ...diag, moneda } : diag;
 }
 
+export type MetaConsulta = QueryDiagnostics & { moneda?: string; tasas?: AvisoTasas };
+
+/**
+ * Corre la consulta recogiendo los días sin tasa y, en paralelo, el diagnóstico
+ * con la moneda. Sin diagnóstico (consulta sin cliente) no hay conversión que
+ * avisar, así que tampoco hace falta `meta`.
+ */
+async function conMeta<T>(p: ParsedBiQuery, correr: () => Promise<T>): Promise<DispatchResult> {
+  const [{ resultado, tasas }, meta] = await Promise.all([
+    conAvisosDeTasas(correr),
+    diagnosticarConMoneda(p),
+  ]);
+  return { data: resultado, meta: meta && tasas ? { ...meta, tasas } : meta };
+}
+
 export async function dispatchBiQuery(rawParams: ParsedBiQuery): Promise<DispatchResult> {
   // "Campaña (cruzada)" tuvo su propio motor (`runCampaignQuery`), que solo
   // emitía ~20 de las 72 métricas e ignoraba los campos calculados. Hoy la
@@ -139,7 +158,7 @@ export async function dispatchBiQuery(rawParams: ParsedBiQuery): Promise<Dispatc
   };
 
   if (p.type === 'funnel') {
-    const [data, meta] = await Promise.all([
+    return conMeta(p, () =>
       runFunnelQuery({
         cliente_id: p.cliente_id,
         date_from: p.date_from,
@@ -147,10 +166,8 @@ export async function dispatchBiQuery(rawParams: ParsedBiQuery): Promise<Dispatc
         filters: p.filters,
         advancedFilter: p.advancedFilter,
         metrics: p.metrics,
-      }),
-      diagnosticarConMoneda(p),
-    ]);
-    return { data, meta };
+      })
+    );
   }
 
   if (esConsultaDeValores(p.type)) {
@@ -201,11 +218,7 @@ export async function dispatchBiQuery(rawParams: ParsedBiQuery): Promise<Dispatc
         status: 400,
       };
     }
-    const [data, meta] = await Promise.all([
-      runPivotQuery(base, p.metrics[0]),
-      diagnosticarConMoneda(p),
-    ]);
-    return { data, meta };
+    return conMeta(p, () => runPivotQuery(base, p.metrics[0]));
   }
 
   // Un widget de FÓRMULA no pide métricas: pide una expresión (calc[...]) que el
@@ -216,10 +229,8 @@ export async function dispatchBiQuery(rawParams: ParsedBiQuery): Promise<Dispatc
   }
 
   if (p.type === 'compare') {
-    const [data, meta] = await Promise.all([runComparison(base), diagnosticarConMoneda(p)]);
-    return { data, meta };
+    return conMeta(p, () => runComparison(base));
   }
 
-  const [data, meta] = await Promise.all([runBiQuery(base), diagnosticarConMoneda(p)]);
-  return { data, meta };
+  return conMeta(p, () => runBiQuery(base));
 }

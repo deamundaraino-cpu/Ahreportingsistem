@@ -57,7 +57,7 @@ export default async function ClientDetailPage(props: { params: Promise<{ id: st
             <>
               <MonedaReporteCard
                 rtmClienteId={rtmId}
-                inicial={datos.moneda}
+                resuelta={datos.moneda}
                 ultimasTasas={datos.ultimasTasas}
               />
               <BiClienteGoalsCard clienteId={rtmId} initialGoals={datos.goals} />

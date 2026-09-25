@@ -23,6 +23,7 @@ import { resolveRtmClienteId } from '@/lib/report-utm/campaign-resolver';
 import { formulaUsaRespuestas, camposEnFormula } from '@/lib/dashboard/lead-answer-aggregation';
 import { formulaUsaHotmart } from '@/lib/dashboard/hotmart-cubo';
 import type { HotmartCuboLite } from '@/lib/dashboard/hotmart-cubo';
+import type { AvisoTasas } from '@/lib/moneda-reporte';
 import { cargarCuboHotmart } from '@/lib/hotmart/cubo-db';
 import { funnelCambio } from '@/lib/hotmart/funnel-cambio';
 import { BUCKET_OTROS } from '@/lib/report-utm/lead-campos';
@@ -942,6 +943,8 @@ async function cargarMetricasEnriquecidas(
   hotmartCubo: HotmartCuboLite | null;
   /** Moneda de reporte del cliente: la de los importes de Hotmart ya convertidos. */
   moneda: string;
+  /** Días convertidos sin su tasa de cambio propia (o sin ninguna); null si ninguno. */
+  tasas: AvisoTasas | null;
 }> {
   // Todas paginadas por keyset: sin esto PostgREST corta en ~1000 filas. Para
   // `metricas_diarias` es 1 fila/día (solo se nota en el archivo, que abarca
@@ -959,10 +962,10 @@ async function cargarMetricasEnriquecidas(
   // Arranca en paralelo con las lecturas: el cubo de ventas la necesita para
   // convertir cada venta con la tasa de SU fecha, igual que el BI.
   const monedaReporte = import('@/lib/moneda-reporte').then(
-    async ({ cargarConversor, convertirFilasMetricas, monedaDeClientePublico }) => {
+    async ({ cargarConversor, convertirFilasMetricas, monedaDeClientePublico, avisoDeTasas }) => {
       const moneda = await monedaDeClientePublico(supabase, clienteId);
       const conv = await cargarConversor(supabase, moneda, startStr, endStr);
-      return { conv, convertirFilasMetricas };
+      return { conv, convertirFilasMetricas, avisoDeTasas };
     }
   );
   // Se espera más abajo, cuando ya terminaron las lecturas: sin un manejador
@@ -1005,7 +1008,7 @@ async function cargarMetricasEnriquecidas(
     hotmartCuboPromise,
   ]);
 
-  const { conv, convertirFilasMetricas } = await monedaReporte;
+  const { conv, convertirFilasMetricas, avisoDeTasas } = await monedaReporte;
 
   // Ventas cerradas en el CRM de GoHighLevel (webhook de venta): `crm_ventas`
   // y `crm_revenue` en cada día. Se inyectan ANTES del merge para que viajen
@@ -1042,6 +1045,9 @@ async function cargarMetricasEnriquecidas(
     // de `metrics`. Lo recorta el navegador por la pestaña activa.
     hotmartCubo,
     moneda: conv.moneda,
+    // Se lee al final: los días se apuntan a medida que se convierte (filas y
+    // cubo). Antes se descartaba y la tasa sustituida no se veía en ningún sitio.
+    tasas: avisoDeTasas(conv),
   };
 }
 
@@ -1201,6 +1207,7 @@ export async function getDashboardData(clientId: string, startStr: string, endSt
     leadAnswerCatalogo,
     // Moneda de los importes de Hotmart: los bloques la pintan («CLP …»).
     moneda: actual.moneda,
+    tasas: actual.tasas,
   };
 }
 
@@ -2280,6 +2287,7 @@ export async function getMirrorDashboardData(token: string, from?: string, to?: 
       sheetCampos,
       sheetVistas,
       moneda: enriquecido.moneda,
+      tasas: enriquecido.tasas,
       leadAnswers,
       // El espejo no calcula periodo anterior, así que sus bloques de respuestas
       // no muestran variación. Es coherente con el resto del enlace público, que

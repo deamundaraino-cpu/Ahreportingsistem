@@ -261,7 +261,8 @@ async function main() {
   // ── 4. Moneda de reporte ─────────────────────────────────────────────────
   console.log('\n── Moneda de reporte ────────────────────────────────────────');
 
-  const { cargarConversor, leerMonedaReporte } = await import('../src/lib/moneda-reporte');
+  const { cargarConversor, leerMonedaReporte, resolverMonedaReporte, monedaAjustada } =
+    await import('../src/lib/moneda-reporte');
   const { data: utmData, error: errUtm } = await sb
     .schema('report_utm')
     .from('clientes')
@@ -399,25 +400,37 @@ async function main() {
     }
   }
 
-  // Un cliente en USD: la conversión es la identidad y las gemelas son iguales.
-  const enUsd = utm.find((u) => leerMonedaReporte(u.config) === 'USD');
-  if (enUsd) {
+  // Un cliente SIN ajuste: reporta en la moneda de sus cuentas de Meta (la del
+  // gasto), y solo si no se conoce, en USD (`resolverMonedaReporte`).
+  const sinAjuste = utm.find((u) => monedaAjustada(u.config) === null);
+  if (sinAjuste) {
+    const { data: pub } = await sb
+      .from('clientes')
+      .select('config_api')
+      .eq('id', sinAjuste.public_cliente_id)
+      .maybeSingle();
+    const esperada = resolverMonedaReporte(sinAjuste.config, pub?.config_api ?? null);
     const res = await getMetricasCliente({
-      clienteId: enUsd.public_cliente_id,
+      clienteId: sinAjuste.public_cliente_id,
       from: desde,
       to: hasta,
     });
     check(
-      `[${enUsd.nombre}] un cliente sin moneda configurada reporta en USD`,
-      res.moneda === 'USD'
+      `[${sinAjuste.nombre}] sin moneda configurada reporta en la de su cuenta de Meta (${esperada.moneda}, origen ${esperada.origen})`,
+      res.moneda === esperada.moneda,
+      `obtenida=${res.moneda}`
     );
+    // La gemela en USD solo coincide con la columna si no hay nada que
+    // convertir: en USD, o sin ventas de Hotmart.
     const vp = Number(res.totals.ventas_principal ?? 0);
     const vpUsd = Number(res.totals.ventas_principal_usd ?? vp);
-    check(
-      `[${enUsd.nombre}] en USD la gemela coincide con la columna`,
-      Math.abs(vp - vpUsd) < 0.01,
-      `${vp} vs ${vpUsd}`
-    );
+    if (esperada.moneda === 'USD' || vpUsd === 0) {
+      check(
+        `[${sinAjuste.nombre}] sin conversión la gemela coincide con la columna`,
+        Math.abs(vp - vpUsd) < 0.01,
+        `${vp} vs ${vpUsd}`
+      );
+    }
   }
 
   // ── 5. Aislamiento por cliente y tope de rango ───────────────────────────

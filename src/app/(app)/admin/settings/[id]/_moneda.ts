@@ -9,6 +9,9 @@ import { esMonedaReporte, _limpiarCacheMoneda } from '@/lib/moneda-reporte';
  * Guarda la moneda de reporte del cliente en su espejo UTM
  * (`report_utm.clientes.config.moneda_reporte`). Ver `lib/moneda-reporte.ts` para
  * por qué vive ahí y no en `config_api`.
+ *
+ * `moneda` vacía quita el ajuste: el cliente vuelve a reportar en la moneda de
+ * sus cuentas de Meta (`resolverMonedaReporte`).
  */
 export async function guardarMonedaReporteAction(
   rtmClienteId: string,
@@ -16,7 +19,9 @@ export async function guardarMonedaReporteAction(
 ): Promise<{ ok: boolean; error?: string }> {
   const { ok } = await checkWriteRole();
   if (!ok) return { ok: false, error: 'No tienes permisos para cambiar la moneda.' };
-  if (!esMonedaReporte(moneda)) return { ok: false, error: `Moneda no admitida: ${moneda}` };
+  const automatica = moneda === '';
+  if (!automatica && !esMonedaReporte(moneda))
+    return { ok: false, error: `Moneda no admitida: ${moneda}` };
 
   const db = await reportUtmAdminClient();
   const { data: actual, error: e1 } = await db
@@ -28,7 +33,8 @@ export async function guardarMonedaReporteAction(
   if (!actual) return { ok: false, error: 'El cliente no existe.' };
 
   const config = { ...((actual.config ?? {}) as Record<string, unknown>) };
-  config.moneda_reporte = moneda.toUpperCase();
+  if (automatica) delete config.moneda_reporte;
+  else config.moneda_reporte = moneda.toUpperCase();
   const { error } = await db.from('clientes').update({ config }).eq('id', rtmClienteId);
   if (error) return { ok: false, error: error.message };
 

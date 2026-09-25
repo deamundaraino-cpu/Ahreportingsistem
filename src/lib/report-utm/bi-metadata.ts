@@ -2473,8 +2473,9 @@ export const METRIC_GLOSSARY: Record<string, string> = {
   hm_ventas:
     'Cantidad de ventas cobradas de Hotmart en el período. No incluye las reembolsadas ni las pendientes de pago.',
   hm_neto:
-    'Dinero que realmente llega a la cuenta: la comisión del productor, ya descontada la tarifa de Hotmart. Convertido a dólares.',
-  hm_bruto: 'Precio pagado por el comprador antes de comisiones, convertido a dólares.',
+    'Dinero que realmente llega a la cuenta: la comisión del productor, ya descontada la tarifa de Hotmart. Convertido a la moneda del cliente.',
+  hm_bruto:
+    'Precio pagado por el comprador antes de comisiones, convertido a la moneda del cliente.',
   hm_reembolsos:
     'Cantidad de ventas del período que acabaron reembolsadas o en contracargo. Se cuentan en la fecha de la VENTA, no en la del reembolso.',
   hm_neto_reembolsado:

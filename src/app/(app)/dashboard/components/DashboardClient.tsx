@@ -69,6 +69,7 @@ import {
   Table2,
   CreditCard,
   ListChecks,
+  Coins,
 } from 'lucide-react';
 import type {
   ColDef,
@@ -98,6 +99,7 @@ import { refDeCuboHotmart, clavesHotmartYRefDelDia } from '@/lib/dashboard/hotma
 import type { HotmartCuboLite } from '@/lib/dashboard/hotmart-cubo';
 import { TabArchiveView } from './TabArchiveView';
 import { MonedaReporteProvider, useMonedaReporte } from './MonedaReporteContext';
+import { precioUsdEnFila, textoAvisoTasas, type AvisoTasas } from '@/lib/moneda-reporte';
 
 const SupportModule = dynamic(
   () => import('./SupportModule').then((m) => ({ default: m.SupportModule })),
@@ -1129,14 +1131,15 @@ function DynamicDashboard({
       const landingSessions = fb?.landing_sessions ?? 0;
       // Precio público del funnel de la pestaña (bruta = precio × compras). Se
       // configura en USD y el resto de la fila ya está en la moneda de reporte:
-      // se convierte con la tasa del DÍA (sin tasa, `tasa_cambio` no existe y
-      // el precio se queda en USD, igual que cualquier importe sin tasa). Y va
+      // se convierte con la tasa del DÍA; una fila sin tasa no aporta al
+      // promedio (`precioUsdEnFila`) en vez de colar dólares entre pesos. Y va
       // con su par `__num`/`__den` porque es un PROMEDIO: sumarlo entre días
       // daba precio × días (ver `PROMEDIOS_DE_FILA`).
-      const tasaDia = Number(row.tasa_cambio);
-      const precio =
-        Number(activeTabObj?.hotmart_funnel?.principal_price_usd ?? 0) *
-        (Number.isFinite(tasaDia) && tasaDia > 0 ? tasaDia : 1);
+      const precio = precioUsdEnFila(
+        Number(activeTabObj?.hotmart_funnel?.principal_price_usd ?? 0),
+        row.tasa_cambio,
+        monedaReporte
+      );
       return {
         ...row,
         // Si hay landing pages configuradas, reemplazar ga_sessions con las sesiones del funnel
@@ -1144,9 +1147,13 @@ function DynamicDashboard({
         funnel_principal_count: fb?.principal?.count ?? 0,
         funnel_principal_neto: fb?.principal?.net ?? 0,
         funnel_principal_bruto: fb?.principal?.gross ?? 0,
-        funnel_principal_price: precio,
-        funnel_principal_price__num: precio,
-        funnel_principal_price__den: 1,
+        funnel_principal_price: precio.valor,
+        ...(precio.den !== undefined
+          ? {
+              funnel_principal_price__num: precio.num,
+              funnel_principal_price__den: precio.den,
+            }
+          : {}),
         funnel_bump_count: fb?.bump?.count ?? 0,
         funnel_bump_neto: fb?.bump?.net ?? 0,
         funnel_bump_bruto: fb?.bump?.gross ?? 0,
@@ -1174,6 +1181,7 @@ function DynamicDashboard({
     data.campaignGroups,
     data.leadAnswers,
     data.hotmartCubo,
+    monedaReporte,
   ]);
 
   // Previous period rows (no tab date filter needed — already a different date range)
@@ -1517,11 +1525,7 @@ function DynamicDashboard({
                   <p className="text-sm text-muted-foreground/70">Calculando...</p>
                 ) : (
                   <p className="text-lg md:text-xl font-bold text-emerald-600 dark:text-emerald-400 font-mono">
-                    $
-                    {rem.toLocaleString('en-US', {
-                      minimumFractionDigits: 0,
-                      maximumFractionDigits: 0,
-                    })}
+                    {formatValue(rem, { prefix: '$', decimals: 0, moneda: monedaReporte })}
                   </p>
                 )}
               </div>
@@ -1541,11 +1545,7 @@ function DynamicDashboard({
                   <p className="text-sm text-muted-foreground/70">Calculando...</p>
                 ) : (
                   <p className="text-lg md:text-xl font-bold text-indigo-600 dark:text-indigo-400 font-mono">
-                    $
-                    {dailyBudget.toLocaleString('en-US', {
-                      minimumFractionDigits: 0,
-                      maximumFractionDigits: 0,
-                    })}
+                    {formatValue(dailyBudget, { prefix: '$', decimals: 0, moneda: monedaReporte })}
                     /día
                   </p>
                 )}
@@ -2853,6 +2853,7 @@ export function DashboardClient({
   // importes (tarjetas, tablas, ranking, archivo, extras).
   return (
     <MonedaReporteProvider value={data.moneda ?? 'USD'}>
+      <AvisoTasasDashboard aviso={data.tasas ?? null} />
       <Suspense fallback={null}>
         <DynamicDashboard
           data={data}
@@ -2865,5 +2866,21 @@ export function DashboardClient({
         />
       </Suspense>
     </MonedaReporteProvider>
+  );
+}
+
+/**
+ * Días del rango cuyo dinero de Hotmart se convirtió sin la tasa de cambio de
+ * ese día (se usó la más cercana) o sin ninguna (quedó en USD). Discreto: la
+ * cifra es razonable, pero no es la tasa congelada de la venta.
+ */
+function AvisoTasasDashboard({ aviso }: { aviso: AvisoTasas | null }) {
+  const texto = textoAvisoTasas(aviso);
+  if (!texto) return null;
+  return (
+    <p className="mb-3 flex items-start gap-1.5 text-[11px] leading-snug text-muted-foreground">
+      <Coins className="h-3 w-3 shrink-0 mt-[1px]" />
+      <span>{texto}</span>
+    </p>
   );
 }

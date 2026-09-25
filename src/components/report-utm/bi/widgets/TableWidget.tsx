@@ -29,9 +29,15 @@ import {
 } from '@/lib/report-utm/bi-metadata';
 import { useBiQueryBase } from '../BiQueryContext';
 import { appendWidgetFilters, widgetFilterSignature } from '../widgetQuery';
-import { readUnavailable, UnavailableNote } from '../widgetDiagnostics';
+import { readTasas, readUnavailable, TasasNote, UnavailableNote } from '../widgetDiagnostics';
 import type { WidgetUnavailable } from '../widgetDiagnostics';
-import { decimalesDe, monedaDeMetrica, prefijoMoneda, simboloMoneda } from '@/lib/moneda-reporte';
+import {
+  decimalesDe,
+  monedaDeMetrica,
+  prefijoMoneda,
+  simboloMoneda,
+  type AvisoTasas,
+} from '@/lib/moneda-reporte';
 
 interface Props {
   title: string;
@@ -92,6 +98,7 @@ export function TableWidget({ title, config, filters, calculatedFields = [], h =
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>(config.sort === 'asc' ? 'asc' : 'desc');
   /** Motivo de la primera columna que no se pudo medir, si hay alguna. */
   const [naInfo, setNaInfo] = useState<WidgetUnavailable | null>(null);
+  const [avisoTasas, setAvisoTasas] = useState<AvisoTasas | null>(null);
   /** Moneda de reporte del cliente (viaja en `meta` de la respuesta). */
   const [monedaCliente, setMonedaCliente] = useState<string | null>(null);
 
@@ -184,6 +191,7 @@ export function TableWidget({ title, config, filters, calculatedFields = [], h =
       .then((json) => {
         setRows(Array.isArray(json.data) ? json.data : []);
         setMonedaCliente(json.meta?.moneda ?? null);
+        setAvisoTasas(readTasas(json.meta));
         // Una tabla mezcla columnas de varias fuentes, así que es donde
         // más se nota: se explica la primera columna que no se pudo
         // medir en vez de dejar una columna entera de ceros.
@@ -306,6 +314,7 @@ export function TableWidget({ title, config, filters, calculatedFields = [], h =
           {!loading && !error && (
             <div className="mt-1">
               <UnavailableNote info={naInfo} />
+              <TasasNote aviso={avisoTasas} />
             </div>
           )}
         </div>

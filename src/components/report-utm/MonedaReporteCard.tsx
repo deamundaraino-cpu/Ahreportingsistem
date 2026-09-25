@@ -1,8 +1,13 @@
 'use client';
 
 import { useState, useTransition } from 'react';
-import { Coins, Check, Loader2 } from 'lucide-react';
-import { MONEDAS_REPORTE, type MonedaReporte, type TasaGuardada } from '@/lib/moneda-reporte';
+import { Coins, Check, Loader2, AlertTriangle } from 'lucide-react';
+import {
+  MONEDAS_REPORTE,
+  type MonedaReporte,
+  type MonedaResuelta,
+  type TasaGuardada,
+} from '@/lib/moneda-reporte';
 import { addDaysISO, colombiaToday } from '@/lib/colombia-date';
 import { guardarMonedaReporteAction } from '@/app/(app)/admin/settings/[id]/_moneda';
 
@@ -25,27 +30,41 @@ const NOMBRE: Record<MonedaReporte, string> = {
  * la tasa del día en que se hizo, así que cambiar la moneda no reescribe nada:
  * solo cambia cómo se lee.
  *
+ * Sin ajuste («Automática») se usa la moneda de sus cuentas de Meta, que es la
+ * del gasto; solo si no se conoce, USD. La tarjeta avisa cuando el ajuste no
+ * coincide con Meta o cuando las cuentas de Meta mezclan monedas: el gasto no se
+ * convierte, así que en esos casos el ROAS dividiría dos monedas distintas.
+ *
  * Muestra la última tasa guardada de la moneda elegida: es la forma de ver, sin
  * abrir la base, que el worker sigue guardando la tasa de cada día.
  */
 export function MonedaReporteCard({
   rtmClienteId,
-  inicial,
+  resuelta,
   ultimasTasas = {},
 }: {
   rtmClienteId: string;
-  inicial: MonedaReporte;
+  /** Moneda efectiva y su origen (ver `resolverMonedaDeClienteUtm`). */
+  resuelta: MonedaResuelta;
   /** Última tasa guardada en `fx_rates` por moneda (ver `ultimasTasasGuardadas`). */
   ultimasTasas?: Partial<Record<MonedaReporte, TasaGuardada>>;
 }) {
-  const [moneda, setMoneda] = useState<MonedaReporte>(inicial);
+  // '' = sin ajuste: se sigue la moneda de Meta.
+  const inicial: MonedaReporte | '' = resuelta.origen === 'ajuste' ? resuelta.moneda : '';
+  const [eleccion, setEleccion] = useState<MonedaReporte | ''>(inicial);
+  const monedaMeta = resuelta.monedasMeta.length === 1 ? resuelta.monedasMeta[0] : null;
+  const automatica: MonedaReporte =
+    monedaMeta && (MONEDAS_REPORTE as readonly string[]).includes(monedaMeta)
+      ? (monedaMeta as MonedaReporte)
+      : 'USD';
+  const moneda: MonedaReporte = eleccion || automatica;
   const [pendiente, start] = useTransition();
   const [msg, setMsg] = useState<{ ok: boolean; texto: string } | null>(null);
 
   function guardar() {
     setMsg(null);
     start(async () => {
-      const r = await guardarMonedaReporteAction(rtmClienteId, moneda);
+      const r = await guardarMonedaReporteAction(rtmClienteId, eleccion);
       setMsg(
         r.ok
           ? { ok: true, texto: 'Guardado. Los informes ya muestran Hotmart en esta moneda.' }
@@ -55,6 +74,12 @@ export function MonedaReporteCard({
   }
 
   const tasa = moneda === 'USD' ? undefined : ultimasTasas[moneda];
+  const aviso =
+    resuelta.monedasMeta.length > 1
+      ? `Las cuentas de Meta de este cliente gastan en monedas distintas (${resuelta.monedasMeta.join(', ')}). El gasto no se convierte: el ROAS mezclaría monedas.`
+      : monedaMeta && eleccion && eleccion !== monedaMeta
+        ? `La cuenta de Meta gasta en ${monedaMeta}, pero se reporta en ${eleccion}. El gasto no se convierte: el ROAS y el CPA dividirían ${eleccion} entre ${monedaMeta}.`
+        : null;
   // Más de 2 días sin tasa nueva = el worker no la está guardando.
   const vieja = !!tasa && tasa.fecha < addDaysISO(colombiaToday(), -2);
 
@@ -71,10 +96,11 @@ export function MonedaReporteCard({
       </p>
       <div className="flex flex-wrap items-center gap-2">
         <select
-          value={moneda}
-          onChange={(e) => setMoneda(e.target.value as MonedaReporte)}
+          value={eleccion}
+          onChange={(e) => setEleccion(e.target.value as MonedaReporte | '')}
           className="px-3 py-2 text-xs rounded-lg bg-muted border border-border text-foreground"
         >
+          <option value="">Automática — {monedaMeta ? `la de Meta (${automatica})` : 'USD'}</option>
           {MONEDAS_REPORTE.map((m) => (
             <option key={m} value={m}>
               {NOMBRE[m]}
@@ -84,7 +110,7 @@ export function MonedaReporteCard({
         <button
           type="button"
           onClick={guardar}
-          disabled={pendiente || moneda === inicial}
+          disabled={pendiente || eleccion === inicial}
           className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium text-white nav-active-emerald disabled:opacity-40"
         >
           {pendiente ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
@@ -96,6 +122,20 @@ export function MonedaReporteCard({
           </span>
         )}
       </div>
+      <p className="text-[11px] text-muted-foreground">
+        Se reporta en <strong className="text-foreground">{moneda}</strong>
+        {eleccion
+          ? ', elegida a mano.'
+          : monedaMeta
+            ? ', tomada de la cuenta de Meta.'
+            : ': no se conoce la moneda de la cuenta de Meta.'}
+      </p>
+      {aviso && (
+        <p className="flex items-start gap-1.5 text-[11px] text-amber-600">
+          <AlertTriangle className="h-3 w-3 mt-0.5 shrink-0" />
+          {aviso}
+        </p>
+      )}
       {moneda !== 'USD' && (
         <p className={`text-[11px] ${vieja ? 'text-amber-600' : 'text-muted-foreground'}`}>
           {tasa ? (

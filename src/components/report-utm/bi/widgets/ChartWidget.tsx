@@ -51,9 +51,14 @@ import {
 import { useBiQueryBase } from '../BiQueryContext';
 import { appendWidgetFilters, widgetFilterSignature } from '../widgetQuery';
 import { HelpTip } from '../HelpTip';
-import { readUnavailable, UnavailableNote } from '../widgetDiagnostics';
+import { readTasas, readUnavailable, TasasNote, UnavailableNote } from '../widgetDiagnostics';
 import type { WidgetUnavailable } from '../widgetDiagnostics';
-import { monedaDeMetrica, prefijoMoneda, simboloMoneda } from '@/lib/moneda-reporte';
+import {
+  monedaDeMetrica,
+  prefijoMoneda,
+  simboloMoneda,
+  type AvisoTasas,
+} from '@/lib/moneda-reporte';
 
 /**
  * Prefijo de los importes de la gráfica («$» o «CLP »). Va por contexto porque
@@ -162,6 +167,7 @@ export function ChartWidget({
   const [error, setError] = useState<string | null>(null);
   /** Motivo por el que la métrica de la gráfica no se pudo medir, si es el caso. */
   const [naInfo, setNaInfo] = useState<WidgetUnavailable | null>(null);
+  const [avisoTasas, setAvisoTasas] = useState<AvisoTasas | null>(null);
   /** Moneda de reporte del cliente (viaja en `meta` de la respuesta). */
   const [monedaCliente, setMonedaCliente] = useState<string | null>(null);
 
@@ -238,6 +244,7 @@ export function ChartWidget({
       .then((json) => {
         setNaInfo(readUnavailable(json.meta, metric));
         setMonedaCliente(json.meta?.moneda ?? null);
+        setAvisoTasas(readTasas(json.meta));
         if (usePivot) {
           setPivot(json.data ?? { rows: [], seriesKeys: [] });
           setRows([]);
@@ -324,6 +331,7 @@ export function ChartWidget({
         {/* Una gráfica plana a cero engaña más que un hueco: si la métrica no
                 se pudo medir, se dice antes de dibujarla. */}
         {!loading && !error && <UnavailableNote info={naInfo} />}
+        {!loading && !error && <TasasNote aviso={avisoTasas} />}
 
         {loading ? (
           <Skeleton className="flex-1 min-h-[180px] rounded-xl" />

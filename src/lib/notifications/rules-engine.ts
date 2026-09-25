@@ -1,7 +1,12 @@
 import { type SupabaseClient } from '@supabase/supabase-js';
 import { parseISO, subDays, format, startOfMonth, endOfMonth } from 'date-fns';
 import { colombiaToday, colombiaYesterday } from '@/lib/date-utils';
-import { enrichMetaRow, enrichTikTokRow, parseTabFilter } from '@/lib/campaign-filter';
+import {
+  enrichMetaRow,
+  enrichTikTokRow,
+  parseTabFilter,
+  type AnyCampaignFilter,
+} from '@/lib/campaign-filter';
 import { notifyUsers } from '@/lib/notifications/notify';
 import { sendWhatsAppNotification } from '@/lib/whatsapp/notify';
 import {
@@ -11,6 +16,7 @@ import {
   prefijoMoneda,
   simboloMoneda,
   type ConversorMoneda,
+  type MonedaReporte,
 } from '@/lib/moneda-reporte';
 
 /**
@@ -63,6 +69,127 @@ export interface RuleRow {
   cooldown_hours: number;
   last_triggered_at: string | null;
   enabled: boolean;
+}
+
+/** Lo que mide una regla sobre un cliente y una pestaña en un rango. */
+export interface MedicionRegla {
+  /** `null` = no se puede medir (`budget_percentage` sin presupuesto). */
+  actualValue: number | null;
+  totalSpend: number;
+  totalRevenue: number;
+  totalLeads: number;
+  /** Moneda del gasto y de los ingresos (la de reporte del cliente). */
+  moneda: MonedaReporte;
+  /** Días cuyos ingresos quedaron en USD por no haber ninguna tasa. */
+  diasSinTasa: number;
+}
+
+/**
+ * Mide la métrica de una regla. Es la ÚNICA definición: la usan la evaluación
+ * de verdad (`evaluateAlertRules`) y el botón «Probar regla» de ajustes. Antes
+ * el botón tenía su propia copia, que sumaba los ingresos en USD contra un gasto
+ * en pesos, olvidaba el downsell y sumaba `VENTAS_CERRADAS` (un conteo) como
+ * dinero: la prueba decía una cosa y la alerta hacía otra.
+ */
+export async function medirRegla(
+  db: SupabaseClient,
+  p: {
+    clientId: string;
+    metric: RuleRow['metric'];
+    start: string;
+    end: string;
+    keywordFilter: AnyCampaignFilter;
+    campaignGroups: any[];
+    tabBudget: number | null;
+    /** Si ya se conoce (se resuelve una vez por cliente); si no, se busca. */
+    moneda?: MonedaReporte;
+    clientName?: string;
+  }
+): Promise<MedicionRegla> {
+  const moneda = p.moneda ?? (await monedaDeClientePublico(db, p.clientId));
+  const { data: metricsRows, error: metricsError } = await db
+    .from('metricas_diarias')
+    .select(
+      'fecha, meta_spend, tiktok_spend, meta_campaigns, tiktok_campaigns, ' +
+        'ga_sessions, hotmart_pagos_iniciados, ' +
+        COLUMNAS_INGRESOS.join(', ')
+    )
+    .eq('cliente_id', p.clientId)
+    .gte('fecha', p.start)
+    .lte('fecha', p.end);
+  if (metricsError) throw new Error(metricsError.message);
+
+  let totalSpend = 0;
+  let totalLeads = 0;
+  const filas = (metricsRows ?? []) as unknown as Array<Record<string, any>>;
+  for (const row of filas) {
+    const enrichedRow = enrichTikTokRow(
+      enrichMetaRow(row, p.keywordFilter, p.campaignGroups),
+      p.keywordFilter,
+      p.campaignGroups
+    );
+    totalSpend += (Number(enrichedRow.meta_spend) || 0) + (Number(enrichedRow.tiktok_spend) || 0);
+    totalLeads +=
+      (Number(enrichedRow.meta_leads) || 0) + (Number(enrichedRow.tiktok_conversions) || 0);
+  }
+
+  // Ingresos en la moneda del gasto. Solo se carga el conversor si la regla los
+  // necesita: el resto de métricas no tocan dinero de Hotmart.
+  let totalRevenue = 0;
+  let diasSinTasa = 0;
+  if (p.metric === 'revenue' || p.metric === 'roas') {
+    const conv = await cargarConversor(db, moneda, p.start, p.end);
+    totalRevenue = ingresosEnMonedaReporte(filas, conv);
+    diasSinTasa = conv.sinTasa.size;
+    if (diasSinTasa > 0) {
+      console.warn(
+        `[rules-engine] Sin tasa USD→${conv.moneda} en ${diasSinTasa} día(s) para ${p.clientName ?? p.clientId}: esos ingresos quedan en USD.`
+      );
+    }
+  }
+
+  let actualValue: number | null = 0;
+  switch (p.metric) {
+    case 'spend':
+      actualValue = totalSpend;
+      break;
+    case 'revenue':
+      actualValue = totalRevenue;
+      break;
+    case 'roas':
+      actualValue = totalSpend > 0 ? totalRevenue / totalSpend : 0;
+      break;
+    case 'leads':
+      actualValue = totalLeads;
+      break;
+    case 'cpl':
+      actualValue = totalLeads > 0 ? totalSpend / totalLeads : 0;
+      break;
+    case 'budget_percentage':
+      actualValue = p.tabBudget && p.tabBudget > 0 ? (totalSpend / p.tabBudget) * 100 : null;
+      break;
+  }
+  return { actualValue, totalSpend, totalRevenue, totalLeads, moneda, diasSinTasa };
+}
+
+/** ¿El valor cumple la condición de la regla? */
+export function cumpleCondicion(
+  actual: number,
+  operator: RuleRow['operator'],
+  threshold: number
+): boolean {
+  switch (operator) {
+    case '>':
+      return actual > threshold;
+    case '<':
+      return actual < threshold;
+    case '>=':
+      return actual >= threshold;
+    case '<=':
+      return actual <= threshold;
+    default:
+      return false;
+  }
 }
 
 interface TabInfo {
@@ -201,106 +328,25 @@ export async function evaluateAlertRules(
             // E. Resolve date range (per-tab context: tab's own dates if current_tab_period)
             const { start, end } = resolveTabDateRange(rule, tab, today);
 
-            // F. Query daily metrics for this client in the date range
-            const { data: metricsRows, error: metricsError } = await db
-              .from('metricas_diarias')
-              .select(
-                'fecha, meta_spend, tiktok_spend, meta_campaigns, tiktok_campaigns, ' +
-                  'ga_sessions, hotmart_pagos_iniciados, ventas_principal, ventas_bump, ' +
-                  'ventas_upsell, ventas_downsell'
-              )
-              .eq('cliente_id', clientId)
-              .gte('fecha', start)
-              .lte('fecha', end);
-
-            if (metricsError) {
-              console.error(
-                `[rules-engine] Metrics query error for client ${clientId} tab ${tab.nombre}:`,
-                metricsError.message
-              );
-              continue;
-            }
-
-            const keywordFilter = parseTabFilter(tab.keyword_meta);
+            // F-H. Medir la métrica en esta pestaña (misma función que «Probar regla»).
             const tabBudget = tab.presupuesto_objetivo ? Number(tab.presupuesto_objetivo) : null;
-
-            // G. Aggregate metrics filtered by this tab's keyword/filtro compuesto
-            let totalSpend = 0;
-            let totalLeads = 0;
-            const filas = (metricsRows ?? []) as unknown as Array<Record<string, any>>;
-
-            for (const row of filas) {
-              const enrichedRow = enrichTikTokRow(
-                enrichMetaRow(row, keywordFilter, campaignGroups ?? []),
-                keywordFilter,
-                campaignGroups ?? []
-              );
-              totalSpend +=
-                (Number(enrichedRow.meta_spend) || 0) + (Number(enrichedRow.tiktok_spend) || 0);
-
-              totalLeads +=
-                (Number(enrichedRow.meta_leads) || 0) +
-                (Number(enrichedRow.tiktok_conversions) || 0);
-            }
-
-            // Ingresos en la moneda del gasto. Solo se carga el conversor si la
-            // regla los necesita: el resto de métricas no tocan dinero de Hotmart.
-            let totalRevenue = 0;
-            if (rule.metric === 'revenue' || rule.metric === 'roas') {
-              const conv = await cargarConversor(db, moneda, start, end);
-              totalRevenue = ingresosEnMonedaReporte(filas, conv);
-              if (conv.sinTasa.size > 0) {
-                console.warn(
-                  `[rules-engine] Sin tasa USD→${conv.moneda} en ${conv.sinTasa.size} día(s) para ${clientName}: esos ingresos quedan en USD.`
-                );
-              }
-            }
-
-            // H. Calculate the target metric value
-            let actualValue = 0;
-            switch (rule.metric) {
-              case 'spend':
-                actualValue = totalSpend;
-                break;
-              case 'revenue':
-                actualValue = totalRevenue;
-                break;
-              case 'roas':
-                actualValue = totalSpend > 0 ? totalRevenue / totalSpend : 0;
-                break;
-              case 'leads':
-                actualValue = totalLeads;
-                break;
-              case 'cpl':
-                actualValue = totalLeads > 0 ? totalSpend / totalLeads : 0;
-                break;
-              case 'budget_percentage':
-                if (tabBudget && tabBudget > 0) {
-                  actualValue = (totalSpend / tabBudget) * 100;
-                } else {
-                  // No budget configured for this tab – skip silently
-                  continue;
-                }
-                break;
-            }
+            const medida = await medirRegla(db, {
+              clientId,
+              metric: rule.metric,
+              start,
+              end,
+              keywordFilter: parseTabFilter(tab.keyword_meta),
+              campaignGroups: campaignGroups ?? [],
+              tabBudget,
+              moneda,
+              clientName,
+            });
+            // Sin presupuesto configurado, el % de presupuesto no se puede medir.
+            if (medida.actualValue === null) continue;
+            const { actualValue, totalSpend } = medida;
 
             // I. Evaluate the condition
-            let isTriggered = false;
-            const threshold = Number(rule.value);
-            switch (rule.operator) {
-              case '>':
-                isTriggered = actualValue > threshold;
-                break;
-              case '<':
-                isTriggered = actualValue < threshold;
-                break;
-              case '>=':
-                isTriggered = actualValue >= threshold;
-                break;
-              case '<=':
-                isTriggered = actualValue <= threshold;
-                break;
-            }
+            const isTriggered = cumpleCondicion(actualValue, rule.operator, Number(rule.value));
 
             if (isTriggered) {
               triggered++;

@@ -79,7 +79,7 @@ export const HOTMART_SOURCE: DataSource = {
       S,
       'revenue_neto',
       'Facturación Hotmart (neto)',
-      'Dinero que realmente llega a la cuenta: la comisión del productor, ya descontada la tarifa de Hotmart. Convertido a dólares.',
+      'Dinero que realmente llega a la cuenta: la comisión del productor, ya descontada la tarifa de Hotmart. Convertido a la moneda del cliente.',
       'hotmart',
       { column: 'neto_productor_usd', recommended: true }
     ),
@@ -87,7 +87,7 @@ export const HOTMART_SOURCE: DataSource = {
       S,
       'revenue_bruto',
       'Facturación Hotmart (bruto)',
-      'Precio pagado por el comprador antes de comisiones, convertido a dólares.',
+      'Precio pagado por el comprador antes de comisiones, convertido a la moneda del cliente.',
       'hotmart',
       { column: 'bruto_usd' }
     ),
