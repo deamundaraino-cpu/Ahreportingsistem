@@ -7,6 +7,8 @@ import {
   type IdsPublicitarios,
 } from './lead-ids';
 import { leerSecreto } from '@/lib/secretos';
+import { guardarPreguntas, sincronizarOpcionesEnCampos } from '@/lib/leads/respuestas/preguntas-db';
+import type { PreguntaPlataforma, TipoPlataforma } from '@/lib/leads/respuestas/preguntas-db';
 import {
   fetchContactById,
   fetchCustomFields,
@@ -566,6 +568,59 @@ export async function resolveCustomFieldMap(
   }
 }
 
+/** Tipo de dato de GHL → tipo de pregunta. */
+const TIPO_GHL: Record<string, TipoPlataforma> = {
+  SINGLE_OPTIONS: 'opcion',
+  RADIO: 'opcion',
+  MULTIPLE_OPTIONS: 'multiple',
+  CHECKBOX: 'multiple',
+  NUMERICAL: 'numero',
+  MONETORY: 'numero',
+  DATE: 'fecha',
+  PHONE: 'telefono',
+  EMAIL: 'email',
+};
+
+/**
+ * Campos personalizados de GHL → preguntas (`lead_preguntas`, migración 091).
+ * La clave es el NOMBRE del campo: es con el que la respuesta entra en
+ * `raw_fields` (ver `normalizeContactFields`).
+ */
+export function preguntasDeCamposGhl(items: GhlCustomFieldDef[]): PreguntaPlataforma[] {
+  return items
+    .filter((f) => f?.name)
+    .map((f) => {
+      const opciones = f.opciones ?? [];
+      const tipoGhl = String(f.dataType ?? '').toUpperCase();
+      return {
+        form_id: '',
+        form_name: null,
+        clave_origen: f.name,
+        etiqueta: f.name,
+        tipo: TIPO_GHL[tipoGhl] ?? (opciones.length > 0 ? 'opcion' : 'texto'),
+        opciones,
+      };
+    });
+}
+
+/**
+ * Guarda las preguntas del catálogo recién leído y añade a los campos las
+ * opciones nuevas. Best-effort: nunca interrumpe la ingesta.
+ */
+async function registrarPreguntasGhl(
+  db: ReturnType<SupabaseClient['schema']>,
+  clienteId: string,
+  items: GhlCustomFieldDef[]
+): Promise<void> {
+  try {
+    if ((await guardarPreguntas(db, clienteId, 'ghl', preguntasDeCamposGhl(items))) > 0) {
+      await sincronizarOpcionesEnCampos(db, clienteId);
+    }
+  } catch {
+    /* no fatal */
+  }
+}
+
 /** ¿Algún contacto trae un id de campo que el catálogo cacheado no conoce? */
 export function hayCamposDesconocidos(
   contactos: GhlContact[],
@@ -632,6 +687,7 @@ export async function syncGhlLeadsForCliente(
     let defs = catalogo.defs;
     let items = catalogo.items;
     campos = items.length;
+    if (catalogo.refrescado) await registrarPreguntasGhl(db, clienteId, items);
 
     let partial = false;
     await searchContactsPaged(cred, desdeIso, async (batch) => {

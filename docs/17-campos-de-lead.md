@@ -1,5 +1,10 @@
 # 17 · Campos de lead — cruzar las respuestas de los formularios
 
+> **Desde el 2026-09-26 esto se configura en la pestaña «Leads» de la ficha del
+> cliente, con activación de un clic y una métrica por respuesta sin crear
+> segmentos.** Ver [doc 24 · Respuestas de formulario](./24-respuestas-de-formulario.md).
+> Lo de abajo sigue valiendo como referencia de las reglas.
+
 Guía práctica para convertir las respuestas de los formularios de un cliente
 (rango de ingresos, plazo de compra, tipo de propiedad…) en dimensiones y
 filtros de los informes de Report-UTM.
@@ -225,15 +230,15 @@ Para re-apuntar bloques en masa: `npx tsx scripts/reapuntar-bloques-lead.ts`
 | ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Tabla del campo               | `report_utm.lead_campos` (migración `060`)                                                                                                                      |
 | Tabla del segmento            | `report_utm.lead_campo_segmentos` (migración `073`)                                                                                                             |
-| Bloque del dashboard          | `LeadAnswerBlockDef` + RPC `bi_respuestas_por_dia` (migración `071`)                                                                                            |
+| Bloque del dashboard          | `LeadAnswerBlockDef` + RPC `leads_cubo` (migración `090`; sin ella, `bi_respuestas_por_dia` de la `071`)                                                        |
 | Lógica pura                   | [`src/lib/report-utm/lead-campos.ts`](../src/lib/report-utm/lead-campos.ts)                                                                                     |
 | Lectura/escritura y detección | [`src/lib/report-utm/lead-campos-db.ts`](../src/lib/report-utm/lead-campos-db.ts)                                                                               |
 | Token del campo               | `leadfield:<clave>` (dimensión y filtro)                                                                                                                        |
 | Token del segmento            | `leadseg:<clave>` (métrica) · alias de fórmula `lseg__<clave>`                                                                                                  |
-| Métrica por respuesta         | `lf__<campo>__<respuesta>` — solo en el dashboard, derivada de los buckets                                                                                      |
+| Métrica por respuesta         | `lf__<campo>__<respuesta>` (fórmula) · `leadans:<campo>:<respuesta>` (widget) — en dashboard e informes, con clave guardada en `lead_campos.respuestas` (090)      |
 | Quién usa un campo            | [`src/lib/report-utm/lead-campo-referencias.ts`](../src/lib/report-utm/lead-campo-referencias.ts) · `GET /api/report-utm/lead-campos?con_referencias=1`         |
 | API                           | `/api/report-utm/lead-campos`, `/lead-campos/detectar`, `/lead-campos/segmentos`, `/lead-campos/sugeridas`, `/api/report-utm/bi/lead-fields`                    |
-| UI                            | [`LeadCamposCard`](../src/components/report-utm/LeadCamposCard.tsx) + [`LeadSegmentosEditor`](../src/components/report-utm/LeadSegmentosEditor.tsx)             |
+| UI                            | [`LeadsConfigCard`](../src/components/report-utm/leads/LeadsConfigCard.tsx) (pestaña «Leads» de la ficha) · edición avanzada con `LeadCampoEditorDialog`       |
 | Comprobaciones                | `npx tsx scripts/verify-lead-segmentos.ts` (puro) · `verify-lead-segmentos-db.ts` y `verify-lead-campo-referencias.ts` (datos reales) · `verify-lead-campos.ts` |
 | Migración de datos            | `npx tsx scripts/migrar-segmentos-lead.ts` (informe · `--aplicar` · `--revertir`) · `scripts/reapuntar-bloques-lead.ts`                                         |
 

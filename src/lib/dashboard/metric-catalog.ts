@@ -41,6 +41,8 @@ export interface LeadAnswerCampoResumen {
   clave: string;
   nombre: string;
   buckets: string[];
+  /** Clave estable de cada bucket, en el mismo orden (migración 090). */
+  claves?: string[];
   /**
    * El catálogo no sabe qué respuestas produce esta pregunta: no tiene ningún
    * valor agrupado. Solo se puede ofrecer su `(sin respuesta)`… que sin las
@@ -320,7 +322,7 @@ export const AVAILABLE_METRICS: MetricOption[] = [
   // Contactos reales del formulario (web + Meta Lead Ads unificados), no lo
   // que reporta el píxel. NO se suma con `meta_leads`: miden lo mismo desde
   // fuentes distintas y un lead puede estar en las dos.
-  { id: 'utm_leads', label: 'UTM Report: Leads (contactos)' },
+  { id: 'utm_leads', label: 'Report-UTM: Leads (contactos)' },
 
   // ── CRM (GoHighLevel) ─────────────────────────────────────────────────────
   // Ventas que el cliente cierra en su embudo de GHL, recibidas por el webhook

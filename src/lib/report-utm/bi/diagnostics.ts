@@ -160,7 +160,10 @@ export function explainSkipReason(reason: SkipReason, sourceLabel?: string): str
       return (
         `El gasto de anuncios no se puede repartir por el filtro aplicado ` +
         `(${reason.fields.join(', ')}), porque las métricas de campaña no ` +
-        `guardan ese dato. Los leads y las ventas sí quedan filtrados.`
+        `guardan ese dato. Los leads sí quedan filtrados; las ventas solo si ` +
+        `el filtro es de campaña, fuente o plataforma (una venta no sabe qué ` +
+        `respondió el lead). Para el costo de una respuesta usa su métrica: ` +
+        `inversión ÷ esa respuesta.`
       );
     case 'grain_mismatch':
       return (
@@ -189,8 +192,12 @@ export function hasDiagnostics(d: QueryDiagnostics | undefined): boolean {
  * reporte y el aviso de tasas de cambio viajan tal cual.
  */
 export function sanitizeForClient<
-  T extends QueryDiagnostics & { moneda?: string; tasas?: unknown },
->(d: T | undefined): (QueryDiagnostics & Pick<T, 'moneda' | 'tasas'>) | undefined {
+  T extends QueryDiagnostics & {
+    moneda?: string;
+    tasas?: unknown;
+    etiquetas?: Record<string, string>;
+  },
+>(d: T | undefined): (QueryDiagnostics & Pick<T, 'moneda' | 'tasas' | 'etiquetas'>) | undefined {
   if (!d) return undefined;
   const neutralizar = (r: SkipReason): SkipReason =>
     r.kind === 'no_public_link' ? { kind: 'not_configured' } : r;
@@ -206,5 +213,7 @@ export function sanitizeForClient<
     // público pinta pesos chilenos con «$» y dos decimales.
     ...(d.moneda ? { moneda: d.moneda } : {}),
     ...(d.tasas ? { tasas: d.tasas } : {}),
+    // Los nombres de las preguntas y respuestas son del propio informe.
+    ...(d.etiquetas ? { etiquetas: d.etiquetas } : {}),
   };
 }

@@ -110,13 +110,18 @@ export function FormulaInput({
   >('all');
   const metrics = availableMetrics || AVAILABLE_METRICS;
 
-  const insertMetric = (metricId: string) => {
+  /**
+   * Inserta un texto en el cursor. `formato` manda sobre el que declare la
+   * métrica: los atajos CPL y % de una respuesta insertan una fórmula entera y
+   * saben qué formato le toca (moneda, porcentaje).
+   */
+  const insertMetric = (metricId: string, texto: string = metricId, formato?: MetricType) => {
     const estabaVacio = value.trim() === '';
     const currentPos = inputRef.current?.selectionStart || value.length;
     const newVal =
       value.slice(0, currentPos) +
       (value.length > 0 && currentPos > 0 && !value.endsWith(' ') ? ' ' : '') +
-      metricId +
+      texto +
       ' ' +
       value.slice(currentPos);
     onChange(newVal);
@@ -125,9 +130,26 @@ export function FormulaInput({
     // `col`/`card` es el de este render. Sin ella, aplicar el formato lo
     // reconstruía desde el objeto viejo y borraba la métrica recién puesta.
     if (estabaVacio) {
-      onMetricInserted?.(metricId, metrics.find((m) => m.id === metricId)?.format, newVal);
+      onMetricInserted?.(
+        metricId,
+        formato ?? metrics.find((m) => m.id === metricId)?.format,
+        newVal
+      );
     }
   };
+
+  // Lectura en lenguaje natural de la fórmula, en el tooltip del campo:
+  // «Inversión total ÷ Rango de ingresos: $2M a $3M». Las claves internas
+  // (`lf__…`) no dicen nada a quien no las escribió.
+  const etiquetaDe = new Map(metrics.map((m) => [m.id, m.label]));
+  const lectura = value.trim()
+    ? value
+        .replace(/[a-z_][a-z0-9_]*/gi, (id) => etiquetaDe.get(id) ?? id)
+        .replace(/\//g, ' ÷ ')
+        .replace(/\*/g, ' × ')
+        .replace(/\s+/g, ' ')
+        .trim()
+    : '';
 
   // Los campos de Sheet no encajan en ninguna categoría existente: su id no
   // empieza por `offline_`/`sheet_` y su etiqueta es el nombre libre que puso
@@ -182,6 +204,7 @@ export function FormulaInput({
         onChange={(e) => onChange(e.target.value)}
         className={`h-7 text-xs bg-background border-border text-foreground w-full font-mono ${!disabled ? 'pr-8' : ''}`}
         placeholder="Fórmula"
+        title={lectura && lectura !== value.trim() ? `Se lee como: ${lectura}` : undefined}
         disabled={disabled}
       />
       {!disabled && (
@@ -238,16 +261,48 @@ export function FormulaInput({
               ))}
             </div>
             <div className="max-h-48 overflow-y-auto custom-scrollbar p-1">
-              {filteredMetrics.map((m) => (
-                <button
-                  key={m.id}
-                  onClick={() => insertMetric(m.id)}
-                  className="w-full text-left px-2 py-1.5 text-xs text-foreground/90 hover:bg-accent rounded transition flex flex-col gap-0.5"
-                >
-                  <span className="font-semibold text-foreground">{m.label}</span>
-                  <span className="text-[10px] text-muted-foreground/70 font-mono">{m.id}</span>
-                </button>
-              ))}
+              {filteredMetrics.map((m) => {
+                // Una respuesta o un segmento es un conteo de leads: se ofrecen
+                // además sus dos lecturas habituales, ya escritas.
+                const esConteoDeRespuesta =
+                  m.id.startsWith(PREFIJO_RESPUESTA) || m.id.startsWith(PREFIJO_SEGMENTO);
+                return (
+                  <div
+                    key={m.id}
+                    className="flex items-center gap-1 hover:bg-accent rounded transition"
+                  >
+                    <button
+                      onClick={() => insertMetric(m.id)}
+                      title={m.id}
+                      className="flex-1 min-w-0 text-left px-2 py-1.5 text-xs text-foreground/90"
+                    >
+                      <span className="font-semibold text-foreground">{m.label}</span>
+                    </button>
+                    {esConteoDeRespuesta && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => insertMetric(m.id, `total_spend / ${m.id}`, 'currency')}
+                          title={`Costo por lead de «${m.label}»: inversión total ÷ estos leads`}
+                          className="shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-500/10"
+                        >
+                          CPL
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            insertMetric(m.id, `${m.id} / ${CLAVE_TOTAL_LEADS} * 100`, 'percent')
+                          }
+                          title={`Porcentaje de los leads que son «${m.label}»`}
+                          className="shrink-0 mr-1 px-1.5 py-0.5 rounded text-[10px] font-medium text-sky-700 dark:text-sky-300 bg-sky-50 dark:bg-sky-500/10"
+                        >
+                          %
+                        </button>
+                      </>
+                    )}
+                  </div>
+                );
+              })}
               {filteredMetrics.length === 0 && (
                 <p className="text-center text-xs text-muted-foreground/70 py-4">
                   No se encontraron métricas

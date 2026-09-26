@@ -39,6 +39,7 @@ import { enrichOfflineRow } from '@/lib/offline-filter';
 import {
   aggregateRankingRows,
   dimensionSoportaRespuestas,
+  cuboDeFilas,
   dimensionSoportaHotmart,
 } from '@/lib/ranking-aggregation';
 import { reDerivarRespuestas } from '@/lib/dashboard/lead-answer-row';
@@ -603,10 +604,10 @@ function SingleMetricChart({
     if (!dim) return [];
     return todasLasFormulas.filter(
       (f) =>
-        (formulaUsaRespuestas(f) && !dimensionSoportaRespuestas(dim)) ||
+        (formulaUsaRespuestas(f) && !dimensionSoportaRespuestas(dim, cuboDeFilas(sourceMetrics))) ||
         (formulaUsaHotmart(f) && !dimensionSoportaHotmart(dim))
     );
-  }, [chart.dimension, todasLasFormulas]);
+  }, [chart.dimension, todasLasFormulas, sourceMetrics]);
   const formulas = useMemo(
     () => todasLasFormulas.filter((f) => !formulasNoAplicables.includes(f)),
     [todasLasFormulas, formulasNoAplicables]

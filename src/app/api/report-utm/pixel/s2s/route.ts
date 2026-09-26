@@ -1,4 +1,7 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse, after } from 'next/server';
+import { createHash } from 'node:crypto';
+import { preguntasDeFieldsMeta } from '@/lib/leads/respuestas/wordpress';
+import { guardarPreguntas, sincronizarOpcionesEnCampos } from '@/lib/leads/respuestas/preguntas-db';
 import { createAdminClient } from '@/utils/supabase/server';
 import { verifyS2SSignature } from '@/lib/report-utm/s2s-auth';
 import { aplicarExclusion, cargarReglaExclusion } from '@/lib/report-utm/lead-exclusion';
@@ -57,6 +60,8 @@ type S2SPayload = {
   form_id?: string;
   form_plugin?: string;
   raw_fields?: Record<string, unknown>;
+  /** Tipo y opciones de las preguntas de opción del formulario (plugin 0.4.0). */
+  fields_meta?: Record<string, unknown>;
 };
 
 /**
@@ -278,9 +283,50 @@ export async function POST(req: NextRequest) {
       console.error('[s2s] lead_events insert error', leadError);
       return NextResponse.json({ error: 'Insert failed' }, { status: 500 });
     }
+
+    // Tipo y opciones de las preguntas del formulario (plugin 0.4.0). Después de
+    // responder y sin tocar la base si la definición no cambió desde la última
+    // vez: el lead ya está guardado y esto es un extra.
+    if (body.fields_meta) {
+      const clienteId = cliente.id;
+      after(() => registrarPreguntasWordpress(db, clienteId, body));
+    }
   }
 
   return NextResponse.json({ ok: true });
+}
+
+// Huellas recientes de `fields_meta` por cliente y formulario: el mismo
+// formulario manda la misma definición con cada lead, y basta con guardarla una
+// vez cada pocas horas.
+const HUELLA_TTL_MS = 6 * 3600_000;
+const huellasRecientes = new Map<string, number>();
+
+async function registrarPreguntasWordpress(
+  db: ReturnType<Awaited<ReturnType<typeof createAdminClient>>['schema']>,
+  clienteId: string,
+  body: S2SPayload
+): Promise<void> {
+  try {
+    const huella = `${clienteId}|${body.form_id ?? ''}|${createHash('sha1')
+      .update(JSON.stringify(body.fields_meta))
+      .digest('hex')}`;
+    const vista = huellasRecientes.get(huella);
+    if (vista && Date.now() - vista < HUELLA_TTL_MS) return;
+    if (huellasRecientes.size > 2000) huellasRecientes.clear();
+    huellasRecientes.set(huella, Date.now());
+
+    const preguntas = preguntasDeFieldsMeta(body.fields_meta, {
+      form_id: body.form_id ?? null,
+      form_name: body.form_name ?? null,
+    });
+    if (!preguntas || preguntas.length === 0) return;
+    if ((await guardarPreguntas(db, clienteId, 'wordpress', preguntas)) > 0) {
+      await sincronizarOpcionesEnCampos(db, clienteId);
+    }
+  } catch (err) {
+    console.error('[s2s] no se pudieron registrar las preguntas del formulario', err);
+  }
 }
 
 export async function GET() {

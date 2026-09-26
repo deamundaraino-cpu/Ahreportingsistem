@@ -17,6 +17,7 @@ import {
   sheetFieldAlias,
   sheetViewAlias,
   leadSegAlias,
+  leadAnsAlias,
 } from '@/lib/report-utm/bi-metadata';
 import type {
   BiMetric,
@@ -25,7 +26,11 @@ import type {
   SheetFieldMeta,
   SheetViewMeta,
   LeadSegmentoMeta,
+  LeadFieldMeta,
 } from '@/lib/report-utm/bi-metadata';
+import { refsOf } from '@/lib/report-utm/bi/expr';
+import { respuestasDeCampo } from './fuentesDelCliente';
+import { SIN_RESPUESTA } from '@/lib/leads/respuestas/claves';
 
 interface Props {
   value: string;
@@ -40,12 +45,20 @@ interface Props {
   sheetViews?: SheetViewMeta[];
   /** Segmentos de campo de lead, con sus alias lseg__. */
   leadSegments?: LeadSegmentoMeta[];
+  /** Preguntas del catálogo: cada respuesta se ofrece con su alias lf__. */
+  leadFields?: LeadFieldMeta[];
   placeholder?: string;
 }
 
 interface MetricOption {
   key: string;
   label: string;
+  /**
+   * Es un CONTEO de leads (respuesta o segmento): se ofrecen además los atajos
+   * «CPL» (gasto ÷ esto) y «%» (esto ÷ leads × 100), que son las dos fórmulas
+   * por las que existe. Así nadie tiene que escribir `spend / lf__…` a mano.
+   */
+  conteo?: boolean;
 }
 
 /** Agrupa el catálogo por origen, para que la lista sea navegable. */
@@ -54,7 +67,8 @@ function buildGroups(
   offlineFields: OfflineFieldMeta[],
   sheetFields: SheetFieldMeta[],
   sheetViews: SheetViewMeta[],
-  leadSegments: LeadSegmentoMeta[]
+  leadSegments: LeadSegmentoMeta[],
+  leadFields: LeadFieldMeta[] = []
 ): { title: string; items: MetricOption[] }[] {
   const of = (keys: string[]): MetricOption[] =>
     keys
@@ -158,7 +172,23 @@ function buildGroups(
   const segmentosLead: MetricOption[] = leadSegments.map((s) => ({
     key: leadSegAlias(s.clave),
     label: s.campo_nombre ? `${s.campo_nombre}: ${s.nombre}` : s.nombre,
+    conteo: true,
   }));
+
+  // Cada respuesta de cada pregunta (alias lf__<campo>__<respuesta>), sin
+  // necesidad de crear un segmento por respuesta.
+  const respuestasLead: MetricOption[] = leadFields.flatMap((f) => [
+    ...respuestasDeCampo(f).map((r) => ({
+      key: leadAnsAlias(f.clave, r.clave),
+      label: `${f.nombre}: ${r.nombre}`,
+      conteo: true,
+    })),
+    {
+      key: leadAnsAlias(f.clave, SIN_RESPUESTA),
+      label: `${f.nombre}: (sin respuesta)`,
+      conteo: true,
+    },
+  ]);
 
   return [
     { title: 'Núcleo', items: nucleo },
@@ -166,6 +196,7 @@ function buildGroups(
     { title: 'Hotmart', items: hotmart },
     { title: 'Google Analytics', items: ga },
     { title: 'Offline', items: offline },
+    { title: 'Respuestas de formulario', items: respuestasLead },
     { title: 'Segmentos de lead', items: segmentosLead },
     { title: 'Campos de Sheet', items: camposSheet },
     { title: 'Vistas de Sheet', items: vistasSheet },
@@ -183,13 +214,41 @@ export function BiFormulaInput({
   sheetFields = [],
   sheetViews = [],
   leadSegments = [],
+  leadFields = [],
   placeholder,
 }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
 
-  const groups = buildGroups(formFields, offlineFields, sheetFields, sheetViews, leadSegments);
+  const groups = buildGroups(
+    formFields,
+    offlineFields,
+    sheetFields,
+    sheetViews,
+    leadSegments,
+    leadFields
+  );
+  // Lectura en lenguaje natural de la fórmula: «Inversión ÷ Rango de ingresos:
+  // $2M a $3M». Es la forma de comprobar que se eligió lo que se quería sin
+  // tener que descifrar las claves internas.
+  const etiquetaDe = new Map(groups.flatMap((g) => g.items.map((i) => [i.key, i.label])));
+  const lectura = (() => {
+    if (!value.trim()) return '';
+    let refs: string[] = [];
+    try {
+      refs = refsOf(value);
+    } catch {
+      return '';
+    }
+    if (!refs.some((id) => etiquetaDe.has(id))) return '';
+    return value
+      .replace(/[a-z_][a-z0-9_.]*/gi, (id) => etiquetaDe.get(id) ?? id)
+      .replace(/\//g, ' ÷ ')
+      .replace(/\*/g, ' × ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  })();
   const q = search.trim().toLowerCase();
   const filtered = q
     ? groups
@@ -244,6 +303,11 @@ export function BiFormulaInput({
           Métrica
         </button>
       </div>
+      {lectura && (
+        <p className="mt-1 text-[10px] text-muted-foreground leading-snug">
+          Se lee como: <span className="text-foreground/80">{lectura}</span>
+        </p>
+      )}
 
       {open && (
         <div className="absolute z-20 mt-1 w-full rounded-xl border border-border bg-card shadow-xl overflow-hidden">
@@ -280,17 +344,43 @@ export function BiFormulaInput({
                     {g.title}
                   </p>
                   {g.items.map((i) => (
-                    <button
+                    <div
                       key={i.key}
-                      type="button"
-                      onClick={() => insert(i.key)}
-                      className="w-full flex items-baseline justify-between gap-2 px-3 py-1.5 text-left hover:bg-accent transition-colors"
+                      className="flex items-center gap-1 px-3 py-1 hover:bg-accent transition-colors"
                     >
-                      <span className="text-[11px] text-foreground truncate">{i.label}</span>
-                      <code className="text-[10px] font-mono text-emerald-600 dark:text-emerald-400 shrink-0">
-                        {i.key}
-                      </code>
-                    </button>
+                      {/* La clave interna solo al pasar el ratón: lo que se
+                          elige es la etiqueta, no el identificador. */}
+                      <button
+                        type="button"
+                        onClick={() => insert(i.key)}
+                        title={i.key}
+                        className="flex-1 min-w-0 text-left py-0.5"
+                      >
+                        <span className="block text-[11px] text-foreground truncate">
+                          {i.label}
+                        </span>
+                      </button>
+                      {i.conteo && (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => insert(`spend / ${i.key}`)}
+                            title={`Costo por lead de «${i.label}»: inversión ÷ estos leads`}
+                            className="shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-500/10 hover:bg-emerald-100"
+                          >
+                            CPL
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => insert(`${i.key} / leads_count * 100`)}
+                            title={`Porcentaje de los leads que son «${i.label}»`}
+                            className="shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium text-sky-700 dark:text-sky-300 bg-sky-50 dark:bg-sky-500/10 hover:bg-sky-100"
+                          >
+                            %
+                          </button>
+                        </>
+                      )}
+                    </div>
                   ))}
                 </div>
               ))

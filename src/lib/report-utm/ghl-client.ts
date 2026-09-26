@@ -92,6 +92,13 @@ export type GhlCustomFieldDef = {
   name: string;
   fieldKey?: string | null;
   dataType?: string | null;
+  /**
+   * Opciones de un desplegable, casillas o radio. GHL las devuelve en
+   * `picklistOptions` (texto) y en las versiones nuevas también en `options`
+   * ({key, label}). Se conservan desde la migración 091: son las respuestas
+   * reales de la pregunta, que antes se tiraban.
+   */
+  opciones?: { valor: string; etiqueta: string | null }[];
 };
 
 export type GhlCredenciales = {
@@ -149,6 +156,27 @@ export async function fetchContactById(
   return contacto?.id ? contacto : null;
 }
 
+/** Opciones de un campo de GHL, en cualquiera de sus dos formatos. */
+export function opcionesDeCampoGhl(
+  f: Record<string, unknown>
+): { valor: string; etiqueta: string | null }[] {
+  const out: { valor: string; etiqueta: string | null }[] = [];
+  const pick = f.picklistOptions;
+  if (Array.isArray(pick)) {
+    for (const o of pick)
+      if (o !== null && o !== undefined && String(o).trim())
+        out.push({ valor: String(o), etiqueta: String(o) });
+  }
+  const opts = f.options;
+  if (out.length === 0 && Array.isArray(opts)) {
+    for (const o of opts as Record<string, unknown>[]) {
+      const valor = String(o?.label ?? o?.key ?? '').trim();
+      if (valor) out.push({ valor, etiqueta: o?.label ? String(o.label) : valor });
+    }
+  }
+  return out;
+}
+
 /** Catálogo de campos personalizados de la location (resuelve los ids opacos del contacto). */
 export async function fetchCustomFields(cred: GhlCredenciales): Promise<GhlCustomFieldDef[]> {
   const url = `${BASE}/locations/${encodeURIComponent(cred.locationId)}/customFields?model=contact`;
@@ -162,6 +190,7 @@ export async function fetchCustomFields(cred: GhlCredenciales): Promise<GhlCusto
       name: String(f.name),
       fieldKey: f.fieldKey ? String(f.fieldKey) : null,
       dataType: f.dataType ? String(f.dataType) : null,
+      opciones: opcionesDeCampoGhl(f as unknown as Record<string, unknown>),
     }));
 }
 

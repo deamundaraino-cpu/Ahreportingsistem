@@ -21,6 +21,7 @@ import type {
   BiPivotRow,
   FieldAgg,
   AdvancedFilter,
+  LeadFieldMeta,
 } from './bi-metadata';
 import {
   evaluateExpression,
@@ -59,6 +60,12 @@ import {
   leadSegAlias,
   isLeadSegMetric,
   leadSegLabel,
+  isLeadAnsMetric,
+  parseLeadAnsMetric,
+  leadAnsAlias,
+  leadAnsLabel,
+  extractLeadAnsAliases,
+  isFieldMetric,
   esEtapaDeEmbudo,
   sheetFieldAlias,
   sheetViewAlias,
@@ -98,11 +105,12 @@ import { loadLeadCampos, loadLeadSegmentos } from './lead-campos-db';
 import {
   bucketDeLeadRaw,
   ordenarBuckets,
-  bucketDeLead,
   indexarRawFields,
-  segmentoIncluyeBucket,
-  cuentaEnSegmento,
+  bucketsDeLead,
+  predicadoDeSegmento,
+  predicadoDeRespuesta,
 } from './lead-campos';
+import { refsOf } from './bi/expr';
 import type { LeadCampoDef, LeadSegmentoDef, LeadSegmentoMeta } from './lead-campos';
 import {
   sinValores,
@@ -243,6 +251,10 @@ export async function runBiQuery(params: BiQueryParams): Promise<BiQueryRow[]> {
   // gasto se sigue trayendo entero y `spend / lseg__x` es el costo por lead de
   // ese segmento. Un refactor que junte esta lista con `fieldMetrics` rompería
   // exactamente eso y dejaría el gasto en 0 sin ningún aviso.
+  //
+  // Una RESPUESTA (`leadans:<campo>:<resp>` / `lf__<campo>__<resp>`) es lo mismo
+  // con un solo bucket, y sigue exactamente el mismo camino: es un contador más
+  // por lead, no recorta nada, y `spend / lf__campo__resp` es su CPL.
   const leadSegReqs = new Map<string, LeadSegReq>();
   const addSeg = (clave: string, outKey: string) => {
     if (leadSegReqs.has(outKey)) return;
@@ -250,14 +262,33 @@ export async function runBiQuery(params: BiQueryParams): Promise<BiQueryRow[]> {
     // Un alias que no resuelve a ningún segmento se descarta en vez de vaciar
     // el informe: mismo criterio que `advCellValue` con un campo borrado.
     if (!def) return;
-    leadSegReqs.set(outKey, { clave, campoClave: def.campo_clave, outKey });
+    leadSegReqs.set(outKey, {
+      campoClave: def.campo_clave,
+      outKey,
+      alias: leadSegAlias(clave),
+      incluye: predicadoDeSegmento(def),
+    });
+  };
+  const addAns = (campoClave: string, resp: string, outKey: string) => {
+    if (leadSegReqs.has(outKey)) return;
+    const campo = leadCampos.find((c) => c.clave === campoClave);
+    if (!campo) return;
+    leadSegReqs.set(outKey, {
+      campoClave,
+      outKey,
+      alias: leadAnsAlias(campoClave, resp),
+      incluye: predicadoDeRespuesta(campo, resp),
+    });
   };
   for (const m of params.metrics) {
     const c = parseLeadSegMetric(m);
     if (c) addSeg(c, m);
+    const a = parseLeadAnsMetric(m);
+    if (a) addAns(a.campo, a.resp, m);
   }
   for (const cf of params.calculated ?? []) {
     for (const a of extractLeadSegAliases(cf.expression)) addSeg(a.clave, a.alias);
+    for (const a of extractLeadAnsAliases(cf.expression)) addAns(a.campo, a.resp, a.alias);
   }
   const leadSegs = Array.from(leadSegReqs.values());
 
@@ -456,8 +487,7 @@ export async function runBiQuery(params: BiQueryParams): Promise<BiQueryRow[]> {
       leadCampos,
       resolver,
       nocross,
-      leadSegs,
-      leadSegmentos
+      leadSegs
     );
   }
 
@@ -560,6 +590,15 @@ export async function runBiQuery(params: BiQueryParams): Promise<BiQueryRow[]> {
   // campaña real. Cualquier otra dimensión no las puede repartir y quedan en 0.
   const ccTokens = params.metrics.filter((m) => typeof m === 'string' && m.startsWith('metacc:'));
   if (ccTokens.length === 0) return fusionado;
+  // Las conversiones de Meta son de nivel campaña: tampoco saben qué respondió
+  // cada lead. Mismo criterio que el gasto en `mergeResults`.
+  if (consultaSinGasto(params)) {
+    return fusionado.map((r) => {
+      const o: BiQueryRow = { ...r };
+      for (const t of ccTokens) (o as Record<string, unknown>)[t] = null;
+      return o;
+    });
+  }
   const { queryMetaCustomConv, aplicarMetaCustomConv } = await import('./bi/meta-custom-conv');
   const unifiedCc = unifiedTarget(params.dimension);
   const grouping = params.date_grouping ?? 'day';
@@ -604,11 +643,17 @@ interface FieldAcc {
   max: number;
   present: number;
 }
-/** Un segmento pedido: su clave, la del campo padre que lo bucketiza y el token de salida. */
+/**
+ * Un contador de lead pedido —un segmento o una respuesta—: el campo padre que
+ * lo bucketiza, el token de salida, el alias de fórmula y la regla de
+ * pertenencia sobre los buckets de un lead (vacío = no respondió).
+ */
 interface LeadSegReq {
-  clave: string;
   campoClave: string;
   outKey: string;
+  /** `lseg__<seg>` o `lf__<campo>__<resp>`: se emite siempre para las fórmulas. */
+  alias: string;
+  incluye: (buckets: readonly string[]) => boolean;
 }
 interface LeadAgg {
   dim: string | null;
@@ -711,6 +756,17 @@ function collectLeadSegClaves(params: {
   return Array.from(out);
 }
 
+/** ¿La consulta pide alguna RESPUESTA como métrica (token o alias)? */
+function pideRespuestas(params: {
+  metrics?: readonly string[];
+  calculated?: { expression: string }[];
+}): boolean {
+  return (
+    (params.metrics ?? []).some((m) => isLeadAnsMetric(m)) ||
+    (params.calculated ?? []).some((cf) => extractLeadAnsAliases(cf.expression).length > 0)
+  );
+}
+
 /**
  * Carga el catálogo de campos de lead del cliente —y sus segmentos— si la
  * consulta lo necesita. Sin cliente o sin referencias devuelve listas vacías sin
@@ -736,7 +792,8 @@ async function loadLeadCamposSiHaceFalta(
   if (!params.cliente_id) return vacio;
   const porDimension = collectLeadFieldClaves(params).length > 0;
   const porSegmento = collectLeadSegClaves(params).length > 0;
-  if (!porDimension && !porSegmento) return vacio;
+  const porRespuesta = pideRespuestas(params);
+  if (!porDimension && !porSegmento && !porRespuesta) return vacio;
 
   const db = supabase.schema('report_utm');
   const campos = await loadLeadCampos(db, params.cliente_id);
@@ -982,8 +1039,7 @@ async function queryLeadsDirect(
   leadCampos: LeadCampoDef[] = [],
   resolver: CampaignResolver | null = null,
   nocross: Set<string> = new Set(),
-  leadSegs: LeadSegReq[] = [],
-  leadSegmentos: LeadSegmentoDef[] = []
+  leadSegs: LeadSegReq[] = []
 ): Promise<LeadAgg[]> {
   const plan = buildEntityFilterPlan(params, resolver);
   // Con el filtro de entidad resuelto en memoria, no debe aplicarse además por
@@ -1088,8 +1144,7 @@ async function queryLeadsDirect(
     leadCampos,
     resolver,
     nocross,
-    leadSegs,
-    leadSegmentos
+    leadSegs
   );
 }
 
@@ -1127,44 +1182,70 @@ function aggregateLeads(
   leadCampos: LeadCampoDef[] = [],
   resolver: CampaignResolver | null = null,
   nocross: Set<string> = new Set(),
-  leadSegs: LeadSegReq[] = [],
-  leadSegmentos: LeadSegmentoDef[] = []
+  leadSegs: LeadSegReq[] = []
 ): LeadAgg[] {
-  // Los segmentos se agrupan por campo padre: Goodprop tiene cuatro sobre una
-  // sola pregunta, y recalcular el bucket una vez por segmento multiplicaría por
-  // cuatro el trabajo en decenas de miles de leads.
-  const porCampo = new Map<
-    string,
-    { campo: LeadCampoDef; segs: { def: LeadSegmentoDef; outKey: string }[] }
-  >();
+  // Los contadores (segmentos y respuestas) se agrupan por campo padre: Goodprop
+  // tiene cuatro segmentos sobre una sola pregunta, y recalcular el bucket una
+  // vez por contador multiplicaría el trabajo en decenas de miles de leads.
+  const porCampo = new Map<string, { campo: LeadCampoDef; reqs: LeadSegReq[] }>();
   for (const req of leadSegs) {
     const campo = leadCampos.find((c) => c.clave === req.campoClave);
-    const def = leadSegmentos.find((s) => s.clave === req.clave);
-    if (!campo || !def) continue;
+    if (!campo) continue;
     let e = porCampo.get(campo.clave);
     if (!e) {
-      e = { campo, segs: [] };
+      e = { campo, reqs: [] };
       porCampo.set(campo.clave, e);
     }
-    e.segs.push({ def, outKey: req.outKey });
+    e.reqs.push(req);
   }
   const hayCampos = fieldKeys.length > 0;
   const haySegs = porCampo.size > 0;
 
+  // Agrupar por una pregunta de selección MÚLTIPLE: el lead cuenta en cada
+  // respuesta que eligió (las filas suman más que el total, a propósito).
+  const campoDim = (() => {
+    const clave = parseLeadFieldDim(dimension);
+    const campo = clave ? leadCampos.find((c) => c.clave === clave) : undefined;
+    return campo?.tipo === 'multiple' ? campo : null;
+  })();
+
   const map = new Map<string, LeadAgg>();
-  for (const r of rows) {
-    const dim = getDimValue(r, dimension, grouping, leadCampos, resolver, nocross);
+  const entrada = (dim: string) => {
     let entry = map.get(dim);
     if (!entry) {
       entry = { dim, count: 0, fields: {}, segs: {} };
-      // Los segmentos se inicializan en 0 en cada grupo: una serie por fecha
+      // Los contadores se inicializan en 0 en cada grupo: una serie por fecha
       // con huecos dibujaría cortes donde solo hubo días sin ese tipo de lead.
       for (const req of leadSegs) entry.segs[req.outKey] = 0;
       map.set(dim, entry);
     }
-    entry.count++;
-    if (hayCampos || haySegs) {
-      const rf = (r.raw_fields as Record<string, unknown> | null) ?? null;
+    return entry;
+  };
+
+  for (const r of rows) {
+    let dims: string[];
+    if (campoDim) {
+      const bs = bucketsDeLead(
+        campoDim,
+        indexarRawFields(r.raw_fields as Record<string, unknown> | null)
+      );
+      dims = bs.length > 0 ? bs : ['(sin valor)'];
+    } else {
+      dims = [getDimValue(r, dimension, grouping, leadCampos, resolver, nocross)];
+    }
+    const rf = (r.raw_fields as Record<string, unknown> | null) ?? null;
+    const idx = haySegs ? indexarRawFields(rf) : null;
+    // Buckets por campo, una vez por lead.
+    const bucketsPorCampo = haySegs
+      ? [...porCampo.values()].map(({ campo, reqs }) => ({
+          reqs,
+          buckets: bucketsDeLead(campo, idx!),
+        }))
+      : [];
+
+    for (const dim of dims) {
+      const entry = entrada(dim);
+      entry.count++;
       if (hayCampos) {
         for (const key of fieldKeys) {
           let acc = entry.fields[key];
@@ -1175,17 +1256,10 @@ function aggregateLeads(
           accumulateField(acc, rf ? rf[key] : null);
         }
       }
-      if (haySegs) {
-        const idx = indexarRawFields(rf);
-        for (const { campo, segs } of porCampo.values()) {
-          const bucket = bucketDeLead(campo, idx);
-          // Sin respuesta no entra en ningún segmento, tampoco en un
-          // `not_in`: «no contestó» no es «no es de este grupo».
-          if (bucket === null) continue;
-          for (const s of segs) {
-            if (segmentoIncluyeBucket(s.def, bucket)) entry.segs[s.outKey]++;
-          }
-        }
+      for (const { reqs, buckets } of bucketsPorCampo) {
+        // Sin respuesta no entra en ningún segmento, tampoco en un `not_in`
+        // («no contestó» no es «no es de este grupo»); sí en `sin_respuesta`.
+        for (const req of reqs) if (req.incluye(buckets)) entry.segs[req.outKey]++;
       }
     }
   }
@@ -1200,6 +1274,12 @@ async function querySalesDirect(
   resolver: CampaignResolver | null = null,
   nocross: Set<string> = new Set()
 ): Promise<Array<{ dim: string | null; sales: number; revenue: number }>> {
+  // Mismo criterio que `leerVentasHotmart`: una venta de `sales_events` no tiene
+  // formulario, país IP ni respuestas, así que un filtro de ese tipo no la puede
+  // recortar. Ignorarlo —lo que pasaba hasta la auditoría del 2026-09-26— dejaba
+  // TODAS las ventas junto a unos leads recortados, y la tasa de conversión se
+  // leía como si fuera la de ese segmento.
+  if (filtroSoloDeLeads(params)) return [];
   const plan = buildEntityFilterPlan(params, resolver);
   const filterKey = plan.inMemory
     ? (k: string) => salesFilterKey(k) && !ENTITY_FILTER_FIELDS.has(k)
@@ -2640,6 +2720,45 @@ async function querySubsLatest(
 
 // ── Merge ─────────────────────────────────────────────────────────────
 
+/**
+ * ¿La métrica sale de `lead_events`? Son las ÚNICAS que un campo de formulario
+ * puede recortar: el gasto, las ventas, Hotmart, offline y GA4 no saben qué
+ * respondió cada lead. Todo lo demás se anula cuando la consulta agrupa o
+ * filtra por una respuesta (ver `gastoNoAplica` en `mergeResults`).
+ */
+export function esMetricaDeLead(id: string): boolean {
+  return (
+    id === 'leads_count' ||
+    id === 'leads_total' ||
+    isFieldMetric(id) ||
+    isLeadSegMetric(id) ||
+    isLeadAnsMetric(id) ||
+    /^(lseg__|lf__|f_(sum|avg|min|max|count)__)/i.test(id)
+  );
+}
+
+/**
+ * ¿La consulta recorta el ámbito por algo que el gasto no conoce? Agrupar por un
+ * campo de formulario o filtrar por uno (o por país, formulario…). Entonces solo
+ * las métricas de lead tienen sentido; el resto sale null («—»).
+ */
+export function consultaSinGasto(params: {
+  dimension: string;
+  filters?: Record<string, string>;
+  advancedFilter?: AdvancedFilter;
+}): boolean {
+  return (
+    isFieldDim(params.dimension) ||
+    isLeadFieldDim(params.dimension) ||
+    hasNonAttributableFilter(params.filters, params.advancedFilter)
+  );
+}
+
+/** ¿La fórmula nombra algo que no sale de los leads (gasto, ventas…)? */
+export function expresionUsaMetricaDeAnuncio(expression: string): boolean {
+  return refsOf(expression).some((id) => !esMetricaDeLead(id));
+}
+
 function mergeResults(
   params: BiQueryParams,
   leadsData: LeadAgg[],
@@ -2671,6 +2790,10 @@ function mergeResults(
     if (params.dimension === 'none') keys.add('total');
     else return [];
   }
+
+  // ¿Esta consulta recorta el ámbito por algo que el gasto no conoce? Agrupar
+  // por un campo de formulario o filtrar por uno.
+  const gastoNoAplica = consultaSinGasto(params);
 
   const rows: BiQueryRow[] = [];
   for (const key of keys) {
@@ -2853,7 +2976,7 @@ function mergeResults(
     for (const ls of leadSegs) {
       const v = lead?.segs[ls.outKey] ?? 0;
       segValues[ls.outKey] = v;
-      segValues[leadSegAlias(ls.clave)] = v;
+      segValues[ls.alias] = v;
       if ((params.metrics as string[]).includes(ls.outKey)) row[ls.outKey] = v;
     }
     // Suscripciones (snapshot): solo en la fila global "(total)"
@@ -2869,6 +2992,18 @@ function mergeResults(
       const v = fieldAggValue(lead?.fields[fm.key], fm.agg);
       fieldValues[fm.outKey] = v;
       if (params.metrics.includes(fm.outKey as BiMetric)) row[fm.outKey] = v;
+    }
+
+    // El gasto no se puede repartir por la respuesta de un formulario (ni por
+    // ningún filtro que no sea atribuible, ver `hasNonAttributableFilter`). Hasta
+    // la auditoría del 2026-09-26 esas celdas salían en 0, que se lee como «no
+    // gastó»; ahora salen null (la UI pinta «—») y el diagnóstico explica por qué.
+    // Para medir el costo por respuesta está `spend / lf__<campo>__<respuesta>`,
+    // que no recorta el ámbito y conserva el gasto entero.
+    if (gastoNoAplica) {
+      for (const m of params.metrics as string[]) {
+        if (m in row && !esMetricaDeLead(m)) row[m] = null;
+      }
     }
 
     // Campos calculados: se evalúan sobre las métricas base de la fila.
@@ -2932,7 +3067,12 @@ function mergeResults(
       if (subsData && key === 'total')
         for (const k of SUBS_METRICS) baseValues[k] = subsData[k] ?? 0;
       for (const cf of params.calculated) {
-        row[cf.name] = evaluateExpression(cf.expression, baseValues);
+        // Una fórmula que usa el gasto con el gasto anulado no vale 0: vale
+        // «no se puede calcular». Mismo criterio que las celdas de arriba.
+        row[cf.name] =
+          gastoNoAplica && expresionUsaMetricaDeAnuncio(cf.expression)
+            ? null
+            : evaluateExpression(cf.expression, baseValues);
       }
     }
 
@@ -3055,17 +3195,44 @@ export async function runPivotQuery(
   // que caen en sus buckets. Si el segmento no existe (borrado tras guardar el
   // widget) la celda vale 0: contar todas las filas afirmaría que todos los
   // leads son de ese tipo, que es peor que un cero.
+  //
+  // Una respuesta (`leadans:`) es lo mismo con un solo bucket.
   const segClave = parseLeadSegMetric(metric);
-  const segDef = segClave ? (leadSegmentos.find((s) => s.clave === segClave) ?? null) : null;
-  const segCampo = segDef ? (leadCampos.find((c) => c.clave === segDef.campo_clave) ?? null) : null;
+  const ansPedida = parseLeadAnsMetric(metric);
+  const esContador = segClave !== null || ansPedida !== null;
+  const contador: { campo: LeadCampoDef; incluye: (b: readonly string[]) => boolean } | null =
+    (() => {
+      if (segClave) {
+        const def = leadSegmentos.find((s) => s.clave === segClave);
+        const campo = def ? leadCampos.find((c) => c.clave === def.campo_clave) : undefined;
+        return def && campo ? { campo, incluye: predicadoDeSegmento(def) } : null;
+      }
+      if (ansPedida) {
+        const campo = leadCampos.find((c) => c.clave === ansPedida.campo);
+        return campo ? { campo, incluye: predicadoDeRespuesta(campo, ansPedida.resp) } : null;
+      }
+      return null;
+    })();
 
   const isSales = metric === 'sales_count' || metric === 'revenue';
+  // Misma guarda que `querySalesDirect`: una venta no puede cumplir un filtro de
+  // lead (formulario, respuesta, país IP), así que no se muestra ninguna.
+  if (isSales && filtroSoloDeLeads(params)) return { rows: [], seriesKeys: [] };
   const table = isSales ? 'sales_events' : 'lead_events';
   const esDimDeCampo = (d: string) => isFieldDim(d) || isLeadFieldDim(d);
   // El pivot agrupa filas de leads/ventas, así que una dimensión unificada se
   // resuelve igual que en el resto del motor: el eje muestra nombres reales de
   // campaña/anuncio/conjunto, no el texto crudo del UTM.
-  const pivotNeedsResolver = unifiedTarget(dim1) !== null || unifiedTarget(dim2) !== null;
+  //
+  // Un filtro por nombre de campaña/anuncio/conjunto también necesita el
+  // resolver: igual que en la consulta estándar (`buildEntityFilterPlan`), se
+  // evalúa contra el nombre REAL de la entidad y no contra el `utm_campaign`
+  // crudo. Sin esto, el mismo filtro daba cifras distintas en una tabla y en una
+  // gráfica apilada.
+  const pivotNeedsResolver =
+    unifiedTarget(dim1) !== null ||
+    unifiedTarget(dim2) !== null ||
+    hasAnyEntityFilter(params.filters, params.advancedFilter);
   const resolver =
     pivotNeedsResolver && params.cliente_id
       ? await loadResolver(params.cliente_id, dateFrom, dateTo)
@@ -3126,10 +3293,13 @@ export async function runPivotQuery(
   // Ventas no tienen raw_fields → una dimensión de campo sobre ventas cae en
   // "(sin valor)"; solo lead_events puede desglosar por campo de formulario.
   if (!isSales && (esDimDeCampo(dim1) || esDimDeCampo(dim2))) cols.add('raw_fields');
-  if (segClave) cols.add('raw_fields');
+  if (esContador) cols.add('raw_fields');
+
+  // Filtro de entidad resuelto en memoria (mismo plan que la consulta estándar).
+  const plan = buildEntityFilterPlan(params, resolver);
 
   // Columnas necesarias para el filtro avanzado en esta tabla.
-  const adv = params.advancedFilter;
+  const adv = plan.restAdvanced;
   const advCols = collectAdvancedColumns(adv, isSales ? 'sales' : 'leads');
   const hasAdv =
     advancedFilterHasConditions(adv) && (advCols.cols.length > 0 || advCols.needsRawFields);
@@ -3153,7 +3323,11 @@ export async function runPivotQuery(
     if (isSales) q = q.eq('status', 'approved').neq('platform', 'hotmart');
     if (filtrarExcluidos) q = q.eq('excluido', false);
     if (params.cliente_id) q = q.eq('cliente_id', params.cliente_id);
-    return applyDimFilters(q, params.filters, isSales ? salesFilterKey : leadFilterKey);
+    const base = isSales ? salesFilterKey : leadFilterKey;
+    // Con el filtro de entidad en memoria no se aplica además por SQL sobre la
+    // columna cruda: dejaría fuera las filas que cruzan por utm_id o por ID.
+    const filterKey = plan.inMemory ? (k: string) => base(k) && !ENTITY_FILTER_FIELDS.has(k) : base;
+    return applyDimFilters(q, params.filters, filterKey);
   };
 
   // Traer TODAS las filas (paginado); el Top-N se aplica después sobre los grupos.
@@ -3162,6 +3336,10 @@ export async function runPivotQuery(
   );
   if (hasAdv)
     data = data.filter((r) => evalAdvancedRow(r, adv, isSales ? 'sales' : 'leads', leadCampos));
+  if (plan.inMemory)
+    data = data.filter((r) =>
+      rowPassesEntityFilters(r as unknown as Record<string, unknown>, plan, resolver!)
+    );
 
   const grouping = params.date_grouping ?? 'day';
   const pivot = new Map<string, Map<string, number>>();
@@ -3172,14 +3350,14 @@ export async function runPivotQuery(
     if (!pivot.has(k1)) pivot.set(k1, new Map());
     const inner = pivot.get(k1)!;
     let add = metric === 'revenue' ? Number(r.amount ?? 0) : 1;
-    if (segClave) {
+    if (esContador) {
       add =
-        segDef &&
-        segCampo &&
-        cuentaEnSegmento(
-          segDef,
-          segCampo,
-          indexarRawFields(r.raw_fields as Record<string, unknown> | null)
+        contador &&
+        contador.incluye(
+          bucketsDeLead(
+            contador.campo,
+            indexarRawFields(r.raw_fields as Record<string, unknown> | null)
+          )
         )
           ? 1
           : 0;
@@ -3786,9 +3964,10 @@ export async function runFunnelQuery(params: {
   // porque cada una tiene su propia tabla; solo se piden las que hagan falta.
   // Los segmentos cuelgan de `lead_events`, así que viajan con los leads: una
   // sola consulta paga el escaneo de `raw_fields` para todas las etapas.
-  const segStages = stages.filter(isLeadSegMetric);
+  const esContadorDeLead = (m: string) => isLeadSegMetric(m) || isLeadAnsMetric(m);
+  const segStages = stages.filter(esContadorDeLead);
   const adsMetrics = stages.filter(
-    (m) => m !== 'leads_count' && m !== 'sales_count' && !isLeadSegMetric(m)
+    (m) => m !== 'leads_count' && m !== 'sales_count' && !esContadorDeLead(m)
   );
   const leadMetrics = [...(stages.includes('leads_count') ? ['leads_count'] : []), ...segStages];
   const needsSales = stages.includes('sales_count');
@@ -3826,10 +4005,20 @@ export async function runFunnelQuery(params: {
   // Nombre del segmento para la etiqueta de la etapa. Se lee una sola vez y solo
   // si hay algún segmento en el embudo: sin esto la etapa mostraría el token.
   let segMeta: LeadSegmentoMeta[] = [];
+  let camposMeta: LeadFieldMeta[] = [];
   if (segStages.length > 0 && params.cliente_id) {
     const db = (await createAdminClient()).schema('report_utm');
     const campos = await loadLeadCampos(db, params.cliente_id);
     const porClave = new Map(campos.map((c) => [c.clave, c.nombre]));
+    camposMeta = campos.map((c) => ({
+      clave: c.clave,
+      nombre: c.nombre,
+      valores: [],
+      claves_origen: c.claves_origen,
+      cobertura: 0,
+      alta_cardinalidad: false,
+      respuestas: c.respuestas ?? [],
+    }));
     segMeta = (await loadLeadSegmentos(db, params.cliente_id, campos)).map((s) => ({
       clave: s.clave,
       nombre: s.nombre,
@@ -3845,13 +4034,17 @@ export async function runFunnelQuery(params: {
     const source =
       metric === 'sales_count'
         ? salesResult
-        : metric === 'leads_count' || isLeadSegMetric(metric)
+        : metric === 'leads_count' || esContadorDeLead(metric)
           ? leadsResult
           : adsResult;
     return {
       stage: metric,
       value: Number(source[0]?.[metric] ?? 0),
-      label: leadSegLabel(metric, segMeta) ?? METRIC_META[metric as BiMetric]?.label ?? metric,
+      label:
+        leadSegLabel(metric, segMeta) ??
+        leadAnsLabel(metric, camposMeta) ??
+        METRIC_META[metric as BiMetric]?.label ??
+        metric,
     };
   });
 }

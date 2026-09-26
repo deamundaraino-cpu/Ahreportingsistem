@@ -3,7 +3,7 @@ Contributors: adshouse, robinsonzapata
 Requires at least: 5.8
 Tested up to: 6.7
 Requires PHP: 7.4
-Stable tag: 0.3.2
+Stable tag: 0.4.0
 License: Proprietary — Ad House Internal Use
 
 Tracking UTM server-side para WordPress. Capta leads de formularios con atribución multi-touch, propaga UTMs a checkout y registra cada conversión con primer y último toque.
@@ -117,6 +117,11 @@ En reportes.adshouse.cloud → sección "Leads". Podés filtrar por cliente, plu
 
 == Changelog ==
 
+= 0.4.0 =
+* Cada lead viaja con el tipo y las opciones de sus desplegables, casillas y radios (CF7, Gravity Forms, WPForms y Elementor): la plataforma ofrece cada respuesta con su nombre real.
+* Las casillas se envían unidas por comas, para poder separar cada opción elegida.
+* Fix: las casillas de Gravity Forms llegaban vacías.
+
 = 0.3.2 =
 * Fix: el pixel JS no se ejecutaba nunca. La configuración se inyectaba con la clave `cliente_slug` y el script espera `cliente`, así que abortaba en la primera línea ("pixel inactive" en consola).
 * Fix: la configuración se añadía con wp_add_inline_script() antes de registrar el script, y WordPress la descartaba en silencio. Ahora el enqueue va primero.
@@ -155,6 +160,9 @@ En reportes.adshouse.cloud → sección "Leads". Podés filtrar por cliente, plu
 * Panel de configuración básico
 
 == Upgrade Notice ==
+
+= 0.4.0 =
+Recomendada: envía el tipo y las opciones de cada pregunta de los formularios, para medir cada respuesta en los informes.
 
 = 0.3.2 =
 Actualización recomendada para todos los sitios: hasta esta versión el pixel JS no llegaba a ejecutarse y solo funcionaba la captura de leads por servidor. Subí el ZIP nuevo y volvé a activar; la configuración guardada se conserva.

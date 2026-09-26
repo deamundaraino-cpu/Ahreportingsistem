@@ -1,6 +1,8 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { aplicarExclusion, cargarReglaExclusion } from './lead-exclusion';
 import { adaptarIds, columnasIdDisponibles, idsPublicitarios } from './lead-ids';
+import { guardarPreguntas, sincronizarOpcionesEnCampos } from '@/lib/leads/respuestas/preguntas-db';
+import type { PreguntaPlataforma, TipoPlataforma } from '@/lib/leads/respuestas/preguntas-db';
 
 /**
  * Núcleo compartido para ingerir leads de **Meta Lead Ads** (formularios
@@ -133,6 +135,81 @@ export async function listLeadForms(page: MetaPage): Promise<MetaLeadForm[]> {
   const rows = await fetchAllPages(url.toString());
   return rows.filter((f) => f.id).map((f) => ({ id: String(f.id), name: String(f.name ?? f.id) }));
 }
+
+// ── Preguntas del formulario (migración 091) ──────────────────────────
+
+/** Pregunta de un formulario instantáneo, tal como la devuelve Graph. */
+export interface MetaFormQuestion {
+  key?: string;
+  label?: string;
+  type?: string;
+  options?: { key?: string; value?: string }[];
+}
+
+/** Tipos de Graph que son datos de contacto, no preguntas medibles. */
+const TIPOS_CONTACTO: Record<string, TipoPlataforma> = {
+  EMAIL: 'email',
+  PHONE: 'telefono',
+  FULL_NAME: 'texto',
+  FIRST_NAME: 'texto',
+  LAST_NAME: 'texto',
+  DATE_OF_BIRTH: 'fecha',
+  DATE_TIME: 'fecha',
+};
+
+/**
+ * Preguntas de un formulario de Meta → el formato de `lead_preguntas`.
+ *
+ * La respuesta de una opción llega a `field_data` con la CLAVE de la opción
+ * («entre_$2.000.000_y_$4.000.000»), no con su texto: por eso se guarda la
+ * pareja {valor: key, etiqueta: value}, y la activación usa la etiqueta como
+ * nombre de la respuesta. Meta no distingue selección múltiple en `type`
+ * (llega como `CUSTOM` con opciones): se trata como desplegable.
+ */
+export function preguntasDeFormularioMeta(
+  form: { id: string; name: string },
+  questions: MetaFormQuestion[]
+): PreguntaPlataforma[] {
+  return (questions ?? [])
+    .filter((q) => q?.key)
+    .map((q) => {
+      const opciones = (q.options ?? [])
+        .filter((o) => o?.key || o?.value)
+        .map((o) => ({ valor: String(o.key ?? o.value), etiqueta: o.value ?? null }));
+      const tipoGraph = String(q.type ?? '').toUpperCase();
+      const tipo: TipoPlataforma =
+        opciones.length > 0 ? 'opcion' : (TIPOS_CONTACTO[tipoGraph] ?? 'texto');
+      return {
+        form_id: form.id,
+        form_name: form.name,
+        clave_origen: String(q.key),
+        etiqueta: q.label ?? null,
+        tipo,
+        opciones,
+      };
+    });
+}
+
+/** Lee las preguntas de un formulario. null si Graph no las da (permisos). */
+export async function fetchFormQuestions(
+  formId: string,
+  token: string
+): Promise<MetaFormQuestion[] | null> {
+  const url = new URL(`${GRAPH}/${formId}`);
+  url.searchParams.append('access_token', token);
+  url.searchParams.append('fields', 'questions');
+  try {
+    const res = await fetch(url.toString());
+    const data = (await res.json()) as { questions?: MetaFormQuestion[]; error?: unknown };
+    if (data.error || !Array.isArray(data.questions)) return null;
+    return data.questions;
+  } catch {
+    return null;
+  }
+}
+
+/** Cada cuánto se releen las preguntas de los formularios de un cliente. */
+const PREGUNTAS_CADA_MS = 6 * 3600_000;
 
 /**
  * Trae los leads de un formulario. Si `sinceUnix` se pasa, solo los creados
@@ -724,6 +801,27 @@ export async function syncMetaLeadsForCliente(
       }
     }
 
+    // Preguntas de los formularios (tipo y opciones), como mucho cada 6 h y
+    // solo si sobra presupuesto: es lo que permite activar una pregunta en la
+    // pantalla de Leads con sus respuestas reales ya nombradas. Best-effort: un
+    // fallo aquí no toca la ingesta de leads.
+    const ultimaPreguntas = Number(config.preguntas_sync_at ?? 0);
+    let preguntasSyncAt = ultimaPreguntas;
+    if (!partial && Date.now() - ultimaPreguntas > PREGUNTAS_CADA_MS) {
+      const preguntas: PreguntaPlataforma[] = [];
+      for (const sf of scopedForms) {
+        if (Date.now() - startedAt > BUDGET_MS) break;
+        const qs = await fetchFormQuestions(sf.form_id, sf.page_token);
+        if (qs)
+          preguntas.push(...preguntasDeFormularioMeta({ id: sf.form_id, name: sf.form_name }, qs));
+      }
+      if (preguntas.length > 0) {
+        await guardarPreguntas(db, clienteId, 'meta', preguntas);
+        await sincronizarOpcionesEnCampos(db, clienteId);
+      }
+      preguntasSyncAt = Date.now();
+    }
+
     // Cursor: solo avanza cuando la pasada terminó completa. Si quedó parcial,
     // se mantiene el cursor previo para re-escanear (la dedup evita duplicar)
     // y NO se marca backfill como completo.
@@ -745,6 +843,7 @@ export async function syncMetaLeadsForCliente(
           last_forms_detected: formCount,
           pages: scopedPages,
           scoped_forms: scopedForms,
+          preguntas_sync_at: preguntasSyncAt,
         },
       })
       .eq('id', integration.id);

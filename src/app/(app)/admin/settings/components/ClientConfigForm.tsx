@@ -354,6 +354,7 @@ const ANCLAS: Record<string, Pestana> = {
   google: 'google',
   hotmart: 'hotmart',
   tiktok: 'tiktok',
+  leads: 'leads',
 };
 
 /**
@@ -3000,11 +3001,20 @@ export function ClientConfigForm({
             );
           })()}
 
-          {/* ─── Campos de Sheet ──────────────────────────────────────────── */}
-          {/* La card de arriba define la CONEXIÓN (documento, pestañas, fecha);
-                esta define QUÉ SE MIDE. Va aparte porque un campo cruza varias
-                pestañas y puede cruzar varios documentos. */}
-          <SheetCamposSection clienteId={cliente.id} />
+          {/* Los campos de Sheet (QUÉ se mide de cada documento) se configuran
+              en la pestaña «Leads», junto a las preguntas de los formularios:
+              un solo sitio para los datos de leads. Aquí queda la CONEXIÓN. */}
+          <p className="text-xs text-muted-foreground">
+            Qué se mide de cada Sheet (sus campos y vistas) se configura en la pestaña{' '}
+            <button
+              type="button"
+              onClick={() => intentarIr('leads')}
+              className="underline hover:text-foreground"
+            >
+              Leads
+            </button>
+            .
+          </p>
 
           {slots?.google}
           <BarraGuardar
@@ -3411,6 +3421,22 @@ export function ClientConfigForm({
             guardando={guardandoPestana}
             onGuardar={guardarPestana}
           />
+        </TabsContent>
+
+        <TabsContent
+          value="leads"
+          forceMount
+          className="space-y-6 outline-none data-[state=inactive]:hidden"
+        >
+          {/* Formularios (preguntas y respuestas) y Sheets: todo lo que se
+              mide de los leads, configurado en un solo sitio. */}
+          {slots?.leads ?? (
+            <p className="text-sm text-muted-foreground">
+              Las preguntas de formulario se preparan al abrir la ficha. Recarga la página si no
+              aparecen.
+            </p>
+          )}
+          <SheetCamposSection clienteId={cliente.id} />
         </TabsContent>
 
         <TabsContent

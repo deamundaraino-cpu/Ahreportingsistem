@@ -15,7 +15,7 @@
  * script de verificación. Sin React, sin Supabase, sin `server-only`.
  */
 
-export const PESTANAS = ['general', 'meta', 'google', 'hotmart', 'tiktok', 'crm'] as const;
+export const PESTANAS = ['general', 'meta', 'google', 'hotmart', 'tiktok', 'crm', 'leads'] as const;
 export type Pestana = (typeof PESTANAS)[number];
 
 export const ETIQUETA_PESTANA: Record<Pestana, string> = {
@@ -25,6 +25,9 @@ export const ETIQUETA_PESTANA: Record<Pestana, string> = {
   hotmart: 'Hotmart',
   tiktok: 'TikTok',
   crm: 'CRM y Web',
+  // Qué se mide de los formularios (preguntas y respuestas) y de los Sheets:
+  // UN sitio para configurar los datos de leads (auditoría del 2026-09-26).
+  leads: 'Leads',
 };
 
 /**
@@ -75,6 +78,9 @@ export const CLAVES_POR_PESTANA: Record<Pestana, readonly string[]> = {
   // webhooks salientes viven en `report_utm.integrations`. Cada tarjeta guarda
   // con su propia acción, así que aquí no hay nada de `config_api` que mandar.
   crm: [],
+
+  // Leads guarda contra sus propias tablas (lead_campos, sheet_campos…).
+  leads: [],
 };
 
 /**

@@ -126,13 +126,18 @@ export function LeadCampoEditorDialog({
     set({ valores_orden: next });
   };
 
-  /** Ignora de golpe los rellenos de desplegable ("Seleccione una opción."). */
+  /**
+   * Aparta de golpe los rellenos de desplegable ("Seleccione una opción."): se
+   * mapean a vacío, que el motor trata como «no respondió». Antes se mapeaban a
+   * una etiqueta literal «(sin respuesta)», que contaba como una respuesta más y
+   * salía duplicada junto al «(sin respuesta)» real del bloque.
+   */
   const ignorarPlaceholders = () => {
     const next = { ...(borrador.valores_map ?? {}) };
     let tocado = false;
     for (const v of valores) {
       if (esValorPlaceholder(v.valor_crudo)) {
-        next[normalizarValorCrudo(v.valor_crudo)] = '(sin respuesta)';
+        next[normalizarValorCrudo(v.valor_crudo)] = '';
         tocado = true;
       }
     }

@@ -67,6 +67,12 @@ interface Props {
   onlyFunnelStages?: boolean;
   /** Solo campos válidos como eje de tabla dinámica. */
   onlyPivotable?: boolean;
+  /**
+   * Fuentes propias del cliente y del informe (preguntas, respuestas y
+   * segmentos de formulario, campos de Sheet, campos calculados…). El catálogo
+   * del servidor solo trae las métricas fijas: ver `fuentesDelCliente.ts`.
+   */
+  extraSources?: CatalogSource[];
 }
 
 /** Qué puede hacer una fuente, en una frase. Se muestra bajo su nombre. */
@@ -85,6 +91,7 @@ export function BiFieldPicker({
   alreadyChosen = [],
   onlyFunnelStages,
   onlyPivotable,
+  extraSources = [],
 }: Props) {
   const [sources, setSources] = useState<CatalogSource[] | null>(null);
   const [activeSource, setActiveSource] = useState<string | null>(null);
@@ -112,7 +119,9 @@ export function BiFieldPicker({
   /** Campos que aplican a este selector, ya filtrados por tipo y por uso. */
   const fuentesUtiles = useMemo(() => {
     if (!sources) return [];
-    return sources
+    // Las del cliente van PRIMERO: son las que este informe tiene de propio y
+    // las que más cuesta encontrar en una lista larga.
+    return [...extraSources, ...sources]
       .map((s) => ({
         ...s,
         fields: s.fields.filter((f) => {
@@ -123,7 +132,7 @@ export function BiFieldPicker({
         }),
       }))
       .filter((s) => s.fields.length > 0);
-  }, [sources, kind, onlyFunnelStages, onlyPivotable]);
+  }, [sources, extraSources, kind, onlyFunnelStages, onlyPivotable]);
 
   /** Búsqueda: atraviesa todas las fuentes, porque quien sabe el nombre no
    *  quiere navegar. Es el escape de la cascada, no su sustituto. */
@@ -230,18 +239,31 @@ export function BiFieldPicker({
             </div>
             {/* Las recomendadas primero: son las que sirven para el 90%
                             de los informes y cruzan bien entre sí. */}
-            {[...activa.fields]
-              .sort((a, b) => Number(!!b.recommended) - Number(!!a.recommended))
-              .map((f) => (
-                <FieldRow
-                  key={f.id}
-                  field={f}
-                  disabled={!activa.available}
-                  selected={f.id === value}
-                  overlaps={solapaCon(f)}
-                  onPick={() => activa.available && onChange(f.id, f)}
-                />
-              ))}
+            {(() => {
+              const campos = [...activa.fields].sort(
+                (a, b) => Number(!!b.recommended) - Number(!!a.recommended)
+              );
+              // Con varios grupos (una pregunta con sus respuestas, otra con
+              // las suyas…) se enseña la cabecera de cada uno: sin ella, veinte
+              // respuestas seguidas no dicen a qué pregunta pertenecen.
+              const conGrupos = new Set(campos.map((f) => f.group)).size > 1;
+              return campos.map((f, i) => (
+                <div key={f.id}>
+                  {conGrupos && (i === 0 || campos[i - 1].group !== f.group) && (
+                    <p className="px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                      {f.group}
+                    </p>
+                  )}
+                  <FieldRow
+                    field={f}
+                    disabled={!activa.available}
+                    selected={f.id === value}
+                    overlaps={solapaCon(f)}
+                    onPick={() => activa.available && onChange(f.id, f)}
+                  />
+                </div>
+              ));
+            })()}
           </div>
         </div>
       )}

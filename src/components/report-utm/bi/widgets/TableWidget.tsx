@@ -26,8 +26,11 @@ import {
   sheetFieldFormat,
   isLeadSegMetric,
   leadSegLabel,
+  isLeadAnsMetric,
+  evaluateExpression,
+  basesAditivasDeFormula,
 } from '@/lib/report-utm/bi-metadata';
-import { useBiQueryBase } from '../BiQueryContext';
+import { useBiQueryBase, useBiEtiquetas } from '../BiQueryContext';
 import { appendWidgetFilters, widgetFilterSignature } from '../widgetQuery';
 import { readTasas, readUnavailable, TasasNote, UnavailableNote } from '../widgetDiagnostics';
 import type { WidgetUnavailable } from '../widgetDiagnostics';
@@ -88,6 +91,7 @@ function fmtVal(
 
 export function TableWidget({ title, config, filters, calculatedFields = [], h = 1 }: Props) {
   const queryBase = useBiQueryBase();
+  const { registrar: registrarEtiquetas } = useBiEtiquetas();
   // Una sola firma para todo lo que obliga a recargar: filtros del informe +
   // filtro propio del widget. Ver widgetQuery.ts.
   const filterSig = widgetFilterSignature(filters, config);
@@ -101,6 +105,8 @@ export function TableWidget({ title, config, filters, calculatedFields = [], h =
   const [avisoTasas, setAvisoTasas] = useState<AvisoTasas | null>(null);
   /** Moneda de reporte del cliente (viaja en `meta` de la respuesta). */
   const [monedaCliente, setMonedaCliente] = useState<string | null>(null);
+  /** Nombres de preguntas, respuestas y segmentos (viajan en `meta.etiquetas`). */
+  const [etiquetas, setEtiquetas] = useState<Record<string, string>>({});
 
   const rawMetrics = config.metric ?? 'leads_count';
   const colKeys = rawMetrics
@@ -120,12 +126,25 @@ export function TableWidget({ title, config, filters, calculatedFields = [], h =
   const offlineFieldCols = colKeys.filter(isOfflineFieldMetric);
   // Campos y vistas de Sheet (sheetagg:/sheetview:).
   const sheetCols = colKeys.filter(isSheetToken);
-  // Segmentos de campo de lead (leadseg:<clave>).
-  const leadSegCols = colKeys.filter(isLeadSegMetric);
+  // Segmentos y respuestas de campo de lead (leadseg:<clave>, leadans:<campo>:<resp>).
+  const leadSegCols = colKeys.filter((k) => isLeadSegMetric(k) || isLeadAnsMetric(k));
   const usedCalc = colKeys.filter((k) => calcMap.has(k)).map((k) => calcMap.get(k)!);
+  // Para totalizar un campo calculado hacen falta sus bases SUMADAS, que no
+  // siempre son columnas visibles (`spend / lf__rango__2m` no enseña ni el gasto
+  // ni la respuesta). Se piden aparte, ocultas. Solo si todas son aditivas: el
+  // total de una fórmula sobre un ratio no se puede reconstruir fila a fila.
+  const basesDeCalc = new Map<string, Map<string, string>>(); // calc → (id → token)
+  for (const c of usedCalc) {
+    const bases = basesAditivasDeFormula(c.expression);
+    if (bases) basesDeCalc.set(c.name, bases);
+  }
+  const ocultas = [...new Set([...basesDeCalc.values()].flatMap((m) => [...m.values()]))].filter(
+    (t) => !colKeys.includes(t)
+  );
 
   function colLabel(key: string): string {
     return (
+      etiquetas[key] ??
       METRIC_META[key as BiMetric]?.label ??
       fieldMetricLabel(key) ??
       offlineFieldLabel(key) ??
@@ -175,6 +194,7 @@ export function TableWidget({ title, config, filters, calculatedFields = [], h =
         ...offlineFieldCols,
         ...sheetCols,
         ...leadSegCols,
+        ...ocultas,
       ].join(','),
       dimension,
       limit: String(rowLimit),
@@ -191,6 +211,8 @@ export function TableWidget({ title, config, filters, calculatedFields = [], h =
       .then((json) => {
         setRows(Array.isArray(json.data) ? json.data : []);
         setMonedaCliente(json.meta?.moneda ?? null);
+        setEtiquetas(json.meta?.etiquetas ?? {});
+        registrarEtiquetas(json.meta?.etiquetas);
         setAvisoTasas(readTasas(json.meta));
         // Una tabla mezcla columnas de varias fuentes, así que es donde
         // más se nota: se explica la primera columna que no se pudo
@@ -280,6 +302,19 @@ export function TableWidget({ title, config, filters, calculatedFields = [], h =
         t[key] = round2(filteredRows.reduce((s, r) => s + Number(r[key] ?? 0), 0));
       }
     }
+    // Segmentos y respuestas: conteos de contactos, siempre suman. Faltaban y la
+    // fila Total salía «—» (auditoría del 2026-09-26).
+    for (const key of leadSegCols) t[key] = round2(sumOf(key));
+    // Campos calculados sobre bases aditivas: la fórmula aplicada a los totales
+    // (el CPL total es gasto total ÷ leads totales, no la suma de los CPL).
+    for (const c of usedCalc) {
+      const bases = basesDeCalc.get(c.name);
+      if (!bases) continue;
+      const valores: Record<string, number> = {};
+      for (const [id, token] of bases) valores[id] = sumOf(token);
+      const v = evaluateExpression(c.expression, valores);
+      if (v !== null && Number.isFinite(v)) t[c.name] = v;
+    }
     return t;
   }
   const totals = showTotals ? computeTotals() : null;
@@ -296,6 +331,7 @@ export function TableWidget({ title, config, filters, calculatedFields = [], h =
   }
 
   const dimLabel =
+    etiquetas[dimension] ??
     DIMENSION_META[dimension as BiDimension]?.label ??
     leadFieldLabel(dimension) ??
     fieldDimLabel(dimension) ??

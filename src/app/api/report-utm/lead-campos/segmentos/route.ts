@@ -18,6 +18,11 @@ import {
   deleteLeadSegmento,
 } from '@/lib/report-utm/lead-campos-db';
 import { slugCampo } from '@/lib/report-utm/lead-campos';
+import {
+  referenciasDeCampoLead,
+  resumirReferencias,
+} from '@/lib/report-utm/lead-campo-referencias';
+import { createAdminClient } from '@/utils/supabase/server';
 
 export const dynamic = 'force-dynamic';
 
@@ -100,6 +105,42 @@ export async function DELETE(req: NextRequest) {
   if (!id) return NextResponse.json({ error: 'id requerido' }, { status: 400 });
 
   const rtm = await reportUtmAdminClient();
+
+  // Antes de borrar se mira quién lo usa, igual que con un campo. Sin esto,
+  // borrar un segmento dejaba en 0 —sin ningún aviso— las tarjetas y columnas
+  // que lo nombraban (auditoría del 2026-09-26). `forzar=1` es la confirmación
+  // explícita de la UI tras enseñar la lista.
+  if (req.nextUrl.searchParams.get('forzar') !== '1') {
+    const { data: seg } = await rtm
+      .from('lead_campo_segmentos')
+      .select('cliente_id, clave, nombre')
+      .eq('id', id)
+      .maybeSingle();
+    if (seg) {
+      const s = seg as { cliente_id: string; clave: string; nombre: string };
+      const { data: cli } = await rtm
+        .from('clientes')
+        .select('public_cliente_id')
+        .eq('id', s.cliente_id)
+        .maybeSingle();
+      const referencias = await referenciasDeCampoLead(await createAdminClient(), {
+        rtmClienteId: s.cliente_id,
+        publicClienteId: (cli as { public_cliente_id?: string } | null)?.public_cliente_id ?? null,
+        clave: '',
+        segmentos: [{ clave: s.clave, nombre: s.nombre }],
+      }).catch(() => []);
+      if (referencias.length > 0) {
+        return NextResponse.json(
+          {
+            error: `El segmento «${s.nombre}» se usa en ${resumirReferencias(referencias)}.`,
+            referencias,
+          },
+          { status: 409 }
+        );
+      }
+    }
+  }
+
   const res = await deleteLeadSegmento(rtm, id);
   if (res.error) return NextResponse.json({ error: res.error }, { status: 400 });
   return NextResponse.json({ ok: true });

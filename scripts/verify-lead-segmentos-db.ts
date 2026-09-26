@@ -63,7 +63,8 @@ async function main() {
   const { cargarRespuestasLead } = await import('../src/lib/report-utm/lead-answers-db');
   const { clavesDelDia, campanasPermitidas, claveSegmento } =
     await import('../src/lib/dashboard/lead-answer-aggregation');
-  const { makeLeadSegMetric, makeLeadFieldDim } = await import('../src/lib/report-utm/bi-metadata');
+  const { makeLeadSegMetric, makeLeadFieldDim, makeLeadAnsMetric } =
+    await import('../src/lib/report-utm/bi-metadata');
 
   const db = await createAdminClient();
   const rtm = db.schema('report_utm');
@@ -228,6 +229,102 @@ async function main() {
       'el cubo del dashboard da el mismo conteo que el motor del BI',
       desdeCubo === valorTotal,
       `dashboard=${desdeCubo} vs bi=${valorTotal}`
+    );
+  }
+
+  // ── 4. Cada RESPUESTA es una métrica, igual en BI y dashboard ─────────
+  // Auditoría del 2026-09-26: en el BI no había métrica por respuesta (había
+  // que crear un segmento por cada una) y `lf__…` en una fórmula valía 0.
+  console.log('\n── Respuestas como métrica (leadans: / lf__) ──────────────');
+  const catCampo = ds.campos.find((c) => c.clave === campo.clave);
+  if (!catCampo || catCampo.buckets.length === 0 || ds.incompleto) {
+    console.log('  · el campo no trae respuestas en el rango: se omite');
+  } else {
+    const claves = catCampo.claves ?? [];
+    const tokens = claves.map((k) => makeLeadAnsMetric(campo.clave, k));
+    const tokenSin = makeLeadAnsMetric(campo.clave, 'sin_respuesta');
+    const [bi] = await runBiQuery({
+      cliente_id: elegido.id,
+      date_from: DESDE,
+      date_to: HASTA,
+      metrics: [...tokens, tokenSin, 'leads_count'] as any,
+      dimension: 'none',
+    });
+
+    let cuadran = true;
+    const detalle: string[] = [];
+    let sumaRespuestas = 0;
+    catCampo.buckets.forEach((bucket, i) => {
+      const alias = `lf__${campo.clave}__${claves[i]}`;
+      let delCubo = 0;
+      for (const fecha of Object.keys(ds.porFecha))
+        delCubo += clavesDelDia(ds as any, fecha, permitidas)[alias] ?? 0;
+      const delBi = Number((bi as any)?.[tokens[i]] ?? 0);
+      sumaRespuestas += delBi;
+      if (delCubo !== delBi) {
+        cuadran = false;
+        detalle.push(`${bucket}: dashboard=${delCubo} bi=${delBi}`);
+      }
+    });
+    check(
+      'cada respuesta da el mismo número en el BI y en el dashboard',
+      cuadran,
+      detalle.join('; ')
+    );
+    const sin = Number((bi as any)?.[tokenSin] ?? 0);
+    const leadsBi = Number(bi?.leads_count ?? 0);
+    if (catCampo.multiple) {
+      console.log(
+        '  · pregunta de selección múltiple: la suma de respuestas no cierra con el total'
+      );
+    } else {
+      check(
+        'respuestas + sin respuesta = leads (BI)',
+        sumaRespuestas + sin === leadsBi,
+        `${sumaRespuestas} + ${sin} vs ${leadsBi}`
+      );
+    }
+
+    const alias0 = `lf__${campo.clave}__${claves[0]}`;
+    const [cplResp] = await runBiQuery({
+      cliente_id: elegido.id,
+      date_from: DESDE,
+      date_to: HASTA,
+      metrics: ['spend'] as any,
+      dimension: 'none',
+      calculated: [{ name: 'cpl_resp', expression: `spend / ${alias0}` }],
+    } as any);
+    if (Number(cplResp?.spend ?? 0) > 0) {
+      check(
+        '`spend / lf__…` conserva el gasto (el CPL de la respuesta)',
+        Number((cplResp as any)?.cpl_resp ?? 0) > 0 || Number((bi as any)?.[tokens[0]] ?? 0) === 0
+      );
+    }
+
+    const porPregunta = await runBiQuery({
+      cliente_id: elegido.id,
+      date_from: DESDE,
+      date_to: HASTA,
+      metrics: ['leads_count', 'spend', 'sales_count'] as any,
+      dimension: makeLeadFieldDim(campo.clave) as any,
+    });
+    check(
+      'agrupar por la pregunta deja el gasto en «—» (null), no en 0',
+      porPregunta.length > 0 && porPregunta.every((r) => r.spend === null),
+      JSON.stringify(porPregunta.slice(0, 2))
+    );
+    const [filtrado] = await runBiQuery({
+      cliente_id: elegido.id,
+      date_from: DESDE,
+      date_to: HASTA,
+      metrics: ['leads_count', 'sales_count'] as any,
+      dimension: 'none',
+      filters: { [makeLeadFieldDim(campo.clave)]: catCampo.buckets[0] },
+    } as any);
+    check(
+      'con un filtro por respuesta las ventas no se cuentan enteras (salen «—»)',
+      filtrado?.sales_count === null,
+      String(filtrado?.sales_count)
     );
   }
 

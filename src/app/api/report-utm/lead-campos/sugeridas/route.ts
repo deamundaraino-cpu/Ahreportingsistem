@@ -21,14 +21,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { reportUtmAdminClient } from '@/lib/report-utm/client';
 import { getUserRole } from '@/lib/report-utm/auth';
-import { detectarCamposDeLeads, loadLeadCampos } from '@/lib/report-utm/lead-campos-db';
-import { esValorPlaceholder } from '@/lib/report-utm/lead-campos';
+import { loadLeadCampos } from '@/lib/report-utm/lead-campos-db';
+import { detectarPreguntas } from '@/lib/leads/respuestas/deteccion-db';
+import { esValorPlaceholder, etiquetasDeCampo } from '@/lib/report-utm/lead-campos';
 import { resolveRtmClienteId } from '@/lib/report-utm/campaign-resolver';
 
 export const dynamic = 'force-dynamic';
-
-/** Ventana de escaneo: el alta mira el histórico, no el rango del informe. */
-const DIAS_ESCANEO = 365;
 
 /** Cobertura mínima para ofrecer una clave, como fracción de los leads vistos. */
 const COBERTURA_MINIMA = 0.05;
@@ -63,14 +61,12 @@ export interface PreguntaSugerida {
   inactivo?: boolean;
 }
 
-// ── Caché de módulo ───────────────────────────────────────────────────
-// El analista abre el modal, prueba dos o tres preguntas y lo cierra. Sin caché
-// eso son tres escaneos idénticos de decenas de miles de leads. TTL más largo
-// que el del dashboard porque el catálogo de preguntas de un cliente cambia con
-// cada campaña nueva, no con cada sincronización.
-
-const TTL_MS = 10 * 60_000;
-const cache = new Map<string, { payload: unknown; ts: number }>();
+// La detección (el escaneo caro) se cachea en `detectarPreguntas`, compartida
+// con la pantalla de Leads; el catálogo se relee en cada petición. Antes se
+// cacheaba la respuesta entera 10 minutos —y el navegador otros 10—, así que
+// tras «Guardar en el catálogo» el picker seguía ofreciendo la pregunta como
+// detectada (auditoría del 2026-09-26).
+const SIN_CACHE = { 'Cache-Control': 'private, no-store' };
 
 export async function GET(req: NextRequest) {
   const role = await getUserRole();
@@ -86,14 +82,6 @@ export async function GET(req: NextRequest) {
   // su campo esté desactivado; ver `PreguntaSugerida.inactivo`.
   const claveActual = sp.get('clave_actual') ?? '';
 
-  const key = `${publicClienteId}|${todas ? 'todas' : 'ofrecibles'}|${claveActual}`;
-  const hit = cache.get(key);
-  if (hit && Date.now() - hit.ts <= TTL_MS) {
-    return NextResponse.json(hit.payload, {
-      headers: { 'Cache-Control': 'private, max-age=600' },
-    });
-  }
-
   try {
     const rtmClienteId = await resolveRtmClienteId(publicClienteId);
     if (!rtmClienteId) {
@@ -105,19 +93,16 @@ export async function GET(req: NextRequest) {
           leads: 0,
           enlazado: false,
         },
-        { headers: { 'Cache-Control': 'private, max-age=600' } }
+        { headers: SIN_CACHE }
       );
     }
-
-    const dateFrom = new Date(Date.now() - DIAS_ESCANEO * 86400_000).toISOString().slice(0, 10);
-    const dateTo = new Date().toISOString().slice(0, 10);
 
     const rtm = await reportUtmAdminClient();
     // Se lee el catálogo ENTERO, no solo los activos: hace falta poder devolver
     // el campo que el bloque tiene guardado aunque esté desactivado.
     const [catalogoCompleto, deteccion] = await Promise.all([
       loadLeadCampos(rtm, rtmClienteId),
-      detectarCamposDeLeads(rtm, rtmClienteId, { dateFrom, dateTo, incluirIgnoradas: todas }),
+      detectarPreguntas(rtm, rtmClienteId, { incluirIgnoradas: todas }),
     ]);
 
     // Los activos, más —si toca— el inactivo que el bloque ya tiene puesto. Un
@@ -137,9 +122,9 @@ export async function GET(req: NextRequest) {
       leads: deteccion.claves
         .filter((k) => c.claves_origen.includes(k.clave_norm))
         .reduce((s, k) => s + k.leads, 0),
-      distintos: c.valores_orden.length || 0,
+      distintos: etiquetasDeCampo(c).length,
       formularios: [],
-      valores: c.valores_orden.slice(0, 10),
+      valores: etiquetasDeCampo(c).slice(0, 10),
       ...(c.activo ? {} : { inactivo: true }),
     }));
 
@@ -178,12 +163,7 @@ export async function GET(req: NextRequest) {
       enlazado: true,
     };
 
-    if (cache.size > 200) cache.clear();
-    cache.set(key, { payload, ts: Date.now() });
-
-    return NextResponse.json(payload, {
-      headers: { 'Cache-Control': 'private, max-age=600' },
-    });
+    return NextResponse.json(payload, { headers: SIN_CACHE });
   } catch (err) {
     console.error('[lead-campos/sugeridas]', err);
     return NextResponse.json({ error: 'No se pudieron leer los leads.' }, { status: 500 });

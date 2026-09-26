@@ -4,10 +4,13 @@ import { reportUtmAdminClient } from '@/lib/report-utm/client';
 import { fetchAllRows } from '@/lib/report-utm/bi-query';
 import { loadLeadCampos, loadLeadSegmentos } from '@/lib/report-utm/lead-campos-db';
 import {
-  bucketDeLeadRaw,
+  bucketsDeLead,
+  indexarRawFields,
   ordenarBuckets,
-  segmentoIncluyeBucket,
+  etiquetasDeCampo,
+  predicadoDeSegmento,
 } from '@/lib/report-utm/lead-campos';
+import { clavesDeRespuestas } from '@/lib/leads/respuestas/claves';
 import type { LeadFieldMeta, LeadSegmentoMeta } from '@/lib/report-utm/bi-metadata';
 import { colombiaRangeBounds } from '@/lib/colombia-date';
 import { columnaExcluidoDisponible } from '@/lib/report-utm/lead-exclusion';
@@ -80,26 +83,39 @@ export async function GET(req: NextRequest) {
     const coberturaSeg = new Map<string, number>();
     const data: LeadFieldMeta[] = campos.map((campo) => {
       const susSegmentos = segmentos.filter((s) => s.campo_clave === campo.clave);
-      const set = new Set<string>();
+      // Las respuestas con nombre propio del catálogo se ofrecen SIEMPRE, aunque
+      // nadie las haya elegido en el período: quien arma un informe de «leads
+      // que dijeron X» no tiene por qué esperar a que llegue el primero.
+      const conocidas = etiquetasDeCampo(campo);
+      const set = new Set<string>(conocidas);
       let cobertura = 0;
+      const predicados = susSegmentos.map((s) => ({
+        clave: s.clave,
+        incluye: predicadoDeSegmento(s),
+      }));
       for (const r of rows) {
-        const b = bucketDeLeadRaw(campo, r.raw_fields as Record<string, unknown> | null);
-        if (!b) continue;
+        const bs = bucketsDeLead(
+          campo,
+          indexarRawFields(r.raw_fields as Record<string, unknown> | null)
+        );
+        if (bs.length === 0) continue;
         cobertura++;
-        if (set.size < campo.max_valores + 1) set.add(b);
-        for (const s of susSegmentos) {
-          if (segmentoIncluyeBucket(s, b))
-            coberturaSeg.set(s.clave, (coberturaSeg.get(s.clave) ?? 0) + 1);
+        for (const b of bs) if (set.size < campo.max_valores + 1) set.add(b);
+        for (const s of predicados) {
+          if (s.incluye(bs)) coberturaSeg.set(s.clave, (coberturaSeg.get(s.clave) ?? 0) + 1);
         }
       }
+      const valores = ordenarBuckets(campo, Array.from(set));
+      const claves = clavesDeRespuestas(valores, campo.respuestas ?? []);
       return {
         clave: campo.clave,
         nombre: campo.nombre,
         descripcion: campo.descripcion,
-        valores: ordenarBuckets(campo, Array.from(set)),
+        valores,
         claves_origen: campo.claves_origen,
         cobertura,
         alta_cardinalidad: set.size > campo.max_valores,
+        respuestas: valores.map((nombre, i) => ({ clave: claves[i], nombre })),
       };
     });
 

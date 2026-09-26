@@ -3,7 +3,7 @@
  * Plugin Name:       Report UTM — Ad House
  * Plugin URI:        https://reportes.adshouse.cloud/
  * Description:       Tracking UTM server-side para WordPress. Capta leads de formularios con datos de contacto completos, propaga UTMs a links de checkout y registra la atribución multi-touch de cada visitante.
- * Version:           0.3.2
+ * Version:           0.4.0
  * Requires at least: 5.8
  * Requires PHP:      7.4
  * Author:            Robinson Zapata / Ad House
@@ -101,6 +101,16 @@
  *  CHANGELOG
  * ════════════════════════════════════════════════════════════════════
  *
+ *  v0.4.0 — Tipo y opciones de cada pregunta
+ *    + Cada lead viaja con `fields_meta`: para los desplegables, casillas y
+ *      radios de CF7, Gravity Forms, WPForms y Elementor, su tipo, si admite
+ *      varias respuestas y sus opciones. La plataforma ofrece así cada
+ *      respuesta con su nombre real sin tener que adivinarla.
+ *    + Las casillas se envían unidas por comas (antes por espacios, lo que
+ *      fundía varias opciones en una sola respuesta imposible de separar).
+ *    + Fix: las casillas de Gravity Forms llegaban vacías (se leía la entrada
+ *      del campo y no sus sub-entradas).
+ *
  *  v0.3.2 — El pixel JS vuelve a ejecutarse
  *    + Fix: la config se inyectaba con la clave `cliente_slug`, pero el pixel
  *           lee `cliente`. El script abortaba con "pixel inactive" en cuanto
@@ -143,7 +153,7 @@
 
 if ( ! defined( 'ABSPATH' ) ) exit;
 
-define( 'RUTM_VERSION',    '0.3.2' );
+define( 'RUTM_VERSION',    '0.4.0' );
 define( 'RUTM_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'RUTM_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 define( 'RUTM_PLATFORM',   'https://reportes.adshouse.cloud/' );

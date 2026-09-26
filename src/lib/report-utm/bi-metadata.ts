@@ -6,6 +6,15 @@
 
 // `bi/expr.ts` es puro (sin imports), así que respeta la regla de arriba.
 import { parseExpr, isExprError, evalExpr } from './bi/expr';
+import {
+  extraerReferenciasDeLead,
+  esTokenRespuesta as isLeadAnsMetricLocal,
+  parseTokenRespuesta,
+  parseClaveFormulaRespuesta,
+  tokenRespuesta,
+  SIN_RESPUESTA,
+} from '@/lib/leads/respuestas/claves';
+import type { RespuestaClave } from '@/lib/leads/respuestas/claves';
 // `bi-valores` no importa nada, así que la dependencia va en un solo sentido y
 // no hay ciclo. Es la ÚNICA forma de partir una selección guardada: tenerla
 // escrita cuatro veces fue lo que dejó que un valor con coma se rompiera en
@@ -329,6 +338,8 @@ export function isAdditiveMetric(metric: string): boolean {
   // Un segmento de lead es un CONTEO de contactos: siempre aditivo. Sin esta
   // rama la fila "Total" de la tabla dejaría su columna en blanco.
   if (isLeadSegMetric(metric)) return true;
+  // Una respuesta de lead también es un conteo de contactos.
+  if (isLeadAnsMetricLocal(metric)) return true;
   return ADDITIVE_METRICS.has(metric);
 }
 
@@ -398,6 +409,7 @@ export function supportsPivot(metric: string): boolean {
   // el pivot sabe manejar. No está en PIVOT_METRICS porque es un token dinámico
   // por cliente, no una entrada del catálogo fijo.
   if (isLeadSegMetric(metric)) return true;
+  if (isLeadAnsMetricLocal(metric)) return true;
   return (PIVOT_METRICS as string[]).includes(metric);
 }
 
@@ -411,6 +423,7 @@ export function supportsPivot(metric: string): boolean {
  */
 export function esEtapaDeEmbudo(metric: string): boolean {
   if (isLeadSegMetric(metric)) return true;
+  if (isLeadAnsMetricLocal(metric)) return true;
   return (FUNNEL_STAGE_METRICS as readonly string[]).includes(metric);
 }
 
@@ -1451,6 +1464,11 @@ export interface LeadFieldMeta {
   /** Leads del período que responden este campo. */
   cobertura: number;
   alta_cardinalidad: boolean;
+  /**
+   * Cada bucket con su clave estable, en el orden de `valores`. Es lo que hace
+   * que cada respuesta se ofrezca como métrica (`leadans:<campo>:<clave>`).
+   */
+  respuestas?: RespuestaClave[];
 }
 
 // ── Segmentos de campo de lead (report_utm.lead_campo_segmentos) ──────
@@ -1518,6 +1536,82 @@ export function leadSegLabel(token: string, segs: LeadSegmentoMeta[] = []): stri
   const seg = segs.find((s) => s.clave === clave);
   if (!seg) return humanizeFieldKey(clave);
   return seg.campo_nombre ? `${seg.campo_nombre}: ${seg.nombre}` : seg.nombre;
+}
+
+// ── Respuestas de campo de lead (una respuesta = una métrica) ─────────
+// Cada respuesta de un campo del catálogo es, sin configurar nada, una MÉTRICA:
+//   • Métrica: "leadans:<campo>:<respuesta>" · alias: "lf__<campo>__<respuesta>"
+//   • Los que no respondieron: "leadans:<campo>:sin_respuesta"
+//
+// Es el mismo alias que ya usaba el dashboard, así que una fórmula se escribe
+// igual en una pestaña y en un informe (auditoría del 2026-09-26: antes, en un
+// informe, `lf__…` valía 0 en silencio). El vocabulario vive en
+// `src/lib/leads/respuestas/claves.ts`; aquí solo se reexporta con los nombres
+// que usa el resto del BI.
+//
+// Igual que un segmento, una respuesta es una MEDIDA y no recorta el ámbito, así
+// que `spend / lf__rango__2m_3m` conserva el gasto entero: es el CPL de esa
+// respuesta. Filtrar por `leadfield:` sí lo anula (ver `hasNonAttributableFilter`).
+
+export {
+  PREFIJO_TOKEN_RESPUESTA as LEAD_ANS_PREFIX,
+  SIN_RESPUESTA as LEAD_ANS_SIN_RESPUESTA,
+  tokenRespuesta as makeLeadAnsMetric,
+  esTokenRespuesta as isLeadAnsMetric,
+  parseTokenRespuesta as parseLeadAnsMetric,
+  claveFormulaRespuesta as leadAnsAlias,
+} from '@/lib/leads/respuestas/claves';
+
+/** Alias `lf__<campo>__<resp>` referenciados por una expresión calc. */
+export function extractLeadAnsAliases(
+  expression: string
+): { campo: string; resp: string; alias: string }[] {
+  return extraerReferenciasDeLead(expression)
+    .respuestas.filter((r) => r.texto.startsWith('lf__'))
+    .map((r) => ({ campo: r.campo, resp: r.resp, alias: r.texto }));
+}
+
+/**
+ * Bases de una fórmula, si TODAS son aditivas: identificador → token que hay que
+ * pedir al motor para tener su valor por fila. null si alguna no suma (un
+ * ratio, un campo calculado anidado): entonces el total de la fórmula no se
+ * puede reconstruir fila a fila y la tabla lo deja en «—».
+ *
+ * Es lo que permite totalizar `spend / lf__rango__2m_3m` (CPL por respuesta):
+ * gasto total ÷ respuestas totales, no la suma de los CPL de cada fila.
+ */
+export function basesAditivasDeFormula(expression: string): Map<string, string> | null {
+  const parsed = parseExpr(expression);
+  if (isExprError(parsed)) return null;
+  const out = new Map<string, string>();
+  for (const id of parsed.refs) {
+    let token: string | null = null;
+    if (METRIC_META[id as BiMetric]) token = id;
+    else {
+      const r = parseClaveFormulaRespuesta(id);
+      if (r) token = tokenRespuesta(r.campo, r.resp);
+      else if (id.startsWith('lseg__')) token = makeLeadSegMetric(id.slice('lseg__'.length));
+    }
+    if (!token || !isAdditiveMetric(token)) return null;
+    out.set(id, token);
+  }
+  return out.size > 0 ? out : null;
+}
+
+/**
+ * Etiqueta legible de un token de respuesta: «Rango de ingresos: $2M a $3M».
+ * null si no es un token de respuesta. Sin catálogo, humaniza las claves.
+ */
+export function leadAnsLabel(token: string, campos: LeadFieldMeta[] = []): string | null {
+  const p = parseTokenRespuesta(token);
+  if (!p) return null;
+  const campo = campos.find((c) => c.clave === p.campo);
+  const nombreCampo = campo?.nombre ?? humanizeFieldKey(p.campo);
+  if (p.resp === SIN_RESPUESTA) return `${nombreCampo}: (sin respuesta)`;
+  const resp =
+    campo?.respuestas?.find((r) => r.clave === p.resp || (r.alias ?? []).includes(p.resp))
+      ?.nombre ?? humanizeFieldKey(p.resp);
+  return `${nombreCampo}: ${resp}`;
 }
 
 // ── Columnas adicionales de Sheets offline (custom_fields JSONB) ──────

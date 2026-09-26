@@ -19,7 +19,7 @@ import {
   evaluateGoal,
 } from '@/lib/report-utm/bi-metadata';
 import { fetchClienteGoals } from '@/lib/report-utm/client-goals';
-import { useBiQueryBase } from '../BiQueryContext';
+import { useBiQueryBase, useBiEtiquetas } from '../BiQueryContext';
 import { appendWidgetFilters, widgetFilterSignature } from '../widgetQuery';
 import { HelpTip } from '../HelpTip';
 import {
@@ -73,6 +73,7 @@ function formatVal(value: number, format: ValFormat, decimals?: number, decMoned
 
 export function ScorecardWidget({ title, config, filters, calculatedFields = [] }: Props) {
   const queryBase = useBiQueryBase();
+  const { registrar: registrarEtiquetas } = useBiEtiquetas();
   // Una sola firma para todo lo que obliga a recargar: filtros del informe +
   // filtro propio del widget. Ver widgetQuery.ts.
   const filterSig = widgetFilterSignature(filters, config);
@@ -86,6 +87,8 @@ export function ScorecardWidget({ title, config, filters, calculatedFields = [] 
   const [avisoTasas, setAvisoTasas] = useState<AvisoTasas | null>(null);
   /** Moneda de reporte del cliente (viaja en `meta` de la respuesta). */
   const [monedaCliente, setMonedaCliente] = useState<string | null>(null);
+  /** Nombres de preguntas, respuestas y segmentos (viajan en `meta.etiquetas`). */
+  const [etiquetas, setEtiquetas] = useState<Record<string, string>>({});
 
   const compare = !!config.compare_period;
   // Fórmula propia del widget: manda sobre `metric` y viaja bajo una clave fija.
@@ -105,7 +108,8 @@ export function ScorecardWidget({ title, config, filters, calculatedFields = [] 
   const decimals = formula ? config.formula_decimals : calcField?.decimals;
   const label = formula
     ? formula
-    : (METRIC_META[metric as BiMetric]?.label ??
+    : (etiquetas[metric] ??
+      METRIC_META[metric as BiMetric]?.label ??
       fieldMetricLabel(metric) ??
       offlineFieldLabel(metric) ??
       sheetFieldLabel(metric) ??
@@ -138,6 +142,8 @@ export function ScorecardWidget({ title, config, filters, calculatedFields = [] 
         const na = readUnavailable(json.meta, metric);
         setNaInfo(na);
         setMonedaCliente(json.meta?.moneda ?? null);
+        setEtiquetas(json.meta?.etiquetas ?? {});
+        registrarEtiquetas(json.meta?.etiquetas);
         setAvisoTasas(readTasas(json.meta));
         if (compare) {
           setValue(readValue(json.data?.current?.[0], metric, na));

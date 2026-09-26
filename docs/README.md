@@ -32,6 +32,7 @@ Plataforma multi-cliente para agencias de publicidad que **consolida métricas d
 | 21  | [Auditoría de UTMs](./21-auditoria-utms-ghl.md)                    | Qué arrastra GoHighLevel, qué toma el UTM Report y cómo comprobar los campos ocultos del formulario                           |
 | 22  | [Plantilla de agente interno](./22-plantilla-agente-interno.md)    | Plantilla de prompt para dar de alta y probar un agente interno, y por qué el agente usa API y no una suscripción             |
 | 23  | [Runbook de empalme](./23-runbook-empalme.md)                      | Si algo falla, qué mirar: informes vacíos, leads excluidos, sync caída, cuenta de Meta parada, ventas del CRM                 |
+| 24  | [Respuestas de formulario](./24-respuestas-de-formulario.md)         | Un solo sitio (pestaña «Leads»): medir una pregunta en un clic y usar cada respuesta como métrica (leads, CPL, %) en pestañas e informes |
 
 ---
 

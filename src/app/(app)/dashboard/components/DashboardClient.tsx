@@ -1257,6 +1257,20 @@ function DynamicDashboard({
     ];
   }, [data.leadAnswers, data.leadAnswerCatalogo]);
 
+  /**
+   * Inversión de la pestaña (Meta + TikTok, ya recortada por su filtro de
+   * campañas y sus fechas): es el numerador del «CPL por respuesta» del bloque
+   * de respuestas, igual que `total_spend` en una fórmula.
+   */
+  const inversionPestana = useMemo(
+    () =>
+      filteredMetrics.reduce(
+        (s: number, r: any) => s + (Number(r.meta_spend) || 0) + (Number(r.tiktok_spend) || 0),
+        0
+      ),
+    [filteredMetrics]
+  );
+
   const visibleCols = useMemo(() => {
     return activeLayout.columnas.filter((c: ColDef) => !c.hidden);
   }, [activeLayout.columnas]);
@@ -1902,6 +1916,10 @@ function DynamicDashboard({
                           pestanaNombre={activeTabObj?.nombre ?? 'Vista general'}
                           rangoLabel={`${searchParams.get('from') ?? ''} a ${searchParams.get('to') ?? ''}`.trim()}
                           filtroLabel={tabFilterLabel(activeTabObj?.keyword_meta)}
+                          inversion={inversionPestana}
+                          formatearMoneda={(n: number) =>
+                            formatValue(n, { prefix: '$', decimals: 0, moneda: monedaReporte })
+                          }
                         />
                       </SortableTable>
                     );

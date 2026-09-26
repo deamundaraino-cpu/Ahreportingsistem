@@ -15,6 +15,8 @@ import {
   NON_ATTRIBUTABLE_FIELDS,
 } from './bi-metadata';
 import { resolvePublicClienteId } from './campaign-resolver';
+import { leadFieldLabel, leadAnsLabel, leadSegLabel } from './bi-metadata';
+import { loadLeadCampos, loadLeadSegmentos } from './lead-campos-db';
 import { createAdminClient } from '@/utils/supabase/server';
 import { monedaDeClienteUtm, type AvisoTasas } from '@/lib/moneda-reporte';
 import { conAvisosDeTasas } from './bi/avisos-tasas';
@@ -115,7 +117,73 @@ async function diagnosticarConMoneda(
   return moneda ? { ...diag, moneda } : diag;
 }
 
-export type MetaConsulta = QueryDiagnostics & { moneda?: string; tasas?: AvisoTasas };
+export type MetaConsulta = QueryDiagnostics & {
+  moneda?: string;
+  tasas?: AvisoTasas;
+  /**
+   * Nombre legible de cada token de lead que usa la consulta (pregunta,
+   * respuesta, segmento): «Rango de ingresos: $2M a $3M» en vez de
+   * `leadans:rango_de_ingresos:2m_3m`. Viaja con la respuesta —y no en un fetch
+   * aparte— para que también lo tengan los informes públicos, que no tienen
+   * sesión para pedir el catálogo.
+   */
+  etiquetas?: Record<string, string>;
+};
+
+/** Tokens de lead que nombra la consulta (métricas, dimensiones y filtros). */
+function tokensDeLead(p: ParsedBiQuery): string[] {
+  const out = new Set<string>();
+  const ver = (t: string | undefined) => {
+    if (t && (t.startsWith('leadfield:') || t.startsWith('leadans:') || t.startsWith('leadseg:')))
+      out.add(t);
+  };
+  for (const m of p.metrics as unknown as string[]) ver(m);
+  ver(p.dimension);
+  ver(p.dimension2);
+  for (const k of Object.keys(p.filters ?? {})) ver(k);
+  return [...out];
+}
+
+/** Etiquetas del catálogo de Leads para los tokens de la consulta. Nunca lanza. */
+async function etiquetasSeguras(p: ParsedBiQuery): Promise<Record<string, string> | undefined> {
+  const tokens = tokensDeLead(p);
+  if (tokens.length === 0 || !p.cliente_id) return undefined;
+  try {
+    const db = (await createAdminClient()).schema('report_utm');
+    const campos = await loadLeadCampos(db, p.cliente_id);
+    const segs = tokens.some((t) => t.startsWith('leadseg:'))
+      ? await loadLeadSegmentos(db, p.cliente_id, campos)
+      : [];
+    const metaCampos = campos.map((c) => ({
+      clave: c.clave,
+      nombre: c.nombre,
+      valores: [],
+      claves_origen: c.claves_origen,
+      cobertura: 0,
+      alta_cardinalidad: false,
+      respuestas: c.respuestas ?? [],
+    }));
+    const porClave = new Map(campos.map((c) => [c.clave, c.nombre]));
+    const metaSegs = segs.map((s) => ({
+      clave: s.clave,
+      nombre: s.nombre,
+      campo_clave: s.campo_clave,
+      campo_nombre: porClave.get(s.campo_clave),
+      operador: s.operador,
+      valores: s.valores,
+      cobertura: 0,
+    }));
+    const out: Record<string, string> = {};
+    for (const t of tokens) {
+      const e =
+        leadFieldLabel(t, metaCampos) ?? leadAnsLabel(t, metaCampos) ?? leadSegLabel(t, metaSegs);
+      if (e) out[t] = e;
+    }
+    return out;
+  } catch {
+    return undefined;
+  }
+}
 
 /**
  * Corre la consulta recogiendo los días sin tasa y, en paralelo, el diagnóstico
@@ -123,11 +191,16 @@ export type MetaConsulta = QueryDiagnostics & { moneda?: string; tasas?: AvisoTa
  * avisar, así que tampoco hace falta `meta`.
  */
 async function conMeta<T>(p: ParsedBiQuery, correr: () => Promise<T>): Promise<DispatchResult> {
-  const [{ resultado, tasas }, meta] = await Promise.all([
+  const [{ resultado, tasas }, meta, etiquetas] = await Promise.all([
     conAvisosDeTasas(correr),
     diagnosticarConMoneda(p),
+    etiquetasSeguras(p),
   ]);
-  return { data: resultado, meta: meta && tasas ? { ...meta, tasas } : meta };
+  if (!meta) return { data: resultado };
+  return {
+    data: resultado,
+    meta: { ...meta, ...(tasas ? { tasas } : {}), ...(etiquetas ? { etiquetas } : {}) },
+  };
 }
 
 export async function dispatchBiQuery(rawParams: ParsedBiQuery): Promise<DispatchResult> {

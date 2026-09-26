@@ -26,6 +26,7 @@ import {
   advancedFilterHasConditions,
 } from '@/lib/report-utm/bi-metadata';
 import type { BiDimension } from '@/lib/report-utm/bi-metadata';
+import { motivoConsultaNoPermitida } from '@/lib/report-utm/bi/public-allowlist';
 
 export const dynamic = 'force-dynamic';
 
@@ -163,6 +164,15 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ toke
               : { valores: [], total: 0, truncado: false, motivo: 'dimension_no_listable' },
         });
       }
+    }
+
+    // Lo que abre o recorta filas por un valor de formulario tiene que salir del
+    // propio informe (ver `public-allowlist.ts`): sin esto, un visitante con el
+    // enlace podía pedir `dimension=field:email` y listar los correos.
+    const noPermitida = motivoConsultaNoPermitida(parsed, report);
+    if (noPermitida) {
+      console.warn('[bi/public/query] consulta rechazada:', noPermitida);
+      return NextResponse.json({ error: 'Consulta no permitida' }, { status: 403 });
     }
 
     const result = await dispatchBiQuery(parsed);

@@ -26,10 +26,12 @@ import type { HotmartCuboLite } from '@/lib/dashboard/hotmart-cubo';
 import type { AvisoTasas } from '@/lib/moneda-reporte';
 import { cargarCuboHotmart } from '@/lib/hotmart/cubo-db';
 import { funnelCambio } from '@/lib/hotmart/funnel-cambio';
-import { BUCKET_OTROS } from '@/lib/report-utm/lead-campos';
+import { etiquetasDeCampo } from '@/lib/report-utm/lead-campos';
+import { clavesDeRespuestas } from '@/lib/leads/respuestas/claves';
+import { primerDiaConLeads } from '@/lib/leads/respuestas/cubo-db';
+import { activarPregunta } from '@/lib/leads/respuestas/activar-db';
 import type { LeadAnswerCampoResumen } from '@/lib/dashboard/metric-catalog';
-import { loadLeadCampos, loadLeadSegmentos, saveLeadCampo } from '@/lib/report-utm/lead-campos-db';
-import { slugCampo } from '@/lib/report-utm/lead-campos';
+import { loadLeadCampos, loadLeadSegmentos } from '@/lib/report-utm/lead-campos-db';
 import { getUserRole } from '@/lib/report-utm/auth';
 import {
   cargarRespuestasLead,
@@ -701,8 +703,9 @@ function layoutUsaHotmart(
  * columna aunque la pestaña no tenga ningún bloque de respuestas.
  *
  * Los buckets salen de `valores_map` —los valores a los que el analista mapeó las
- * respuestas crudas— porque `valores_orden` está vacío en todos los campos reales.
- * Eso tiene dos consecuencias que la UI debe declarar:
+ * respuestas crudas—, ordenados por `valores_orden` cuando lo hay, y cada uno
+ * lleva su clave estable (`lead_campos.respuestas`, migración 090), la misma
+ * que emite el cubo. Eso tiene dos consecuencias que la UI debe declarar:
  *
  *   • un campo sin `valores_map` no aporta ninguna respuesta ofrecible (`sinBuckets`);
  *   • con `sin_mapear: 'crudo'` la lista NUNCA es completa, porque hay buckets que
@@ -721,12 +724,13 @@ async function getCatalogoRespuestas(clienteId: string): Promise<LeadAnswerCampo
       (porCampo[s.campo_clave] ??= []).push({ clave: s.clave, nombre: s.nombre });
     }
     return campos.map((c) => {
-      const buckets = [...new Set(Object.values(c.valores_map ?? {}))].filter(Boolean) as string[];
-      if (c.sin_mapear === 'otros') buckets.push(BUCKET_OTROS);
+      // Las etiquetas conocidas del campo (sin los placeholders apartados).
+      const buckets = etiquetasDeCampo(c);
       return {
         clave: c.clave,
         nombre: c.nombre,
         buckets,
+        claves: clavesDeRespuestas(buckets, c.respuestas ?? []),
         sinBuckets: buckets.length === 0,
         // Un segmento SÍ es ofrecible aunque el campo salga `sinBuckets`: lleva su
         // propia lista de buckets, que es justo la información que al catálogo le
@@ -799,7 +803,9 @@ async function getRespuestasLeadDelDia(
   /** ¿Hay algún bloque o alguna fórmula que use estas métricas? */
   conTotales: boolean,
   /** Claves del catálogo que mencionan las fórmulas, además de los bloques. */
-  clavesDeFormulas: string[] = []
+  clavesDeFormulas: string[] = [],
+  /** Construir también el nivel de conjunto y anuncio. */
+  niveles = false
 ): Promise<LeadAnswerDataset> {
   // Si no hay ni bloques ni fórmulas que lo usen, no se toca la red: el total
   // diario es la consulta cara y no tiene sentido cobrársela a un cliente que no
@@ -877,9 +883,15 @@ async function getRespuestasLeadDelDia(
     // Sin campos NO se corta: `cargarRespuestasLead` sigue trayendo el total
     // diario de contactos, que es lo que alimenta `utm_leads`.
 
-    // `all` abarca desde 2020: escanear el histórico entero reventaría el
-    // statement_timeout y no aporta nada a un desglose de respuestas.
-    const desde = startStr === 'all' ? addDaysISO(endStr, -365) : startStr;
+    // `all` empieza en el PRIMER lead del cliente, no hace 365 días. Recortarlo
+    // a un año (lo que se hacía hasta la auditoría del 2026-09-26) dejaba el
+    // gasto de «Todo» entero y los leads de un solo año, y el CPL de cualquier
+    // tarjeta salía inflado sin aviso. El cubo se pide por ventanas de un año,
+    // en serie, así que el histórico entero ya no revienta el statement_timeout.
+    const desde =
+      startStr === 'all'
+        ? ((await primerDiaConLeads(rtm, rtmClienteId).catch(() => null)) ?? endStr)
+        : startStr;
 
     // Un bloque de respuestas necesita el total sí o sí: sin él no puede calcular
     // su `(sin respuesta)` y la tabla diaria no cerraría.
@@ -893,7 +905,8 @@ async function getRespuestasLeadDelDia(
       campos,
       origenes,
       necesitaTotales,
-      segmentosPorCampo
+      segmentosPorCampo,
+      { niveles }
     );
 
     // Copia, no mutación: `cargarRespuestasLead` cachea el dataset y las claves
@@ -903,6 +916,81 @@ async function getRespuestasLeadDelDia(
     console.error('[dashboard] respuestas de formulario no disponibles:', err);
     return datasetVacio();
   }
+}
+
+/** Primer día con venta de Hotmart del cliente (`fecha_venta` ya es día Colombia). */
+async function primeraVentaHotmart(supabase: any, clienteId: string): Promise<string | null> {
+  const { data, error } = await supabase
+    .from('hotmart_ventas')
+    .select('fecha_venta')
+    .eq('cliente_id', clienteId)
+    .order('fecha_venta', { ascending: true })
+    .limit(1);
+  if (error) return null;
+  const f = data?.[0]?.fecha_venta;
+  return f ? String(f).slice(0, 10) : null;
+}
+
+/**
+ * Qué necesita cargar un layout de las respuestas de formulario: los bloques, si
+ * hace falta el total diario y qué preguntas del catálogo nombran sus fórmulas.
+ *
+ * UNA sola función para el dashboard interno y para el espejo público. Antes el
+ * espejo calculaba solo el total y no pasaba ni las preguntas ni los segmentos
+ * (auditoría del 2026-09-26): una tarjeta con `lf__…` o `lseg__…` salía «–» en
+ * el enlace del cliente mientras en el dashboard se veía bien.
+ */
+function planDeRespuestas(
+  layout: any,
+  tabs: any[] | null | undefined,
+  plantillas: any[] | null | undefined,
+  catalogo: LeadAnswerCampoResumen[]
+): { bloques: LeadAnswerBlockDef[]; usaTotales: boolean; claves: string[]; niveles: boolean } {
+  const uso = layoutUsaRespuestasLead(
+    layout,
+    tabs,
+    plantillas,
+    catalogo.map((c) => c.clave),
+    catalogo.flatMap((c) =>
+      (c.segmentos ?? []).map((s) => ({ clave: s.clave, campoClave: c.clave }))
+    )
+  );
+  return {
+    bloques: recolectarBloquesRespuesta(layout, tabs),
+    usaTotales: uso.usaTotales,
+    claves: uso.claves,
+    niveles: usaRespuestasPorAnuncio(layout, tabs, plantillas),
+  };
+}
+
+/**
+ * ¿Algún ranking o gráfica por ANUNCIO o CONJUNTO usa métricas de respuestas?
+ * Solo entonces se carga el cubo a ese nivel, que pesa bastante más que el de
+ * campaña (cientos de tuplas frente a decenas de campañas).
+ */
+function usaRespuestasPorAnuncio(
+  layout: any,
+  tabs: any[] | null | undefined,
+  plantillas: any[] | null | undefined
+): boolean {
+  const porEntidad = (d: unknown) => d === 'ads' || d === 'adsets';
+  const revisar = (f: any) =>
+    !!f &&
+    ((f.ranking_tables ?? []).some(
+      (r: any) =>
+        porEntidad(r?.dimension) &&
+        (r?.columns ?? []).some((c: any) => formulaUsaRespuestas(c?.formula))
+    ) ||
+      (f.graficos ?? []).some(
+        (g: any) =>
+          porEntidad(g?.dimension) &&
+          (g?.valueFormulas ?? []).some((x: string) => formulaUsaRespuestas(x))
+      ));
+  if (revisar(layout)) return true;
+  for (const t of tabs ?? []) if (revisar(t)) return true;
+  const usadas = new Set((tabs ?? []).map((t) => t?.plantilla_id).filter(Boolean));
+  for (const pl of plantillas ?? []) if (usadas.has(pl?.id) && revisar(pl)) return true;
+  return false;
 }
 
 /**
@@ -925,6 +1013,8 @@ async function cargarMetricasEnriquecidas(
     leadAnswerFormulas?: boolean;
     /** Claves del catálogo que mencionan las fórmulas del layout. */
     leadAnswerClaves?: string[];
+    /** Cargar el cubo también por conjunto y anuncio (rankings por anuncio). */
+    leadAnswerNiveles?: boolean;
     /**
      * ¿Alguna fórmula usa las ventas de Hotmart por campaña (`hm_*`)? Ver
      * `layoutUsaHotmart`. Sin esto no se lee `hotmart_ventas` y `hotmartCubo`
@@ -973,14 +1063,17 @@ async function cargarMetricasEnriquecidas(
   // Node trata como fatal. El `await` de abajo lo sigue relanzando igual.
   monedaReporte.catch(() => {});
 
-  // `all` abarca desde 2020: resolver seis años de campañas reventaría el
-  // presupuesto de la carga. Mismo recorte que el cubo de respuestas, y el
-  // mismo motivo; las `ventas_*` de cuenta siguen cubriendo el rango entero.
-  const cuboDesde = startStr === 'all' ? addDaysISO(endStr, -365) : startStr;
+  // `all` empieza en la primera venta del cliente, no hace 365 días: con el
+  // recorte, `hm_cpa` dividía el gasto de todo el histórico entre las ventas de
+  // un año (auditoría del 2026-09-26, mismo fallo que el CPL de los leads).
   const hotmartCuboPromise: Promise<HotmartCuboLite | null> = opts?.hotmartCubo
-    ? monedaReporte.then(({ conv }) =>
-        cargarCuboHotmart(supabase, clienteId, cuboDesde, endStr, conv)
-      )
+    ? monedaReporte.then(async ({ conv }) => {
+        const cuboDesde =
+          startStr === 'all'
+            ? ((await primeraVentaHotmart(supabase, clienteId)) ?? endStr)
+            : startStr;
+        return cargarCuboHotmart(supabase, clienteId, cuboDesde, endStr, conv);
+      })
     : Promise.resolve(null);
 
   const [metricas, leads, offline, sheetData, leadAnswers, hotmartCubo] = await Promise.all([
@@ -1003,7 +1096,8 @@ async function cargarMetricasEnriquecidas(
       endStr,
       opts?.leadAnswerBlocks ?? [],
       opts?.leadAnswerFormulas ?? false,
-      opts?.leadAnswerClaves ?? []
+      opts?.leadAnswerClaves ?? [],
+      opts?.leadAnswerNiveles ?? false
     ),
     hotmartCuboPromise,
   ]);
@@ -1132,22 +1226,19 @@ export async function getDashboardData(clientId: string, startStr: string, endSt
         })()
       : null;
 
-  // Los bloques de respuestas se recolectan del layout MÁS todas las pestañas:
-  // la carga es única y el usuario cambia de pestaña sin volver al servidor.
-  const leadAnswerBlocks = recolectarBloquesRespuesta(layout, tabsRes.data);
   // El catálogo del cliente alimenta el selector de métricas y resuelve las
   // claves `lf__<clave>__<x>` que mencionen las fórmulas. No escanea leads.
   const leadAnswerCatalogo = await getCatalogoRespuestas(clientId);
-  // El total diario solo se pide si alguna fórmula lo menciona (ver helper).
-  const leadAnswerUso = layoutUsaRespuestasLead(
+  // Los bloques se recolectan del layout MÁS todas las pestañas (la carga es
+  // única) y el total diario solo se pide si alguna fórmula lo menciona.
+  const leadAnswerPlan = planDeRespuestas(
     layout,
     tabsRes.data,
     allLayoutsRes.data,
-    leadAnswerCatalogo.map((c) => c.clave),
-    leadAnswerCatalogo.flatMap((c) =>
-      (c.segmentos ?? []).map((s) => ({ clave: s.clave, campoClave: c.clave }))
-    )
+    leadAnswerCatalogo
   );
+  const leadAnswerBlocks = leadAnswerPlan.bloques;
+  const leadAnswerUso = leadAnswerPlan;
 
   // El periodo anterior pasa por el MISMO enriquecimiento: si no, las tarjetas
   // con campos de Sheet, offline o leads se quedaban sin comparativo en silencio.
@@ -1160,6 +1251,7 @@ export async function getDashboardData(clientId: string, startStr: string, endSt
       leadAnswerBlocks,
       leadAnswerFormulas: leadAnswerUso.usaTotales,
       leadAnswerClaves: leadAnswerUso.claves,
+      leadAnswerNiveles: leadAnswerPlan.niveles,
       hotmartCubo: usaHotmart,
     }),
     rangoPrevio
@@ -1168,6 +1260,7 @@ export async function getDashboardData(clientId: string, startStr: string, endSt
           leadAnswerBlocks,
           leadAnswerFormulas: leadAnswerUso.usaTotales,
           leadAnswerClaves: leadAnswerUso.claves,
+          leadAnswerNiveles: leadAnswerPlan.niveles,
           hotmartCubo: usaHotmart,
         })
       : Promise.resolve(null),
@@ -2222,36 +2315,51 @@ export async function getMirrorDashboardData(token: string, from?: string, to?: 
 
   // Mismo enriquecimiento que el dashboard interno: sin esto, una tarjeta con un
   // campo de Sheet salía en blanco en el enlace público del cliente.
-  const [enriquecido, conversionesRes, campaignGroupsRes, tabsRes, allLayoutsRes] =
-    await Promise.all([
-      tabsPromise.then((r: any) =>
-        cargarMetricasEnriquecidas(supabase, cliente.id, startStr, endStr, {
-          leadAnswerBlocks: recolectarBloquesRespuesta(layout, r.data),
-          // El espejo no conoce las plantillas globales, así que solo se miran el
-          // layout de la pestaña y las pestañas visibles. Es suficiente: lo que se
-          // comparte con el cliente es lo que hay en ese layout.
-          leadAnswerFormulas: layoutUsaRespuestasLead(layout, r.data, null).usaTotales,
-          hotmartCubo: layoutUsaHotmart(layout, r.data, null),
-        })
-      ),
-      supabase
-        .from('meta_conversiones_catalogo')
-        .select('conversion_key, label, field_id')
-        .eq('cliente_id', cliente.id)
-        .order('label', { ascending: true }),
-      supabase
-        .from('campaign_groups')
-        .select(
-          `
+  // Plantillas y catálogo de preguntas: el espejo resuelve las fórmulas igual que
+  // el dashboard interno (`planDeRespuestas`), o las tarjetas con respuestas o
+  // segmentos saldrían «–» en el enlace del cliente.
+  const plantillasPromise = supabase.from('layouts_reporte').select('*').order('nombre');
+  const catalogoPromise = getCatalogoRespuestas(cliente.id);
+
+  const [
+    enriquecido,
+    conversionesRes,
+    campaignGroupsRes,
+    tabsRes,
+    allLayoutsRes,
+    leadAnswerCatalogo,
+  ] = await Promise.all([
+    Promise.all([tabsPromise, plantillasPromise, catalogoPromise]).then(
+      ([r, pl, catalogo]: [any, any, LeadAnswerCampoResumen[]]) => {
+        const plan = planDeRespuestas(layout, r.data, pl.data, catalogo);
+        return cargarMetricasEnriquecidas(supabase, cliente.id, startStr, endStr, {
+          leadAnswerBlocks: plan.bloques,
+          leadAnswerFormulas: plan.usaTotales,
+          leadAnswerClaves: plan.claves,
+          leadAnswerNiveles: plan.niveles,
+          hotmartCubo: layoutUsaHotmart(layout, r.data, pl.data),
+        });
+      }
+    ),
+    supabase
+      .from('meta_conversiones_catalogo')
+      .select('conversion_key, label, field_id')
+      .eq('cliente_id', cliente.id)
+      .order('label', { ascending: true }),
+    supabase
+      .from('campaign_groups')
+      .select(
+        `
                 *,
                 campaign_group_mappings (id, campaign_id, campaign_name_pattern)
             `
-        )
-        .eq('cliente_id', cliente.id)
-        .order('nombre', { ascending: true }),
-      tabsPromise,
-      supabase.from('layouts_reporte').select('*').order('nombre'),
-    ]);
+      )
+      .eq('cliente_id', cliente.id)
+      .order('nombre', { ascending: true }),
+    tabsPromise,
+    plantillasPromise,
+    catalogoPromise,
+  ]);
 
   const { metrics, conversionesOfflineRaw, sheetCampos, sheetVistas, leadAnswers } = enriquecido;
 
@@ -2295,6 +2403,7 @@ export async function getMirrorDashboardData(token: string, from?: string, to?: 
       prevLeadAnswers: null,
       hotmartCubo: enriquecido.hotmartCubo,
       prevHotmartCubo: null,
+      leadAnswerCatalogo,
       weeks,
       layout,
       tabs: allTabs,
@@ -2418,19 +2527,18 @@ export async function promoverCampoLead(
   const supabase = await createAdminClient();
   const rtm = supabase.schema('report_utm');
 
-  // La clave se fija en el alta y no se reescribe nunca: es lo que queda
-  // guardado dentro del bloque y de los widgets del BI.
-  const clave = slugCampo(input.nombre);
-  const { error } = await saveLeadCampo(rtm, {
-    cliente_id: rtmClienteId,
-    clave,
-    nombre: input.nombre.trim(),
+  // El MISMO alta que el botón «Medir» de la pantalla de Leads: respuestas
+  // nombradas, placeholders apartados, rangos ordenados y clave única (también
+  // frente a los campos desactivados). Antes este botón creaba un campo vacío
+  // y podía chocar (23505) con uno inactivo del mismo nombre.
+  const r = await activarPregunta(rtm, rtmClienteId, {
     claves_origen: input.clavesOrigen,
+    nombre: input.nombre,
   });
-  if (error) return { error };
+  if (r.error) return { error: r.error };
 
   revalidatePath(`/dashboard/${publicClienteId}`);
-  return { clave };
+  return { clave: r.clave };
 }
 
 /**
