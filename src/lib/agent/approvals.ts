@@ -153,7 +153,11 @@ export async function aprobarYEjecutar(
   // aprueba. Aprobar es autorizar, no firmar: si el handler guarda un autor,
   // debe quedar el del proponente. Los permisos ya se comprobaron arriba con
   // los del aprobador, que es donde tienen sentido.
-  const ctxEjecucion: AgentContext = { ...ctx, userId: p.requested_by };
+  const ctxEjecucion: AgentContext = {
+    ...ctx,
+    userId: p.requested_by,
+    operacion: { tool: p.tool_name, resumen: p.summary },
+  };
 
   try {
     const resultado = await tool.handler(p.input, ctxEjecucion);

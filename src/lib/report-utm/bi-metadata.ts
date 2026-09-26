@@ -2023,6 +2023,24 @@ export const DIM_FILTER_KEYS = [
 ] as const;
 
 /**
+ * Claves de `filters` que son filtros de dimensión del informe (los que se ven
+ * como chips «Filtrando por»). Se distinguen de las claves de contexto
+ * (cliente_id, fechas, __adv) porque son las únicas que se persisten —y se
+ * borran— al guardar el informe.
+ *
+ * Vivía dentro de BiReportCanvas; está aquí para que la herramienta
+ * `update_report` del agente acepte exactamente las mismas claves.
+ */
+export function isDimensionFilterKey(k: string): boolean {
+  return (
+    k.startsWith('utm_') ||
+    (DIM_FILTER_KEYS as readonly string[]).includes(k) ||
+    isFieldDim(k) ||
+    isLeadFieldDim(k)
+  );
+}
+
+/**
  * Agrega al query los filtros planos de dimensión no-UTM activos, con la forma
  * `filters[<clave>]=valor` que entiende el endpoint. Client-safe.
  */

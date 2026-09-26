@@ -91,6 +91,12 @@ export type AgentContext = {
   origin: OrigenLlamada;
   conversationId: string | null;
   tokenId: string | null;
+  /**
+   * Escritura en curso, si la hay. Lo rellena el ejecutor (o la aprobación) para
+   * que un handler que guarda una revisión sepa qué herramienta la provocó sin
+   * tener que repetirlo en cada llamada.
+   */
+  operacion?: { tool: string; resumen: string };
 };
 
 /**
@@ -101,11 +107,45 @@ export type AgentContext = {
  */
 export type RiesgoMutacion = 'low' | 'high';
 
+/**
+ * Cómo se aplica una escritura.
+ *
+ *   · `requerida` (por defecto): queda como propuesta y una persona distinta la
+ *     aprueba. Es lo que hacen todas las escrituras salvo que se diga otra cosa.
+ *   · `directa`: se ejecuta al momento, se audita y deja una revisión para
+ *     deshacerla. Solo para escrituras reversibles y de alcance interno —editar
+ *     un informe que nadie de fuera ve—. Construir un informe son diez o quince
+ *     pasos encadenados, y con aprobación por paso no se podía terminar ninguno:
+ *     `create_report` devolvía «pendiente» sin id al que añadir widgets.
+ */
+export type ModoAprobacion = 'directa' | 'requerida';
+
 export type Mutacion<I> = {
   risk: RiesgoMutacion;
+  /** Por defecto `requerida`. Ver `esDirecta`: el riesgo alto nunca es directo. */
+  approval?: ModoAprobacion;
   /** Resumen en lenguaje natural para que un humano apruebe con criterio. */
   summarize: (input: I) => string;
+  /**
+   * Comprobaciones que corren ANTES de registrar la propuesta: que el informe
+   * existe, que quien propone puede verlo... Sin esto, el modelo recibía
+   * «pendiente de aprobación» para una acción que iba a fallar al aprobarla, y
+   * con los permisos de quien aprueba en vez de los de quien la pidió.
+   */
+  precheck?: (input: I, ctx: AgentContext) => Promise<void>;
 };
+
+/**
+ * ¿La escritura se aplica sin aprobación?
+ *
+ * Una de riesgo alto nunca, aunque la marquen como directa por error: la regla
+ * vive aquí y no en la disciplina de quien declara la herramienta.
+ */
+export function esDirecta(tool: {
+  mutation?: { approval?: ModoAprobacion; risk: RiesgoMutacion };
+}): boolean {
+  return tool.mutation?.approval === 'directa' && tool.mutation.risk === 'low';
+}
 
 /** Una herramienta del agente. */
 export type AgentTool<I = unknown> = {
@@ -118,7 +158,7 @@ export type AgentTool<I = unknown> = {
   scopes: TokenPermission[];
   /** Nivel mínimo del contacto. Por defecto `consulta` (solo lectura). */
   minLevel?: NivelAgente;
-  /** Si está presente, la herramienta escribe y pasa por aprobación. */
+  /** Si está presente, la herramienta escribe (con o sin aprobación: ver `approval`). */
   mutation?: Mutacion<I>;
   handler: (input: I, ctx: AgentContext) => Promise<unknown>;
 };

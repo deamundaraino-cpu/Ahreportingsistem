@@ -53,8 +53,12 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
-# claude code internal
-.claude/
+# claude code internal (las skills del proyecto sí se versionan)
+.claude/*
+!.claude/skills/
+
+# zip de la skill para subir a claude.ai (npm run skill:informes -- --zip)
+skills/*.zip
 
 # supabase cli temp files
 supabase/.temp/

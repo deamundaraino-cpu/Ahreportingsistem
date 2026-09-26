@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient, createAdminClient } from '@/utils/supabase/server';
-import type { OfflineFieldMeta } from '@/lib/report-utm/bi-metadata';
+import { columnasOfflineDeConfig } from '@/lib/report-utm/bi/campos-cliente';
 
 export const dynamic = 'force-dynamic';
 
@@ -42,59 +42,8 @@ export async function GET(req: NextRequest) {
       .eq('id', publicId)
       .maybeSingle();
 
-    // Forma mínima de la config que hace falta acá (la completa vive en
-    // ConversionesConfig, en la librería de Sheets, que es server-only).
-    interface ColDef {
-      col_name?: string;
-      type?: string;
-      label?: string;
-      include?: boolean;
-    }
-    interface TabCfg {
-      sheet_name?: string;
-      custom_columns?: Record<string, ColDef>;
-    }
-    interface SheetCfg {
-      name?: string;
-      custom_columns?: Record<string, ColDef>;
-      tabs?: TabCfg[];
-    }
-
-    const raw = (cliente?.config_api as Record<string, unknown> | null)?.google_sheets_conversiones;
-    const sheets: SheetCfg[] = Array.isArray(raw)
-      ? (raw as SheetCfg[])
-      : raw && typeof raw === 'object'
-        ? [raw as SheetCfg]
-        : [];
-
-    const byKey = new Map<string, OfflineFieldMeta>();
-    const absorb = (cols: Record<string, ColDef> | undefined, source: string) => {
-      for (const [key, def] of Object.entries(cols ?? {})) {
-        if (!def || def.include === false) continue;
-        if (def.type !== 'count' && def.type !== 'currency' && def.type !== 'percentage') continue;
-        const existing = byKey.get(key);
-        if (existing) {
-          if (!existing.sources.includes(source)) existing.sources.push(source);
-        } else {
-          byKey.set(key, {
-            key,
-            label: def.label || def.col_name || key,
-            type: def.type,
-            sources: [source],
-          });
-        }
-      }
-    };
-
-    for (const sheet of sheets) {
-      const sheetName = sheet.name || 'Sheet';
-      absorb(sheet.custom_columns, sheetName);
-      for (const tab of sheet.tabs ?? []) {
-        absorb(tab.custom_columns, `${sheetName} › ${tab.sheet_name || '(primera pestaña)'}`);
-      }
-    }
-
-    const data = Array.from(byKey.values()).sort((a, b) => a.label.localeCompare(b.label));
+    // El parseo vive en lib: lo comparte la herramienta list_report_fields.
+    const data = columnasOfflineDeConfig(cliente?.config_api);
     return NextResponse.json({ data });
   } catch (err) {
     console.error('[bi/offline-fields]', err);

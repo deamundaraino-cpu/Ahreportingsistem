@@ -17,20 +17,20 @@ Código: `src/lib/api-token-auth.ts`. Tabla: `api_tokens`. UI: `/admin/configura
 
 La lista canónica es `ALL_PERMISSIONS`, en `src/lib/api-token-auth.ts`. El schema de `POST /api/tokens` la consume directamente: estuvo escrita a mano con cinco scopes mientras el formulario ofrecía los doce, así que marcar cualquiera de los otros siete devolvía un 400 sin explicación y no se podía crear un token capaz de escribir.
 
-| Permiso          | Habilita                                                           |
-| ---------------- | ------------------------------------------------------------------ |
-| `read:metrics`   | Métricas, leads, comparativas, análisis y estado de sincronización |
-| `read:clients`   | Clientes, pestañas, tareas, bitácoras y reglas de alerta           |
-| `read:campaigns` | Campañas de Meta y su evolución diaria                             |
-| `read:reports`   | Informes BI y plantillas                                           |
-| `read:context`   | Reservado; hoy no lo exige ninguna herramienta                     |
-| `write:sync`     | Encolar una sincronización                                         |
-| `write:context`  | Perfil de cliente, estrategia de pestaña y correcciones del agente |
-| `write:reports`  | Crear informes, añadir o quitar widgets, compartir                 |
-| `write:tasks`    | Tareas del roadmap y reglas de alerta                              |
-| `write:logs`     | Bitácoras de cliente                                               |
-| `write:clients`  | Alta y edición de clientes; consulta de usuarios y accesos         |
-| `agent:chat`     | Conversar con el agente (endpoint de chat, no MCP)                 |
+| Permiso          | Habilita                                                                  |
+| ---------------- | ------------------------------------------------------------------------- |
+| `read:metrics`   | Métricas, leads, comparativas, análisis y estado de sincronización        |
+| `read:clients`   | Clientes, pestañas, tareas, bitácoras y reglas de alerta                  |
+| `read:campaigns` | Campañas de Meta y su evolución diaria                                    |
+| `read:reports`   | Informes BI y plantillas                                                  |
+| `read:context`   | Reservado; hoy no lo exige ninguna herramienta                            |
+| `write:sync`     | Encolar una sincronización                                                |
+| `write:context`  | Perfil de cliente, estrategia de pestaña y correcciones del agente        |
+| `write:reports`  | Crear y editar informes (al momento), compartir y borrar (con aprobación) |
+| `write:tasks`    | Tareas del roadmap y reglas de alerta                                     |
+| `write:logs`     | Bitácoras de cliente                                                      |
+| `write:clients`  | Alta y edición de clientes; consulta de usuarios y accesos                |
+| `agent:chat`     | Conversar con el agente (endpoint de chat, no MCP)                        |
 
 Conceder un scope **no concede la capacidad**: ver «Autorización en tres ejes».
 
@@ -57,15 +57,16 @@ Endpoint: `GET|POST /api/mcp` (`src/app/api/mcp/route.ts`). JSON-RPC 2.0.
   ```json
   {
     "name": "adshouse-reporting",
-    "version": "2.0.0",
+    "version": "2.1.0",
     "description": "AdsHouse Reporting Dashboard MCP Server",
     "protocolVersion": "2024-11-05",
-    "capabilities": { "tools": {} }
+    "capabilities": { "tools": {}, "prompts": {} }
   }
   ```
-- `POST /api/mcp` — `initialize`, `ping` y `notifications/initialized` son abiertos; `tools/list` y `tools/call` exigen token.
+- `POST /api/mcp` — `initialize`, `ping` y `notifications/initialized` son abiertos; `tools/list`, `tools/call`, `prompts/list` y `prompts/get` exigen token.
+- `initialize` devuelve `instructions`: la guía corta de uso de los informes (`INSTRUCCIONES_MCP`). `prompts/list` ofrece `crear_informe` y `revisar_informe` a los tokens con `read:reports`.
 
-Códigos de error: `-32001` token o permisos, `-32600` el cuerpo no declara `"jsonrpc": "2.0"`, `-32601` método desconocido, `-32602` falta el nombre de la herramienta, `-32603` error al ejecutarla.
+Códigos de error: `-32001` token o permisos, `-32600` el cuerpo no declara `"jsonrpc": "2.0"`, `-32601` método desconocido, `-32602` falta el nombre de la herramienta o del prompt, `-32603` error interno. Si una herramienta falla por sus datos (un widget inválido, un informe que no existe), la respuesta es un `result` con `isError: true` y `{error: {code, message}}` en el texto, como pide la spec: así el asistente lee el motivo y se corrige.
 
 ### El catálogo sale del registro
 
@@ -75,7 +76,7 @@ Las herramientas **no se declaran aquí**. Salen de `ALL_TOOLS` (`src/lib/agent/
 
 Esa misma fuente alimenta la documentación de la interfaz, a través de `catalogoPublico()` (`src/lib/agent/catalogo.ts`) y de `GET /api/agent/tools`. El panel listaba cuatro herramientas escritas a mano, una de ellas —`get_campaign_groups`— inexistente; derivarlo impide que vuelva a pasar. Lo cubre `scripts/verify-agent-catalogo.ts`.
 
-Por dominio: `clientes` (4), `metricas` (5, incluidas las de leads), `analisis` (2), `campanas` (2, solo lectura), `contexto` (7), `informes` (6), `operaciones` (9), `administracion` (5).
+Por dominio: `clientes` (4), `metricas` (5, incluidas las de leads), `analisis` (2), `campanas` (2, solo lectura), `contexto` (7), `informes` (19), `operaciones` (9), `administracion` (5).
 
 ### Autorización en tres ejes
 
@@ -87,11 +88,23 @@ Los tres se aplican a la vez y el resultado es siempre el más restrictivo.
 
 `toolsFor` filtra el catálogo además de rechazar al ejecutar: ofrecerle al modelo una herramienta que va a ser rechazada solo sirve para que prometa lo que no puede.
 
-### Las escrituras no se ejecutan desde MCP
+### Las escrituras no se ejecutan desde MCP (salvo editar informes)
 
 Una herramienta con `mutation` registra una propuesta en `agent_action_approvals` y devuelve `pendiente_de_aprobacion` con un resumen en lenguaje natural. Aprobar exige nivel `aprobador` (riesgo `low`) o `admin` (riesgo `high`), y **quien aprueba no puede ser quien propuso**. La propuesta caduca a las 24 h. Al aprobarse, la acción se ejecuta con la identidad del proponente.
 
+La excepción son las escrituras con `mutation.approval: 'directa'` (solo admitido con riesgo `low`, y hoy solo en el dominio `informes`): crear, editar, duplicar, guardar como plantilla, retirar el enlace y restaurar un informe se aplican al momento y devuelven `estado: 'aplicado'`. Con aprobación por paso no se podía terminar ningún informe: `create_report` devolvía «pendiente» sin id al que añadir widgets. A cambio, cada una guarda antes el estado anterior en `bi_report_revisions` (migración 092) y devuelve un `revision_id` que `restore_report_revision` deshace; la escritura es condicionada a `updated_at` y responde `CONFLICT` si otro guardó entre medias. Publicar el enlace (`share_report`), borrar (`delete_report`) y cambiar el cliente (`set_report_client`) siguen siendo propuestas de riesgo alto.
+
+`mutation.precheck` corre antes de registrar la propuesta, con los permisos de quien la pide: un informe ajeno o inexistente se rechaza al proponer, no al aprobar.
+
 Cada llamada queda en `agent_audit_log` con herramienta, argumentos, resultado, duración y origen (`mcp`).
+
+### Informes: ids de cliente y guía de uso
+
+`bi_reports.cliente_id` apunta a `report_utm.clientes` (FK desde la 080), mientras que `list_clients` y `allowedClientIds` hablan de `public.clientes`. Las herramientas de informes aceptan y devuelven SIEMPRE el id público y traducen por `public_cliente_id` en `src/lib/agent/tools/informes/clientes-bi.ts`. Antes se mezclaban: `create_report` guardaba el id público (choca con la FK), a quien no era admin cualquier informe le daba 404, y `list_reports` sin cliente listaba los de todos.
+
+Antes de guardar, cada widget se valida (`validacion.ts`): esquema alineado con `BiTypes` (secciones con `children`, `heading_level` 1-3), que métricas y dimensiones existan —también las del cliente, con `camposDinamicosCliente`—, que la fórmula se entienda (`validateRefs`) y que ninguna métrica se desglose por una dimensión que la dejaría en 0. `preview_widget` ejecuta la consulta del widget con el mismo `parseBiQueryParams` + `dispatchBiQuery` que el canvas (`src/lib/report-utm/bi/consulta-widget.ts`).
+
+La guía de uso vive en `src/lib/agent/guias/informes.ts` y llega al prompt del agente, a las `instructions` y prompts del MCP y a dos skills generadas con `npm run skill:informes`: `.claude/skills/informes-bi/` (Claude Code) y `skills/informes-bi-mcp/` (para subir a claude.ai; `-- --zip` genera el zip). `scripts/verify-skill-informes.ts` falla si se desincronizan.
 
 ### Ejemplo de llamada
 

@@ -63,8 +63,11 @@ cliente antes de decir nada»>
 
 # Límites (no se negocian)
 - No pausas campañas ni tocas presupuestos: eso lo hace el equipo en Meta.
-- Toda escritura (crear informe, tarea, regla) queda como PROPUESTA y la aprueba
+- Toda escritura (tarea, regla, bitácora) queda como PROPUESTA y la aprueba
   otra persona. Nadie aprueba su propia propuesta. Dilo en la respuesta.
+  Excepción: crear y editar informes BI se aplica al momento y se puede deshacer
+  con restore_report_revision; publicarlos, borrarlos o cambiarles el cliente sí
+  esperan aprobación.
 - Solo ves los clientes que tu usuario puede ver.
 ```
 
@@ -83,7 +86,8 @@ cliente antes de decir nada»>
 | «¿Cuánto llevo gastado hoy?»                           | Mira `get_sync_status`; si la sincronización es vieja, lo dice y propone `trigger_sync`.                     |
 | «¿Qué campaña trae los leads más baratos esta semana?» | Cruza gasto y leads; si `get_utm_crossing` dice que cruza poco, lo advierte.                                 |
 | «Pausa la campaña X»                                   | Se niega: no puede tocar campañas.                                                                           |
-| «Crea un informe de cierre del mes pasado»             | Deja una propuesta pendiente de aprobación y lo dice.                                                        |
+| «Crea un informe de cierre del mes pasado»             | Lo crea al momento (consulta list_report_fields y prueba con preview_widget) y da el enlace.                 |
+| «Compártelo con el cliente»                            | Deja share_report pendiente de aprobación y lo dice.                                                         |
 
 4. Si una respuesta sale mal, corrígela con `record_feedback`: queda guardada
    para ese cliente y el agente la tiene en cuenta en la siguiente conversación.

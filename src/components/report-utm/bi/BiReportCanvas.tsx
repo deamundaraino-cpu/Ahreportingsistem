@@ -25,9 +25,8 @@ import { HelpTip } from './HelpTip';
 import type { CalculatedField } from './BiTypes';
 import type { AdvancedFilter } from '@/lib/report-utm/bi-metadata';
 import {
-  isFieldDim,
+  isDimensionFilterKey,
   fieldDimLabel,
-  isLeadFieldDim,
   leadFieldLabel,
   ADVANCED_FILTER_KEY,
   parseAdvancedFilter,
@@ -156,25 +155,6 @@ function startOfMonth(): string {
 
 function genId(): string {
   return Math.random().toString(36).slice(2, 10);
-}
-
-/**
- * Claves de `filters` que son filtros de dimensión del informe (los que se ven
- * como chips "Filtrando por"). Se distinguen de las claves de contexto
- * (cliente_id, fechas, __adv) porque son las únicas que se persisten —y se
- * borran— al guardar el informe.
- */
-function isDimensionFilterKey(k: string): boolean {
-  return (
-    k.startsWith('utm_') ||
-    k === 'ip_country' ||
-    k === 'form_name' ||
-    k === 'form_plugin' ||
-    k === 'attribution_method' ||
-    k === 'platform' ||
-    isFieldDim(k) ||
-    isLeadFieldDim(k)
-  );
 }
 
 export function BiReportCanvas({

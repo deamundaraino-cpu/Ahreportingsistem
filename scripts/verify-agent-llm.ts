@@ -130,6 +130,15 @@ async function main() {
   check('advierte de que la escritura requiere aprobación', /aprob/i.test(sys));
   check('deja claro que no puede tocar campañas', /no puedes pausarlas/i.test(sys));
   check('pide no inventar datos ausentes', /no lo estimes/i.test(sys));
+  // Informes: el modelo inventaba ids de métricas y guardaba widgets a 0.
+  check(
+    'con herramientas de informes, guía a list_report_fields y preview_widget',
+    sys.includes('list_report_fields') && sys.includes('preview_widget')
+  );
+  check(
+    'distingue las escrituras directas de las que esperan aprobación',
+    sys.includes('estado: aplicado') && sys.includes('pendiente_de_aprobacion')
+  );
 
   const conContexto = construirSystem(ctx, 'Cliente: Goodprop\nFuentes que NO tiene: ga4');
   check('el contexto extra se añade al prompt', conContexto.includes('Goodprop'));

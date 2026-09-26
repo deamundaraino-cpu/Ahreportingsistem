@@ -36,6 +36,18 @@
  *     por estrategia o no.
  *
  * La comprobación está en `scripts/verify-mcp-paridad.ts`.
+ *
+ * ── Guía de uso ────────────────────────────────────────────────────────────
+ *
+ * `initialize` devuelve `instructions` (la guía corta de informes) y el servidor
+ * ofrece prompts (`prompts/list`, `prompts/get`) con la guía completa. Salen de
+ * `src/lib/agent/guias/informes.ts`, la misma fuente que el prompt del agente y
+ * las skills generadas.
+ *
+ * Un fallo de una herramienta por sus datos (widget inválido, informe que no
+ * existe) viaja como resultado con `isError: true`, como pide la spec: así el
+ * asistente lee el motivo y se corrige. Solo la autenticación y los fallos del
+ * propio protocolo son errores JSON-RPC.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -45,10 +57,11 @@ import { ApiError } from '@/lib/error-handler';
 import { contextoDesdeToken } from '@/lib/agent/context';
 import { ejecutarTool } from '@/lib/agent/execute';
 import { toolsFor } from '@/lib/agent/registry';
+import { INSTRUCCIONES_MCP, PROMPTS_INFORMES } from '@/lib/agent/guias/informes';
 import type { AnyAgentTool } from '@/lib/agent/types';
 
 const NOMBRE_SERVIDOR = 'adshouse-reporting';
-const VERSION = '2.0.0';
+const VERSION = '2.1.0';
 const PROTOCOLO = '2024-11-05';
 
 // ─── Helpers JSON-RPC ────────────────────────────────────────────────────────
@@ -87,7 +100,7 @@ export async function GET() {
     version: VERSION,
     description: 'AdsHouse Reporting Dashboard MCP Server',
     protocolVersion: PROTOCOLO,
-    capabilities: { tools: {} },
+    capabilities: { tools: {}, prompts: {} },
   });
 }
 
@@ -111,8 +124,9 @@ export async function POST(request: NextRequest) {
     if (method === 'initialize') {
       return rpcResult(id, {
         protocolVersion: PROTOCOLO,
-        capabilities: { tools: {} },
+        capabilities: { tools: {}, prompts: {} },
         serverInfo: { name: NOMBRE_SERVIDOR, version: VERSION },
+        instructions: INSTRUCCIONES_MCP,
       });
     }
 
@@ -129,6 +143,37 @@ export async function POST(request: NextRequest) {
       return rpcResult(id, { tools: toolsFor(ctx).map(aFormatoMcp) });
     }
 
+    // Los prompts guían el uso de los informes: sin `read:reports` no hay nada
+    // que guiar.
+    const conInformes = ctx.permissions.includes('read:reports');
+
+    if (method === 'prompts/list') {
+      return rpcResult(id, {
+        prompts: conInformes
+          ? PROMPTS_INFORMES.map((p) => ({
+              name: p.name,
+              description: p.description,
+              arguments: p.arguments,
+            }))
+          : [],
+      });
+    }
+
+    if (method === 'prompts/get') {
+      const nombre: string | undefined = params?.name;
+      const prompt = conInformes ? PROMPTS_INFORMES.find((p) => p.name === nombre) : undefined;
+      if (!prompt) return rpcError(id, -32602, `No existe el prompt '${nombre ?? ''}'.`);
+      const args = (params?.arguments ?? {}) as Record<string, string | undefined>;
+      const faltan = prompt.arguments.filter((a) => a.required && !args[a.name]);
+      if (faltan.length) {
+        return rpcError(id, -32602, `Faltan argumentos: ${faltan.map((a) => a.name).join(', ')}.`);
+      }
+      return rpcResult(id, {
+        description: prompt.description,
+        messages: [{ role: 'user', content: { type: 'text', text: prompt.construir(args) } }],
+      });
+    }
+
     if (method === 'tools/call') {
       const nombre: string = params?.name;
       const args: unknown = params?.arguments ?? {};
@@ -138,8 +183,15 @@ export async function POST(request: NextRequest) {
       const res = await ejecutarTool(nombre, args, ctx);
 
       if (!res.ok) {
-        const code = res.error?.code === 'UNAUTHORIZED' ? -32001 : -32603;
-        return rpcError(id, code, res.error?.message ?? 'Error ejecutando la herramienta.');
+        // Sin permiso sigue siendo un error del protocolo: el asistente no
+        // puede corregirlo cambiando los argumentos.
+        if (res.error?.code === 'UNAUTHORIZED') {
+          return rpcError(id, -32001, res.error.message);
+        }
+        return rpcResult(id, {
+          isError: true,
+          content: [{ type: 'text', text: JSON.stringify({ error: res.error }, null, 2) }],
+        });
       }
 
       return rpcResult(id, {
