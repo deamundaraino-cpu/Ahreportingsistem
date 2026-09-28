@@ -12,10 +12,10 @@ El sincronizador principal (`/api/worker`) consulta todas estas APIs a diario y 
 
 ### Conexión (OAuth)
 
-1. Desde `/admin/settings/[id]`, el usuario inicia OAuth → `GET /api/auth/meta?client_id=…`.
-2. Facebook pide consentimiento (scopes `ads_read`, `business_management`, `leads_retrieval`).
-3. `GET /api/auth/meta/callback` intercambia el código por un token de larga duración (~60 días) y guarda en `config_api`:
-   - `meta_token`, `meta_token_expires_at`, `meta_connection_status`, `meta_account_id`.
+1. Desde `/admin/settings/[id]`, un admin/superadmin inicia OAuth → `GET /api/auth/meta?client_id=…`. Sin ese rol responde 401/403.
+2. El `state` va firmado (HMAC con `CRON_SECRET`, caduca a los 10 min) y su nonce queda en la cookie httpOnly `meta_oauth_state` (`lib/integrations/oauth-state-cliente.ts`). Facebook pide consentimiento (scopes `ads_read`, `business_management`, `leads_retrieval`, `pages_show_list`, `pages_read_engagement`, `pages_manage_ads`).
+3. `GET /api/auth/meta/callback` valida el `state` contra la cookie **antes** de canjear el código; si no cuadra, vuelve con `meta_error` sin tocar la base. Después intercambia el código por un token de larga duración (~60 días) y lo funde en `config_api` con `fusionar_config_api`:
+   - `meta_token`, `meta_token_expires_at`, `meta_connection_status`. Las cuentas no se importan: el admin las elige con «Elegir cuentas» (`meta_accounts`).
 
 ### Renovación automática
 
@@ -40,9 +40,9 @@ El worker consulta _insights_ a nivel **campaña**, **anuncio** y **conjunto de 
 
 ### Conexión (OAuth)
 
-1. `GET /api/auth/tiktok?client_id=…` redirige al consentimiento de TikTok.
-2. `GET /api/auth/tiktok/callback` intercambia `auth_code` → `access_token`, extrae `advertiser_ids` y guarda en `config_api`:
-   - `tiktok_access_token`, `tiktok_accounts: [{ advertiser_id, name }]`.
+1. `GET /api/auth/tiktok?client_id=…` (solo admin/superadmin) firma el `state`, deja el nonce en la cookie httpOnly `tiktok_oauth_state` y redirige al consentimiento de TikTok.
+2. `GET /api/auth/tiktok/callback` valida el `state` contra la cookie **antes** de canjear el código, intercambia `auth_code` → `access_token` y lo funde en `config_api` con `fusionar_config_api`:
+   - `tiktok_access_token`. Las cuentas no se importan: el admin las elige con «Elegir cuentas» (`tiktok_accounts: [{ advertiser_id, name }]`).
    - Los tokens de TikTok **no expiran** (a diferencia de Meta).
 
 ### Datos sincronizados

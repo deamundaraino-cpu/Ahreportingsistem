@@ -131,19 +131,19 @@ Revoca el token (204).
 
 ### `GET /api/auth/meta`
 
-Inicia OAuth de Meta. Param `client_id`. Redirige al diálogo de Facebook (scopes `ads_read`, `business_management`, `leads_retrieval`). Graph API v19.0.
+Inicia OAuth de Meta. Param `client_id`. Exige sesión con rol admin/superadmin. Firma el `state` (HMAC, 10 min), deja su nonce en la cookie httpOnly `meta_oauth_state` y redirige al diálogo de Facebook. Graph API v19.0.
 
 ### `GET /api/auth/meta/callback`
 
-Callback de Meta. Intercambia `code` → token corto → token largo (~60 días) y lo guarda en `config_api.meta_token` + `meta_token_expires_at`. Redirige a `/admin/settings/{clientId}`.
+Callback de Meta. Valida el `state` contra la cookie antes de nada; si no cuadra, redirige con `meta_error` sin tocar la base. Intercambia `code` → token corto → token largo (~60 días) y lo funde en `config_api.meta_token` + `meta_token_expires_at` (`fusionar_config_api`). El cliente sale del `state` verificado. Redirige a `/admin/settings/{clientId}`.
 
 ### `GET /api/auth/tiktok`
 
-Inicia OAuth de TikTok. Param `client_id`.
+Inicia OAuth de TikTok. Param `client_id`. Exige rol admin/superadmin; `state` firmado con nonce en la cookie `tiktok_oauth_state`.
 
 ### `GET /api/auth/tiktok/callback`
 
-Callback de TikTok. Intercambia `auth_code` → `access_token`, extrae `advertiser_ids` y los guarda en `config_api.tiktok_accounts`. (Los tokens de TikTok no expiran.)
+Callback de TikTok. Valida el `state` contra la cookie, intercambia `auth_code` → `access_token` y lo funde en `config_api.tiktok_access_token`. Las cuentas se eligen después desde la UI. (Los tokens de TikTok no expiran.)
 
 ---
 
@@ -226,8 +226,8 @@ Resuelve el slug de tracking → destino con UTMs. Setea cookies de atribución 
 | `/api/mcp`                                     | GET/POST        | público (GET) / token (POST) |
 | `/api/tokens`                                  | GET/POST        | sesión                       |
 | `/api/tokens/[id]`                             | PATCH/DELETE    | sesión                       |
-| `/api/auth/meta` `/callback`                   | GET             | OAuth                        |
-| `/api/auth/tiktok` `/callback`                 | GET             | OAuth                        |
+| `/api/auth/meta` `/callback`                   | GET             | admin / `state` firmado      |
+| `/api/auth/tiktok` `/callback`                 | GET             | admin / `state` firmado      |
 | `/api/worker`                                  | GET             | CRON_SECRET                  |
 | `/api/worker/hotmart`                          | GET             | CRON_SECRET                  |
 | `/api/worker/backfill-campaign-ids`            | GET             | CRON_SECRET                  |

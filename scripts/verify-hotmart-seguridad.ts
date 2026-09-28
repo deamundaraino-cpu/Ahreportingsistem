@@ -12,6 +12,12 @@ import crypto from 'node:crypto';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { firmarState, verificarState, VENTANA_STATE_MS } from '../src/lib/hotmart/oauth-state';
+import { STATE_AGENCIA_GOOGLE } from '../src/lib/integrations/google-oauth-state';
+import {
+  firmarStateCliente,
+  verificarStateCliente,
+  type ProveedorOAuth,
+} from '../src/lib/integrations/oauth-state-cliente';
 import { leerSecreto, cifrarSecreto, hayClaveDeCifrado } from '../src/lib/secretos';
 import { encrypt } from '../src/lib/report-utm/encryption';
 import { generateWebhookSecret, verifyWebhookSignature } from '../src/lib/report-utm/webhook-auth';
@@ -138,6 +144,72 @@ check(
     return !r.ok && r.motivo === 'nonce';
   })()
 );
+
+// ════════════════════════════════════════════════════════════
+seccion('OAuth de Meta y TikTok: el `state` firmado por cliente');
+// ════════════════════════════════════════════════════════════
+// AGUJERO REAL (2026-09-28): mismo patrón que Hotmart. `state = clientId`, sin
+// sesión para iniciar y sin validar en el callback. Cualquiera que conociera
+// un UUID de cliente sustituía su token de Meta o TikTok por el de SU cuenta.
+for (const [prov, otro] of [
+  ['meta', 'tiktok'],
+  ['tiktok', 'meta'],
+] as Array<[ProveedorOAuth, ProveedorOAuth]>) {
+  const ahora = Date.UTC(2026, 8, 28, 12);
+  const f = firmarStateCliente(prov, CLIENTE, ahora);
+  const v = verificarStateCliente(prov, f.state, f.nonce, ahora);
+  check(`${prov}: state legítimo → válido y sin prefijo`, v.ok && v.clienteId === CLIENTE);
+  check(
+    `${prov}: el cliente_id crudo como state → rechazado`,
+    !verificarStateCliente(prov, CLIENTE, f.nonce, ahora).ok
+  );
+  check(`${prov}: sin cookie → rechazado`, !verificarStateCliente(prov, f.state, null, ahora).ok);
+  check(
+    `${prov}: nonce de otro navegador → rechazado`,
+    !verificarStateCliente(prov, f.state, firmarStateCliente(prov, CLIENTE, ahora).nonce, ahora).ok
+  );
+  check(
+    `${prov}: caducado → rechazado`,
+    !verificarStateCliente(prov, f.state, f.nonce, ahora + VENTANA_STATE_MS + 1000).ok
+  );
+  const deOtro = firmarStateCliente(otro, CLIENTE, ahora);
+  check(
+    `${prov}: un state firmado para ${otro} → rechazado`,
+    !verificarStateCliente(prov, deOtro.state, deOtro.nonce, ahora).ok
+  );
+  const hm = firmarState(CLIENTE, ahora);
+  check(
+    `${prov}: un state firmado para Hotmart → rechazado`,
+    !verificarStateCliente(prov, hm.state, hm.nonce, ahora).ok
+  );
+  const gg = firmarState(STATE_AGENCIA_GOOGLE, ahora);
+  check(
+    `${prov}: un state firmado para Google → rechazado`,
+    !verificarStateCliente(prov, gg.state, gg.nonce, ahora).ok
+  );
+  const noUuid = firmarState(`${prov}:../../otra-cosa`, ahora);
+  check(
+    `${prov}: prefijo correcto pero id que no es UUID → rechazado`,
+    !verificarStateCliente(prov, noUuid.state, noUuid.nonce, ahora).ok
+  );
+
+  // ── Estáticos: que las rutas usen de verdad el helper ──────
+  const ini = readFileSync(`src/app/api/auth/${prov}/route.ts`, 'utf8');
+  check(`${prov}: iniciar exige rol admin`, ini.includes('requireAdminRole()'));
+  check(`${prov}: iniciar firma el state`, ini.includes(`firmarStateCliente('${prov}'`));
+  check(`${prov}: ya no manda el cliente_id como state`, !/state\s*=\s*clientId/.test(ini));
+  const cb = readFileSync(`src/app/api/auth/${prov}/callback/route.ts`, 'utf8');
+  const iVerif = cb.indexOf(`verificarStateCliente('${prov}'`);
+  check(
+    `${prov}: el callback valida el state ANTES del primer fetch y de la base`,
+    iVerif > 0 && iVerif < cb.indexOf('fetch(') && iVerif < cb.indexOf('createAdminClient()')
+  );
+  check(
+    `${prov}: el callback no toma el cliente de la querystring`,
+    !/clientId\s*=\s*searchParams\.get/.test(cb)
+  );
+  check(`${prov}: la escritura es atómica`, cb.includes("rpc('fusionar_config_api'"));
+}
 
 // ════════════════════════════════════════════════════════════
 seccion('Secretos: cifrado con migración perezosa');

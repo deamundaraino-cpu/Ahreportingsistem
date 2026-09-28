@@ -99,8 +99,6 @@ const eslintConfig = defineConfig([
       'src/app/api/admin/list-google-sheets/route.ts', // 1
       'src/app/api/admin/list-sheet-tabs/route.ts', // 1
       'src/app/api/admin/sync-conversiones-offline/route.ts', // 4
-      'src/app/api/auth/meta/callback/route.ts', // 1
-      'src/app/api/auth/tiktok/callback/route.ts', // 2
       'src/app/api/backfill-forms/route.ts', // 5
       'src/app/api/cron/cierre-mes/route.ts', // 2
       'src/app/api/cron/refresh-hotmart-tokens/route.ts', // 2
