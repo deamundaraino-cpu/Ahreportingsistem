@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
-import { createClient } from '@/utils/supabase/server';
+import { createAdminClient, createClient } from '@/utils/supabase/server';
+import { clientesVisiblesDe } from '@/lib/agent/context';
 // 50 llamadas a Meta Graph en paralelo pueden pasar del corte por defecto.
 export const maxDuration = 30;
 
@@ -34,7 +35,16 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const { data: cliente, error: clienteErr } = await supabase
+  // `config_api` guarda los tokens: se lee con el cliente de servicio y solo si
+  // el usuario ve el cliente (rol o asignación). Antes se leía con la sesión y
+  // dependía de la política pública de `clientes` que cerró la 098.
+  const admin = await createAdminClient();
+  const visibles = await clientesVisiblesDe(admin, user.id);
+  if (visibles !== 'all' && !visibles.includes(clienteId)) {
+    return NextResponse.json({ error: 'Cliente not found' }, { status: 404 });
+  }
+
+  const { data: cliente, error: clienteErr } = await admin
     .from('clientes')
     .select('id, config_api')
     .eq('id', clienteId)

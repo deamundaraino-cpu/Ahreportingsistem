@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { toast } from 'sonner';
 
 import { useState, useEffect, type ReactNode } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -19,6 +20,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import {
   guardarConfigPestana,
   deleteCliente,
+  resumenBorradoCliente,
   assignLayoutToCliente,
   testMetaConnection,
   testHotmartConnection,
@@ -44,6 +46,10 @@ import type {
   SheetSyncStatus,
 } from '@/lib/integrations/google-sheets-conversiones';
 import type { SheetEliminarPreview } from '../_actions';
+import type { ResumenBorrado } from '@/lib/clientes/ciclo-de-vida';
+import { ConfirmarBorradoCliente } from '@/components/clientes/ConfirmarBorradoCliente';
+import type { PasoPuestaEnMarcha } from '@/lib/clientes/puesta-en-marcha';
+import { PuestaEnMarchaCard } from './PuestaEnMarchaCard';
 import type { GA4Property } from '@/lib/integrations/google-analytics';
 import {
   Dialog,
@@ -403,6 +409,7 @@ export function ClientConfigForm({
   googleConnected = false,
   googleEmail = null,
   slots,
+  puestaEnMarcha,
 }: {
   cliente: any;
   layouts?: any[];
@@ -418,6 +425,8 @@ export function ClientConfigForm({
    * viajan ya resueltas en el payload del servidor.
    */
   slots?: Partial<Record<Pestana, ReactNode>>;
+  /** Qué le falta al cliente (`cargarPuestaEnMarcha`), para la tarjeta de arriba. */
+  puestaEnMarcha?: PasoPuestaEnMarcha[] | null;
 }) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -1109,22 +1118,34 @@ export function ClientConfigForm({
     reader.readAsText(file);
   };
 
+  // El mismo borrado que la tarjeta de la lista: resumen de lo que se pierde,
+  // checklist de lo externo, nombre tecleado y avisos al terminar. Antes aquí
+  // había un `prompt()` que se saltaba todo eso.
+  const [resumenBorrado, setResumenBorrado] = useState<ResumenBorrado | null>(null);
+  const [errorBorrado, setErrorBorrado] = useState<string | null>(null);
+  const [borrando, setBorrando] = useState(false);
+
   async function handleDelete() {
-    const escrito = prompt(
-      `Se eliminará «${cliente.nombre}» en el reporting Y en Report-UTM, con sus métricas, leads y ventas. No se puede deshacer; si solo quieres ocultarlo, archívalo desde la lista de clientes.\n\nEscribe el nombre del cliente para confirmar:`
-    );
-    if (escrito === null) return;
-    if (escrito.trim() !== String(cliente.nombre).trim()) {
-      alert('El nombre no coincide: no se eliminó nada.');
+    setErrorBorrado(null);
+    setBorrando(true);
+    const r = await resumenBorradoCliente(cliente.id);
+    setBorrando(false);
+    if (r.error || !r.resumen) alert(r.error ?? 'No se pudo preparar el borrado.');
+    else setResumenBorrado(r.resumen);
+  }
+
+  async function confirmarBorrado() {
+    setBorrando(true);
+    const r = await deleteCliente(cliente.id);
+    setBorrando(false);
+    if (r.error) {
+      setErrorBorrado(r.error);
       return;
     }
-    const { success, error } = await deleteCliente(cliente.id);
-    if (success) {
-      // `/admin/clientes` no existe: el listado de clientes es Ajustes.
-      router.push('/admin/settings');
-    } else if (error) {
-      alert(error);
-    }
+    setResumenBorrado(null);
+    for (const aviso of r.avisos ?? []) toast.warning(aviso);
+    // `/admin/clientes` no existe: el listado de clientes es Ajustes.
+    router.push('/admin/settings');
   }
 
   const hasMetaConfig = metaAccounts.length > 0 || config.meta_token;
@@ -1145,6 +1166,9 @@ export function ClientConfigForm({
 
       {error && <p className="text-red-500 bg-red-500/10 p-4 rounded">{error}</p>}
 
+      {puestaEnMarcha && puestaEnMarcha.length > 0 && (
+        <PuestaEnMarchaCard clienteId={cliente.id} pasos={puestaEnMarcha} onIrA={intentarIr} />
+      )}
       <Tabs value={pestana} onValueChange={intentarIr} className="w-full">
         <TabsList className="bg-muted/80 p-1 rounded-lg mb-6 flex w-fit flex-wrap gap-1">
           {PESTANAS.map((p) => (
@@ -1340,12 +1364,30 @@ export function ClientConfigForm({
                 </CardDescription>
               </CardHeader>
               <CardFooter className="pt-0">
-                <Button variant="destructive" onClick={handleDelete} className="gap-2">
-                  <Trash2 className="w-4 h-4" />
+                <Button
+                  variant="destructive"
+                  onClick={handleDelete}
+                  disabled={borrando}
+                  className="gap-2"
+                >
+                  {borrando && !resumenBorrado ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Trash2 className="w-4 h-4" />
+                  )}
                   Eliminar Cliente
                 </Button>
               </CardFooter>
             </Card>
+          )}
+          {resumenBorrado && (
+            <ConfirmarBorradoCliente
+              resumen={resumenBorrado}
+              pendiente={borrando}
+              error={errorBorrado}
+              onCancelar={() => setResumenBorrado(null)}
+              onConfirmar={confirmarBorrado}
+            />
           )}
         </TabsContent>
 

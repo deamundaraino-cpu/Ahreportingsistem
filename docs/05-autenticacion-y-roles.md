@@ -25,7 +25,11 @@ Los roles se almacenan en la tabla **`user_profiles`** (`role`). Existen cuatro:
 
 ## Asignación de clientes a traffickers
 
-La tabla **`user_client_assignments`** (`user_id`, `client_id`) define qué clientes ve un trafficker. Las consultas de clientes (`getClientes()`) filtran según este mapeo cuando el rol es `trafficker`. La gestión se hace desde `/admin/users`.
+La tabla **`user_client_assignments`** (`user_id`, `client_id`) define qué clientes ve un trafficker. Las consultas de clientes (`getClientes()`) filtran según este mapeo cuando el rol es `trafficker`. La gestión se hace desde `/admin/users`, o al dar de alta el cliente.
+
+**Los clientes son de la empresa, no de un usuario** (migración 098). No existe «dueño»: el acceso lo dan el rol o una asignación, igual en la interfaz, en `/api/v1/*`, en el MCP (`resolverClientesVisibles`) y en RLS (`public.puede_ver_cliente`). Por eso cualquier usuario se puede eliminar sin «pasar» sus clientes a otro: se van sus asignaciones, tokens y notificaciones, y los clientes quedan intactos.
+
+**Crear, archivar y borrar clientes** es de admin y superadmin (`ROLES_ADMIN` en `admin/settings/_actions.ts`).
 
 ## Middleware y protección de rutas
 

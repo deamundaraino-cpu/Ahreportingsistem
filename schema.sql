@@ -2,6 +2,7 @@
 CREATE TABLE public.clientes (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   nombre TEXT NOT NULL,
+  -- Histórico: los clientes ya no tienen dueño (migraciones 098 y 099).
   user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
   config_api JSONB DEFAULT '{}'::jsonb NOT NULL,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL

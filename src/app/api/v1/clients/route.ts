@@ -2,11 +2,13 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { authenticateApiToken, requirePermission } from '@/lib/api-token-auth';
 import { ApiError, apiErrorResponse, handleUnexpectedError } from '@/lib/error-handler';
+import { clientesVisiblesDe } from '@/lib/agent/context';
 
 /**
  * GET /api/v1/clients
  *
- * Returns all clients belonging to the authenticated user.
+ * Clientes que ve el usuario del token: todos si es admin/superadmin; si no,
+ * los que tiene asignados. Los clientes son de la empresa, no de un usuario.
  *
  * Headers:
  *   Authorization: Bearer <ads_token>
@@ -21,11 +23,15 @@ export async function GET(request: NextRequest) {
       process.env.SUPABASE_SERVICE_ROLE_KEY!
     );
 
-    const { data, error } = await supabase
+    const visibles = await clientesVisiblesDe(supabase, ctx.userId);
+    if (visibles !== 'all' && visibles.length === 0) return NextResponse.json({ clients: [] });
+
+    let query = supabase
       .from('clientes')
       .select('id, nombre, created_at')
-      .eq('user_id', ctx.userId)
       .order('nombre', { ascending: true });
+    if (visibles !== 'all') query = query.in('id', visibles);
+    const { data, error } = await query;
 
     if (error) throw new ApiError('DATABASE_ERROR', error.message, 500);
 

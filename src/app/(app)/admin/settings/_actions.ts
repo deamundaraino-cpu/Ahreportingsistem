@@ -39,6 +39,7 @@ import {
   mapaArchivados,
   resumenBorrado,
 } from '@/lib/clientes/ciclo-de-vida';
+import { CLAVE_OMITIDOS } from '@/lib/clientes/puesta-en-marcha';
 import { interpretarEstadoCuenta } from '@/lib/meta/estado-cuenta';
 import { cuentasMetaDe } from '@/lib/meta/cuentas';
 import { sincronizarCatalogo } from '@/lib/meta/conversiones-personalizadas-sync';
@@ -151,23 +152,89 @@ export async function getCliente(id: string) {
     : cliente;
 }
 
-export async function createCliente(data: { nombre: string }) {
-  // Una sola casa: el cliente nace también en Report-UTM, ya enlazado. Antes
-  // aparecía allí solo cuando alguien visitaba su listado, y un cliente creado
-  // desde Report-UTM nacía huérfano, sin gasto con el que cruzar.
-  const r = await crearCliente(await createAdminClient(), data.nombre);
+/**
+ * Alta de un cliente desde Ajustes. Solo admin y superadmin: un cliente es de la
+ * empresa, y crearlo no lo ata a quien lo crea (migración 098). Hasta el
+ * 2026-09-28 esta acción no comprobaba nada: cualquier sesión, hasta un viewer,
+ * podía crear clientes con el cliente de servicio.
+ *
+ * Nace ya con moneda, zona y traffickers si se indican; lo demás (Meta, Sheets,
+ * Hotmart…) lo guía la «Puesta en marcha» de su ficha.
+ */
+export async function createCliente(data: {
+  nombre: string;
+  moneda?: string | null;
+  zonaHoraria?: string | null;
+  traffickers?: string[];
+}) {
+  const sesion = await sesionActual();
+  if (!sesion || !ROLES_ADMIN.has(sesion.rol)) {
+    return { error: 'Solo un administrador puede crear clientes.' };
+  }
+
+  const admin = await createAdminClient();
+  const pedidos = [...new Set(data.traffickers ?? [])];
+  if (pedidos.length > 0) {
+    const { data: validos, error } = await admin
+      .from('user_profiles')
+      .select('id')
+      .in('id', pedidos)
+      .eq('role', 'trafficker');
+    if (error) return { error: error.message };
+    if ((validos ?? []).length !== pedidos.length) {
+      return { error: 'Alguno de los usuarios elegidos no es trafficker.' };
+    }
+  }
+
+  // Una sola casa: el cliente nace también en Report-UTM, ya enlazado, o no nace.
+  const r = await crearCliente(admin, data.nombre, {
+    moneda: data.moneda,
+    zonaHoraria: data.zonaHoraria,
+    traffickers: pedidos,
+    asignadoPor: sesion.userId,
+  });
   if (!r.ok) {
     console.error('Error creating client:', r.error);
     return { error: r.error };
   }
-  if (r.aviso) console.error('[createCliente]', r.aviso);
 
   revalidatePath('/admin/settings');
-  revalidatePath('/admin/settings');
+  revalidatePath('/dashboard');
   return { success: true, data: r.cliente };
 }
 
-async function rolActual(): Promise<string | null> {
+/** ¿Puede quien mira crear, archivar y borrar clientes? Para mostrar u ocultar botones. */
+export async function puedeAdministrarClientes(): Promise<boolean> {
+  const sesion = await sesionActual();
+  return sesion !== null && ROLES_ADMIN.has(sesion.rol);
+}
+
+/** Traffickers para asignar en el alta: id y nombre legible. Solo para admins. */
+export async function getTraffickersParaAlta(): Promise<Array<{ id: string; etiqueta: string }>> {
+  const sesion = await sesionActual();
+  if (!sesion || !ROLES_ADMIN.has(sesion.rol)) return [];
+  const admin = await createAdminClient();
+  const { data: perfiles } = await admin
+    .from('user_profiles')
+    .select('id, full_name')
+    .eq('role', 'trafficker');
+  if (!perfiles?.length) return [];
+  const {
+    data: { users },
+  } = await admin.auth.admin.listUsers({ perPage: 1000 });
+  const correo = new Map((users ?? []).map((u) => [u.id, u.email ?? '']));
+  return (perfiles as Array<{ id: string; full_name?: string | null }>)
+    .map((p) => {
+      const email = correo.get(p.id) ?? '';
+      return {
+        id: p.id,
+        etiqueta: p.full_name ? `${p.full_name}${email ? ` · ${email}` : ''}` : email || p.id,
+      };
+    })
+    .sort((x, y) => x.etiqueta.localeCompare(y.etiqueta));
+}
+
+async function sesionActual(): Promise<{ userId: string; rol: string } | null> {
   const supabaseStore = await createClient();
   const {
     data: { user },
@@ -178,15 +245,20 @@ async function rolActual(): Promise<string | null> {
     .select('role')
     .eq('id', user.id)
     .single();
-  return profile?.role ?? 'viewer';
+  return { userId: user.id, rol: profile?.role ?? 'viewer' };
 }
 
-const ROLES_BORRADO = new Set(['superadmin', 'admin']);
+async function rolActual(): Promise<string | null> {
+  return (await sesionActual())?.rol ?? null;
+}
+
+/** Crear, archivar y borrar clientes. */
+const ROLES_ADMIN = new Set(['superadmin', 'admin']);
 
 /** Lo que se perdería al borrar, para el diálogo de confirmación. */
 export async function resumenBorradoCliente(id: string) {
   const rol = await rolActual();
-  if (!rol || !ROLES_BORRADO.has(rol))
+  if (!rol || !ROLES_ADMIN.has(rol))
     return { error: 'Solo un administrador puede borrar clientes.' };
   const resumen = await resumenBorrado(await createAdminClient(), id);
   if (!resumen) return { error: 'El cliente no existe.' };
@@ -196,7 +268,7 @@ export async function resumenBorradoCliente(id: string) {
 /** Archiva o reactiva el cliente en los dos lados a la vez. */
 export async function setClienteArchivado(id: string, archivado: boolean) {
   const rol = await rolActual();
-  if (!rol || !ROLES_BORRADO.has(rol)) return { error: 'Solo un administrador puede archivar.' };
+  if (!rol || !ROLES_ADMIN.has(rol)) return { error: 'Solo un administrador puede archivar.' };
 
   const admin = await createAdminClient();
   const { data: cliente } = await admin
@@ -268,7 +340,7 @@ export async function assignLayoutToCliente(clienteId: string, layoutId: string 
 export async function deleteCliente(id: string) {
   const rol = await rolActual();
   if (!rol) return { error: 'No autorizado' };
-  if (!ROLES_BORRADO.has(rol)) {
+  if (!ROLES_ADMIN.has(rol)) {
     return { error: 'Solo los administradores pueden borrar clientes' };
   }
 
@@ -1559,5 +1631,38 @@ export async function guardarConfigPestana(
 
   revalidatePath(`/admin/settings/${clienteId}`);
   revalidatePath('/admin/settings');
+  return { success: true };
+}
+
+/**
+ * Marca (o desmarca) un paso opcional de la «Puesta en marcha» como «No aplica».
+ * Escribe solo `config_api.puesta_en_marcha_omitidos`, con la fusión atómica:
+ * ninguna pestaña de la ficha manda esa clave, así que guardarlas no la pisa.
+ */
+export async function marcarPasoPuestaEnMarcha(clienteId: string, clave: string, omitir: boolean) {
+  const rol = await rolActual();
+  if (!rol || rol === 'viewer') return { error: 'No autorizado' };
+  if (!/^[a-z0-9_]{1,40}$/.test(clave)) return { error: 'Paso desconocido.' };
+
+  const admin = await createAdminClient();
+  const { data, error } = await admin
+    .from('clientes')
+    .select('config_api')
+    .eq('id', clienteId)
+    .maybeSingle();
+  if (error) return { error: error.message };
+  if (!data) return { error: 'El cliente no existe.' };
+
+  const actuales = (data.config_api as Record<string, unknown> | null)?.[CLAVE_OMITIDOS];
+  const lista = new Set(Array.isArray(actuales) ? actuales.map(String) : []);
+  if (omitir) lista.add(clave);
+  else lista.delete(clave);
+
+  const { error: e } = await admin.rpc('fusionar_config_api', {
+    p_cliente_id: clienteId,
+    p_parche: { [CLAVE_OMITIDOS]: [...lista] },
+  });
+  if (e) return { error: e.message };
+  revalidatePath(`/admin/settings/${clienteId}`);
   return { success: true };
 }

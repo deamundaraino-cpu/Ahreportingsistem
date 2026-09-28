@@ -109,6 +109,8 @@ export const CLAVES_SOLO_SERVIDOR: readonly string[] = [
   // Moneda y zona horaria de cada anunciante de TikTok (src/lib/tiktok/cuenta.ts).
   'tiktok_cuentas_info',
   'tiktok_advertiser_id',
+  // Pasos de la «Puesta en marcha» marcados «No aplica» (puesta-en-marcha.ts).
+  'puesta_en_marcha_omitidos',
 ];
 
 type Config = Record<string, unknown>;

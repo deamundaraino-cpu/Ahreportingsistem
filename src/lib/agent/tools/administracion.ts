@@ -58,9 +58,11 @@ const createClient: AnyAgentTool = {
     return {
       ads: { id: r.cliente.id, nombre: r.cliente.nombre },
       utm_id: r.espejoId,
-      enlazados: r.espejoId !== null,
-      ...(r.aviso ? { aviso: r.aviso } : {}),
-      siguiente_paso: `Conecta las credenciales en ${base}/admin/settings/${r.cliente.id}`,
+      // El alta es todo o nada: si existe, nació enlazado.
+      enlazados: true,
+      siguiente_paso:
+        `Completa su puesta en marcha (credenciales, moneda, zona, traffickers) en ` +
+        `${base}/admin/settings/${r.cliente.id}`,
     };
   },
 };

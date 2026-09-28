@@ -1,12 +1,31 @@
 import { Card, CardTitle } from '@/components/ui/card';
-import { getClientes, getGoogleConnectionStatus } from './_actions';
+import {
+  getClientes,
+  getGoogleConnectionStatus,
+  getTraffickersParaAlta,
+  puedeAdministrarClientes,
+} from './_actions';
 import { NewClientDialog } from './components/NewClientDialog';
 import { GoogleConnectionCard } from './components/GoogleConnectionCard';
 import { AtSign } from 'lucide-react';
 import { ClienteCard } from './components/ClienteCard';
+import { createAdminClient } from '@/utils/supabase/server';
+import { cargarPuestaEnMarchaVarios, progreso } from '@/lib/clientes/puesta-en-marcha';
 
 export default async function AdminClientesPage() {
-  const [clientes, googleStatus] = await Promise.all([getClientes(), getGoogleConnectionStatus()]);
+  const [clientes, googleStatus, esAdmin, traffickers] = await Promise.all([
+    getClientes(),
+    getGoogleConnectionStatus(),
+    puedeAdministrarClientes(),
+    getTraffickersParaAlta(),
+  ]);
+  // Solo admin y superadmin crean clientes (`createCliente` lo exige igual).
+  // Progreso de la puesta en marcha de cada cliente: 8 consultas para todos.
+  const puestas = await cargarPuestaEnMarchaVarios(
+    await createAdminClient(),
+    (clientes ?? []).map((c: { id: string }) => c.id)
+  ).catch(() => new Map());
+  const alta = esAdmin ? <NewClientDialog traffickers={traffickers} /> : null;
 
   return (
     <div className="space-y-6">
@@ -17,7 +36,7 @@ export default async function AdminClientesPage() {
             Configura accesos y credenciales de API para cada cliente.
           </p>
         </div>
-        <NewClientDialog />
+        {alta}
       </div>
 
       <GoogleConnectionCard connected={googleStatus.connected} email={googleStatus.email} />
@@ -32,12 +51,16 @@ export default async function AdminClientesPage() {
             Aún no has creado configuraciones para tus clientes. Empieza creando tu primer cliente
             para conectarlo a Meta o Hotmart.
           </p>
-          <NewClientDialog />
+          {alta}
         </Card>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {clientes.map((cliente: any) => (
-            <ClienteCard key={cliente.id} cliente={cliente} />
+            <ClienteCard
+              key={cliente.id}
+              cliente={cliente}
+              puesta={puestas.has(cliente.id) ? progreso(puestas.get(cliente.id)) : null}
+            />
           ))}
         </div>
       )}

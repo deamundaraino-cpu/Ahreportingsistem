@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { authenticateApiToken, requirePermission } from '@/lib/api-token-auth';
 import { ApiError, apiErrorResponse, handleUnexpectedError } from '@/lib/error-handler';
+import { clientesVisiblesDe } from '@/lib/agent/context';
 import { getMetricasCliente, type FilaMetricas } from '@/lib/metrics/client-metrics';
 import { addDaysISO, colombiaToday } from '@/lib/colombia-date';
 import { SUFIJO_USD } from '@/lib/moneda-reporte';
@@ -130,13 +131,12 @@ export async function GET(request: NextRequest) {
       process.env.SUPABASE_SERVICE_ROLE_KEY!
     );
 
-    // Verify the client belongs to this token's user
-    const { data: client, error: errClient } = await supabase
-      .from('clientes')
-      .select('id, nombre')
-      .eq('id', clientId)
-      .eq('user_id', ctx.userId)
-      .maybeSingle();
+    // El usuario del token tiene que poder ver el cliente (rol o asignación).
+    const visibles = await clientesVisiblesDe(supabase, ctx.userId);
+    const { data: client, error: errClient } =
+      visibles === 'all' || visibles.includes(clientId)
+        ? await supabase.from('clientes').select('id, nombre').eq('id', clientId).maybeSingle()
+        : { data: null, error: null };
 
     if (errClient) throw new ApiError('DATABASE_ERROR', errClient.message, 500);
     if (!client) {

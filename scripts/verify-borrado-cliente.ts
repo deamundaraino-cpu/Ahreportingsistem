@@ -5,13 +5,15 @@
  * cascada cubren la base (eso lo vigila `verify-borrado-cascada.ts` contra el
  * catálogo real); esto vigila lo que no:
  *
- *   · lo del agente sin FK (propuestas pendientes, conversaciones de sus grupos,
- *     `client_scope`), antes de borrar;
+ *   · lo que no tiene FK (todas sus propuestas del agente, conversaciones de sus
+ *     grupos, `client_scope`, revisiones de sus informes, alertas que lo
+ *     nombran), antes de borrar;
  *   · las tablas grandes vaciadas por tramos, y UN solo DELETE de cliente, el
  *     del reporting, que arrastra el espejo en la misma sentencia;
  *   · Storage (bitácoras y logos, paginando) y lo externo (Meta, WhatsApp)
  *     después, sin bloquear y sin tocar lo que usa otro cliente;
- *   · el alta: siempre los dos lados enlazados, con un slug que no se reutiliza.
+ *   · el alta: todo o nada (los dos lados enlazados, con moneda, zona y
+ *     traffickers), con un slug que no se reutiliza.
  *
  * Puro: una base falsa registra cada operación, sin Postgres ni red.
  *
@@ -19,6 +21,7 @@
  */
 
 import {
+  PESADAS as TABLAS_PESADAS,
   TRAMOS_UUID,
   borrarDatosSueltos,
   crearCliente,
@@ -165,21 +168,20 @@ const CONTACTOS = [
 ];
 
 /** Tablas que se vacían por tramos; la base falsa les da una fila para que no se salten. */
-const PESADAS = [
-  'lead_events',
-  'pixel_events',
-  'sales_events',
-  'ads_daily',
-  'metricas_diarias',
-  'sheet_filas',
-  'sheet_campo_valores_diarios',
-];
+const PESADAS = TABLAS_PESADAS.map((t) => t.tabla);
 const conFilasPesadas = (op: Op) => op.accion === 'select' && PESADAS.includes(op.tabla);
 
 /** Cliente enlazado con un grupo propio, uno compartido, y una Página propia y otra compartida. */
 const filasBase = (op: Op): unknown[] => {
   if (conFilasPesadas(op)) return [{ id: 'fila' }];
   if (es(op, 'report_utm', 'clientes', 'select')) return [{ id: UTM, public_cliente_id: PUB }];
+  if (es(op, 'public', 'bi_reports', 'select')) return [{ id: 'bi-1' }, { id: 'bi-2' }];
+  if (es(op, 'public', 'notifications', 'select')) {
+    return [
+      { id: 'n-solo', metadata: { cliente_ids: [PUB], range: {} } },
+      { id: 'n-varios', metadata: { cliente_ids: [PUB, 'pub-otro'], range: {} } },
+    ];
+  }
   if (es(op, 'public', 'agent_contacts', 'select')) return CONTACTOS;
   if (es(op, 'public', 'agent_channels', 'select')) {
     return tiene(op, 'cliente_id')
@@ -223,7 +225,7 @@ const archivosBase = {
   branding: [`cliente_${UTM}_1.png`, `cliente_${UTM}0_2.png`, 'logo_1.webp'],
 };
 
-const SUELTAS_VIEJAS = ['bi_reports', 'agent_channels', 'notifications', 'whatsapp_messages'];
+const SUELTAS_VIEJAS = ['bi_reports', 'agent_channels'];
 
 async function silencioso<T>(fn: () => Promise<T>): Promise<T> {
   const original = console.error;
@@ -246,9 +248,25 @@ async function main() {
 
     const propuestas = ops.find((o) => es(o, 'public', 'agent_action_approvals', 'delete'));
     check(
-      'borra sus propuestas PENDIENTES del agente, por client_id de los dos lados',
-      filtro(propuestas, 'status') === 'pendiente' &&
+      'borra TODAS sus propuestas del agente (no solo las pendientes), por client_id de los dos lados',
+      !tiene(propuestas!, 'status') &&
         json(filtro(propuestas, 'input->>client_id')) === json([PUB, UTM])
+    );
+    const revisiones = ops.find((o) => es(o, 'public', 'bi_report_revisions', 'delete'));
+    check(
+      'borra las revisiones de sus informes BI (report_id no tiene FK)',
+      json(filtro(revisiones, 'report_id')) === json(['bi-1', 'bi-2'])
+    );
+    const alertaSola = ops.find((o) => es(o, 'public', 'notifications', 'delete'));
+    const alertaVarios = ops.find((o) => es(o, 'public', 'notifications', 'update'));
+    check(
+      'borra las alertas que solo hablan de él y a las compartidas les quita su id',
+      json(filtro(alertaSola, 'id')) === json(['n-solo']) &&
+        filtro(alertaVarios, 'id') === 'n-varios' &&
+        json(
+          (alertaVarios?.valores as { metadata?: { cliente_ids?: string[] } })?.metadata
+            ?.cliente_ids
+        ) === json(['pub-otro'])
     );
     const conv = ops.find((o) => es(o, 'public', 'agent_conversations', 'delete'));
     check(
@@ -286,6 +304,22 @@ async function main() {
       'vacía ads_daily en 16 tramos, por su cliente del reporting',
       ads.length === 16 && ads.every((o) => json(filtro(o, 'cliente_id')) === json([PUB]))
     );
+    check(
+      'también las grandes que antes arrastraba la cascada (offline, snapshots, Hotmart, WhatsApp)',
+      [
+        'conversiones_offline',
+        'conversiones_offline_diarias',
+        'metricas_snapshots',
+        'hotmart_ventas',
+        'whatsapp_messages',
+      ].every((t) => ops.filter((o) => es(o, 'public', t, 'delete')).length === 16)
+    );
+    const leadsDiarios = ops.filter((o) => es(o, 'public', 'leads_diarios', 'delete'));
+    check(
+      'leads_diarios se vacía por su columna client_id',
+      leadsDiarios.length === 16 &&
+        leadsDiarios.every((o) => json(filtro(o, 'client_id')) === json([PUB]))
+    );
 
     const iPub = idx(ops, 'public', 'clientes', 'delete');
     check('borra el cliente del reporting por su id', filtro(ops[iPub], 'id') === PUB);
@@ -295,7 +329,7 @@ async function main() {
         ops.filter((o) => o.tabla === 'clientes' && o.accion === 'delete').length === 1
     );
     check(
-      'ya no borra a mano lo que cubren las FK (informes, canales, notificaciones, mensajes)',
+      'no borra a mano lo que cubren las FK (informes, canales)',
       SUELTAS_VIEJAS.every((t) => idx(ops, 'public', t, 'delete') < 0)
     );
     const antes = ops
@@ -492,6 +526,18 @@ async function main() {
       gruposWhatsapp: 0,
     });
     check('S2S sin eventos de píxel también pide retirar el del sitio', s2s.manual.length === 1);
+    const conUrl = pendientesExternos({
+      tiposIntegracion: ['gohighlevel', 'hotmart'],
+      conPixel: false,
+      gruposWhatsapp: 0,
+      utmId: 'utm-7',
+    });
+    check(
+      'con su id UTM dice qué URL de webhook quitar en GHL y en Hotmart',
+      conUrl.manual.some((t) => t.includes('/api/report-utm/webhooks/ghl/utm-7')) &&
+        conUrl.manual.some((t) => t.includes('/api/report-utm/webhooks/hotmart/utm-7')),
+      json(conUrl.manual)
+    );
   }
 
   // ── 9. Resumen de un huérfano ────────────────────────────────────────
@@ -567,9 +613,95 @@ async function main() {
         (utm[1].valores as { slug?: string }).slug === esperados[1]
     );
 
+    check(
+      'el cliente nace sin dueño (no se escribe user_id)',
+      !('user_id' in (pub?.valores as object))
+    );
+
     const vacio = dbFalsa({});
     const r2 = await crearCliente(vacio.db, '   ');
     check('sin nombre no crea nada', !r2.ok && vacio.ops.length === 0);
+
+    const mal = dbFalsa({});
+    const r3 = await crearCliente(mal.db, 'X', { moneda: 'XYZ' });
+    const r4 = await crearCliente(mal.db, 'X', { zonaHoraria: 'Marte/Olympus' });
+    check(
+      'moneda o zona desconocidas: error y ninguna escritura',
+      !r3.ok && !r4.ok && mal.ops.length === 0,
+      json([r3, r4])
+    );
+  }
+
+  // ── 11b. Alta completa y todo o nada ─────────────────────────────────
+  console.log('\n11b. Alta con ajustes y traffickers; si algo falla, no queda nada');
+  {
+    const f = dbFalsa({
+      insertar: (op) =>
+        op.schema === 'public' && op.tabla === 'clientes'
+          ? { data: { id: 'pub-n', nombre: 'Nuevo' } }
+          : { data: { id: 'utm-n' } },
+    });
+    const r = await crearCliente(f.db, 'Nuevo', {
+      moneda: 'clp',
+      zonaHoraria: 'America/Santiago',
+      traffickers: ['u-1', 'u-2', 'u-1'],
+      asignadoPor: 'admin-1',
+    });
+    check('crea el cliente', r.ok, json(r));
+    const pub = f.ops.find((o) => es(o, 'public', 'clientes', 'insert'));
+    check(
+      'la zona va en config_api',
+      json((pub?.valores as { config_api?: unknown })?.config_api) ===
+        json({ zona_horaria: 'America/Santiago' })
+    );
+    const utm = f.ops.find((o) => es(o, 'report_utm', 'clientes', 'insert'));
+    check(
+      'la moneda va en el espejo UTM, normalizada',
+      json((utm?.valores as { config?: unknown })?.config) === json({ moneda_reporte: 'CLP' })
+    );
+    const asig = f.ops.find((o) => es(o, 'public', 'user_client_assignments', 'insert'));
+    check(
+      'asigna los traffickers una vez cada uno, con quién los asignó',
+      json(asig?.valores) ===
+        json([
+          { user_id: 'u-1', client_id: 'pub-n', assigned_by: 'admin-1' },
+          { user_id: 'u-2', client_id: 'pub-n', assigned_by: 'admin-1' },
+        ])
+    );
+
+    const sinEspejo = dbFalsa({
+      insertar: (op) =>
+        op.schema === 'public'
+          ? { data: { id: 'pub-n', nombre: 'Nuevo' } }
+          : { error: { message: 'report_utm caído' } },
+    });
+    const r2 = await crearCliente(sinEspejo.db, 'Nuevo');
+    const deshecho = sinEspejo.ops.find((o) => es(o, 'public', 'clientes', 'delete'));
+    check(
+      'si falla el espejo: error y se borra el cliente recién creado',
+      !r2.ok && /Report-UTM/.test(r2.error) && filtro(deshecho, 'id') === 'pub-n',
+      json(r2)
+    );
+
+    const sinAsignar = dbFalsa({
+      insertar: (op) =>
+        op.tabla === 'user_client_assignments'
+          ? { error: { message: 'FK' } }
+          : op.schema === 'public'
+            ? { data: { id: 'pub-n', nombre: 'Nuevo' } }
+            : { data: { id: 'utm-n' } },
+    });
+    const r3 = await crearCliente(sinAsignar.db, 'Nuevo', { traffickers: ['u-x'] });
+    check(
+      'si fallan las asignaciones: error y se deshace el alta',
+      !r3.ok &&
+        /traffickers/.test(r3.error) &&
+        filtro(
+          sinAsignar.ops.find((o) => es(o, 'public', 'clientes', 'delete')),
+          'id'
+        ) === 'pub-n',
+      json(r3)
+    );
   }
 
   // ── 12. Tabla sin filas del cliente: se salta ────────────────────────
