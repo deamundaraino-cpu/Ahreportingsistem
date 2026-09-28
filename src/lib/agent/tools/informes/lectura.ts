@@ -210,6 +210,12 @@ const listReportFields: AnyAgentTool = {
       .string()
       .optional()
       .describe('Dimensión del widget: marca con cruza=false lo que mostraría 0.'),
+    incluir_antiguas: z
+      .boolean()
+      .optional()
+      .describe(
+        'Conversiones de Meta sin actividad en 90 días o archivadas. Por defecto no se listan.'
+      ),
   }),
   scopes: ['read:reports'],
   handler: async (
@@ -219,6 +225,7 @@ const listReportFields: AnyAgentTool = {
       buscar?: string;
       solo_recomendadas?: boolean;
       dimension?: string;
+      incluir_antiguas?: boolean;
     },
     ctx
   ) => {
@@ -292,8 +299,10 @@ const listReportFields: AnyAgentTool = {
         out.offline = d.offline.filter((o) => coincide(input.buscar, o.clave, o.nombre));
       }
       if (fuente === 'todas' || fuente === 'meta') {
-        out.conversiones_meta = d.conversiones_meta.filter((m) =>
-          coincide(input.buscar, m.clave, m.nombre)
+        out.conversiones_meta = d.conversiones_meta.filter(
+          (m) =>
+            (m.activa || input.incluir_antiguas || input.buscar) &&
+            coincide(input.buscar, m.clave, m.nombre)
         );
       }
     }

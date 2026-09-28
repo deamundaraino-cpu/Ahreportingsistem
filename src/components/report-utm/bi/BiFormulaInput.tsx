@@ -18,6 +18,7 @@ import {
   sheetViewAlias,
   leadSegAlias,
   leadAnsAlias,
+  metaCcAlias,
 } from '@/lib/report-utm/bi-metadata';
 import type {
   BiMetric,
@@ -27,6 +28,7 @@ import type {
   SheetViewMeta,
   LeadSegmentoMeta,
   LeadFieldMeta,
+  MetaCustomConvMeta,
 } from '@/lib/report-utm/bi-metadata';
 import { refsOf } from '@/lib/report-utm/bi/expr';
 import { respuestasDeCampo } from './fuentesDelCliente';
@@ -47,6 +49,8 @@ interface Props {
   leadSegments?: LeadSegmentoMeta[];
   /** Preguntas del catálogo: cada respuesta se ofrece con su alias lf__. */
   leadFields?: LeadFieldMeta[];
+  /** Conversiones personalizadas de Meta, con sus alias mcc__. */
+  customConversions?: MetaCustomConvMeta[];
   placeholder?: string;
 }
 
@@ -68,7 +72,8 @@ function buildGroups(
   sheetFields: SheetFieldMeta[],
   sheetViews: SheetViewMeta[],
   leadSegments: LeadSegmentoMeta[],
-  leadFields: LeadFieldMeta[] = []
+  leadFields: LeadFieldMeta[] = [],
+  customConversions: MetaCustomConvMeta[] = []
 ): { title: string; items: MetricOption[] }[] {
   const of = (keys: string[]): MetricOption[] =>
     keys
@@ -190,9 +195,21 @@ function buildGroups(
     },
   ]);
 
+  // Conversiones personalizadas de Meta (alias mcc__<clave>): «gasto ÷ esto» es
+  // el coste por conversión. Las antiguas (90 días sin actividad) no se ofrecen,
+  // pero una fórmula que ya las use sigue funcionando.
+  const conversionesMeta: MetricOption[] = customConversions
+    .filter((c) => c.activa !== false)
+    .map((c) => ({
+      key: c.alias ?? metaCcAlias(c.key),
+      label: `${c.label} (Meta · conversión)`,
+      conteo: true,
+    }));
+
   return [
     { title: 'Núcleo', items: nucleo },
     { title: 'Campaña (Meta / TikTok)', items: campana },
+    { title: 'Conversiones personalizadas de Meta', items: conversionesMeta },
     { title: 'Hotmart', items: hotmart },
     { title: 'Google Analytics', items: ga },
     { title: 'Offline', items: offline },
@@ -215,6 +232,7 @@ export function BiFormulaInput({
   sheetViews = [],
   leadSegments = [],
   leadFields = [],
+  customConversions = [],
   placeholder,
 }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -227,7 +245,8 @@ export function BiFormulaInput({
     sheetFields,
     sheetViews,
     leadSegments,
-    leadFields
+    leadFields,
+    customConversions
   );
   // Lectura en lenguaje natural de la fórmula: «Inversión ÷ Rango de ingresos:
   // $2M a $3M». Es la forma de comprobar que se eligió lo que se quería sin

@@ -45,8 +45,9 @@ import {
   CLAVE_CRM_REVENUE,
 } from '../src/lib/dashboard/ventas-crm';
 import {
-  agregarMetaCustomConv,
-  aplicarMetaCustomConv,
+  planConversiones,
+  sumarConversiones,
+  valoresConversiones,
 } from '../src/lib/report-utm/bi/meta-custom-conv';
 import {
   isMetaCcMetric,
@@ -358,16 +359,43 @@ const dias = [
     meta_campaigns: [{ name: 'Camp A', custom_conversions: { lead_calificado: 2 } }],
   },
 ];
-const total = agregarMetaCustomConv(dias, [tok], () => 'total');
-check('total suma todas las campañas y días', total.get('total')?.[tok] === 6);
-const porCamp = agregarMetaCustomConv(dias, [tok], (_f, c) => c);
-check('por campaña', porCamp.get('Camp A')?.[tok] === 5 && porCamp.get('Camp B')?.[tok] === 1);
-check('una campaña sin conversiones no genera fila', !porCamp.has('Camp C'));
-const aplicadas = aplicarMetaCustomConv([{ dimension_value: 'Camp A', spend: 100 }], porCamp, [
-  tok,
+// Las conversiones viajan con el gasto: el motor suma cada elemento del JSONB
+// en la entrada de su clave (total, fecha o entidad) con `sumarConversiones`.
+const plan = planConversiones({ tokens: [tok], aliases: [], resultados: false }, [
+  { conversion_key: 'lead_calificado' },
 ]);
-check('se suma a la fila existente', (aplicadas[0] as Record<string, unknown>)[tok] === 5);
-check('y añade la campaña que solo tenía conversiones', aplicadas.length === 2);
+check('el plan pide la clave del token', plan?.claves.join() === 'lead_calificado');
+const acumular = (claveDe: (fecha: string, camp: string) => string) => {
+  const m = new Map<string, Record<string, number>>();
+  for (const d of dias) {
+    for (const c of d.meta_campaigns) {
+      const k = claveDe(d.fecha, c.name);
+      const e = m.get(k) ?? {};
+      sumarConversiones(
+        e,
+        (c as { custom_conversions?: unknown }).custom_conversions,
+        plan!.claves
+      );
+      m.set(k, e);
+    }
+  }
+  return m;
+};
+const total = acumular(() => 'total');
+check(
+  'total suma todas las campañas y días',
+  valoresConversiones(total.get('total'), plan, 0).valores[tok] === 6
+);
+const porCamp = acumular((_f, c) => c);
+check(
+  'por campaña',
+  valoresConversiones(porCamp.get('Camp A'), plan, 0).valores[tok] === 5 &&
+    valoresConversiones(porCamp.get('Camp B'), plan, 0).valores[tok] === 1
+);
+check(
+  'una campaña sin conversiones vale 0',
+  valoresConversiones(porCamp.get('Camp C'), plan, 0).valores[tok] === 0
+);
 
 // ── 6. Moneda efectiva: ajuste > cuenta de Meta > USD ─────────────────
 console.log('\n6. Moneda efectiva');

@@ -22,7 +22,6 @@ import {
   assignLayoutToCliente,
   testMetaConnection,
   testHotmartConnection,
-  refreshMetaCustomConversions,
   testTikTokConnection,
   syncClienteMetrics,
   testGA4Connection,
@@ -56,6 +55,7 @@ import {
 } from '@/components/ui/dialog';
 import { SheetCamposSection } from './sheet-campos/SheetCamposSection';
 import { PerfilIASection } from './perfil-ia/PerfilIASection';
+import { MetaConversionesCard } from './MetaConversionesCard';
 import {
   Loader2,
   ArrowLeft,
@@ -1362,16 +1362,6 @@ export function ClientConfigForm({
                 Conecta una o más cuentas publicitarias de Meta. Los datos de todas las cuentas se
                 consolidarán en el reporte.
               </CardDescription>
-              {testStatus.metaSync?.success && (
-                <p className="text-emerald-600 dark:text-emerald-400 text-sm flex items-center mt-2 p-2 bg-emerald-500/10 rounded">
-                  <CheckCircle2 className="w-4 h-4 mr-2" /> {testStatus.metaSync.message}
-                </p>
-              )}
-              {testStatus.metaSync?.error && (
-                <p className="text-red-500 text-xs flex items-center mt-2">
-                  <AlertCircle className="w-3 h-3 mr-1" /> {testStatus.metaSync.error}
-                </p>
-              )}
             </CardHeader>
             <CardContent className="space-y-5">
               {/* OAuth connect + estado de conexión */}
@@ -1573,35 +1563,7 @@ export function ClientConfigForm({
               </div>
 
               {/* Conversiones personalizadas */}
-              <div className="pt-4 mt-2 border-t border-border">
-                <div className="flex justify-between items-center bg-muted/50 p-3 rounded-lg border border-border">
-                  <div>
-                    <h4 className="text-sm font-medium text-foreground">
-                      Conversiones Personalizadas
-                    </h4>
-                    <p className="text-xs text-muted-foreground/70 mt-1">
-                      Busca y actualiza todos los eventos personalizados detectados en Meta durante
-                      los últimos 30 días.
-                    </p>
-                  </div>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    className="bg-indigo-500/20 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-500/30 border border-indigo-500/30 whitespace-nowrap"
-                    onClick={() =>
-                      runTest('metaSync', () => refreshMetaCustomConversions(cliente.id, config))
-                    }
-                    disabled={testStatus.metaSync?.loading || !hasMetaConfig}
-                  >
-                    {testStatus.metaSync?.loading ? (
-                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                    ) : (
-                      <DownloadCloud className="w-4 h-4 mr-2" />
-                    )}
-                    Sincronizar Conversiones
-                  </Button>
-                </div>
-              </div>
+              <MetaConversionesCard clienteId={cliente.id} habilitado={hasMetaConfig} />
             </CardContent>
           </Card>
 

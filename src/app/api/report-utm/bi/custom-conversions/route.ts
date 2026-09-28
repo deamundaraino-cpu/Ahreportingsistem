@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient, createAdminClient } from '@/utils/supabase/server';
 import type { MetaCustomConvMeta } from '@/lib/report-utm/bi-metadata';
+import { leerCatalogoConversiones } from '@/lib/meta/conversiones-catalogo';
 
 export const dynamic = 'force-dynamic';
 
@@ -10,9 +11,9 @@ export const dynamic = 'force-dynamic';
  *
  *   GET /api/report-utm/bi/custom-conversions?cliente_id=<report_utm id>
  *
- * Salen de `meta_conversiones_catalogo`, el mismo catálogo que ya usaba el
- * dashboard clásico: el worker lo mantiene con el nombre real de cada conversión
- * en Meta, así que aquí se ve lo mismo que en el Administrador de anuncios.
+ * Salen de `meta_conversiones_catalogo`, el mismo catálogo que usa el dashboard
+ * clásico: el sync lo mantiene con el nombre real de cada conversión en Meta y
+ * el equipo puede renombrarlas en ajustes → Meta.
  */
 export async function GET(req: NextRequest) {
   const supabase = await createClient();
@@ -35,20 +36,20 @@ export async function GET(req: NextRequest) {
     const publicId = rtm?.public_cliente_id;
     if (!publicId) return NextResponse.json({ data: [] });
 
-    const { data, error } = await admin
-      .from('meta_conversiones_catalogo')
-      .select('conversion_key, label, last_seen')
-      .eq('cliente_id', publicId)
-      .order('label');
-    if (error) return NextResponse.json({ data: [] });
-
-    const vistas = new Set<string>();
-    const out: MetaCustomConvMeta[] = [];
-    for (const r of (data ?? []) as Array<{ conversion_key: string; label: string | null }>) {
-      if (!r.conversion_key || vistas.has(r.conversion_key)) continue;
-      vistas.add(r.conversion_key);
-      out.push({ key: r.conversion_key, label: r.label || r.conversion_key });
-    }
+    // Todas, con su estado: el editor muestra las activas y las ya elegidas, y
+    // guarda el resto tras «Ver antiguas».
+    const out: MetaCustomConvMeta[] = (await leerCatalogoConversiones(admin, publicId)).map(
+      (c) => ({
+        key: c.key,
+        label: c.label,
+        alias: c.alias,
+        tipo: c.tipo,
+        es_resultado: c.es_resultado,
+        activa: c.activa,
+        archivada: c.archivada,
+        ultima_actividad: c.ultima_actividad,
+      })
+    );
     return NextResponse.json({ data: out });
   } catch {
     return NextResponse.json({ data: [] });

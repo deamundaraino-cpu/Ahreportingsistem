@@ -11,7 +11,7 @@
 //   meta_campaigns   name, spend, clicks, impressions, reach, frequency, cpc,
 //                    cpm, ctr, leads, results, purchases, link_clicks,
 //                    video_views, adds_to_cart, initiates_checkout,
-//                    landing_page_views
+//                    landing_page_views, custom_conversions
 //                    → OJO: NO trae `campaign_id` ni `account_id` en las filas
 //                      antiguas (de ahí que exista worker/backfill-campaign-ids),
 //                      y usa `leads`, no `leads_form`.
@@ -377,10 +377,16 @@ function sumarFilas(a: AdsDailyRow, b: AdsDailyRow): AdsDailyRow {
     eventos[k] = num(eventos[k]) + num(v);
   }
   if (a.eventos.custom || b.eventos.custom) {
-    eventos.custom = {
-      ...((a.eventos.custom as object) ?? {}),
-      ...((b.eventos.custom as object) ?? {}),
-    };
+    // Clave a clave, como el resto de eventos: con un spread la segunda fila
+    // pisaba las conversiones de la primera.
+    const custom: Record<string, number> = {};
+    for (const src of [a.eventos.custom, b.eventos.custom]) {
+      if (!src || typeof src !== 'object') continue;
+      for (const [k, v] of Object.entries(src as Record<string, unknown>)) {
+        custom[k] = (custom[k] ?? 0) + num(v);
+      }
+    }
+    eventos.custom = custom;
   }
   out.eventos = eventos;
   // Se conserva la identidad más completa de las dos.

@@ -48,6 +48,8 @@ export const LEGACY_MEASURE_IDS: Readonly<Record<string, string>> = {
   landing_page_views: 'ads.landing_page_views',
   complete_registration: 'ads.complete_registration',
   results: 'ads.results',
+  resultados_custom: 'ads.resultados_custom',
+  coste_por_resultado_custom: 'ads.coste_por_resultado_custom',
   video_views: 'ads.video_views',
   video_thruplay: 'ads.video_thruplay',
   messaging_conversations: 'ads.messaging_conversations',

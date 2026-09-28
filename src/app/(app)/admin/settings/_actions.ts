@@ -41,6 +41,16 @@ import {
   resumenBorrado,
 } from '@/lib/clientes/ciclo-de-vida';
 import { interpretarEstadoCuenta } from '@/lib/meta/estado-cuenta';
+import { cuentasMetaDe } from '@/lib/meta/cuentas';
+import { sincronizarCatalogo } from '@/lib/meta/conversiones-personalizadas-sync';
+import {
+  DIAS_ANTIGUA,
+  TIPOS_CONVERSION,
+  conversionActiva,
+  type TipoConversion,
+} from '@/lib/meta/conversiones-personalizadas';
+import { buscarReferenciasConversion } from '@/lib/meta/conversiones-referencias';
+import { addDaysISO, hoyCliente } from '@/lib/colombia-date';
 
 /**
  * Marca `archivado` en cada cliente. El estado vive en su espejo de
@@ -624,131 +634,183 @@ export async function testHotmartConnection(config: any, clienteId?: string) {
   }
 }
 
-export async function refreshMetaCustomConversions(clienteId: string, metaConfig: any) {
-  const hasMulti = metaConfig?.meta_accounts?.length > 0;
-  const hasLegacy = metaConfig?.meta_token && metaConfig?.meta_account_id;
-  if (!hasMulti && !hasLegacy) {
-    return { error: 'El cliente no tiene conectada la API de Meta Ads.' };
+/**
+ * Botón «Sincronizar» de la tarjeta de conversiones: descubre las conversiones
+ * personalizadas con actividad en los últimos 90 días (zona del cliente) y
+ * actualiza el catálogo. Lee las cuentas y tokens de la config GUARDADA: el
+ * navegador ya no los envía. El segundo argumento se ignora (compatibilidad).
+ */
+export async function refreshMetaCustomConversions(clienteId: string, _legacy?: unknown) {
+  void _legacy;
+  const rol = await rolActual();
+  if (!rol || rol === 'viewer') return { error: 'No autorizado.' };
+
+  const admin = await createAdminClient();
+  const { data: cliente } = await admin
+    .from('clientes')
+    .select('config_api')
+    .eq('id', clienteId)
+    .maybeSingle();
+  if (!cliente) return { error: 'El cliente no existe.' };
+  const config = (cliente.config_api ?? {}) as Record<string, any>;
+  const cuentas = cuentasMetaDe(config);
+  if (cuentas.length === 0) {
+    return {
+      error:
+        'El cliente no tiene cuentas de Meta guardadas. Guarda la configuración antes de sincronizar.',
+    };
   }
 
-  const accountsToQuery: { account_id: string; token: string }[] = hasMulti
-    ? metaConfig.meta_accounts
-        .filter((a: any) => a.account_id)
-        .map((a: any) => ({
-          account_id: a.account_id,
-          token: a.token || metaConfig.meta_token || '',
-        }))
-    : [{ account_id: metaConfig.meta_account_id, token: metaConfig.meta_token }];
-
+  const hasta = hoyCliente(config);
+  const desde = addDaysISO(hasta, -(DIAS_ANTIGUA - 1));
   try {
-    const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-    const until = new Date().toISOString().split('T')[0];
-
-    const allCustomKeys = new Set<string>();
-
-    await Promise.all(
-      accountsToQuery.map(async ({ account_id, token }) => {
-        const actId = account_id.startsWith('act_') ? account_id : `act_${account_id}`;
-        const url = new URL(`https://graph.facebook.com/v19.0/${actId}/insights`);
-        url.searchParams.append('access_token', token);
-        url.searchParams.append('time_range', JSON.stringify({ since, until }));
-        url.searchParams.append('fields', 'conversions');
-        url.searchParams.append('level', 'account');
-
-        const res = await fetch(url.toString());
-        const data = await res.json();
-
-        if (data.error) {
-          console.warn(`[refreshMeta] ${account_id} error: ${data.error.message}`);
-          return;
-        }
-
-        if (data.data?.[0]?.conversions) {
-          data.data[0].conversions.forEach((cv: any) => {
-            const type: string = cv.action_type || '';
-            if (type.startsWith('offsite_conversion.fb_pixel_custom.')) {
-              const key = type.replace('offsite_conversion.fb_pixel_custom.', '').toLowerCase();
-              allCustomKeys.add(key);
-            } else if (type.startsWith('offsite_conversion.custom.')) {
-              const key = type.replace('offsite_conversion.custom.', '').toLowerCase();
-              allCustomKeys.add(key);
-            }
-          });
-        }
-      })
-    );
-
-    if (allCustomKeys.size === 0) {
-      return {
-        success: true,
-        count: 0,
-        message:
-          'No se encontraron conversiones personalizadas con actividad en los últimos 30 días.',
-      };
+    const r = await sincronizarCatalogo(admin, clienteId, cuentas, desde, hasta);
+    if (r.error) return { error: `Error guardando en BD: ${r.error}` };
+    if (r.cuentasConError.length === cuentas.length) {
+      return { error: 'Meta no respondió para ninguna cuenta (revisa el token).' };
     }
-
-    // Fetch custom conversion names to get friendly names
-    const customConversionNames: Record<string, string> = {};
-    await Promise.all(
-      accountsToQuery.map(async ({ account_id, token }) => {
-        try {
-          const actId = account_id.startsWith('act_') ? account_id : `act_${account_id}`;
-          const ccUrl = new URL(`https://graph.facebook.com/v19.0/${actId}/customconversions`);
-          ccUrl.searchParams.append('access_token', token);
-          ccUrl.searchParams.append('fields', 'id,name');
-          const res = await fetch(ccUrl.toString());
-          const ccData = await res.json();
-          if (ccData.data) {
-            ccData.data.forEach((cc: any) => {
-              customConversionNames[cc.id] = cc.name;
-            });
-          }
-        } catch (e: any) {
-          console.warn(`[refreshMeta customconversions] error:`, e?.message);
-        }
-      })
-    );
-
-    // Prepare data for upsert
-    const catalogRows = Array.from(allCustomKeys).map((key) => {
-      const isNumeric = /^\d+$/.test(key);
-      let label = '';
-      if (isNumeric && customConversionNames[key]) {
-        label = customConversionNames[key];
-      } else {
-        const cleanKey = key
-          .replace(/_/g, ' ')
-          .replace(/\b\w/g, (c) => c.toUpperCase())
-          .trim();
-        label = `Lead ${cleanKey.replace('Lead', '').trim() || cleanKey}`;
-      }
-      return {
-        cliente_id: clienteId,
-        conversion_key: key,
-        label: label,
-        field_id: `meta_custom_${key}`,
-        last_seen: new Date().toISOString().split('T')[0],
-      };
-    });
-
-    const supabase = await createAdminClient();
-    const { error: catErr } = await supabase
-      .from('meta_conversiones_catalogo')
-      .upsert(catalogRows, { onConflict: 'cliente_id,conversion_key' });
-
-    if (catErr) {
-      return { error: `Error guardando en BD: ${catErr.message}` };
-    }
-
+    const avisoCuentas =
+      r.cuentasConError.length > 0 ? ` Sin respuesta de: ${r.cuentasConError.join(', ')}.` : '';
+    revalidatePath('/admin/settings');
     return {
       success: true,
-      count: allCustomKeys.size,
-      conversions: Array.from(allCustomKeys),
-      message: `Se actualizaron ${allCustomKeys.size} conversiones personalizadas exitosamente.`,
+      count: r.total,
+      conversions: r.claves,
+      message:
+        r.total === 0
+          ? `No hay conversiones personalizadas con actividad en los últimos ${DIAS_ANTIGUA} días.${avisoCuentas}`
+          : `${r.total} conversiones con actividad (${r.nuevas} nuevas).${avisoCuentas}`,
     };
   } catch (e: any) {
-    return { error: e.message };
+    return { error: e?.message ?? 'Error desconocido' };
   }
+}
+
+export interface ConversionMetaFila {
+  conversion_key: string;
+  label: string;
+  field_id: string;
+  last_seen: string | null;
+  origen: 'cc' | 'evento';
+  nombre_meta: string | null;
+  label_manual: string | null;
+  tipo: TipoConversion;
+  es_resultado: boolean;
+  archivada: boolean;
+  regla: unknown;
+  ultima_actividad: string | null;
+  activa: boolean;
+}
+
+/** Catálogo del cliente para la tarjeta de ajustes (incluye antiguas y archivadas). */
+export async function listarConversionesMeta(
+  clienteId: string
+): Promise<{ data?: ConversionMetaFila[]; migrada?: boolean; hoy?: string; error?: string }> {
+  const rol = await rolActual();
+  if (!rol) return { error: 'No autorizado.' };
+  const admin = await createAdminClient();
+  const [{ data: cliente }, completo] = await Promise.all([
+    admin.from('clientes').select('config_api').eq('id', clienteId).maybeSingle(),
+    admin
+      .from('meta_conversiones_catalogo')
+      .select(
+        'conversion_key, label, field_id, last_seen, origen, nombre_meta, label_manual, tipo, es_resultado, archivada, regla, ultima_actividad'
+      )
+      .eq('cliente_id', clienteId)
+      .order('label'),
+  ]);
+  const hoy = hoyCliente(cliente?.config_api ?? undefined);
+  let filas: any[] | null = completo.data;
+  let migrada = true;
+  if (completo.error) {
+    // Sin la migración 096: solo las columnas antiguas.
+    migrada = false;
+    const antiguo = await admin
+      .from('meta_conversiones_catalogo')
+      .select('conversion_key, label, field_id, last_seen')
+      .eq('cliente_id', clienteId)
+      .order('label');
+    if (antiguo.error) return { error: antiguo.error.message };
+    filas = antiguo.data;
+  }
+  const data = (filas ?? []).map((r: any): ConversionMetaFila => {
+    const ultima = r.ultima_actividad ?? r.last_seen ?? null;
+    return {
+      conversion_key: r.conversion_key,
+      label: r.label,
+      field_id: r.field_id,
+      last_seen: r.last_seen ?? null,
+      origen: r.origen ?? (/^\d+$/.test(r.conversion_key) ? 'cc' : 'evento'),
+      nombre_meta: r.nombre_meta ?? null,
+      label_manual: r.label_manual ?? null,
+      tipo: (TIPOS_CONVERSION as readonly string[]).includes(r.tipo) ? r.tipo : 'otro',
+      es_resultado: Boolean(r.es_resultado),
+      archivada: Boolean(r.archivada),
+      regla: r.regla ?? null,
+      ultima_actividad: ultima,
+      activa: !r.archivada && conversionActiva(ultima, hoy),
+    };
+  });
+  return { data, migrada, hoy };
+}
+
+/**
+ * Cambia lo que decide el usuario sobre una conversión. Lista blanca de campos:
+ * el resto lo mantiene el sync.
+ */
+export async function actualizarConversionMeta(
+  clienteId: string,
+  conversionKey: string,
+  patch: {
+    label_manual?: string | null;
+    tipo?: string;
+    es_resultado?: boolean;
+    archivada?: boolean;
+  }
+) {
+  const rol = await rolActual();
+  if (!rol || rol === 'viewer') return { error: 'No autorizado.' };
+  const cambios: Record<string, unknown> = {};
+  if ('label_manual' in patch) {
+    const v = (patch.label_manual ?? '').trim();
+    if (v.length > 80) return { error: 'El nombre admite como mucho 80 caracteres.' };
+    cambios.label_manual = v || null;
+  }
+  if (patch.tipo !== undefined) {
+    if (!(TIPOS_CONVERSION as readonly string[]).includes(patch.tipo)) {
+      return { error: 'Tipo no válido.' };
+    }
+    cambios.tipo = patch.tipo;
+  }
+  if (patch.es_resultado !== undefined) cambios.es_resultado = Boolean(patch.es_resultado);
+  if (patch.archivada !== undefined) cambios.archivada = Boolean(patch.archivada);
+  if (Object.keys(cambios).length === 0) return { success: true };
+
+  const admin = await createAdminClient();
+  const { error } = await admin
+    .from('meta_conversiones_catalogo')
+    .update(cambios)
+    .eq('cliente_id', clienteId)
+    .eq('conversion_key', conversionKey);
+  if (error) {
+    return {
+      error: /column .* does not exist|schema cache/i.test(error.message)
+        ? 'Falta aplicar la migración 096 para editar conversiones.'
+        : error.message,
+    };
+  }
+  revalidatePath('/admin/settings');
+  revalidatePath(`/dashboard/${clienteId}`);
+  revalidatePath(`/report/${clienteId}`);
+  return { success: true };
+}
+
+/** Dónde se usa una conversión (antes de archivarla). */
+export async function referenciasConversionMeta(clienteId: string, conversionKey: string) {
+  const rol = await rolActual();
+  if (!rol) return { error: 'No autorizado.' };
+  const admin = await createAdminClient();
+  return { data: await buscarReferenciasConversion(admin, clienteId, conversionKey) };
 }
 
 export async function testTikTokConnection(accessToken: string, advertiserId: string) {

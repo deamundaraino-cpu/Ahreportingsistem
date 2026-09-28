@@ -28,7 +28,11 @@ import type {
   LeadAnswerBlockDef,
 } from '@/lib/layout-types';
 import { tieneVentasOffline } from '@/lib/dashboard/metric-catalog';
-import type { MetricOption, LeadAnswerCampoResumen } from '@/lib/dashboard/metric-catalog';
+import type {
+  MetricOption,
+  LeadAnswerCampoResumen,
+  ConversionCatalogoResumen,
+} from '@/lib/dashboard/metric-catalog';
 import type { SheetCampoResumen, SheetVistaResumen } from '../_actions';
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
@@ -724,7 +728,7 @@ export function QuickEditModal({
   tabId?: string;
   campaignGroups?: { id: string; nombre: string }[];
   campaignNames?: string[];
-  conversionesCatalogo?: { conversion_key: string; label: string; field_id: string }[];
+  conversionesCatalogo?: ConversionCatalogoResumen[];
 
   googleSheetsConversiones?: any[];
   /** Conversiones offline en crudo: deciden si se ofrecen las métricas que
@@ -747,7 +751,8 @@ export function QuickEditModal({
     sheetCampos,
     sheetVistas,
     tieneVentasOffline(conversionesOfflineRaw),
-    leadAnswerCampos
+    leadAnswerCampos,
+    JSON.stringify(layout ?? {})
   );
   const [loading, setLoading] = useState(false);
   const [saved, setSaved] = useState(false);

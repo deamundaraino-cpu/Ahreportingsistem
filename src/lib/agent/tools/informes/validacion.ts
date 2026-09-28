@@ -43,8 +43,8 @@ const PREFIJOS_METRICA = [
 ];
 const PREFIJOS_DIMENSION = ['field:', 'leadfield:', 'sheetdim:'];
 
-/** Alias de fórmula de un campo dinámico (`lf__`, `lseg__`, `sf__`…). */
-const PATRON_ALIAS = /^(f_(sum|avg|min|max|count)__|lf__|lseg__|off__|sf__|sv__)[a-z0-9_]+$/i;
+/** Alias de fórmula de un campo dinámico (`lf__`, `lseg__`, `sf__`, `mcc__`…). */
+const PATRON_ALIAS = /^(f_(sum|avg|min|max|count)__|lf__|lseg__|off__|sf__|sv__|mcc__)[a-z0-9_]+$/i;
 
 /** Identificadores que el motor acepta en una fórmula además del catálogo fijo. */
 const REFS_EXTRA = new Set(['leads_total']);

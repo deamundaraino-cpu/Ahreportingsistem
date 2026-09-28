@@ -85,9 +85,9 @@ Todos salen de \`list_report_fields\`. La gramática, para reconocerlos:
 - **Segmento** (métrica): \`leadseg:<clave>\`; en fórmulas, \`lseg__<clave>\`.
 - **Google Sheets**: \`sheetdim:<clave>\` (dimensión), \`sheetagg:<agregación>:<clave>\` y \`sheetview:<clave>\` (métricas); en fórmulas \`sf__<clave>\` y \`sv__<clave>\`.
 - **Columnas offline**: \`offfield:<tipo>:<clave>\`; en fórmulas \`off__<clave>\`.
-- **Conversiones personalizadas de Meta**: \`metacc:<clave>\`.
+- **Conversiones personalizadas de Meta**: \`metacc:<clave>\`; en fórmulas, \`mcc__<clave>\` (coste por conversión: \`spend / mcc__<clave>\`). Las que el cliente marcó como resultado se suman en \`resultados_custom\`, y su coste es \`coste_por_resultado_custom\`.
 
-**Fórmulas** (\`config.formula\` o campos calculados): \`+ - * /\` y paréntesis sobre ids de métricas fijas y alias (\`lf__\`, \`lseg__\`, \`sf__\`, \`sv__\`, \`off__\`). Un campo calculado NO puede usarse dentro de otra fórmula. Ejemplo: \`spend / lf__rango_de_ingresos__2m_3m\`.
+**Fórmulas** (\`config.formula\` o campos calculados): \`+ - * /\` y paréntesis sobre ids de métricas fijas y alias (\`lf__\`, \`lseg__\`, \`sf__\`, \`sv__\`, \`off__\`, \`mcc__\`). Un campo calculado NO puede usarse dentro de otra fórmula. Ejemplo: \`spend / lf__rango_de_ingresos__2m_3m\`.
 `.trim(),
   },
   {
@@ -99,7 +99,7 @@ Un widget que desglosa una métrica por una dimensión que no la reparte mostrar
 - **Gasto, impresiones, clics, CTR, CPL, ROAS** (vienen de Meta/TikTok): por \`date\` y por campaña, anuncio o conjunto (\`utm_campaign\`, \`utm_content\`, \`utm_term\`, \`ad\`, \`adset\`). NO por \`utm_source\`, país, formulario ni pregunta de lead.
 - **Leads, ventas, revenue, Hotmart neto**: por cualquier dimensión.
 - **GA4 y columnas offline**: solo por \`date\` (o total).
-- **Conversiones de Meta (\`metacc:\`)**: por \`date\` o por campaña.
+- **Conversiones de Meta (\`metacc:\`, \`resultados_custom\`)**: igual que el gasto: por \`date\` y por campaña, anuncio o conjunto.
 - **MRR y métricas de suscripción**: solo total (\`dimension: "none"\`).
 - **Filtrar por una pregunta de lead anula el gasto** (el gasto no se puede atribuir a una respuesta). Para medir el coste por respuesta usa una fórmula: \`spend / lf__<pregunta>__<respuesta>\`.
 - **\`dimension2\`** solo funciona en barras, líneas, áreas o combo con una métrica que cuente leads o ventas.

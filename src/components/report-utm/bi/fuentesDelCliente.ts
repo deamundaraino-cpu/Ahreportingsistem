@@ -216,7 +216,14 @@ export function fuentesDelCliente(e: EntradaFuentesDelCliente): CatalogSource[] 
       'cliente_metacc',
       'Conversiones de Meta',
       'daily',
-      e.customConversions.map((c) => medida(`metacc:${c.key}`, c.label, 'Personalizadas'))
+      e.customConversions.map((c) =>
+        medida(
+          `metacc:${c.key}`,
+          c.label,
+          c.activa === false ? 'Sin actividad (90 días)' : 'Personalizadas',
+          { additive: true }
+        )
+      )
     )
   );
 

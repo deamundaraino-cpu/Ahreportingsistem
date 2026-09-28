@@ -4,6 +4,14 @@ import { columnaExcluidoDisponible } from './lead-exclusion';
 import { escLike, patronLike } from './leads-filtros';
 import { COLUMNAS_ID, SELECT_IDS_VENTA, columnasIdDisponibles } from './lead-ids';
 import { cargarAlcanceCampanas, predicadoAlcance } from './alcance-campanas';
+import {
+  cargarCatalogoCc,
+  pideConversiones,
+  planConversiones,
+  sumarConversiones,
+  valoresConversiones,
+  type PeticionCc,
+} from './bi/meta-custom-conv';
 import { registrarAvisoConsulta, registrarConversor } from './bi/avisos-tasas';
 import {
   cargarConversor,
@@ -314,6 +322,16 @@ export async function runBiQuery(params: BiQueryParams): Promise<BiQueryRow[]> {
   }
   const requires = (keys: string[]) => keys.some((k) => required.has(k));
 
+  // ── Conversiones personalizadas de Meta ───────────────────────────
+  // `metacc:<clave>`, alias `mcc__<clave>` y resultados personalizados. Se
+  // resuelven contra el catálogo del cliente y viajan con el gasto.
+  const pedidoCc = pideConversiones(params);
+  let planCc: PeticionCc | null = null;
+  if (pedidoCc.tokens.length > 0 || pedidoCc.aliases.length > 0 || pedidoCc.resultados) {
+    const publicCc = params.cliente_id ? await resolvePublicClienteId(params.cliente_id) : null;
+    planCc = planConversiones(pedidoCc, publicCc ? await cargarCatalogoCc(supabase, publicCc) : []);
+  }
+
   // ── Campos de formulario (raw_fields JSONB) ───────────────────────
   // Dimensión de campo (agrupar por raw_fields.<clave>) + métricas de campo
   // (sum/avg/… de un campo). Las métricas de campo pueden venir directamente
@@ -416,33 +434,36 @@ export async function runBiQuery(params: BiQueryParams): Promise<BiQueryRow[]> {
   const needsAds =
     !isFieldDimQuery &&
     !isSheetDimQuery &&
-    requires([
-      'spend',
-      'meta_spend',
-      'tiktok_spend',
-      'cpl',
-      'cpa',
-      'roas',
-      'clicks',
-      'impressions',
-      'cpc',
-      'cpm',
-      'frequency',
-      'ctr',
-      ...AD_JSONB_METRICS,
-      ...AD_SCALAR_METRICS,
-      ...AD_RATE_METRICS,
-      ...MANUAL_JSONB_METRICS.map((m) => m.metric),
-      'hotmart_revenue',
-      'hotmart_sales',
-      'hotmart_roas',
-      'hotmart_cpa',
-      'hotmart_roi',
-      // El ROAS y el CPA reales de Hotmart necesitan el gasto como denominador.
-      'hm_roas',
-      'hm_cpa',
-      'hm_cpa_compra',
-    ]);
+    ((planCc !== null && planCc.claves.length > 0) ||
+      requires([
+        'spend',
+        'meta_spend',
+        'tiktok_spend',
+        'cpl',
+        'cpa',
+        'roas',
+        'clicks',
+        'impressions',
+        'cpc',
+        'cpm',
+        'frequency',
+        'ctr',
+        ...AD_JSONB_METRICS,
+        ...AD_SCALAR_METRICS,
+        ...AD_RATE_METRICS,
+        ...MANUAL_JSONB_METRICS.map((m) => m.metric),
+        'hotmart_revenue',
+        'hotmart_sales',
+        'hotmart_roas',
+        'hotmart_cpa',
+        'hotmart_roi',
+        // El ROAS y el CPA reales de Hotmart necesitan el gasto como denominador.
+        'hm_roas',
+        'hm_cpa',
+        'hm_cpa_compra',
+        'resultados_custom',
+        'coste_por_resultado_custom',
+      ]));
   // Offline (día×cliente) y suscripciones (snapshot) son globales/por fecha,
   // no cruzan por dimensiones de lead/venta/anuncio.
   const isBreakdownDim = isSalesOnlyDim || unified !== null || isFieldDimQuery || isSheetDimQuery;
@@ -524,7 +545,7 @@ export async function runBiQuery(params: BiQueryParams): Promise<BiQueryRow[]> {
   // ── ADS query (metricas_diarias) ──────────────────────────────────
   let adsData: AdRow[] = [];
   if (needsAds) {
-    adsData = await queryAdsDirect(params, dateFrom, dateTo);
+    adsData = await queryAdsDirect(params, dateFrom, dateTo, planCc?.claves ?? []);
   }
 
   // ── OFFLINE query (conversiones_offline_diarias) ──────────────────
@@ -585,7 +606,7 @@ export async function runBiQuery(params: BiQueryParams): Promise<BiQueryRow[]> {
     };
   }
 
-  const fusionado = mergeResults(
+  return mergeResults(
     params,
     leadsData,
     salesData,
@@ -600,41 +621,9 @@ export async function runBiQuery(params: BiQueryParams): Promise<BiQueryRow[]> {
     nocross,
     hotmartData,
     leadSegs,
-    tasaBi
+    tasaBi,
+    planCc
   );
-
-  // ── Conversiones personalizadas de Meta (`metacc:<clave>`) ─────────
-  // Se suman al resultado fusionado desde su propio lector: total, fecha y
-  // campaña real. Cualquier otra dimensión no las puede repartir y quedan en 0.
-  const ccTokens = params.metrics.filter((m) => typeof m === 'string' && m.startsWith('metacc:'));
-  if (ccTokens.length === 0) return fusionado;
-  // Las conversiones de Meta son de nivel campaña: tampoco saben qué respondió
-  // cada lead. Mismo criterio que el gasto en `mergeResults`.
-  if (consultaSinGasto(params)) {
-    return fusionado.map((r) => {
-      const o: BiQueryRow = { ...r };
-      for (const t of ccTokens) (o as Record<string, unknown>)[t] = null;
-      return o;
-    });
-  }
-  const { queryMetaCustomConv, aplicarMetaCustomConv } = await import('./bi/meta-custom-conv');
-  const unifiedCc = unifiedTarget(params.dimension);
-  const grouping = params.date_grouping ?? 'day';
-  const ccData = await queryMetaCustomConv(
-    params.cliente_id,
-    dateFrom,
-    dateTo,
-    ccTokens,
-    (fecha, campana) =>
-      params.dimension === 'none'
-        ? 'total'
-        : params.dimension === 'date'
-          ? truncateDate(fecha, grouping)
-          : unifiedCc === 'campaign'
-            ? campana
-            : null
-  );
-  return aplicarMetaCustomConv(fusionado, ccData, ccTokens);
 }
 
 /** ¿Hay filtro por nombre de campaña, anuncio o conjunto? */
@@ -1671,7 +1660,9 @@ const MAX_AD_DAY_ROWS = 5000;
 async function queryAdsDirect(
   params: BiQueryParams,
   dateFrom: string,
-  dateTo: string
+  dateTo: string,
+  /** Conversiones personalizadas a acumular junto al gasto. */
+  ccKeys: string[] = []
 ): Promise<AdRow[]> {
   // ── Aplicación de filtros al gasto ─────────────────────────────────
   //   • Filtro NO atribuible (país/formulario/campo de lead/Sheet) → el gasto no
@@ -1720,7 +1711,7 @@ async function queryAdsDirect(
     ? needed.reduce((a, b) => (ENTITY_LEVEL[a].rank >= ENTITY_LEVEL[b].rank ? a : b))
     : null;
 
-  if (!level) return queryAdsScalar(params, dateFrom, dateTo, publicId, platform);
+  if (!level) return queryAdsScalar(params, dateFrom, dateTo, publicId, platform, ccKeys);
 
   // `ads_daily` es la tabla normalizada que la migración 063 creó justo para
   // no leer los JSONB: una fila por (cliente, fecha, plataforma, nivel,
@@ -1729,7 +1720,14 @@ async function queryAdsDirect(
   // tiempo. Los dos caminos tienen que dar el MISMO número —lo comprueba
   // `scripts/verify-ads-daily-paridad.ts`—, así que cuál se use es una
   // decisión de coste, no de resultado.
-  if (!forzarJsonb() && publicId && (await adsDailyCubre(publicId, level, dateFrom, dateTo))) {
+  // Con conversiones personalizadas se lee el JSONB: `ads_daily_resumen` solo
+  // agrega las claves numéricas de `eventos` y descarta `eventos.custom`.
+  if (
+    ccKeys.length === 0 &&
+    !forzarJsonb() &&
+    publicId &&
+    (await adsDailyCubre(publicId, level, dateFrom, dateTo))
+  ) {
     return queryAdsFromDaily(
       params,
       dateFrom,
@@ -1749,7 +1747,8 @@ async function queryAdsDirect(
     level,
     breakdown,
     matchers,
-    platform
+    platform,
+    ccKeys
   );
 }
 
@@ -2033,7 +2032,8 @@ async function queryAdsScalar(
   dateFrom: string,
   dateTo: string,
   publicId: string | null,
-  platform: 'meta' | 'tiktok' | null
+  platform: 'meta' | 'tiktok' | null,
+  ccKeys: string[] = []
 ): Promise<AdRow[]> {
   const db = await createAdminClient();
   const adCols = [
@@ -2125,6 +2125,7 @@ async function queryAdsScalar(
       const camps = (r.meta_campaigns as Record<string, unknown>[] | null) ?? [];
       for (const c of camps) {
         for (const k of AD_JSONB_METRICS) entry[k] += Number(c[k] ?? 0);
+        if (ccKeys.length) sumarConversiones(entry, c.custom_conversions, ccKeys);
       }
     }
   }
@@ -2146,7 +2147,8 @@ async function queryAdsFromJsonb(
   level: EntityKind,
   breakdown: EntityKind | null,
   matchers: Map<EntityKind, (name: string) => boolean>,
-  platform: 'meta' | 'tiktok' | null
+  platform: 'meta' | 'tiktok' | null,
+  ccKeys: string[] = []
 ): Promise<AdRow[]> {
   const db = await createAdminClient();
   const spec = ENTITY_LEVEL[level];
@@ -2272,6 +2274,8 @@ async function queryAdsFromJsonb(
         if (withJsonbMetrics) {
           for (const k of AD_JSONB_METRICS) entry[k] += Number(el[k] ?? 0);
         }
+        // Conversiones personalizadas: solo Meta las tiene.
+        if (isMeta && ccKeys.length) sumarConversiones(entry, el.custom_conversions, ccKeys);
         // TikTok solo reporta 4 métricas; `conversions` es la única propia.
         if (!isMeta) entry.tiktok_conversions += Number(el.conversions ?? 0);
       }
@@ -2868,7 +2872,8 @@ function mergeResults(
   nocross: Set<string> = new Set(),
   hotmartData: HotmartRow[] = [],
   leadSegs: LeadSegReq[] = [],
-  tasa: TasaBi | null = null
+  tasa: TasaBi | null = null,
+  planCc: PeticionCc | null = null
 ): BiQueryRow[] {
   const keys = new Set<string>();
   leadsData.forEach((r) => keys.add(r.dim ?? 'total'));
@@ -2961,6 +2966,15 @@ function mergeResults(
     for (const k of AD_JSONB_METRICS) {
       if (params.metrics.includes(k)) row[k] = Number(ad?.[k] ?? 0);
     }
+    // Conversiones personalizadas: por su token (`metacc:`) y, en las fórmulas,
+    // por su alias (`mcc__`). Mismo objeto para la fila y para `baseValues`.
+    const cc = valoresConversiones(ad, planCc, meta_spend);
+    for (const [k, v] of Object.entries(cc.valores)) {
+      if ((params.metrics as string[]).includes(k)) row[k] = v;
+    }
+    if (params.metrics.includes('resultados_custom')) row.resultados_custom = cc.resultados;
+    if (params.metrics.includes('coste_por_resultado_custom'))
+      row.coste_por_resultado_custom = cc.coste;
     if (params.metrics.includes('frequency'))
       row.frequency = reach > 0 ? round2(impressions / reach) : null;
     if (params.metrics.includes('ctr'))
@@ -3125,6 +3139,9 @@ function mergeResults(
         ...segValues, // token leadseg:<clave> Y alias lseg__<clave>
       };
       for (const k of AD_JSONB_METRICS) baseValues[k] = Number(ad?.[k] ?? 0);
+      Object.assign(baseValues, cc.valores); // token metacc:<k> y alias mcc__<k>
+      baseValues.resultados_custom = cc.resultados ?? 0;
+      baseValues.coste_por_resultado_custom = cc.coste ?? 0;
       for (const k of AD_SCALAR_METRICS) baseValues[k] = Number(ad?.[k] ?? 0);
       for (const { metric } of MANUAL_JSONB_METRICS) baseValues[metric] = Number(ad?.[metric] ?? 0);
       baseValues.ga_bounce_rate = gaBounceRate ?? 0;

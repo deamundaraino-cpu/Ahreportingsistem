@@ -6,6 +6,7 @@
 
 // `bi/expr.ts` es puro (sin imports), así que respeta la regla de arriba.
 import { parseExpr, isExprError, evalExpr } from './bi/expr';
+import { PREFIJO_ALIAS_CC, aliasFormulaCc } from '@/lib/meta/conversiones-personalizadas';
 import {
   extraerReferenciasDeLead,
   esTokenRespuesta as isLeadAnsMetricLocal,
@@ -104,6 +105,8 @@ export type BiMetric =
   | 'landing_page_views'
   | 'complete_registration'
   | 'results'
+  | 'resultados_custom'
+  | 'coste_por_resultado_custom'
   | 'video_views'
   | 'video_thruplay'
   | 'messaging_conversations'
@@ -335,6 +338,8 @@ export const ADDITIVE_METRICS: ReadonlySet<string> = new Set<string>([
   // (`hm_tasa_cambio`) NO: es un promedio.
   'hm_neto_usd',
   'hm_bruto_usd',
+  // Suma de conversiones personalizadas marcadas como resultado.
+  'resultados_custom',
 ]);
 
 /** ¿La fila "Total" de una tabla puede sumar esta métrica directamente? */
@@ -346,6 +351,8 @@ export function isAdditiveMetric(metric: string): boolean {
   if (isLeadSegMetric(metric)) return true;
   // Una respuesta de lead también es un conteo de contactos.
   if (isLeadAnsMetricLocal(metric)) return true;
+  // Una conversión personalizada de Meta es un conteo de eventos.
+  if (isMetaCcMetric(metric)) return true;
   return ADDITIVE_METRICS.has(metric);
 }
 
@@ -653,6 +660,21 @@ export const METRIC_META: Record<BiMetric, MetricMetaEntry> = {
     breakdown: 'campaign',
   },
   results: { label: 'Resultados', format: 'number', group: 'campana', breakdown: 'campaign' },
+  // Conversiones personalizadas marcadas como «resultado» en la tarjeta de Meta
+  // del cliente (`meta_conversiones_catalogo.es_resultado`). Sin ninguna marcada
+  // valen null, no 0: el cliente no ha definido qué cuenta como resultado.
+  resultados_custom: {
+    label: 'Resultados (personalizados)',
+    format: 'number',
+    group: 'campana',
+    breakdown: 'campaign',
+  },
+  coste_por_resultado_custom: {
+    label: 'Coste por resultado (personalizado)',
+    format: 'currency',
+    group: 'campana',
+    breakdown: 'campaign',
+  },
   video_views: {
     label: 'Reproducciones',
     format: 'number',
@@ -1092,10 +1114,10 @@ export function metricCrossesDimension(metric: string, dimension: string): boole
   // Las columnas extra de Sheet offline viven en conversiones_offline_diarias,
   // que es día×cliente: se comportan como 'total'.
   if (isOfflineFieldMetric(metric)) return dimension === 'date';
-  // Conversiones personalizadas de Meta: se leen del nivel campaña, así que se
-  // reparten por fecha y por campaña real, no por anuncio, conjunto ni lead.
-  if (isMetaCcMetric(metric))
-    return dimension === 'date' || unifiedTarget(dimension) === 'campaign';
+  // Conversiones personalizadas de Meta: viajan con el gasto (mismo JSONB, los
+  // tres niveles), así que se reparten igual que él: fecha, campaña, conjunto y
+  // anuncio. No por lead.
+  if (isMetaCcMetric(metric)) return dimension === 'date' || unifiedTarget(dimension) !== null;
   const meta = METRIC_META[metric as BiMetric];
   if (!meta) return true; // calculada, campo de formulario o de Sheet
   switch (meta.breakdown) {
@@ -1611,6 +1633,8 @@ export function basesAditivasDeFormula(expression: string): Map<string, string> 
       const r = parseClaveFormulaRespuesta(id);
       if (r) token = tokenRespuesta(r.campo, r.resp);
       else if (id.startsWith('lseg__')) token = makeLeadSegMetric(id.slice('lseg__'.length));
+      else if (id.startsWith(PREFIJO_ALIAS_CC))
+        token = makeMetaCcMetric(id.slice(PREFIJO_ALIAS_CC.length));
     }
     if (!token || !isAdditiveMetric(token)) return null;
     out.set(id, token);
@@ -1740,10 +1764,37 @@ export function parseMetaCcMetric(token: string): string | null {
   return isMetaCcMetric(token) ? token.slice(META_CC_PREFIX.length) : null;
 }
 
+/**
+ * Alias de una conversión en un campo calculado: `mcc__<clave saneada>`
+ * (`spend / mcc__lead_docenciau` = coste por esa conversión). El motor lo
+ * resuelve contra el catálogo del cliente (`resolverClaveCc`).
+ */
+export { aliasFormulaCc as metaCcAlias, PREFIJO_ALIAS_CC };
+
+/** Alias `mcc__<x>` referenciados por una expresión calc. */
+export function extractMetaCcAliases(expression: string): { ref: string; alias: string }[] {
+  const out: { ref: string; alias: string }[] = [];
+  const re = /\bmcc__([a-z0-9_]+)\b/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(expression)) !== null) {
+    const ref = m[1].toLowerCase();
+    out.push({ ref, alias: `${PREFIJO_ALIAS_CC}${ref}` });
+  }
+  return out;
+}
+
 /** Una conversión personalizada del cliente, tal como se ofrece en el BI. */
 export interface MetaCustomConvMeta {
   key: string;
   label: string;
+  /** Alias para campos calculados (`mcc__<clave>`). */
+  alias?: string;
+  tipo?: string;
+  es_resultado?: boolean;
+  /** Con actividad en los últimos 90 días y sin archivar. */
+  activa?: boolean;
+  archivada?: boolean;
+  ultima_actividad?: string | null;
 }
 
 /** Etiqueta legible de un token `metacc:`. null si no lo es. */
@@ -2653,7 +2704,11 @@ export const METRIC_GLOSSARY: Record<string, string> = {
   video_thruplay:
     'Reproducciones que llegaron a 15 segundos o al final del video. Mide interés real, no un scroll.',
   results:
-    'Resultados según el objetivo de cada campaña (suma de leads, compras e inicios de pago).',
+    'Suma fija de leads, compras e inicios de pago que reporta Meta. No depende del objetivo de cada campaña.',
+  resultados_custom:
+    'Suma de las conversiones personalizadas de Meta que el equipo marcó como resultado de este cliente (ajustes → Meta → Conversiones personalizadas).',
+  coste_por_resultado_custom:
+    'Cuánto cuesta, en promedio, cada resultado personalizado: gasto de Meta ÷ resultados personalizados. Cuanto MÁS BAJO, mejor.',
   post_engagement:
     'Interacciones totales con los anuncios: reacciones, comentarios, compartidos y clics.',
   // ── Las que solo existen a nivel de cuenta ──
@@ -2724,6 +2779,7 @@ export const LOWER_IS_BETTER = new Set([
   'hm_tasa_reembolso',
   'ventas_reembolsado',
   'ventas_reembolsado_count',
+  'coste_por_resultado_custom',
 ]);
 
 /** ¿Para esta métrica, bajar es mejorar? */

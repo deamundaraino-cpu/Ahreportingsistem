@@ -1060,8 +1060,11 @@ async function main() {
   // El editor y el agente usan `metricCrossesDimension`; el selector de campos,
   // `fieldCrossesDimension` del registro canónico. Hoy discrepan en 170 pares
   // (sobre todo dimensiones de ventas/Hotmart y utm_id): es deuda conocida. Esto
-  // impide que crezca sin que nadie lo vea.
-  const DISCREPANCIAS_CONOCIDAS = 170;
+  // impide que crezca sin que nadie lo vea. 174 desde el 2026-09-28: las dos
+  // métricas de resultados personalizados (`resultados_custom`,
+  // `coste_por_resultado_custom`) heredan la MISMA pareja que cualquier métrica
+  // de anuncios (`utm_id`, `platform`), no una discrepancia nueva.
+  const DISCREPANCIAS_CONOCIDAS = 174;
   let difs = 0;
   for (const m of Object.keys(METRIC_META)) {
     for (const d of Object.keys(DIMENSION_META)) {

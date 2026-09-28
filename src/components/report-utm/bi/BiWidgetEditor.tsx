@@ -452,12 +452,19 @@ export function BiWidgetEditor({
     label: `${f.label} (Sheet)`,
   }));
 
-  // Conversiones personalizadas de Meta → métricas "metacc:<clave>". Se reparten
-  // por fecha y por campaña (ver `metricCrossesDimension`).
-  const ccMetricOptions = customConversions.map((c) => ({
+  // Conversiones personalizadas de Meta → métricas "metacc:<clave>". Viajan con
+  // el gasto: se reparten por fecha, campaña, conjunto y anuncio. Las que llevan
+  // 90 días sin actividad (o archivadas) van aparte, tras «Ver todas» o la
+  // búsqueda, salvo que el widget ya las use.
+  const ccOpt = (c: (typeof customConversions)[number]) => ({
     value: `metacc:${c.key}`,
     label: `${c.label} (Meta · conversión)`,
-  }));
+  });
+  const ccEnUso = (c: (typeof customConversions)[number]) =>
+    (type === 'table' ? tableCols : [String(metric)]).includes(`metacc:${c.key}`);
+  const ccVigente = (c: (typeof customConversions)[number]) => c.activa !== false || ccEnUso(c);
+  const ccMetricOptions = customConversions.filter(ccVigente).map(ccOpt);
+  const ccAntiguasOptions = customConversions.filter((c) => !ccVigente(c)).map(ccOpt);
   const ccLabel = (k: string) =>
     k.startsWith('metacc:')
       ? `${customConversions.find((c) => `metacc:${c.key}` === k)?.label ?? k.slice(7)} (Meta · conversión)`
@@ -544,6 +551,11 @@ export function BiWidgetEditor({
     { key: 'sheet', title: 'Campos de Sheet', items: sheetMetricOptions },
     { key: 'offline', title: 'Columnas de Sheet offline', items: offlineMetricOptions },
     { key: 'metacc', title: 'Conversiones personalizadas de Meta', items: ccMetricOptions },
+    {
+      key: 'metacc_antiguas',
+      title: 'Conversiones de Meta sin actividad (90 días)',
+      items: showAllMetrics || searchQ ? ccAntiguasOptions : [],
+    },
   ];
 
   // Sin "ver todas" ni búsqueda, del catálogo fijo solo se muestran las
@@ -1077,6 +1089,7 @@ export function BiWidgetEditor({
                       sheetViews={sheetViews}
                       leadSegments={leadSegments}
                       leadFields={leadFields}
+                      customConversions={customConversions}
                     />
                     <div className="grid grid-cols-2 gap-2">
                       <div>
