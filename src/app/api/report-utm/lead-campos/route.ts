@@ -112,10 +112,18 @@ export async function POST(req: NextRequest) {
     sin_mapear: body.sin_mapear,
     activo: body.activo,
     orden: body.orden,
+    // Solo si vienen: un guardado desde el editor antiguo no los conoce y no
+    // debe pisar lo que decidió la activación automática.
+    ...(body.tipo !== undefined ? { tipo: body.tipo } : {}),
+    ...(body.sincronizar_opciones !== undefined
+      ? { sincronizar_opciones: !!body.sincronizar_opciones }
+      : {}),
   });
 
   if (res.error) return NextResponse.json({ error: res.error }, { status: 400 });
-  return NextResponse.json({ data: { id: res.id, clave } });
+  // `renombres`: respuestas que cambiaron de nombre conservando su clave (y
+  // cuyos segmentos se reescribieron). La UI lo cuenta.
+  return NextResponse.json({ data: { id: res.id, clave, renombres: res.renombres ?? [] } });
 }
 
 export async function DELETE(req: NextRequest) {

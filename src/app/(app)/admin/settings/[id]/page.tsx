@@ -14,7 +14,7 @@ import { S2SIntegrationCard } from '@/components/report-utm/S2SIntegrationCard';
 import { OutboundWebhooksCard } from '@/components/report-utm/OutboundWebhooksCard';
 import { MonedaReporteCard } from '@/components/report-utm/MonedaReporteCard';
 import { FiltroAtribucionCard } from '@/components/report-utm/FiltroAtribucionCard';
-import { LeadCamposCard } from '@/components/report-utm/LeadCamposCard';
+import { LeadsConfigCard } from '@/components/report-utm/leads/LeadsConfigCard';
 import { BiClienteGoalsCard } from '@/components/report-utm/BiClienteGoalsCard';
 import { BiClienteBrandingCard } from '@/components/report-utm/BiClienteBrandingCard';
 
@@ -57,7 +57,7 @@ export default async function ClientDetailPage(props: { params: Promise<{ id: st
             <>
               <MonedaReporteCard
                 rtmClienteId={rtmId}
-                inicial={datos.moneda}
+                resuelta={datos.moneda}
                 ultimasTasas={datos.ultimasTasas}
               />
               <BiClienteGoalsCard clienteId={rtmId} initialGoals={datos.goals} />
@@ -103,16 +103,17 @@ export default async function ClientDetailPage(props: { params: Promise<{ id: st
                 clienteId={rtmId}
                 webhooks={datos.outbound as Parameters<typeof OutboundWebhooksCard>[0]['webhooks']}
               />
-              {/* Qué leads cuentan y cómo se nombran sus campos: son las reglas
-                  que aplican a todo lo que entra por las conexiones de arriba. */}
+              {/* Qué leads cuentan: la regla aplica a todo lo que entra por las
+                  conexiones de arriba. Qué se mide de ellos está en «Leads». */}
               <FiltroAtribucionCard
                 clienteId={rtmId}
                 inicial={datos.reglaExclusion}
                 migracionAplicada={datos.migracionExclusion}
+                migracionDuplicados={datos.migracionDuplicados}
               />
-              <LeadCamposCard clienteId={rtmId} />
             </>
           ),
+          leads: <LeadsConfigCard clienteId={rtmId} />,
         }
       : undefined;
 

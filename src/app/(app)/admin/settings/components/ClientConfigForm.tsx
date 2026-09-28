@@ -268,12 +268,70 @@ import {
   PESTANAS,
   ETIQUETA_PESTANA,
   CLAVES_POR_PESTANA,
+  SECRETO_GUARDADO,
+  SECRETOS_HOTMART,
   construirConfigEfectiva,
   construirParche,
   huella,
   huellasPorPestana,
   type Pestana,
 } from '@/lib/clientes/config-pestanas';
+
+/**
+ * Campo de un secreto de Hotmart.
+ *
+ * El navegador no recibe el valor guardado: llega `SECRETO_GUARDADO`, que aquí
+ * se pinta como un campo vacío con aviso. Solo se envía si el usuario escribe
+ * algo, y vaciar lo escrito vuelve a «conservar el guardado». Borrarlo de
+ * verdad es «Quitar», que manda `''` (el servidor lo guarda como `null`).
+ */
+function CampoSecreto({
+  id,
+  valor,
+  hayGuardado,
+  onCambio,
+}: {
+  id: string;
+  valor: unknown;
+  hayGuardado: boolean;
+  onCambio: (valor: string) => void;
+}) {
+  const conservado = valor === SECRETO_GUARDADO;
+  const texto = conservado ? '' : String(valor ?? '');
+  return (
+    <>
+      <Input
+        id={id}
+        type="password"
+        autoComplete="new-password"
+        value={texto}
+        placeholder={
+          conservado ? '•••••••• guardado' : hayGuardado && !texto ? 'Se borrará al guardar' : ''
+        }
+        onChange={(e) =>
+          onCambio(e.target.value === '' && hayGuardado ? SECRETO_GUARDADO : e.target.value)
+        }
+        className="bg-background border-input"
+      />
+      {hayGuardado && (
+        <p className="text-xs text-muted-foreground/70">
+          {conservado
+            ? 'Guardado y cifrado. Escribe uno nuevo solo si quieres reemplazarlo. '
+            : texto
+              ? 'Reemplazará al guardado cuando guardes. '
+              : 'Se borrará al guardar. '}
+          <button
+            type="button"
+            onClick={() => onCambio(conservado ? '' : SECRETO_GUARDADO)}
+            className="underline hover:text-foreground/90"
+          >
+            {conservado ? 'Quitar' : 'Conservar el guardado'}
+          </button>
+        </p>
+      )}
+    </>
+  );
+}
 
 /**
  * Los callbacks de OAuth vuelven a esta página con su resultado en la
@@ -296,6 +354,7 @@ const ANCLAS: Record<string, Pestana> = {
   google: 'google',
   hotmart: 'hotmart',
   tiktok: 'tiktok',
+  leads: 'leads',
 };
 
 /**
@@ -708,6 +767,18 @@ export function ClientConfigForm({
     const res = await guardarConfigPestana(cliente.id, p, parche);
     if (res.success) {
       setGuardado((prev) => ({ ...prev, [p]: huella(parche) }));
+      if (p === 'hotmart') {
+        // Lo tecleado ya está cifrado en la base: el campo vuelve al marcador
+        // y el secreto deja de vivir en la memoria de la página.
+        sincronizarConServidor('hotmart', (prev) =>
+          Object.fromEntries(
+            Object.keys(SECRETOS_HOTMART).map((k) => [
+              k,
+              typeof prev[k] === 'string' && prev[k].trim() !== '' ? SECRETO_GUARDADO : prev[k],
+            ])
+          )
+        );
+      }
       if (p === 'google') {
         // Lo guardado ya tiene (o tendrá) datos colgando de su sheet_id: a
         // partir de aquí el documento no se cambia, se elimina y se añade otro.
@@ -909,10 +980,23 @@ export function ClientConfigForm({
     }
   }
 
+  /**
+   * ¿El servidor tiene guardado este secreto de Hotmart? Se mira la prop, que
+   * `router.refresh()` pone al día tras guardar, y el propio estado del campo.
+   */
+  function hayGuardado(clave: string) {
+    return cliente.config_api?.[clave] === SECRETO_GUARDADO || config[clave] === SECRETO_GUARDADO;
+  }
+
   async function testHotmart() {
     setTestStatus((prev) => ({ ...prev, hotmart: { loading: true } }));
     try {
-      const res = await testHotmartConnection(config, cliente.id);
+      // Solo la pestaña de Hotmart, y ya derivada: el servidor parte de lo
+      // guardado y pone encima lo tecleado (los secretos enmascarados no viajan).
+      const res = await testHotmartConnection(
+        construirParche(configEfectiva, 'hotmart'),
+        cliente.id
+      );
       const now = new Date().toISOString();
       if (res.error) {
         sincronizarConServidor('hotmart', {
@@ -1545,6 +1629,39 @@ export function ClientConfigForm({
                 <p className="text-xs text-muted-foreground/70">
                   Estos textos aparecerán como botones de filtro rápido en la vista superior del
                   embudo de Meta Ads.
+                </p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="alcance_campanas" className="text-foreground/90">
+                  Campañas de este cliente (cuenta compartida)
+                </Label>
+                <Input
+                  id="alcance_campanas"
+                  placeholder="Somos, SR, -Sur Profundo"
+                  value={config.alcance_campanas || ''}
+                  onChange={(e) => setConfig({ ...config, alcance_campanas: e.target.value })}
+                  className="bg-background border-input"
+                />
+                <p className="text-xs text-muted-foreground/70">
+                  Solo si la cuenta publicitaria la comparte con otro cliente. Una campaña es suya
+                  si su nombre contiene alguno de estos textos; un texto con «-» delante la excluye.
+                  Recorta el gasto y el cruce de leads de los informes. Vacío = toda la cuenta.
+                </p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="zona_horaria" className="text-foreground/90">
+                  Zona horaria de los informes
+                </Label>
+                <Input
+                  id="zona_horaria"
+                  placeholder="Vacío = la de la cuenta de Meta (p. ej. America/Santiago)"
+                  value={config.zona_horaria || ''}
+                  onChange={(e) => setConfig({ ...config, zona_horaria: e.target.value.trim() })}
+                  className="bg-background border-input"
+                />
+                <p className="text-xs text-muted-foreground/70">
+                  Define dónde empieza y termina cada día para leads y ventas. Por defecto se usa la
+                  zona de la cuenta de Meta, que es la del gasto; escríbela solo para forzar otra.
                 </p>
               </div>
             </CardContent>
@@ -2917,11 +3034,20 @@ export function ClientConfigForm({
             );
           })()}
 
-          {/* ─── Campos de Sheet ──────────────────────────────────────────── */}
-          {/* La card de arriba define la CONEXIÓN (documento, pestañas, fecha);
-                esta define QUÉ SE MIDE. Va aparte porque un campo cruza varias
-                pestañas y puede cruzar varios documentos. */}
-          <SheetCamposSection clienteId={cliente.id} />
+          {/* Los campos de Sheet (QUÉ se mide de cada documento) se configuran
+              en la pestaña «Leads», junto a las preguntas de los formularios:
+              un solo sitio para los datos de leads. Aquí queda la CONEXIÓN. */}
+          <p className="text-xs text-muted-foreground">
+            Qué se mide de cada Sheet (sus campos y vistas) se configura en la pestaña{' '}
+            <button
+              type="button"
+              onClick={() => intentarIr('leads')}
+              className="underline hover:text-foreground"
+            >
+              Leads
+            </button>
+            .
+          </p>
 
           {slots?.google}
           <BarraGuardar
@@ -3057,12 +3183,11 @@ export function ClientConfigForm({
                 <Label htmlFor="hotmart_client_secret" className="text-foreground/90">
                   Client Secret
                 </Label>
-                <Input
+                <CampoSecreto
                   id="hotmart_client_secret"
-                  type="password"
-                  value={config.hotmart_client_secret || ''}
-                  onChange={(e) => setConfig({ ...config, hotmart_client_secret: e.target.value })}
-                  className="bg-background border-input"
+                  valor={config.hotmart_client_secret}
+                  hayGuardado={hayGuardado('hotmart_client_secret')}
+                  onCambio={(v) => setConfig({ ...config, hotmart_client_secret: v })}
                 />
               </div>
 
@@ -3081,28 +3206,26 @@ export function ClientConfigForm({
                       <Label htmlFor="hotmart_token" className="text-foreground/90">
                         Access Token Temporal (opcional)
                       </Label>
-                      <Input
+                      <CampoSecreto
                         id="hotmart_token"
-                        type="password"
-                        value={config.hotmart_token || ''}
-                        onChange={(e) => setConfig({ ...config, hotmart_token: e.target.value })}
-                        className="bg-background border-input"
+                        valor={config.hotmart_token}
+                        hayGuardado={hayGuardado('hotmart_token')}
+                        onCambio={(v) => setConfig({ ...config, hotmart_token: v })}
                       />
                     </div>
                     <div className="space-y-2">
                       <Label htmlFor="hotmart_basic" className="text-foreground/90">
                         Basic Auth (Base64 Client ID:Secret)
                       </Label>
-                      <Input
+                      <CampoSecreto
                         id="hotmart_basic"
-                        type="password"
-                        value={config.hotmart_basic || ''}
-                        onChange={(e) => setConfig({ ...config, hotmart_basic: e.target.value })}
-                        className="bg-background border-input"
+                        valor={config.hotmart_basic}
+                        hayGuardado={hayGuardado('hotmart_basic')}
+                        onCambio={(v) => setConfig({ ...config, hotmart_basic: v })}
                       />
                       <p className="text-xs text-muted-foreground/70">
-                        Se calcula automáticamente desde Client ID + Secret al guardar. Solo edítalo
-                        si tienes el token Basic directamente.
+                        Se calcula automáticamente desde Client ID + Secret al guardar (también al
+                        cambiar el Secret). Solo edítalo si tienes el token Basic directamente.
                       </p>
                     </div>
                   </div>
@@ -3331,6 +3454,22 @@ export function ClientConfigForm({
             guardando={guardandoPestana}
             onGuardar={guardarPestana}
           />
+        </TabsContent>
+
+        <TabsContent
+          value="leads"
+          forceMount
+          className="space-y-6 outline-none data-[state=inactive]:hidden"
+        >
+          {/* Formularios (preguntas y respuestas) y Sheets: todo lo que se
+              mide de los leads, configurado en un solo sitio. */}
+          {slots?.leads ?? (
+            <p className="text-sm text-muted-foreground">
+              Las preguntas de formulario se preparan al abrir la ficha. Recarga la página si no
+              aparecen.
+            </p>
+          )}
+          <SheetCamposSection clienteId={cliente.id} />
         </TabsContent>
 
         <TabsContent

@@ -6,6 +6,8 @@ import { hasAgencyGoogleConnection, getAgencyAccessToken } from './google-auth';
 import { sanitizarColumna, parseNumeroSheet } from '../sheets/campos';
 import type { SheetRawRow } from '../sheets/campos';
 import { fetchAllRows } from '../supabase-paginate';
+import { colombiaDateOf } from '../colombia-date';
+import { conZonaDeCliente } from '../zona-activa';
 
 // La capa cruda del sync es la entrada del motor de campos: el tipo vive allí,
 // que es client-safe, y se reexporta para no romper a quien ya lo importa desde
@@ -416,7 +418,25 @@ export function parseDate(raw: string): string {
   //
   // El `(?!\d)` cierra el año: sin él "01/09/20261" pasaba como 2026-09-01.
   let iso = '';
-  if (/^\d{4}-\d{2}-\d{2}(?!\d)/.test(t)) {
+  // Un instante con desfase explícito (`2026-09-10T23:30:00-05:00`, `…+0000`,
+  // `…Z`: el `created_time` de las exportaciones de Meta) es un INSTANTE, no un
+  // día: cortarlo por los 10 primeros caracteres le daba el día de la zona en que
+  // se escribió, no el del cliente. Se pasa a su día con `colombiaDateOf`, que
+  // dentro de la sincronización de un cliente usa SU zona (zona-activa.ts).
+  const conDesfase = t.match(
+    /^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?)\s*(Z|[+-]\d{2}:?\d{2})$/i
+  );
+  if (conDesfase) {
+    const off =
+      conDesfase[3].toUpperCase() === 'Z'
+        ? 'Z'
+        : conDesfase[3].replace(/^([+-]\d{2})(\d{2})$/, '$1:$2');
+    const ms = Date.parse(`${conDesfase[1]}T${conDesfase[2]}${off}`);
+    if (!Number.isNaN(ms)) iso = colombiaDateOf(new Date(ms));
+  }
+  if (iso) {
+    // ya resuelto por el desfase
+  } else if (/^\d{4}-\d{2}-\d{2}(?!\d)/.test(t)) {
     iso = t.slice(0, 10);
   } else {
     const dmy = t.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4}|\d{2})(?!\d)/);
@@ -1862,7 +1882,14 @@ export interface TabSyncResult {
  * final; hasta entonces los datos anteriores siguen intactos, que es lo que hace
  * que una corrida a medias no deje al cliente sin dato.
  */
+/** Una pestaña, en la zona horaria del cliente (ver `parseDate` y zona-activa.ts). */
 export async function syncTabConversiones(
+  ...args: Parameters<typeof syncTabConversionesEnZona>
+): ReturnType<typeof syncTabConversionesEnZona> {
+  return conZonaDeCliente({ publico: args[1] }, () => syncTabConversionesEnZona(...args));
+}
+
+async function syncTabConversionesEnZona(
   supabase: any,
   clienteId: string,
   sheetCfg: ConversionesConfig,
@@ -1924,7 +1951,14 @@ export interface SyncClienteConversionesOptions {
   recalcularCampos?: boolean;
 }
 
+/** Todo el cliente, en su zona horaria (ver `parseDate` y zona-activa.ts). */
 export async function syncClienteConversiones(
+  ...args: Parameters<typeof syncClienteConversionesEnZona>
+): ReturnType<typeof syncClienteConversionesEnZona> {
+  return conZonaDeCliente({ publico: args[1] }, () => syncClienteConversionesEnZona(...args));
+}
+
+async function syncClienteConversionesEnZona(
   supabase: any,
   clienteId: string,
   rawConfig: unknown,

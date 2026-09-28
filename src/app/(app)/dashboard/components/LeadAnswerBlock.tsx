@@ -40,6 +40,10 @@ interface Props {
   pestanaNombre?: string;
   rangoLabel?: string;
   filtroLabel?: string;
+  /** Inversión de la pestaña, para el CPL por respuesta (`def.mostrarCpl`). */
+  inversion?: number | null;
+  /** Formato de importes en la moneda de reporte del cliente. */
+  formatearMoneda?: (n: number) => string;
 }
 
 const nf = new Intl.NumberFormat('es-CO');
@@ -156,6 +160,8 @@ export function LeadAnswerBlock({
   pestanaNombre = 'Vista general',
   rangoLabel = '',
   filtroLabel = '',
+  inversion = null,
+  formatearMoneda = (n: number) => `${nf.format(Math.round(n))}`,
 }: Props) {
   const [hover, setHover] = useState<number | null>(null);
 
@@ -199,6 +205,20 @@ export function LeadAnswerBlock({
       ? def.clave
       : null;
 
+  // Una pregunta que no llegó porque la carga se quedó a medias (sin la
+  // migración 090 hay un tope de cuatro preguntas por carga) NO es una pregunta
+  // borrada. Antes salía el mismo mensaje y mandaba a buscar en el catálogo un
+  // problema que no estaba ahí (auditoría del 2026-09-26).
+  if (!claveAusente && res.campoAusente && dataset?.incompleto) {
+    return (
+      <Vacio
+        titulo={def.title || 'Respuestas de formulario'}
+        texto="No se pudieron cargar las respuestas de esta pregunta"
+        detalle="La carga de respuestas se quedó incompleta (demasiadas preguntas a la vez o la consulta tardó demasiado). Recarga la página; si sigue igual, reduce el número de preguntas en las pestañas o aplica la migración 090, que las carga todas en una sola consulta."
+      />
+    );
+  }
+
   if (claveAusente || res.campoAusente) {
     return (
       <Vacio
@@ -224,6 +244,16 @@ export function LeadAnswerBlock({
   }
 
   const maxLeads = res.buckets.reduce((m, b) => Math.max(m, b.leads), 0);
+  // CPL por respuesta = inversión de la pestaña ÷ leads de la respuesta. Con un
+  // filtro de campañas propio del bloque no se puede: la inversión que llega es
+  // la de la pestaña entera y dividiría gasto y leads recortados distinto.
+  const vFiltro = def.campaignFilter?.value;
+  const filtroPropio = Array.isArray(vFiltro)
+    ? vFiltro.length > 0
+    : String(vFiltro ?? '').trim() !== '';
+  const conCpl = !!def.mostrarCpl && !filtroPropio && (inversion ?? 0) > 0;
+  const cplDe = (leads: number) =>
+    conCpl && leads > 0 ? formatearMoneda((inversion as number) / leads) : '—';
 
   return (
     <Card className="bg-card/60 border-border">
@@ -394,6 +424,14 @@ export function LeadAnswerBlock({
                 <span className="text-sm font-semibold text-foreground w-16 text-right shrink-0 tabular-nums">
                   {nf.format(b.leads)}
                 </span>
+                {conCpl && (
+                  <span
+                    className="text-xs text-foreground/80 w-20 text-right shrink-0 tabular-nums"
+                    title="CPL de esta respuesta: inversión de la pestaña ÷ sus leads"
+                  >
+                    {b.esResto ? '—' : cplDe(b.leads)}
+                  </span>
+                )}
 
                 {def.showDelta !== false && (
                   <span className="w-16 text-right shrink-0 text-xs tabular-nums">

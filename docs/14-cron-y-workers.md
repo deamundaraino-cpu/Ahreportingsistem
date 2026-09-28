@@ -61,6 +61,25 @@ budget no puede convertirse en budget+timeout. Y no reclama un job si no le
 quedan al menos 60 s: por debajo de eso el aborto era seguro y sólo servía para
 quemarle un intento a un job sano.
 
+### Plazo de reintentos por petición (`conDeadline`)
+
+Los reintentos ante 429/5xx (`withRetry`, `src/lib/rate-limit.ts`) paran al llegar a
+un plazo. Ese plazo era una variable **global del proceso**: `/api/worker` la fijaba
+a ahora + 50 s y, en el servidor de larga duración del VPS, `/api/worker/hotmart`
+—que nunca la toca— heredaba el plazo ya vencido y se quedaba sin reintentos. Ahora
+cada ruta abre el suyo con `conDeadline(instante, fn)` (un `AsyncLocalStorage`):
+50 s en `/api/worker`, 45 s en `/api/worker/hotmart` y en `/api/worker/reconcile`.
+`setRetryDeadline` dentro de ese contexto solo ajusta el de la petición; fuera, sigue
+siendo global, así que el código nuevo debe usar `conDeadline`.
+
+Además, cada **intento** de una llamada a Hotmart lleva su propio timeout de 20 s
+(`HOTMART_TIMEOUT_MS`) y la petición de token uno de 15 s (`TIMEOUT_TOKEN_MS`): sin
+ellos, una conexión que Hotmart dejaba colgada colgaba la corrida entera en el VPS,
+que no tiene el tope de 60 s. Y el memo de tasas de cambio (`getUsdRate`) solo
+recuerda **10 minutos** un resultado sin la tasa del día (`none` o `stale`): antes, una
+API de FX caída cinco minutos dejaba esa moneda sin convertir hasta el siguiente
+reinicio del proceso.
+
 ## Autenticación
 
 Todos los endpoints de cron/worker exigen:
@@ -82,6 +101,14 @@ usa `colombiaToday()` / `colombiaYesterday()` de `src/lib/date-utils.ts`, y los
 presets del dashboard hacen lo mismo — antes usaban la hora del navegador, así
 que un usuario fuera de UTC−5 pedía días que en Colombia aún no existían.
 
+`src/lib/zona-horaria.ts` prepara una zona **por cliente** (`config.zona_horaria`),
+pero **no está activada** y no tiene consumidores. La cuenta de Meta de Cris
+tributario está en `America/Santiago`, así que sus ventas entre las 22:00 y las
+24:00 de Chile caen en el día siguiente respecto al gasto. No se arregla solo para
+Hotmart: los leads se agrupan en SQL con `AT TIME ZONE 'America/Bogota'`, y cambiar
+solo las ventas desalinearía ventas y leads del mismo día. Activarlo es un cambio de
+todo el módulo a la vez, con recálculo de `hotmart_ventas.fecha_venta` y reagregado.
+
 ## Componentes
 
 | Componente                  | Dónde corre | Qué hace                                                         |
@@ -90,7 +117,7 @@ que un usuario fuera de UTC−5 pedía días que en Colombia aún no existían.
 | `POST /api/worker/enqueue`  | app         | Crea los jobs (planner). No ejecuta nada.                        |
 | `POST /api/worker/run-jobs` | app         | Drena la cola. **Ejecutor de respaldo.**                         |
 | `GET /api/worker`           | app         | Sincroniza métricas de un rango. Lo invoca el runner.            |
-| Webhooks `report_utm`       | app         | Ingesta en tiempo real de ventas (Hotmart, Shopify, Cartpanda).  |
+| Webhooks `report_utm`       | app         | Tiempo real: ventas de Hotmart y GHL, leads de Meta y GHL.       |
 
 ## Los crons ya no los pone la plataforma
 
@@ -110,12 +137,16 @@ desconectados sin aviso. Ver
 
 ## Horarios del sync-worker (hora Colombia)
 
-| Hora           | Plan             | Encola                                                                                                                             |
-| -------------- | ---------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| 05:00          | `diario`         | Métricas de ayer y hoy (todos los clientes) + Sheets (**un job por cliente**) + Meta Leads + leads de GoHighLevel + agregación UTM |
-| 14:00          | `diario`         | Segunda pasada: recoge las correcciones de atribución del día                                                                      |
-| día 7, 03:00   | `cierre_mes`     | Re-descarga forzada del mes anterior (ventana de 35 días) y congelado                                                              |
-| domingo, 03:00 | `reconciliacion` | Audita el gasto de Meta contra el real de cada cuenta y repara los días con desglose incompleto                                    |
+| Hora           | Plan             | Encola                                                                                                                                                                          |
+| -------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 05:00          | `diario`         | Métricas de ayer y hoy (todos los clientes) + Sheets (**un job por cliente**) + Meta Leads + leads y oportunidades de GoHighLevel + leads de TikTok + reconciliación de Hotmart |
+| 14:00          | `diario`         | Segunda pasada: recoge las correcciones de atribución del día                                                                                                                   |
+| día 7, 03:00   | `cierre_mes`     | Re-descarga forzada del mes anterior (ventana de 35 días) y congelado                                                                                                           |
+| domingo, 03:00 | `reconciliacion` | Audita el gasto de Meta contra el real de cada cuenta y repara los días con desglose incompleto                                                                                 |
+
+Los planes `diario` y `reconciliacion` encolan además un `hotmart_reconciliar` por
+cliente con Hotmart: la reconciliación de Hotmart es **diaria** desde el 2026-09-25
+(antes solo el domingo). Ver [`/api/worker/hotmart`](#apiworkerhotmart--backfill-reclasificación-y-reconciliación-de-hotmart).
 
 Y dos entradas que no encolan nada: llaman directamente a un endpoint de cron.
 
@@ -159,7 +190,9 @@ franja: pasado su día ya no son accionables y solo entierran el problema de hoy
 bajo las lápidas de las semanas anteriores.
 
 Tipos de job: `metricas`, `sheets_conversiones`, `meta_leads`, `ghl_leads`,
-`utm_aggregate`, `cierre_mes`, `reconciliar`. El tipo `sheets_leads` ya no se
+`utm_aggregate`, `cierre_mes`, `reconciliar`, `hotmart_ventas` (backfill o
+reclasificación) y `hotmart_reconciliar`; los dos últimos van a
+`/api/worker/hotmart`. El tipo `sheets_leads` ya no se
 encola (migración 059) pero sigue reconocido: `sync_jobs` puede tener filas
 históricas con él y el runner las enruta al worker de conversiones.
 
@@ -179,9 +212,13 @@ Para cada cliente y cada día del rango:
    demografía. Ventana de atribución fija en `7d_click` + `1d_view` para que el
    número signifique lo mismo en todas las cuentas.
 2. **TikTok Ads**: reportes a nivel campaña/anuncio/grupo.
-3. **Hotmart**: ventas (APPROVED/COMPLETE) + comisiones, **convertidas a USD**
-   con las tasas de `fx_rates`. Antes solo se sumaba lo facturado en USD y el
-   resto entraba como 0.
+3. **Hotmart**: historial en **todos los estados** (`ESTADOS_API_SYNC`; sin esa
+   lista la API solo devuelve los `COMPLETE`, ver
+   [doc 08](./08-integraciones.md#estados-que-se-piden-a-la-api)) + comisiones. Se
+   guardan en `hotmart_ventas` y el día se agrega desde la tabla, **convertido a
+   USD** con las tasas de `fx_rates`. Si una aprobación movió una venta a otro día,
+   la fecha vieja se reagrega al final de la corrida (`fechasTocadas`): si no, la
+   venta contaba en los dos días.
 4. **GA4**: sesiones y eventos (si está configurado).
 5. `upsert` en `metricas_diarias`.
 
@@ -192,6 +229,16 @@ Sin params sincroniza "ayer" en hora Colombia.
 datos, los campos de esa fuente se **omiten** del upsert en lugar de escribir
 ceros. Aplica a las cuatro fuentes (antes solo a Meta y TikTok, así que un fallo
 de Hotmart o GA4 borraba ventas y sesiones reales).
+
+En Hotmart la decisión vive en `src/lib/hotmart/guarda.ts` (`decidirGuardaHotmart`,
+pura y probada). Si la descarga no vino completa, no se agrega nada. Si vino
+completa, para las fechas que `hotmart_ventas` ya cubre (desde la primera
+`fecha_venta` del cliente) **la tabla manda y su cero es real**: un día cuyo único
+pedido se reembolsó, o del que una venta se movió al aprobarse. La guarda de
+cero/caída (cero con datos previos, o menos del 60 % de 5 o más transacciones
+previas) solo protege las fechas anteriores, heredadas del worker viejo. Los
+reembolsos cuentan como «hubo datos»: antes un día con solo reembolsos se tomaba por
+fallo y conservaba para siempre la facturación devuelta.
 
 ### `/api/worker/google-sheets-conversiones` — conversiones offline
 
@@ -238,16 +285,73 @@ Cada corrida deja un registro en `conversiones_offline_sync_log` (filas ok,
 descartadas por fecha inválida o cantidad ≤ 0, y avisos por pestaña), que la UI
 de `/admin/settings` muestra bajo cada sheet.
 
+### `/api/worker/hotmart` — backfill, reclasificación y reconciliación de Hotmart
+
+Params: `cliente_id`, `desde` (def. `hasta` − 30 días), `hasta` (def. hoy) y `modo`,
+que el runner pone según el job:
+
+| Modo           | Job                                        | Qué hace                                                                                  |
+| -------------- | ------------------------------------------ | ----------------------------------------------------------------------------------------- |
+| `backfill`     | `hotmart_ventas`                           | Descarga el rango a `hotmart_ventas`, día a día y **hacia delante**                       |
+| `reclasificar` | `hotmart_ventas` con `params.reclasificar` | Reescribe `tipo`/`tab_id` leyendo la tabla. Cero peticiones a la API                      |
+| `reconciliar`  | `hotmart_reconciliar`                      | Reembolsos de 90 días + barrido de aprobaciones tardías + atribución por lead (ver abajo) |
+
+**Los tres reagregan** `metricas_diarias` en las fechas que cambian
+(`reagregarFechasHotmart`), salvo los meses de `periodos_cerrados` y sin tocar los
+campos de GA4 que conviven en `hotmart_funnel_data`. Antes solo tocaban
+`hotmart_ventas` y el dashboard seguía con la foto vieja; la reconciliación incluso
+devolvía las fechas a reagregar y nadie las usaba.
+
+**La reconciliación corre a diario**, no solo el domingo: `sales/history` filtra por
+fecha de **orden**, así que un reembolso de hoy sobre una compra de hace dos semanas
+no aparece nunca en la sync del día, y esperar al domingo dejaba hasta siete días
+de facturación inflada. En cada corrida:
+
+1. **Reembolsos** (`reconciliarReembolsos`, 90 días): compara el estado de la API con
+   el guardado, leyendo por lotes de 200 en vez de un SELECT por transacción. El
+   UPDATE es condicional sobre el estado leído (si el webhook lo cambió entre medias,
+   no lo pisa), **`evento_ts` nunca retrocede** —antes se escribía `approved_date` y un
+   reintento tardío del `PURCHASE_APPROVED` resucitaba la venta— y `reembolsada_at` es
+   la fecha en que se **ve** reembolsada (la API no da la del reembolso), conservando
+   la primera.
+2. **Aprobaciones tardías** (`barrerAprobacionesTardias`): vuelve a pedir los últimos
+   3 días. Un pago aprobado días después de la orden (boleto, pix, transferencia) no
+   entraba nunca por la sync diaria, que solo re-pide ayer y hoy.
+3. **Atribución por lead** de los últimos 30 días (`reatribuirGuardadas`), para las
+   ventas cuyo lead llegó después. Solo con la migración 089 aplicada; no cambia los
+   totales diarios.
+
+**Respuesta.** Habla el idioma del runner: `results` (uno por cliente, con `status`
+`ok` | `error` | `skipped_budget`), `debugLogs`, `filas_escritas`, `partial` y
+`resumeFrom`. Antes devolvía `resultados`/`logs` y `sync_runs` marcaba 0 filas
+escritas en todas las corridas; el runner ahora toma `filas_escritas` del cuerpo
+cuando el worker lo trae. Devuelve `ok: false` si ningún cliente salió bien (antes,
+`ok: true` aunque fallaran todos). Presupuesto de 45 s: al agotarse, los clientes que
+faltan salen como `skipped_budget`, y un backfill de un solo cliente cortado a medias
+devuelve `resumeFrom` para que el runner reencole `resumeFrom → fecha_fin` sin
+repetir lo hecho.
+
 ### `/api/cron/refresh-meta-tokens` / `refresh-hotmart-tokens`
 
-Renuevan tokens antes de que caduquen (Meta < 10 días, Hotmart < 30 min).
+Renuevan tokens antes de que caduquen (Meta < 10 días, Hotmart < 30 min). En Hotmart,
+un refresco fallido relee la config antes de marcar la conexión como `expired`: si
+otro proceso (el refresco en línea del worker) ya rotó el refresh token, el cliente
+sale como `skipped_concurrent` y no como caído.
 
-### `/api/cron/report-utm/aggregate`
+### Agregación UTM (retirada)
 
-Reagrega `report_utm.sales_events` en `hourly_metrics`. Recalcula el rango
-horario completo afectado: antes seleccionaba por `received_at` pero borraba por
-hora de venta, así que las ventas antiguas desaparecían y los conteos podían
-**bajar** en cada corrida.
+La ruta `/api/cron/report-utm/aggregate` ya no existe y el planificador no encola
+`utm_aggregate` (el tipo se conserva en `sync_jobs_tipo_check` por las filas
+históricas). Los informes leen `sales_events` y `lead_events` directamente.
+
+### Leads de GoHighLevel, oportunidades de GHL y leads de TikTok
+
+El plan diario encola además `ghl_leads`, `ghl_oportunidades` y `tiktok_leads`
+(`src/lib/sync/planner.ts`). **Requiere la migración 094**: el `CHECK` de
+producción no los admitía (ni siquiera `ghl_leads`) y el INSERT rechazado abortaba
+el plan entero, así que la reconciliación diaria de Hotmart tampoco se encolaba.
+Desde la auditoría del 2026-09-28 cada tipo se encola en su propio `try`: uno
+rechazado se anota en `detalle` (`<tipo>_error`) y el resto sigue.
 
 ### `/api/cron/cierre-mes`
 
@@ -348,7 +452,9 @@ respaldo).
 
 - `synced_at` — última verificación (cambiara el dato o no)
 - `source_synced_at` — última verificación **exitosa por fuente**; si Meta
-  funcionó pero Hotmart falló, solo avanza la clave `meta`
+  funcionó pero Hotmart falló, solo avanza la clave `meta`. `/admin/salud` mide la
+  frescura de Hotmart («Sync Hotmart») por `source_synced_at.hotmart`, no por la
+  última venta: un mes sin ventas no es una fuente parada
 - `is_partial` — la fecha es hoy, el día no ha cerrado y las cifras cambiarán
 
 ## Observabilidad

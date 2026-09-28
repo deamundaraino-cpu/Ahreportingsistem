@@ -3,10 +3,15 @@ import { filterCampaignList, type AnyCampaignFilter } from './campaign-filter';
 import {
   clavesDelDataset,
   desglosePorCampana,
+  desglosePorEntidad,
   CLAVE_TOTAL_LEADS,
 } from './dashboard/lead-answer-aggregation';
+import type { LeadAnswerDatasetLite } from './dashboard/lead-answer-aggregation';
 import { CLAVE_CUBO, permitidasDelCubo } from './dashboard/lead-answer-row';
 import type { CuboRespuestasRef } from './dashboard/lead-answer-row';
+import { CLAVES_APORTE, desgloseHotmartPorCampana } from './dashboard/hotmart-cubo';
+import { CLAVE_CUBO_HOTMART, permitidasDelCuboHotmart } from './dashboard/hotmart-cubo-row';
+import type { CuboHotmartRef } from './dashboard/hotmart-cubo-row';
 
 /** ¿La entrada (campaña/ad/adset) pasa el filtro de keyword/compuesto de la pestaña? */
 function passesKeyword(
@@ -32,13 +37,36 @@ export type RankingDimension =
 /**
  * ¿Esta dimensión puede servir métricas de Report-UTM?
  *
- * Solo `campaigns`. El cubo de respuestas resuelve cada lead hasta su CAMPAÑA
- * —la cascada de `campaign-resolver` no llega más abajo— porque un formulario no
- * sabe qué anuncio concreto trajo al visitante. En anuncio y conjunto la única
- * respuesta honesta es «no aplica»: un 0 diría que no hubo leads, que es falso.
+ * Campañas, siempre. Anuncio y conjunto, cuando el cubo trae ese nivel
+ * (`ds.niveles`: el servidor lo carga si algún ranking o gráfica por anuncio o
+ * conjunto usa respuestas). Sin él la única respuesta honesta es «no aplica»:
+ * un 0 diría que no hubo leads, que es falso. TikTok: el cubo no resuelve sus
+ * anuncios ni conjuntos.
  */
-export function dimensionSoportaRespuestas(d: RankingDimension): boolean {
-  return d === 'campaigns';
+export function dimensionSoportaRespuestas(
+  d: RankingDimension,
+  ds?: Pick<LeadAnswerDatasetLite, 'niveles'> | null
+): boolean {
+  if (d === 'campaigns') return true;
+  return (d === 'ads' || d === 'adsets') && !!ds?.niveles;
+}
+
+/** El cubo de respuestas que llevan las filas de métricas, si lo llevan. */
+export function cuboDeFilas(metrics: any[]): LeadAnswerDatasetLite | null {
+  const ref = metrics.find((r: any) => r?.[CLAVE_CUBO])?.[CLAVE_CUBO] as
+    CuboRespuestasRef | undefined;
+  return ref?.ds ?? null;
+}
+
+/**
+ * ¿Esta dimensión puede servir las ventas de Hotmart por campaña (`hm_*`)?
+ *
+ * Campañas de las dos plataformas: el resolver indexa las de Meta y las de
+ * TikTok, así que una venta atribuida a una campaña de TikTok cuelga de su fila.
+ * En anuncio y conjunto, «no aplica» por la misma razón que las respuestas.
+ */
+export function dimensionSoportaHotmart(d: RankingDimension): boolean {
+  return d === 'campaigns' || d === 'tiktok_campaigns';
 }
 
 /** Leads que el ranking no puede colgar de ninguna fila. Se declaran, no se pierden. */
@@ -122,6 +150,24 @@ function matchesFilter(name: string, filter: CampaignFilterSpec): boolean {
   }
 }
 
+/**
+ * Filtro propio del bloque (encadenado tras el de la pestaña), por nombre o por
+ * GRUPO de campañas. Antes solo se aplicaba el de tipo `keyword`: con un filtro
+ * por grupo el gasto de Meta y TikTok quedaba entero mientras los leads y las
+ * ventas del cubo sí se recortaban por el grupo, así que el CPL dividía gasto sin
+ * filtrar entre leads filtrados (auditoría del 2026-09-26).
+ */
+function pasaFiltroDelBloque(
+  nombreCampana: string,
+  campaignId: unknown,
+  campaignFilter: CampaignFilterSpec | undefined,
+  campaignGroups: any[] | undefined
+): boolean {
+  if (!campaignFilter) return true;
+  if (campaignFilter.type === 'keyword') return matchesFilter(nombreCampana, campaignFilter);
+  return passesKeyword(nombreCampana, campaignId, campaignFilter, campaignGroups);
+}
+
 export function aggregateRankingRows(
   metrics: any[],
   dimension: RankingDimension,
@@ -172,10 +218,15 @@ export function aggregateRankingRows(
       )
         continue;
       // Filtro específico del ranking encadenado sobre el subset del keyword
-      if (campaignFilter && campaignFilter.type === 'keyword') {
-        const nameToFilter = String(entry[filterKey] || entry.name || '');
-        if (!matchesFilter(nameToFilter, campaignFilter)) continue;
-      }
+      if (
+        !pasaFiltroDelBloque(
+          String(entry[filterKey] || entry.name || ''),
+          entry.campaign_id,
+          campaignFilter,
+          campaignGroups
+        )
+      )
+        continue;
 
       const pk = String(entry[idKey] || entry[nameKey] || 'unknown');
 
@@ -208,15 +259,74 @@ export function aggregateRankingRows(
     }
   }
 
+  // La frecuencia no se suma entre días: 30 días a frecuencia 2 no son 60. Se
+  // recalcula sobre las bases acumuladas (impresiones ÷ alcance), como el BI.
+  for (const acc of groupMap.values()) {
+    acc.meta_frequency = acc.meta_reach > 0 ? acc.meta_impressions / acc.meta_reach : 0;
+  }
+
   // ── Respuestas de formulario ─────────────────────────────────────────────
   // Solo en dimensión campaña: es hasta donde resuelve el cubo. En anuncio y
   // conjunto NO se añade nada, y esa ausencia es deliberada — hace que la celda
   // muestre «n/a» en vez de un 0 que afirmaría que no hubo leads.
   if (dimension === 'campaigns') {
     repartirRespuestas(groupMap, metrics, campaignFilter);
+    repartirHotmart(groupMap, metrics, campaignFilter);
+  } else {
+    repartirRespuestasPorEntidad(
+      groupMap,
+      metrics,
+      campaignFilter,
+      dimension === 'ads' ? 'anuncio' : 'conjunto'
+    );
   }
 
   return Array.from(groupMap.values());
+}
+
+/**
+ * Cuelga las ventas de Hotmart por campaña (`hm_*`) de cada campaña del ranking.
+ *
+ * Mismo cruce que `repartirRespuestas` —por `campaign_id` y, si no, por nombre
+ * normalizado— y el mismo filtro: el de la pestaña encadenado con el del bloque
+ * (`permitidasDelCuboHotmart`). Las nueve claves se ponen a 0 en TODAS las filas
+ * antes de repartir: una campaña con gasto y sin ventas tiene 0 ventas, y así su
+ * CPA sale «—» por división entre cero y no por falta de dato.
+ */
+function repartirHotmart(
+  groupMap: Map<string, any>,
+  metrics: any[],
+  campaignFilter?: CampaignFilterSpec
+): void {
+  const ref = metrics.find((r: any) => r?.[CLAVE_CUBO_HOTMART])?.[CLAVE_CUBO_HOTMART] as
+    CuboHotmartRef | undefined;
+  if (!ref) return;
+
+  const porId = new Map<string, any>();
+  const porNombre = new Map<string, any>();
+  for (const acc of groupMap.values()) {
+    for (const clave of CLAVES_APORTE) if (acc[clave] === undefined) acc[clave] = 0;
+    if (acc._id) porId.set(String(acc._id), acc);
+    if (acc._name) porNombre.set(normalizarNombre(String(acc._name)), acc);
+  }
+
+  const permitidas = permitidasDelCuboHotmart(ref, campaignFilter);
+  for (const row of metrics) {
+    const fecha = String(row?.fecha ?? '');
+    if (!fecha) continue;
+    for (const { campaignId, nombre, valores, esSinCampana } of desgloseHotmartPorCampana(
+      ref.ds,
+      fecha,
+      permitidas
+    )) {
+      // Una venta sin campaña no puede colgar de ninguna fila.
+      if (esSinCampana) continue;
+      const acc =
+        (campaignId ? porId.get(campaignId) : undefined) ?? porNombre.get(normalizarNombre(nombre));
+      if (!acc) continue; // campaña sin gasto en el rango: no tiene fila
+      for (const [clave, n] of Object.entries(valores)) acc[clave] = (acc[clave] ?? 0) + n;
+    }
+  }
 }
 
 /**
@@ -259,6 +369,58 @@ function repartirRespuestas(
       for (const [clave, n] of Object.entries(valores)) {
         acc[clave] = (acc[clave] ?? 0) + n;
       }
+    }
+  }
+}
+
+/**
+ * Cuelga las claves de Report-UTM de cada anuncio o conjunto del ranking.
+ *
+ * Cruza por id (`ad_id` / `adset_id` del lead, migración 082) y, si no, por
+ * nombre — pero SOLO si ese nombre es único en la tabla: los nombres de anuncio
+ * se repiten entre campañas (Eduversio: 83 de 91), y colgar los leads de un
+ * homónimo sería inventar el cruce. Si el cubo no trae el nivel no se añade
+ * nada, y la celda sigue diciendo «n/a».
+ */
+function repartirRespuestasPorEntidad(
+  groupMap: Map<string, any>,
+  metrics: any[],
+  campaignFilter: CampaignFilterSpec | undefined,
+  nivel: 'conjunto' | 'anuncio'
+): void {
+  const ref = metrics.find((r: any) => r?.[CLAVE_CUBO])?.[CLAVE_CUBO] as
+    CuboRespuestasRef | undefined;
+  if (!ref?.ds.niveles) return;
+  const claves = clavesDelDataset(ref.ds);
+  if (claves.length === 0) return;
+
+  const porId = new Map<string, any>();
+  const porNombre = new Map<string, any[]>();
+  for (const acc of groupMap.values()) {
+    for (const clave of claves) if (acc[clave] === undefined) acc[clave] = 0;
+    if (acc._id) porId.set(String(acc._id), acc);
+    if (acc._name) {
+      const k = normalizarNombre(String(acc._name));
+      porNombre.set(k, [...(porNombre.get(k) ?? []), acc]);
+    }
+  }
+
+  const permitidas = permitidasDelCubo(ref, campaignFilter);
+  for (const row of metrics) {
+    const fecha = String(row?.fecha ?? '');
+    if (!fecha) continue;
+    for (const { id, nombre, valores, esSinEntidad } of desglosePorEntidad(
+      ref.ds,
+      fecha,
+      permitidas,
+      nivel
+    )) {
+      if (esSinEntidad) continue;
+      const homonimos = porNombre.get(normalizarNombre(nombre)) ?? [];
+      const acc =
+        (id ? porId.get(id) : undefined) ?? (homonimos.length === 1 ? homonimos[0] : undefined);
+      if (!acc) continue;
+      for (const [clave, n] of Object.entries(valores)) acc[clave] = (acc[clave] ?? 0) + n;
     }
   }
 }
@@ -366,10 +528,15 @@ function aggregateTiktokRows(
       )
         continue;
       // Filtro específico encadenado
-      if (campaignFilter && campaignFilter.type === 'keyword') {
-        const nameToFilter = String(entry.campaign_name || entry.name || '');
-        if (!matchesFilter(nameToFilter, campaignFilter)) continue;
-      }
+      if (
+        !pasaFiltroDelBloque(
+          String(entry.campaign_name || entry.name || ''),
+          entry.campaign_id,
+          campaignFilter,
+          campaignGroups
+        )
+      )
+        continue;
 
       const pk = String(entry[idKey] || entry[nameKey] || 'unknown');
 
@@ -394,6 +561,9 @@ function aggregateTiktokRows(
       });
     }
   }
+
+  // Ventas de Hotmart: también en campañas de TikTok (ver `dimensionSoportaHotmart`).
+  if (dimension === 'tiktok_campaigns') repartirHotmart(groupMap, metrics, campaignFilter);
 
   return Array.from(groupMap.values());
 }

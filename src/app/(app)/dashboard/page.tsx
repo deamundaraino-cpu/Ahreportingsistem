@@ -26,19 +26,22 @@ export default async function DashboardHomePage() {
   // historia: sigue en Ajustes, pero no en la grilla ni en los contadores.
   const clientes = (todosLosClientes ?? []).filter((c: any) => !c.archivado);
 
+  // Las conexiones salen de `conexiones` (calculado en el servidor por
+  // `flagsConexion`), no de `config_api`: el listado llega ya saneado, sin
+  // credenciales, y mirar ahí daba Meta, Hotmart y GA4 siempre desconectados.
   const totalClientes = clientes?.length ?? 0;
   const totalIntegrations = (clientes ?? []).reduce((acc: number, c: any) => {
     let n = 0;
-    if (c.config_api?.meta_token) n++;
-    if (c.config_api?.hotmart_token || c.config_api?.hotmart_basic) n++;
-    if (c.config_api?.ga_property_id) n++;
+    if (c.conexiones?.meta) n++;
+    if (c.conexiones?.hotmart) n++;
+    if (c.conexiones?.ga) n++;
     return acc + n;
   }, 0);
   const activePlatforms = new Set<string>();
   (clientes ?? []).forEach((c: any) => {
-    if (c.config_api?.meta_token) activePlatforms.add('meta');
-    if (c.config_api?.hotmart_token || c.config_api?.hotmart_basic) activePlatforms.add('hotmart');
-    if (c.config_api?.ga_property_id) activePlatforms.add('ga4');
+    if (c.conexiones?.meta) activePlatforms.add('meta');
+    if (c.conexiones?.hotmart) activePlatforms.add('hotmart');
+    if (c.conexiones?.ga) activePlatforms.add('ga4');
   });
 
   return (
@@ -256,9 +259,9 @@ function StatCard({
 }
 
 function ClientCard({ cliente }: { cliente: any }) {
-  const hasMeta = !!cliente.config_api?.meta_token;
-  const hasHotmart = !!(cliente.config_api?.hotmart_token || cliente.config_api?.hotmart_basic);
-  const hasGA4 = !!cliente.config_api?.ga_property_id;
+  const hasMeta = !!cliente.conexiones?.meta;
+  const hasHotmart = !!cliente.conexiones?.hotmart;
+  const hasGA4 = !!cliente.conexiones?.ga;
   const activeCount = [hasMeta, hasHotmart, hasGA4].filter(Boolean).length;
 
   return (

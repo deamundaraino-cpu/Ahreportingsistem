@@ -44,14 +44,6 @@ export interface TabCampaignFilter {
   conditions: CampaignFilterSpec[];
 }
 
-export type FormFilterField = 'form_id' | 'form_name';
-
-export interface FormFilterSpec {
-  field: FormFilterField;
-  operator?: CampaignFilterOperator;
-  value: string | string[];
-}
-
 export type SheetFilterOperator =
   | 'equals'
   | 'not_equals'
@@ -92,7 +84,6 @@ export interface ColDef {
   hidden?: boolean;
   isManual?: boolean;
   campaignFilter?: CampaignFilterSpec;
-  formFilter?: FormFilterSpec;
   sheetFilter?: SheetFilterSpec;
 }
 
@@ -105,7 +96,6 @@ export interface CardDef {
   decimals?: number;
   color?: CardColor;
   campaignFilter?: CampaignFilterSpec;
-  formFilter?: FormFilterSpec;
   sheetFilter?: SheetFilterSpec;
   account_id?: string;
   // Visualization variants
@@ -138,7 +128,6 @@ export interface ChartDef {
   colors?: string[]; // e.g. ["amber", "cyan"]
   height?: number;
   campaignFilter?: CampaignFilterSpec;
-  formFilter?: FormFilterSpec;
   sheetFilter?: SheetFilterSpec;
   account_id?: string;
   yAxes?: ('left' | 'right')[];
@@ -188,7 +177,6 @@ export interface RankingTableDef {
   sortOrder: 'desc' | 'asc';
   showRank?: boolean;
   campaignFilter?: CampaignFilterSpec;
-  formFilter?: FormFilterSpec;
   // Sin `sheetFilter`: estas tablas agregan por campaña/anuncio desde
   // `meta_campaigns`/`meta_ads`, filas que no llevan datos offline. El campo
   // existió sin UI ni lector y nunca pudo cambiar un número.
@@ -249,6 +237,13 @@ export interface LeadAnswerBlockDef {
   showDelta?: boolean;
   showCsv?: boolean;
   ocultarVacios?: boolean;
+  /**
+   * Columna de CPL por respuesta: inversión de la pestaña ÷ leads de la
+   * respuesta. Es la misma lectura que `total_spend / lf__<campo>__<resp>`: el
+   * gasto NO se reparte entre respuestas, se usa entero. Con filtro de campañas
+   * propio del bloque no se calcula (la inversión es la de la pestaña).
+   */
+  mostrarCpl?: boolean;
   /** Filtro propio del bloque, encadenado DESPUÉS del filtro de la pestaña. */
   campaignFilter?: CampaignFilterSpec;
 }

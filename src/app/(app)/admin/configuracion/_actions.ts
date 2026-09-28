@@ -2,15 +2,15 @@
 
 import { createClient, createAdminClient } from '@/utils/supabase/server';
 import { revalidatePath, updateTag } from 'next/cache';
-import { evaluateAlertRules, type RuleRow } from '@/lib/notifications/rules-engine';
+import {
+  cumpleCondicion,
+  evaluateAlertRules,
+  medirRegla,
+  type RuleRow,
+} from '@/lib/notifications/rules-engine';
 import { colombiaToday, colombiaYesterday } from '@/lib/date-utils';
 import { format, subDays, startOfMonth, endOfMonth, parseISO } from 'date-fns';
-import {
-  enrichMetaRow,
-  enrichTikTokRow,
-  parseTabFilter,
-  type AnyCampaignFilter,
-} from '@/lib/campaign-filter';
+import { parseTabFilter, type AnyCampaignFilter } from '@/lib/campaign-filter';
 import { BRANDING_CACHE_TAG } from '@/lib/branding';
 import { getSesionActual } from '@/lib/auth-session';
 
@@ -214,16 +214,6 @@ export async function testRule(ruleId: string) {
       end = (rule as any).custom_end || format(endOfMonth(new Date()), 'yyyy-MM-dd');
     }
 
-    // Query daily metrics
-    const { data: rows } = await db
-      .from('metricas_diarias')
-      .select(
-        'fecha, meta_spend, tiktok_spend, meta_campaigns, tiktok_campaigns, ga_sessions, hotmart_pagos_iniciados, ventas_principal, ventas_bump, ventas_upsell, metricas_manuales'
-      )
-      .eq('cliente_id', testClientId)
-      .gte('fecha', start)
-      .lte('fecha', end);
-
     // Tab info
     let keywordFilter: AnyCampaignFilter = '';
     let tabBudget: number | null = null;
@@ -248,75 +238,28 @@ export async function testRule(ruleId: string) {
       .select('id, nombre, campaign_group_mappings(campaign_id, campaign_name_pattern)')
       .eq('cliente_id', testClientId);
 
-    // Aggregate
-    let totalSpend = 0;
-    let totalRevenue = 0;
-    let totalLeads = 0;
-
-    (rows ?? []).forEach((row) => {
-      const enrichedRow = enrichTikTokRow(
-        enrichMetaRow(row, keywordFilter, campaignGroups ?? []),
-        keywordFilter,
-        campaignGroups ?? []
-      );
-      totalSpend += (Number(enrichedRow.meta_spend) || 0) + (Number(enrichedRow.tiktok_spend) || 0);
-
-      const manuales = (row.metricas_manuales as Record<string, number>) ?? {};
-      const ventasCerradas = Number(manuales['VENTAS_CERRADAS'] ?? 0);
-      totalRevenue +=
-        (Number(row.ventas_principal) || 0) +
-        (Number(row.ventas_bump) || 0) +
-        (Number(row.ventas_upsell) || 0) +
-        ventasCerradas;
-
-      totalLeads +=
-        (Number(enrichedRow.meta_leads) || 0) + (Number(enrichedRow.tiktok_conversions) || 0);
+    // La MISMA medición que la evaluación real (`medirRegla`): ingresos de
+    // Hotmart convertidos a la moneda del gasto, con downsell y sin sumar
+    // `VENTAS_CERRADAS`, que es un conteo.
+    const medida = await medirRegla(db, {
+      clientId: testClientId,
+      metric,
+      start,
+      end,
+      keywordFilter,
+      campaignGroups: campaignGroups ?? [],
+      tabBudget,
+      clientName,
     });
-
-    let actualValue = 0;
-    switch (metric) {
-      case 'spend':
-        actualValue = totalSpend;
-        break;
-      case 'revenue':
-        actualValue = totalRevenue;
-        break;
-      case 'roas':
-        actualValue = totalSpend > 0 ? totalRevenue / totalSpend : 0;
-        break;
-      case 'leads':
-        actualValue = totalLeads;
-        break;
-      case 'cpl':
-        actualValue = totalLeads > 0 ? totalSpend / totalLeads : 0;
-        break;
-      case 'budget_percentage':
-        if (tabBudget && tabBudget > 0) {
-          actualValue = (totalSpend / tabBudget) * 100;
-        } else {
-          // No budget set: show 0% but warn the user
-          actualValue = 0;
-        }
-        break;
-    }
+    const { totalSpend, totalRevenue, totalLeads, moneda, diasSinTasa } = medida;
+    // Sin presupuesto la evaluación real se salta la pestaña; aquí se enseña 0 %
+    // con el aviso de abajo.
+    const actualValue = medida.actualValue ?? 0;
 
     // Evaluate
-    let isTriggered = false;
     const threshold = Number(value);
-    switch (operator) {
-      case '>':
-        isTriggered = actualValue > threshold;
-        break;
-      case '<':
-        isTriggered = actualValue < threshold;
-        break;
-      case '>=':
-        isTriggered = actualValue >= threshold;
-        break;
-      case '<=':
-        isTriggered = actualValue <= threshold;
-        break;
-    }
+    const isTriggered =
+      medida.actualValue !== null && cumpleCondicion(actualValue, operator, threshold);
 
     return {
       success: true,
@@ -333,6 +276,8 @@ export async function testRule(ruleId: string) {
       totalRevenue,
       totalLeads,
       tabBudget,
+      moneda,
+      diasSinTasa,
       budgetWarning:
         metric === 'budget_percentage' && (!tabBudget || tabBudget <= 0)
           ? 'Esta pestaña no tiene un Presupuesto Objetivo configurado. Ve a Ajustes de Sistema → Pestañas del cliente para configurarlo.'

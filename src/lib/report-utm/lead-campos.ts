@@ -23,10 +23,14 @@ import {
   bucketDeValor,
   sanitizarColumna,
   slugCampo,
+  ETIQUETA_SIN_RESPUESTA,
 } from '@/lib/sheets/campos';
 import type { CampoValoresMap, CampoValorCrudo, CampoSinMapear } from '@/lib/sheets/campos';
+import { claveDeEtiqueta, claveVigente, SIN_RESPUESTA } from '@/lib/leads/respuestas/claves';
+import type { RespuestaClave } from '@/lib/leads/respuestas/claves';
 
 export { normalizarValorCrudo, slugCampo, bucketDeValor };
+export type { RespuestaClave };
 export type { CampoValoresMap, CampoValorCrudo, CampoSinMapear };
 
 /** Definición de un campo de lead (fila de `report_utm.lead_campos`). */
@@ -44,7 +48,24 @@ export interface LeadCampoDef {
   max_valores: number;
   activo: boolean;
   orden: number;
+  /**
+   * Cada respuesta con su clave estable (migración 090). Vacío hasta que se
+   * guarda el campo o corre `scripts/migrar-respuestas-lead.ts`; mientras tanto
+   * las claves se derivan de forma determinista (`clavesDeRespuestas`).
+   */
+  respuestas?: RespuestaClave[];
+  /**
+   * Tipo de pregunta (migración 090). `multiple` = casillas: un lead puede
+   * elegir varias respuestas y cuenta una vez en cada una. null = sin
+   * determinar, que se trata como desplegable (una sola respuesta).
+   */
+  tipo?: TipoPregunta | null;
+  /** Añadir solas las opciones nuevas que publique la plataforma. */
+  sincronizar_opciones?: boolean;
 }
+
+/** Tipo de pregunta de formulario (columna `lead_campos.tipo`). */
+export type TipoPregunta = 'opcion' | 'multiple' | 'texto' | 'numero';
 
 /**
  * Metadata que viaja al navegador (editor de widgets y constructor de filtros).
@@ -123,12 +144,89 @@ export function bucketDeLead(campo: LeadCampoDef, idx: Map<string, unknown>): st
   return null;
 }
 
+/**
+ * Buckets que aporta UN valor crudo. Para un desplegable es uno (o ninguno);
+ * para una pregunta de selección múltiple (`tipo: 'multiple'`) pueden ser
+ * varios: «Inversión, Vivienda» cuenta en las dos respuestas.
+ *
+ * Cómo se parte una respuesta múltiple: Meta y GHL la guardan unida por comas
+ * (ver `normalizeLeadFields`), pero una OPCIÓN también puede llevar comas
+ * («Entre $2.000.000, aprox.»). Así que primero manda el mapa: si el valor
+ * entero está mapeado es una sola respuesta, y al partir se prueba siempre el
+ * trozo más largo que esté mapeado antes de quedarse con uno suelto.
+ */
+export function bucketsDeValor(
+  campo: Pick<LeadCampoDef, 'valores_map' | 'sin_mapear' | 'tipo'>,
+  crudo: unknown
+): string[] {
+  const norm = normalizarValorCrudo(crudo);
+  if (!norm) return [];
+  const mapa = campo.valores_map ?? {};
+  if (campo.tipo !== 'multiple' || Object.prototype.hasOwnProperty.call(mapa, norm)) {
+    const b = bucketDeValor(campo, crudo);
+    return b ? [b] : [];
+  }
+  const partes = norm.split(/\s*[,;|]\s*/).filter(Boolean);
+  if (partes.length <= 1) {
+    const b = bucketDeValor(campo, crudo);
+    return b ? [b] : [];
+  }
+  const out: string[] = [];
+  for (let i = 0; i < partes.length;) {
+    let tomado = 1;
+    for (let j = partes.length; j > i + 1; j--) {
+      if (Object.prototype.hasOwnProperty.call(mapa, partes.slice(i, j).join(', '))) {
+        tomado = j - i;
+        break;
+      }
+    }
+    const b = bucketDeValor(campo, partes.slice(i, i + tomado).join(', '));
+    if (b && !out.includes(b)) out.push(b);
+    i += tomado;
+  }
+  return out;
+}
+
+/**
+ * Todos los buckets que aporta un lead a un campo (vacío = no respondió). Igual
+ * que `bucketDeLead`, pero una pregunta de selección múltiple puede dar varios.
+ */
+export function bucketsDeLead(campo: LeadCampoDef, idx: Map<string, unknown>): string[] {
+  for (const clave of campo.claves_origen ?? []) {
+    const v = idx.get(clave);
+    if (v === null || v === undefined) continue;
+    const s = String(v).trim();
+    if (!s) continue;
+    return bucketsDeValor(campo, s);
+  }
+  return [];
+}
+
 /** Igual que `bucketDeLead` pero partiendo del `raw_fields` sin indexar. */
 export function bucketDeLeadRaw(
   campo: LeadCampoDef,
   rf: Record<string, unknown> | null | undefined
 ): string | null {
   return bucketDeLead(campo, indexarRawFields(rf));
+}
+
+/**
+ * Etiquetas que el catálogo CONOCE de un campo: los destinos del mapa (sin los
+ * vacíos, que son placeholders apartados), el orden declarado y `(otros)` si la
+ * política lo produce. Con `sin_mapear: 'crudo'` no es la lista completa —hay
+ * buckets que solo emergen de los datos—, pero sí la de las respuestas con
+ * nombre propio, que son las que reciben clave estable al guardar.
+ */
+export function etiquetasDeCampo(
+  campo: Pick<LeadCampoDef, 'valores_map' | 'valores_orden' | 'sin_mapear'>
+): string[] {
+  const out = new Set<string>();
+  const esEtiqueta = (v: string | null | undefined): v is string =>
+    !!v && v.trim().toLowerCase() !== ETIQUETA_SIN_RESPUESTA;
+  for (const v of Object.values(campo.valores_map ?? {})) if (esEtiqueta(v)) out.add(v);
+  for (const v of campo.valores_orden ?? []) if (esEtiqueta(v)) out.add(v);
+  if (campo.sin_mapear === 'otros') out.add(BUCKET_OTROS);
+  return ordenarBuckets(campo, [...out]);
 }
 
 // ── Orden de los buckets ──────────────────────────────────────────────
@@ -372,9 +470,43 @@ export function cuentaEnSegmento(
   campo: LeadCampoDef,
   idx: Map<string, unknown>
 ): boolean {
-  const bucket = bucketDeLead(campo, idx);
-  if (bucket === null) return false;
-  return segmentoIncluyeBucket(seg, bucket);
+  return predicadoDeSegmento(seg)(bucketsDeLead(campo, idx));
+}
+
+/**
+ * Predicado de pertenencia a un segmento sobre los buckets de UN lead (vacío =
+ * no respondió, y entonces nunca pertenece). Con selección múltiple basta con
+ * que una de sus respuestas esté dentro.
+ */
+export function predicadoDeSegmento(
+  seg: Pick<LeadSegmentoDef, 'valores' | 'operador'>
+): (buckets: readonly string[]) => boolean {
+  return (buckets) => buckets.length > 0 && buckets.some((b) => segmentoIncluyeBucket(seg, b));
+}
+
+/**
+ * Predicado de UNA respuesta (`lf__<campo>__<resp>` / `leadans:<campo>:<resp>`)
+ * sobre los buckets de un lead. `sin_respuesta` es el complemento: el lead no
+ * respondió (o su respuesta está apartada). La clave pedida puede ser un alias
+ * antiguo (una respuesta renombrada o fusionada): se resuelve a la vigente.
+ *
+ * Las etiquetas sin clave guardada (valores crudos que el catálogo no mapea) se
+ * comparan por su slug, con la misma función que el dashboard.
+ */
+export function predicadoDeRespuesta(
+  campo: Pick<LeadCampoDef, 'respuestas'>,
+  resp: string
+): (buckets: readonly string[]) => boolean {
+  const guardadas = campo.respuestas ?? [];
+  const vigente = claveVigente(resp, guardadas);
+  if (vigente === SIN_RESPUESTA) return (buckets) => buckets.length === 0;
+  const memo = new Map<string, string>();
+  const claveDe = (label: string) => {
+    let k = memo.get(label);
+    if (k === undefined) memo.set(label, (k = claveDeEtiqueta(label, guardadas)));
+    return k;
+  };
+  return (buckets) => buckets.some((b) => claveDe(b) === vigente);
 }
 
 /**

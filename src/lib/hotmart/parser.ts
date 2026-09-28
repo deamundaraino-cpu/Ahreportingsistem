@@ -21,6 +21,7 @@
 // `hotmart_ventas` puede fusionarlos por transacción.
 
 import { colombiaDateOf } from '../colombia-date';
+import { esSenalDeCampana, idPublicitario } from '../report-utm/lead-ids';
 import { clasificarEvento, estadoDeEvento, estadoDeStatusApi } from './eventos';
 import type {
   EstadoVenta,
@@ -113,6 +114,77 @@ function comisionDe(
 }
 
 /**
+ * Despliega un `src` que empaqueta la tupla UTM de Meta.
+ *
+ * Hotmart no guarda `utm_*` del checkout; solo `src`, `sck` y `xcod`. Por eso
+ * las landings meten la tupla dentro de `src`, unida con guiones en este orden
+ * (Cris tributario, 2026):
+ *
+ *   {{campaign.name}}-{{placement}}-{{site_source_name}}-{{ad.name}}-{{adset.name}}
+ *   [12/07][EBOOK][VENTAS]… - Copia-Instagram_Feed-ig-[AD 3 JUL][NUESTRO EBOOK]-[ADVANTAGE][CHILE][30-50]… - AD 3 GANADOR
+ *
+ * que es la MISMA convención con que llegan sus leads: utm_campaign = campaña,
+ * utm_source = ubicación, utm_medium = red, utm_content = anuncio,
+ * utm_term = conjunto. Así el resolver de campañas cruza ventas y leads con el
+ * mismo código.
+ *
+ * Los nombres llevan guiones propios (`[30-50]`, ` - Copia`), así que no se
+ * parte a ciegas por `-`:
+ *   · el ancla es la ubicación (`Algo_Algo`, con guion bajo) seguida de la red
+ *     (`fb`, `ig`…): nada en un nombre de campaña tiene esa forma;
+ *   · anuncio y conjunto se separan por el primer guion SIN espacios alrededor
+ *     y fuera de corchetes (los ` - ` son parte de los nombres).
+ * Un `src` que no tiene esa forma devuelve `null` y se usa como antes.
+ */
+export function desplegarSrc(src: string | null): {
+  utm_campaign: string | null;
+  utm_source: string | null;
+  utm_medium: string | null;
+  utm_content: string | null;
+  utm_term: string | null;
+} | null {
+  if (!src) return null;
+  const m = src.match(/^(.*?)-([A-Za-z]+(?:_[A-Za-z]+)+|null)-([a-z]{2,3}|null)-(.*)$/s);
+  if (!m) return null;
+  const nulo = (v: string | undefined) => {
+    const t = (v ?? '').trim();
+    return t && t.toLowerCase() !== 'null' ? t : null;
+  };
+
+  const resto = m[4];
+  let corte = -1;
+  let profundidad = 0;
+  for (let i = 0; i < resto.length; i++) {
+    const ch = resto[i];
+    if (ch === '[') profundidad++;
+    else if (ch === ']') profundidad = Math.max(0, profundidad - 1);
+    else if (
+      ch === '-' &&
+      profundidad === 0 &&
+      i > 0 &&
+      resto[i - 1] !== ' ' &&
+      resto[i + 1] !== ' ' &&
+      i < resto.length - 1
+    ) {
+      corte = i;
+      break;
+    }
+  }
+  const anuncio = corte >= 0 ? resto.slice(0, corte) : resto;
+  const conjunto = corte >= 0 ? resto.slice(corte + 1) : null;
+
+  const tupla = {
+    utm_campaign: nulo(m[1]),
+    utm_source: nulo(m[2]),
+    utm_medium: nulo(m[3]),
+    utm_content: nulo(anuncio),
+    utm_term: nulo(conjunto ?? undefined),
+  };
+  // `null-null-null-null-null`: la landing no recibió UTM. No es una tupla.
+  return Object.values(tupla).some(Boolean) ? tupla : null;
+}
+
+/**
  * Extrae UTMs y parámetros de origen.
  *
  * Hotmart los reparte por cuatro sitios distintos según cómo esté montado el
@@ -143,21 +215,46 @@ function extraerOrigen(compra: HotmartCompra | undefined, datos: AnyObj) {
     return null;
   };
 
-  const src = buscar('src');
+  // La API REST (`sales/history`) los llama distinto que el webhook:
+  // `tracking.source` es el `src` del checkout y `tracking.external_code` el
+  // `xcod`. Solo se miran dentro de `tracking`: un `source` suelto en otro
+  // sitio del payload no es un parámetro de checkout.
+  const src = buscar('src') ?? texto(tracking.source);
   const sck = buscar('sck', 'source_sck');
-  const xcod = buscar('xcod');
+  const xcod = buscar('xcod') ?? texto(tracking.external_code);
+
+  // `src` puede traer la tupla UTM entera empaquetada (ver `desplegarSrc`). Las
+  // UTM explícitas mandan; la tupla de `src` solo rellena, y como bloque.
+  const explicita = buscar('utm_campaign') ?? buscar('utm_id');
+  const deSrc = explicita ? null : desplegarSrc(src);
+
+  const utm_campaign = buscar('utm_campaign') ?? deSrc?.utm_campaign ?? null;
+  // `sck={{ad.id}}` en el link del anuncio es la forma de atribuir sin
+  // configurar nada más: si `sck` (o `src`) es un ID de anuncio, va a `utm_id`
+  // y el resolver de campañas lo cruza por ID exacto (docs/08).
+  const utm_id = buscar('utm_id') ?? idPublicitario(sck) ?? idPublicitario(src);
 
   return {
-    utm_source: buscar('utm_source') ?? src,
-    utm_medium: buscar('utm_medium'),
-    utm_campaign: buscar('utm_campaign'),
-    utm_content: buscar('utm_content') ?? sck,
-    utm_term: buscar('utm_term'),
-    utm_id: buscar('utm_id'),
-    click_id: buscar('fbclid', 'gclid', 'ttclid', 'click_id') ?? xcod,
+    utm_source: buscar('utm_source') ?? (deSrc ? deSrc.utm_source : src),
+    utm_medium: buscar('utm_medium') ?? deSrc?.utm_medium ?? null,
+    utm_campaign,
+    utm_content: buscar('utm_content') ?? deSrc?.utm_content ?? sck,
+    utm_term: buscar('utm_term') ?? deSrc?.utm_term ?? null,
+    utm_id,
+    // SIN caer a `xcod`: es un código libre del productor, no un click id. El
+    // webhook lo mandaba a Meta CAPI como `fbclid` y a Google Ads como `gclid`.
+    click_id: buscar('fbclid', 'gclid', 'ttclid', 'click_id'),
     src,
     sck,
     xcod,
+    // Con campaña o ID de anuncio, la tupla es atribución propia de Hotmart y
+    // gana a la heredada de un lead (migración 089). Sin ellas queda
+    // `undefined`, y `aFilaJson` no envía la clave. Una macro sin rellenar
+    // (`{{campaign.name}}`) no es atribución: bloqueaba la herencia del lead.
+    atribucion_metodo:
+      esSenalDeCampana(utm_campaign) || esSenalDeCampana(utm_id)
+        ? ('tracking' as const)
+        : undefined,
   };
 }
 
@@ -332,6 +429,7 @@ export function parsearWebhook(payload: unknown, ahora: Date = new Date()): Resu
     usd_rate: null,
 
     raw_payload: payload,
+    estado_crudo: texto(compra.status) ?? nombreEvento,
   };
 
   // Los importes de comisión en moneda original viajan aparte hasta que
@@ -385,18 +483,34 @@ export function parsearApi(
 
   // La API usa el vocabulario de la plataforma, no nombres de evento. Sin este
   // mapa aparte se repetiría el bug de indexar un mapa con las claves del otro.
-  const estado = estadoDeStatusApi(compra.status) ?? 'aprobada';
+  //
+  // Un status que no está en el mapa NO se cuenta como venta. Antes caía a
+  // `?? 'aprobada'`, el mismo fallback que el webhook ya había desterrado:
+  // NO_FUNDS, BLOCKED u OVERDUE entraban como facturación cobrada.
+  const estado = estadoDeStatusApi(compra.status);
+  if (!estado) {
+    return {
+      ok: false,
+      motivo: 'ilegible',
+      detalle: `status desconocido: ${texto(compra.status) ?? '(vacío)'}`,
+    };
+  }
 
+  const ahora = opts.ahora ?? new Date();
   const eventoTs =
     instanteISO(compra.approved_date) ??
     instanteISO(compra.order_date) ??
     instanteISO(compra.date) ??
-    (opts.ahora ?? new Date()).toISOString();
+    ahora.toISOString();
 
   const cabecera = base(compra, estado, eventoTs, opts.origen ?? 'api');
   if (!cabecera) {
     return { ok: false, motivo: 'ilegible', detalle: 'No se encontró transaction id' };
   }
+  // La API no da la fecha del reembolso: `eventoTs` aquí es la de APROBACIÓN.
+  // Lo honesto es la primera vez que lo VEMOS reembolsado; la 089 conserva la
+  // primera que se guardó.
+  if (cabecera.reembolsada_at) cabecera.reembolsada_at = ahora.toISOString();
 
   const precio = compra.price ?? compra.full_price;
   const lista = comisiones?.commissions ?? compra.commissions;
@@ -421,6 +535,7 @@ export function parsearApi(
     // La API no da payload de evento: el crudo del webhook es el que sirve
     // para depurar, y guardar aquí una copia del item duplicaría espacio.
     raw_payload: null,
+    estado_crudo: texto(compra.status),
   };
 
   comisionesPendientes.set(venta, {

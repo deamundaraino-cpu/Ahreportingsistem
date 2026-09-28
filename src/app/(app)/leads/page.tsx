@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { fijarZonaDeCliente } from '@/lib/zona-activa';
 import { reportUtmClient } from '@/lib/report-utm/client';
 import type { ReportUtmLeadEvent } from '@/lib/report-utm/types';
 import {
@@ -69,6 +70,8 @@ export default async function LeadsPage({
 }) {
   const sp = await searchParams;
   const f = leerFiltros(sp);
+  // Con un cliente elegido, los días del filtro de fechas son los de SU zona.
+  if (f.clienteId) await fijarZonaDeCliente({ rtm: f.clienteId });
   const supabase = await reportUtmClient();
   const offset = (f.page - 1) * PAGE_SIZE;
 

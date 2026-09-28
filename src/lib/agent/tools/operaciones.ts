@@ -280,6 +280,15 @@ const listAlertRules: AnyAgentTool = {
     if (input.client_id) {
       exigirCliente(ctx, input.client_id);
       q = q.eq('cliente_id', input.client_id);
+    } else {
+      // Sin cliente se devolvían las reglas de TODOS: ahora, las de los clientes
+      // visibles y las globales (sin cliente).
+      const ids = idsVisibles(ctx);
+      if (ids) {
+        q = ids.length
+          ? q.or(`cliente_id.is.null,cliente_id.in.(${ids.join(',')})`)
+          : q.is('cliente_id', null);
+      }
     }
 
     const { data, error } = await q;
@@ -382,6 +391,14 @@ const getSyncStatus: AnyAgentTool = {
       .limit(20);
 
     if (input.client_id) q = q.eq('cliente_id', input.client_id);
+    else {
+      // Sin cliente se veían los trabajos de todas las cuentas.
+      const ids = idsVisibles(ctx);
+      if (ids) {
+        if (ids.length === 0) return { resumen: {}, jobs: [] };
+        q = q.in('cliente_id', ids);
+      }
+    }
 
     const { data, error } = await q;
     if (error) {

@@ -160,7 +160,10 @@ export function explainSkipReason(reason: SkipReason, sourceLabel?: string): str
       return (
         `El gasto de anuncios no se puede repartir por el filtro aplicado ` +
         `(${reason.fields.join(', ')}), porque las métricas de campaña no ` +
-        `guardan ese dato. Los leads y las ventas sí quedan filtrados.`
+        `guardan ese dato. Los leads sí quedan filtrados; las ventas solo si ` +
+        `el filtro es de campaña, fuente o plataforma (una venta no sabe qué ` +
+        `respondió el lead). Para el costo de una respuesta usa su métrica: ` +
+        `inversión ÷ esa respuesta.`
       );
     case 'grain_mismatch':
       return (
@@ -185,9 +188,19 @@ export function hasDiagnostics(d: QueryDiagnostics | undefined): boolean {
  * `no_public_link` es plomería interna de la agencia: al cliente no le dice nada
  * y además revela cómo está montado el sistema por dentro. Se traduce a
  * «no configurado», que es lo que significa para él. El resto de motivos sí son
- * información legítima: explican por qué una celda está vacía.
+ * información legítima: explican por qué una celda está vacía. La moneda de
+ * reporte y el aviso de tasas de cambio viajan tal cual.
  */
-export function sanitizeForClient(d: QueryDiagnostics | undefined): QueryDiagnostics | undefined {
+export function sanitizeForClient<
+  T extends QueryDiagnostics & {
+    moneda?: string;
+    tasas?: unknown;
+    etiquetas?: Record<string, string>;
+    avisos_consulta?: string[];
+  },
+>(
+  d: T | undefined
+): (QueryDiagnostics & Pick<T, 'moneda' | 'tasas' | 'etiquetas' | 'avisos_consulta'>) | undefined {
   if (!d) return undefined;
   const neutralizar = (r: SkipReason): SkipReason =>
     r.kind === 'no_public_link' ? { kind: 'not_configured' } : r;
@@ -199,5 +212,13 @@ export function sanitizeForClient(d: QueryDiagnostics | undefined): QueryDiagnos
     skipped: d.skipped.map((s) => ({ ...s, reason: neutralizar(s.reason) })),
     // Se omite a propósito: el estado del enlace es asunto interno.
     hasPublicLink: true,
+    // La moneda y los días sin tasa SÍ son del cliente: sin ellos un enlace
+    // público pinta pesos chilenos con «$» y dos decimales.
+    ...(d.moneda ? { moneda: d.moneda } : {}),
+    ...(d.tasas ? { tasas: d.tasas } : {}),
+    // Los nombres de las preguntas y respuestas son del propio informe.
+    ...(d.etiquetas ? { etiquetas: d.etiquetas } : {}),
+    // Que una cifra puede estar incompleta también es del cliente.
+    ...(d.avisos_consulta?.length ? { avisos_consulta: d.avisos_consulta } : {}),
   };
 }

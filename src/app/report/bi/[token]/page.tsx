@@ -3,6 +3,7 @@ import { createAdminClient } from '@/utils/supabase/server';
 import { BiReportCanvas } from '@/components/report-utm/bi/BiReportCanvas';
 import { BiPublicHeader } from '@/components/report-utm/bi/BiPublicHeader';
 import type { BiReport } from '@/components/report-utm/bi/BiTypes';
+import { frescuraPublicaDeInforme } from '@/lib/report-utm/bi/frescura';
 
 export const dynamic = 'force-dynamic';
 
@@ -49,7 +50,7 @@ export default async function PublicBiReportPage({ params }: Params) {
   };
 
   // Branding de agencia (system_settings) + identidad del cliente (report_utm.clientes).
-  const [{ data: brandingRow }, clienteRes] = await Promise.all([
+  const [{ data: brandingRow }, clienteRes, frescura] = await Promise.all([
     db.from('system_settings').select('value').eq('key', 'branding').maybeSingle(),
     report.cliente_id
       ? db
@@ -59,6 +60,8 @@ export default async function PublicBiReportPage({ params }: Params) {
           .eq('id', report.cliente_id)
           .maybeSingle()
       : Promise.resolve({ data: null }),
+    // Semáforo de última sincronización del cliente (sin el texto del error).
+    frescuraPublicaDeInforme(report.cliente_id),
   ]);
 
   const branding = (brandingRow?.value ?? {}) as {
@@ -86,6 +89,7 @@ export default async function PublicBiReportPage({ params }: Params) {
           clienteName={cliente?.nombre}
           clienteLogo={clienteConfig.logo_url}
           reportName={report.nombre}
+          frescura={frescura}
         />
         <BiReportCanvas report={report} readonly publicToken={token} />
         <p className="mt-8 text-center text-[10px] text-muted-foreground">

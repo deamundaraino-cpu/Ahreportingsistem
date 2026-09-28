@@ -13,7 +13,9 @@ export type ApiErrorCode =
   | 'TIMEOUT'
   | 'INVALID_CONFIG'
   | 'EXTERNAL_API_ERROR'
-  | 'DATABASE_ERROR';
+  | 'DATABASE_ERROR'
+  /** El recurso cambió entre la lectura y la escritura: hay que releerlo. */
+  | 'CONFLICT';
 
 export interface ApiErrorResponse {
   error: {

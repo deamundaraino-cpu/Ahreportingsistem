@@ -29,6 +29,10 @@ export async function notifyOnSaleReceived(args: {
   const { supabaseAdmin, trackingDb, clienteId, parsed, insertedId, outboundType } = args;
 
   if (!NOTIFICATION_TYPES.includes(outboundType as NotificationType)) return;
+  // Solo existen dos avisos de venta. Los ternarios de abajo tratan cualquier
+  // otro tipo como reembolso: añadir uno a NOTIFICATION_TYPES bastaría para
+  // mandar «Venta reembolsada» por un pedido cancelado o pendiente.
+  if (outboundType !== 'sale.approved' && outboundType !== 'sale.refunded') return;
 
   try {
     const { data: rutmCliente } = await trackingDb

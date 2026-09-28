@@ -40,3 +40,8 @@ sync-worker
 
 # Scripts de diagnóstico ad-hoc (ver eslint.config.mjs)
 scripts/_tmp-*
+
+# Skills generadas desde src/lib/agent/guias/informes.ts (npm run skill:informes):
+# se comparan byte a byte con la guía en scripts/verify-skill-informes.ts.
+.claude/skills/informes-bi
+skills/informes-bi-mcp

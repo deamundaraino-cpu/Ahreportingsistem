@@ -3,7 +3,7 @@
  * Plugin Name:       Report UTM — Ad House
  * Plugin URI:        https://reportes.adshouse.cloud/
  * Description:       Tracking UTM server-side para WordPress. Capta leads de formularios con datos de contacto completos, propaga UTMs a links de checkout y registra la atribución multi-touch de cada visitante.
- * Version:           0.3.2
+ * Version:           0.5.0
  * Requires at least: 5.8
  * Requires PHP:      7.4
  * Author:            Robinson Zapata / Ad House
@@ -23,7 +23,8 @@
  *            rutm_sid  — session ID (se renueva cada 30 min de inactividad)
  *       b) Captura los UTMs de la URL de entrada (utm_source, utm_campaign,
  *          utm_medium, utm_content, utm_term, utm_id) y los guarda en
- *          cookies rutm_ft (first touch) y rutm_lt (last touch).
+ *          cookies rutm_ft (first touch, una sola vez) y rutm_lt (last touch,
+ *          se reescribe en cada página que llega con UTM o click id).
  *       c) Detecta click IDs publicitarios: fbclid (Meta), gclid (Google),
  *          ttclid (TikTok) y los asocia al visitante.
  *       d) Propaga esos UTMs automáticamente a todos los links de checkout
@@ -101,6 +102,29 @@
  *  CHANGELOG
  * ════════════════════════════════════════════════════════════════════
  *
+ *  v0.5.0 — Ningún lead se pierde ni se duplica
+ *    + El envío S2S espera la respuesta (3 s como mucho). Hasta ahora era
+ *      fire-and-forget: si la plataforma respondía 500 o no contestaba, el
+ *      lead se perdía sin que nadie lo viera.
+ *    + Si falla (red, 408, 429 o 5xx), se reintenta por WP-Cron a 1, 5 y 15
+ *      minutos con el mismo body.
+ *    + Cada lead lleva `external_id`: la plataforma rechaza la segunda copia
+ *      de un reintento o de un doble clic en vez de guardar el lead dos veces.
+ *    + Se envía la IP PÚBLICA del visitante (antes la primera cabecera válida,
+ *      aunque fuera la privada del proxy) y su país si hay Cloudflare.
+ *    + Se reenvían las cookies rutm_ft / rutm_lt del pixel: un formulario en
+ *      una página sin UTM ya no llega sin atribución.
+ *
+ *  v0.4.0 — Tipo y opciones de cada pregunta
+ *    + Cada lead viaja con `fields_meta`: para los desplegables, casillas y
+ *      radios de CF7, Gravity Forms, WPForms y Elementor, su tipo, si admite
+ *      varias respuestas y sus opciones. La plataforma ofrece así cada
+ *      respuesta con su nombre real sin tener que adivinarla.
+ *    + Las casillas se envían unidas por comas (antes por espacios, lo que
+ *      fundía varias opciones en una sola respuesta imposible de separar).
+ *    + Fix: las casillas de Gravity Forms llegaban vacías (se leía la entrada
+ *      del campo y no sus sub-entradas).
+ *
  *  v0.3.2 — El pixel JS vuelve a ejecutarse
  *    + Fix: la config se inyectaba con la clave `cliente_slug`, pero el pixel
  *           lee `cliente`. El script abortaba con "pixel inactive" en cuanto
@@ -143,7 +167,7 @@
 
 if ( ! defined( 'ABSPATH' ) ) exit;
 
-define( 'RUTM_VERSION',    '0.3.2' );
+define( 'RUTM_VERSION',    '0.5.0' );
 define( 'RUTM_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'RUTM_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 define( 'RUTM_PLATFORM',   'https://reportes.adshouse.cloud/' );
@@ -196,6 +220,11 @@ foreach ( $rutm_required_files as $rutm_file ) {
     }
     require_once $rutm_path;
 }
+
+// Reintentos de envíos S2S fallidos (0.5.0). Fuera de ReportUTM_Forms a
+// propósito: WP-Cron los ejecuta en cualquier petición, y sin el hook
+// registrado el reintento se descartaría en silencio.
+ReportUTM_S2S_Sender::register_retry_hook();
 
 /**
  * Clase principal del plugin.
@@ -313,6 +342,9 @@ class ReportUTM_Plugin {
         );
 
         $result = $sender->send_blocking( 'lead', [
+            // Aleatorio: con el mismo email fijo, dos pruebas en el mismo minuto
+            // compartirían external_id y la segunda no se vería en Leads.
+            'external_id' => 's2s:test-' . str_replace( '-', '', wp_generate_uuid4() ),
             'form_name'   => 'Test desde WP Admin',
             'form_plugin' => 's2s',
             'lead_name'   => 'Test Lead',

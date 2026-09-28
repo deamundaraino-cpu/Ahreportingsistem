@@ -15,7 +15,7 @@ loadEnv({ path: '.env.local' });
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { createClient } from '@supabase/supabase-js';
-import { colombiaDateOf } from '../src/lib/colombia-date';
+import { diaEnZona, zonaHorariaDeCliente } from '../src/lib/zona-horaria';
 import { salir } from './_salida';
 
 let fallos = 0;
@@ -171,17 +171,24 @@ async function main() {
 
   // LA comprobación de zona horaria. Si esto se rompe, las ventas empiezan a
   // caer en el día equivocado y el ROAS se compara contra el gasto de otro día.
-  const desfase = todas.filter(
-    (f) => f.aprobada_at && colombiaDateOf(f.aprobada_at as string) !== f.fecha_venta
+  // Desde el 2026-09-28 el día es el de la zona del CLIENTE (la de su cuenta de
+  // Meta, zona-horaria.ts), no siempre el de Colombia.
+  const { data: cfgs } = await db.from('clientes').select('id, config_api');
+  const zonaDe = new Map(
+    ((cfgs ?? []) as Array<{ id: string; config_api: unknown }>).map((c) => [
+      c.id,
+      zonaHorariaDeCliente(c.config_api),
+    ])
   );
+  const diaEsperado = (f: Record<string, unknown>) =>
+    diaEnZona(f.aprobada_at as string, zonaDe.get(f.cliente_id as string) ?? 'America/Bogota');
+  const desfase = todas.filter((f) => f.aprobada_at && diaEsperado(f) !== f.fecha_venta);
   check(
-    'fecha_venta es el día Colombia de aprobada_at',
+    'fecha_venta es el día (en la zona del cliente) de aprobada_at',
     desfase.length === 0,
     desfase
       .slice(0, 3)
-      .map(
-        (f) => `${f.transaction_id}: ${f.fecha_venta} ≠ ${colombiaDateOf(f.aprobada_at as string)}`
-      )
+      .map((f) => `${f.transaction_id}: ${f.fecha_venta} ≠ ${diaEsperado(f)}`)
       .join(' | ')
   );
 

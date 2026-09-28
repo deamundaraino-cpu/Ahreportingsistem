@@ -15,6 +15,9 @@
  * verdaderamente global requeriría Redis/Upstash (fuera de alcance).
  */
 
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { esTimeoutDeFetch } from './fetch-json';
+
 export type Platform = 'meta' | 'tiktok' | 'hotmart' | 'ga4';
 
 /** Gate estilo p-limit: máx. concurrencia + separación mínima entre arranques. */
@@ -66,10 +69,52 @@ export function limit<T>(platform: Platform, fn: () => Promise<T>): Promise<T> {
 // En Vercel Hobby la función se corta a 60s (el worker self-hosted no tiene tope).
 // Para no consumir todo el presupuesto en reintentos, dejamos de reintentar pasado
 // el deadline (se devuelve el último resultado/lanza el último error tal cual).
-let retryDeadlineMs = Infinity;
-/** Llamar al inicio de la corrida: setRetryDeadline(Date.now() + 50_000) en Vercel. */
+//
+// El deadline vive POR PETICIÓN en un AsyncLocalStorage. Antes era una variable
+// global del proceso: `/api/worker` la fijaba a now+50s y, en el servidor de larga
+// duración del VPS (el sync-worker corre el servidor de Next), `/api/worker/hotmart`
+// —que nunca la toca— heredaba ese deadline ya vencido: todas las llamadas a
+// Hotmart posteriores del mismo proceso se quedaban SIN reintentos.
+
+/** Mutable a propósito: `setRetryDeadline` dentro del contexto lo ajusta sin abrir otro. */
+type ContextoDeadline = { deadlineMs: number };
+const deadlinePorPeticion = new AsyncLocalStorage<ContextoDeadline>();
+
+/** Deadline heredado: solo lo ven las llamadas hechas FUERA de cualquier `conDeadline`. */
+let retryDeadlineGlobalMs = Infinity;
+
+/**
+ * Ejecuta `fn` con un deadline de reintentos propio. `ms` es un instante
+ * ABSOLUTO en epoch ms, igual que en `setRetryDeadline`:
+ *
+ *   conDeadline(Date.now() + 50_000, () => correrSync())
+ *
+ * Todo lo que cuelgue de `fn` (awaits, timers, promesas en paralelo) ve este
+ * deadline y solo este: ni el global ni el de otra petición concurrente. Cada
+ * llamada abre un contexto nuevo, así que un `conDeadline` anidado sustituye al
+ * exterior mientras dura y al salir vuelve el de fuera.
+ */
+export async function conDeadline<T>(ms: number, fn: () => Promise<T>): Promise<T> {
+  return deadlinePorPeticion.run({ deadlineMs: ms }, fn);
+}
+
+/**
+ * Fija el deadline de reintentos (epoch ms absoluto).
+ *  • Dentro de `conDeadline`: ajusta el de ESE contexto; ni el global ni el de
+ *    otras peticiones se enteran.
+ *  • Fuera: el comportamiento de siempre, un valor global para todo el proceso.
+ *    En un servidor de larga duración eso contamina las llamadas posteriores de
+ *    otras rutas; el código nuevo debe usar `conDeadline`.
+ */
 export function setRetryDeadline(absoluteMs: number) {
-  retryDeadlineMs = absoluteMs;
+  const ctx = deadlinePorPeticion.getStore();
+  if (ctx) ctx.deadlineMs = absoluteMs;
+  else retryDeadlineGlobalMs = absoluteMs;
+}
+
+/** Deadline vigente para la llamada en curso: el de su contexto o, sin contexto, el global. */
+function deadlineVigente(): number {
+  return deadlinePorPeticion.getStore()?.deadlineMs ?? retryDeadlineGlobalMs;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -108,7 +153,7 @@ export async function withRetry<T>(
     }
 
     const verdict = classify(result, error);
-    const exhausted = attempt >= maxRetries || Date.now() >= retryDeadlineMs;
+    const exhausted = attempt >= maxRetries || Date.now() >= deadlineVigente();
     if (!verdict.throttled || exhausted) {
       if (error !== undefined) throw error;
       return result as T;
@@ -212,13 +257,35 @@ export function tiktokFetch(url: string, init?: RequestInit): Promise<BufferedRe
   );
 }
 
-/** Hotmart: throttle por HTTP 429 / 5xx. */
+/** Tope de cada intento de una llamada a Hotmart, lectura del cuerpo incluida. */
+export const HOTMART_TIMEOUT_MS = 20_000;
+
+/**
+ * Hotmart: throttle por HTTP 429 / 5xx.
+ *
+ * Sin `init.signal`, cada INTENTO lleva su propio `AbortSignal.timeout` (uno
+ * compartido llegaría ya vencido al reintento). Antes no había ninguno: una
+ * conexión que Hotmart dejaba colgada colgaba la corrida entera en el worker
+ * VPS, que no tiene el tope de 60 s de Vercel. Ese timeout propio se reintenta
+ * igual que un error de red. Si el `signal` lo pasa quien llama, su abort se
+ * respeta: ni se sustituye ni se reintenta.
+ *
+ * Meta y TikTok siguen sin tope por defecto: no se les pone uno sin medir antes
+ * cuánto tardan sus insights más pesados.
+ */
 export function hotmartFetch(url: string, init?: RequestInit): Promise<BufferedResponse> {
+  const signalPropio = !init?.signal;
   return withRetry<BufferedResponse>(
     'hotmart',
-    () => bufferedFetch(url, init),
+    () =>
+      bufferedFetch(
+        url,
+        signalPropio ? { ...init, signal: AbortSignal.timeout(HOTMART_TIMEOUT_MS) } : init
+      ),
     (res, error) => {
-      if (error) return { throttled: isNetworkError(error) };
+      if (error) {
+        return { throttled: isNetworkError(error) || (signalPropio && esTimeoutDeFetch(error)) };
+      }
       if (!res) return { throttled: false };
       return httpThrottled(res);
     }

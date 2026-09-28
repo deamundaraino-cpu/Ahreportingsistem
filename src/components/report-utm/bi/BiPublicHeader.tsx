@@ -3,6 +3,10 @@
 import { useState } from 'react';
 import { FileDown } from 'lucide-react';
 import { exportReportPdf } from './exportPdf';
+import {
+  SyncFreshnessBadge,
+  type FrescuraDatos,
+} from '@/app/(app)/dashboard/components/SyncFreshnessBadge';
 
 interface Props {
   agencyLogo?: string;
@@ -13,6 +17,12 @@ interface Props {
   reportName: string;
   /** Período de la entrega. Ej. "Semana 2 de Julio 2026". */
   periodLabel?: string;
+  /**
+   * Última sincronización del cliente, leída en el servidor (sin el texto del
+   * error). Mismo semáforo que el dashboard: sin él, un informe con el pipeline
+   * caído se veía igual que uno al día.
+   */
+  frescura?: FrescuraDatos | null;
 }
 
 export function BiPublicHeader({
@@ -23,6 +33,7 @@ export function BiPublicHeader({
   clienteLogo,
   reportName,
   periodLabel,
+  frescura,
 }: Props) {
   const [exporting, setExporting] = useState(false);
   const brand = accent || '#10b981';
@@ -96,6 +107,11 @@ export function BiPublicHeader({
           </button>
         </div>
       </div>
+      {frescura && (
+        <div className="mt-2">
+          <SyncFreshnessBadge clienteId="" datos={frescura} ocultarError />
+        </div>
+      )}
     </div>
   );
 }

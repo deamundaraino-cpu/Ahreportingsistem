@@ -6,7 +6,7 @@ import { ConversionesOfflineCardLazy as ConversionesOfflineCard } from '../compo
 import { PublicLinkButton } from '../components/PublicLinkButton';
 import { BitacorasSidebar } from '../components/BitacorasSidebar';
 import { getBitacoras } from '../../admin/settings/[id]/_actions';
-import { colombiaToday, addDaysISO } from '@/lib/date-utils';
+import { rangoPorDefectoCliente } from '@/lib/colombia-date';
 import { createClient, createAdminClient } from '@/utils/supabase/server';
 import { resolveRtmClienteId } from '@/lib/report-utm/campaign-resolver';
 import { redirect } from 'next/navigation';
@@ -25,9 +25,7 @@ export default async function DashboardPage(props: {
   // fila futura en ceros. Y son 30 días inclusive (no 31) para que coincida con
   // el preset "Últimos 30 días" del selector: si no, `getActivePreset` no lo
   // reconocía y el botón decía "Personalizado".
-  const hoy = colombiaToday();
-  const fallbackFrom = addDaysISO(hoy, -29);
-  const fallbackTo = hoy;
+  const { from: fallbackFrom, to: fallbackTo } = rangoPorDefectoCliente(30);
   const fromStr = typeof searchParams.from === 'string' ? searchParams.from : fallbackFrom;
   const toStr = typeof searchParams.to === 'string' ? searchParams.to : fallbackTo;
 

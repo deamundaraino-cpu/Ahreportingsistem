@@ -20,6 +20,17 @@
 /** Intentos por página antes de darse por vencido. */
 const REINTENTOS = 3;
 
+/**
+ * Aviso de resultado incompleto (modo no estricto). Este módulo es neutro y no
+ * sabe de peticiones; el BI engancha aquí su recolector de avisos
+ * (`bi/avisos-tasas.ts`) para que un recorte llegue al widget en vez de quedarse
+ * en el log del servidor.
+ */
+let alQuedarIncompleto: ((motivo: string) => void) | null = null;
+export function alResultadoIncompleto(fn: (motivo: string) => void): void {
+  alQuedarIncompleto = fn;
+}
+
 export async function fetchAllRows(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   buildQuery: () => any,
@@ -79,6 +90,9 @@ export async function fetchAllRows(
           ` el resultado va a quedar INCOMPLETO:`,
         ultimoError?.message ?? ultimoError
       );
+      alQuedarIncompleto?.(
+        `Una lectura falló a mitad: los datos pueden estar incompletos (${all.length} filas leídas). Vuelve a cargar.`
+      );
       break;
     }
 
@@ -102,6 +116,11 @@ export async function fetchAllRows(
   }
   if (opts.estricto && !completo) {
     throw new Error(`[paginate] se alcanzó el tope de ${hardCap} filas sin terminar de leer`);
+  }
+  if (!completo && all.length >= hardCap) {
+    alQuedarIncompleto?.(
+      `Se leyeron las primeras ${hardCap.toLocaleString('es')} filas y había más: acorta el rango para ver el total exacto.`
+    );
   }
   return all;
 }

@@ -6,6 +6,21 @@
 
 // `bi/expr.ts` es puro (sin imports), así que respeta la regla de arriba.
 import { parseExpr, isExprError, evalExpr } from './bi/expr';
+import {
+  extraerReferenciasDeLead,
+  esTokenRespuesta as isLeadAnsMetricLocal,
+  parseTokenRespuesta,
+  parseClaveFormulaRespuesta,
+  tokenRespuesta,
+  SIN_RESPUESTA,
+} from '@/lib/leads/respuestas/claves';
+import type { RespuestaClave } from '@/lib/leads/respuestas/claves';
+import {
+  ROTULO_LEADS_META,
+  ROTULO_LEADS_RECIBIDOS,
+  DESCRIPCION_LEADS_META,
+  DESCRIPCION_LEADS_RECIBIDOS,
+} from '@/lib/leads/fuentes-de-lead';
 // `bi-valores` no importa nada, así que la dependencia va en un solo sentido y
 // no hay ciclo. Es la ÚNICA forma de partir una selección guardada: tenerla
 // escrita cuatro veces fue lo que dejó que un valor con coma se rompiera en
@@ -153,6 +168,15 @@ export type BiMetric =
   | 'hm_roas'
   | 'hm_cpa'
   | 'hm_ticket_medio'
+  // Pedidos frente a transacciones (auditoría 2026-09-25): `hm_ventas` cuenta
+  // el bump y el upsell de un comprador como ventas aparte; `hm_compras` cuenta
+  // pedidos. El CPA por comprador es gasto ÷ compras.
+  | 'hm_compras'
+  | 'hm_bumps'
+  | 'hm_cpa_compra'
+  | 'hm_ticket_compra'
+  | 'hm_tasa_bump'
+  | 'hm_conversion'
   // Moneda de reporte: la facturación SIN convertir (en dólares) y la tasa con
   // la que se convierte.
   | 'hm_neto_usd'
@@ -301,6 +325,8 @@ export const ADDITIVE_METRICS: ReadonlySet<string> = new Set<string>([
   // fuente (tasa de reembolso, ROAS, CPA, ticket medio) NO están aquí: se
   // recalculan sobre los totales de sus operandos.
   'hm_ventas',
+  'hm_compras',
+  'hm_bumps',
   'hm_neto',
   'hm_bruto',
   'hm_reembolsos',
@@ -318,6 +344,8 @@ export function isAdditiveMetric(metric: string): boolean {
   // Un segmento de lead es un CONTEO de contactos: siempre aditivo. Sin esta
   // rama la fila "Total" de la tabla dejaría su columna en blanco.
   if (isLeadSegMetric(metric)) return true;
+  // Una respuesta de lead también es un conteo de contactos.
+  if (isLeadAnsMetricLocal(metric)) return true;
   return ADDITIVE_METRICS.has(metric);
 }
 
@@ -343,6 +371,8 @@ export const FUNNEL_STAGE_METRICS = [
   'purchases',
   'sales_count',
   'hm_ventas',
+  // Pedidos: siempre ≤ ventas (cada bump es una venta más del mismo pedido).
+  'hm_compras',
 ] as const;
 
 /** Etapas por defecto del embudo cuando el widget no configura ninguna. */
@@ -368,6 +398,8 @@ export const PIVOT_METRICS: BiMetric[] = [
   // hacer; los ratios de la misma fuente quedan fuera porque no se pueden
   // sumar por celda.
   'hm_ventas',
+  'hm_compras',
+  'hm_bumps',
   'hm_neto',
   'hm_bruto',
   'hm_reembolsos',
@@ -383,6 +415,7 @@ export function supportsPivot(metric: string): boolean {
   // el pivot sabe manejar. No está en PIVOT_METRICS porque es un token dinámico
   // por cliente, no una entrada del catálogo fijo.
   if (isLeadSegMetric(metric)) return true;
+  if (isLeadAnsMetricLocal(metric)) return true;
   return (PIVOT_METRICS as string[]).includes(metric);
 }
 
@@ -396,6 +429,7 @@ export function supportsPivot(metric: string): boolean {
  */
 export function esEtapaDeEmbudo(metric: string): boolean {
   if (isLeadSegMetric(metric)) return true;
+  if (isLeadAnsMetricLocal(metric)) return true;
   return (FUNNEL_STAGE_METRICS as readonly string[]).includes(metric);
 }
 
@@ -546,9 +580,15 @@ export const METRIC_META: Record<BiMetric, MetricMetaEntry> = {
   // Conteo de-duplicado de lead_events, que ya abarca TODOS los canales
   // (formularios web + Meta Lead Ads). La antigua 'leads_total' era un duplicado
   // exacto de esta métrica y se eliminó del catálogo (ver migración 045).
-  // Se llama "(contactos)" para no confundirla con `leads_form` (píxel de Meta)
-  // ni con `offline_leads` (Sheet): son tres cosas distintas que se solapan.
-  leads_count: { label: 'Leads (contactos)', format: 'number', group: 'leads', breakdown: 'any' },
+  // Se llama "recibidos (contactos)" para no confundirla con `leads_form` (lo que
+  // Meta atribuye) ni con `offline_leads` (Sheet): son tres cosas distintas que se
+  // solapan. El rótulo es el mismo que usa el dashboard (`fuentes-de-lead.ts`).
+  leads_count: {
+    label: ROTULO_LEADS_RECIBIDOS,
+    format: 'number',
+    group: 'leads',
+    breakdown: 'any',
+  },
   cpl: { label: 'CPL', format: 'currency', group: 'leads', breakdown: 'campaign' },
   conversion_rate: { label: 'Conv. Rate', format: 'percent', group: 'leads', breakdown: 'any' },
   // ── Ventas ──
@@ -590,10 +630,11 @@ export const METRIC_META: Record<BiMetric, MetricMetaEntry> = {
     breakdown: 'campaign',
   },
   // ── Eventos de campaña (JSONB meta_campaigns / tiktok_*) ──
-  // `leads_form` es lo que reporta el PÍXEL de Meta, no la tabla de leads:
-  // puede diferir de leads_count y no son sumables entre sí.
+  // `leads_form` es la acción `lead` que Meta ATRIBUYE a sus anuncios (formularios
+  // nativos incluidos), no la tabla de leads: puede diferir de leads_count y no son
+  // sumables entre sí. Llamarlo «del píxel» era falso para los formularios nativos.
   leads_form: {
-    label: 'Leads del píxel de Meta',
+    label: ROTULO_LEADS_META,
     format: 'number',
     group: 'campana',
     breakdown: 'campaign',
@@ -848,7 +889,9 @@ export const METRIC_META: Record<BiMetric, MetricMetaEntry> = {
   // campaña. Es lo que las `hotmart_*` agregadas nunca pudieron hacer.
   hm_ventas: { label: 'Ventas Hotmart (#)', format: 'number', group: 'hotmart', breakdown: 'any' },
   hm_neto: {
-    label: 'Facturación Hotmart (neto)',
+    // Distinta de `hotmart_revenue` (fuente Cuenta, sin campaña): con la misma
+    // etiqueta, el selector mostraba dos métricas iguales que no dan lo mismo.
+    label: 'Facturación Hotmart neta (por venta)',
     format: 'currency',
     group: 'hotmart',
     breakdown: 'any',
@@ -880,7 +923,12 @@ export const METRIC_META: Record<BiMetric, MetricMetaEntry> = {
     group: 'hotmart',
     breakdown: 'any',
   },
-  hm_reembolsos: { label: 'Reembolsos (#)', format: 'number', group: 'hotmart', breakdown: 'any' },
+  hm_reembolsos: {
+    label: 'Reembolsos Hotmart (# por venta)',
+    format: 'number',
+    group: 'hotmart',
+    breakdown: 'any',
+  },
   hm_neto_reembolsado: {
     label: 'Facturación reembolsada',
     format: 'currency',
@@ -910,6 +958,39 @@ export const METRIC_META: Record<BiMetric, MetricMetaEntry> = {
   hm_ticket_medio: {
     label: 'Ticket medio',
     format: 'currency',
+    group: 'hotmart',
+    breakdown: 'any',
+  },
+  hm_compras: {
+    label: 'Compras Hotmart (#)',
+    format: 'number',
+    group: 'hotmart',
+    breakdown: 'any',
+  },
+  hm_bumps: { label: 'Order bumps (#)', format: 'number', group: 'hotmart', breakdown: 'any' },
+  // Hereda el límite del gasto, igual que hm_cpa.
+  hm_cpa_compra: {
+    label: 'CPA por compra (Hotmart)',
+    format: 'currency',
+    group: 'hotmart',
+    breakdown: 'campaign',
+  },
+  hm_ticket_compra: {
+    label: 'Ticket por compra',
+    format: 'currency',
+    group: 'hotmart',
+    breakdown: 'any',
+  },
+  hm_tasa_bump: {
+    label: 'Tasa de order bump',
+    format: 'percent',
+    group: 'hotmart',
+    breakdown: 'any',
+  },
+  // Compras ÷ leads: el desglose derivado es el de sus dos hojas (`any`).
+  hm_conversion: {
+    label: 'Conversión lead → compra',
+    format: 'percent',
     group: 'hotmart',
     breakdown: 'any',
   },
@@ -991,9 +1072,11 @@ export const RECOMMENDED_METRICS: BiMetric[] = [
   'cpc',
   'cpm',
   'hm_ventas',
+  'hm_compras',
   'hm_neto',
   'hm_roas',
   'hm_cpa',
+  'hm_cpa_compra',
 ];
 
 /**
@@ -1401,6 +1484,11 @@ export interface LeadFieldMeta {
   /** Leads del período que responden este campo. */
   cobertura: number;
   alta_cardinalidad: boolean;
+  /**
+   * Cada bucket con su clave estable, en el orden de `valores`. Es lo que hace
+   * que cada respuesta se ofrezca como métrica (`leadans:<campo>:<clave>`).
+   */
+  respuestas?: RespuestaClave[];
 }
 
 // ── Segmentos de campo de lead (report_utm.lead_campo_segmentos) ──────
@@ -1468,6 +1556,82 @@ export function leadSegLabel(token: string, segs: LeadSegmentoMeta[] = []): stri
   const seg = segs.find((s) => s.clave === clave);
   if (!seg) return humanizeFieldKey(clave);
   return seg.campo_nombre ? `${seg.campo_nombre}: ${seg.nombre}` : seg.nombre;
+}
+
+// ── Respuestas de campo de lead (una respuesta = una métrica) ─────────
+// Cada respuesta de un campo del catálogo es, sin configurar nada, una MÉTRICA:
+//   • Métrica: "leadans:<campo>:<respuesta>" · alias: "lf__<campo>__<respuesta>"
+//   • Los que no respondieron: "leadans:<campo>:sin_respuesta"
+//
+// Es el mismo alias que ya usaba el dashboard, así que una fórmula se escribe
+// igual en una pestaña y en un informe (auditoría del 2026-09-26: antes, en un
+// informe, `lf__…` valía 0 en silencio). El vocabulario vive en
+// `src/lib/leads/respuestas/claves.ts`; aquí solo se reexporta con los nombres
+// que usa el resto del BI.
+//
+// Igual que un segmento, una respuesta es una MEDIDA y no recorta el ámbito, así
+// que `spend / lf__rango__2m_3m` conserva el gasto entero: es el CPL de esa
+// respuesta. Filtrar por `leadfield:` sí lo anula (ver `hasNonAttributableFilter`).
+
+export {
+  PREFIJO_TOKEN_RESPUESTA as LEAD_ANS_PREFIX,
+  SIN_RESPUESTA as LEAD_ANS_SIN_RESPUESTA,
+  tokenRespuesta as makeLeadAnsMetric,
+  esTokenRespuesta as isLeadAnsMetric,
+  parseTokenRespuesta as parseLeadAnsMetric,
+  claveFormulaRespuesta as leadAnsAlias,
+} from '@/lib/leads/respuestas/claves';
+
+/** Alias `lf__<campo>__<resp>` referenciados por una expresión calc. */
+export function extractLeadAnsAliases(
+  expression: string
+): { campo: string; resp: string; alias: string }[] {
+  return extraerReferenciasDeLead(expression)
+    .respuestas.filter((r) => r.texto.startsWith('lf__'))
+    .map((r) => ({ campo: r.campo, resp: r.resp, alias: r.texto }));
+}
+
+/**
+ * Bases de una fórmula, si TODAS son aditivas: identificador → token que hay que
+ * pedir al motor para tener su valor por fila. null si alguna no suma (un
+ * ratio, un campo calculado anidado): entonces el total de la fórmula no se
+ * puede reconstruir fila a fila y la tabla lo deja en «—».
+ *
+ * Es lo que permite totalizar `spend / lf__rango__2m_3m` (CPL por respuesta):
+ * gasto total ÷ respuestas totales, no la suma de los CPL de cada fila.
+ */
+export function basesAditivasDeFormula(expression: string): Map<string, string> | null {
+  const parsed = parseExpr(expression);
+  if (isExprError(parsed)) return null;
+  const out = new Map<string, string>();
+  for (const id of parsed.refs) {
+    let token: string | null = null;
+    if (METRIC_META[id as BiMetric]) token = id;
+    else {
+      const r = parseClaveFormulaRespuesta(id);
+      if (r) token = tokenRespuesta(r.campo, r.resp);
+      else if (id.startsWith('lseg__')) token = makeLeadSegMetric(id.slice('lseg__'.length));
+    }
+    if (!token || !isAdditiveMetric(token)) return null;
+    out.set(id, token);
+  }
+  return out.size > 0 ? out : null;
+}
+
+/**
+ * Etiqueta legible de un token de respuesta: «Rango de ingresos: $2M a $3M».
+ * null si no es un token de respuesta. Sin catálogo, humaniza las claves.
+ */
+export function leadAnsLabel(token: string, campos: LeadFieldMeta[] = []): string | null {
+  const p = parseTokenRespuesta(token);
+  if (!p) return null;
+  const campo = campos.find((c) => c.clave === p.campo);
+  const nombreCampo = campo?.nombre ?? humanizeFieldKey(p.campo);
+  if (p.resp === SIN_RESPUESTA) return `${nombreCampo}: (sin respuesta)`;
+  const resp =
+    campo?.respuestas?.find((r) => r.clave === p.resp || (r.alias ?? []).includes(p.resp))
+      ?.nombre ?? humanizeFieldKey(p.resp);
+  return `${nombreCampo}: ${resp}`;
 }
 
 // ── Columnas adicionales de Sheets offline (custom_fields JSONB) ──────
@@ -1877,6 +2041,24 @@ export const DIM_FILTER_KEYS = [
   'attribution_method',
   'platform',
 ] as const;
+
+/**
+ * Claves de `filters` que son filtros de dimensión del informe (los que se ven
+ * como chips «Filtrando por»). Se distinguen de las claves de contexto
+ * (cliente_id, fechas, __adv) porque son las únicas que se persisten —y se
+ * borran— al guardar el informe.
+ *
+ * Vivía dentro de BiReportCanvas; está aquí para que la herramienta
+ * `update_report` del agente acepte exactamente las mismas claves.
+ */
+export function isDimensionFilterKey(k: string): boolean {
+  return (
+    k.startsWith('utm_') ||
+    (DIM_FILTER_KEYS as readonly string[]).includes(k) ||
+    isFieldDim(k) ||
+    isLeadFieldDim(k)
+  );
+}
 
 /**
  * Agrega al query los filtros planos de dimensión no-UTM activos, con la forma
@@ -2383,8 +2565,7 @@ export function hasNonAttributableFilter(
  * (no para el trafficker). Se muestra como tooltip junto al título del widget.
  */
 export const METRIC_GLOSSARY: Record<string, string> = {
-  leads_count:
-    'Personas que dejaron sus datos durante el período, sumando formularios web y formularios de Meta. Es el conteo real de contactos: no se suma con “Leads del píxel de Meta” ni con “Leads offline”, que miden lo mismo desde otra fuente y se solapan.',
+  leads_count: DESCRIPCION_LEADS_RECIBIDOS,
   sales_count: 'Cantidad de ventas registradas en el período.',
   revenue: 'Dinero total facturado por las ventas del período.',
   spend: 'Dinero invertido en publicidad (Meta + TikTok) durante el período.',
@@ -2423,17 +2604,29 @@ export const METRIC_GLOSSARY: Record<string, string> = {
   hm_ventas:
     'Cantidad de ventas cobradas de Hotmart en el período. No incluye las reembolsadas ni las pendientes de pago.',
   hm_neto:
-    'Dinero que realmente llega a la cuenta: la comisión del productor, ya descontada la tarifa de Hotmart. Convertido a dólares.',
-  hm_bruto: 'Precio pagado por el comprador antes de comisiones, convertido a dólares.',
+    'Dinero que realmente llega a la cuenta: la comisión del productor, ya descontada la tarifa de Hotmart. Convertido a la moneda del cliente.',
+  hm_bruto:
+    'Precio pagado por el comprador antes de comisiones, convertido a la moneda del cliente.',
   hm_reembolsos:
     'Cantidad de ventas del período que acabaron reembolsadas o en contracargo. Se cuentan en la fecha de la VENTA, no en la del reembolso.',
   hm_neto_reembolsado:
     'Dinero neto de las ventas del período que acabaron devueltas. Se imputa a la fecha de la venta original para que el retorno de la campaña refleje lo que de verdad dejó.',
-  hm_tasa_reembolso: 'Qué porcentaje de la facturación acabó devuelta. Cuanto MÁS BAJO, mejor.',
+  hm_tasa_reembolso:
+    'Qué porcentaje de lo facturado acabó devuelto (reembolsado ÷ facturado antes de devolver). Cuanto MÁS BAJO, mejor.',
+  hm_compras:
+    'Pedidos cobrados de Hotmart: cada comprador cuenta UNA vez aunque añada order bumps o upsells. Es el número con el que se calcula el costo por comprador.',
+  hm_bumps: 'Order bumps cobrados: productos añadidos al pedido en el mismo checkout.',
+  hm_cpa_compra:
+    'Cuánto costó, en promedio, conseguir cada comprador (gasto ÷ compras). A diferencia del CPA por venta, no se abarata con los bumps y upsells. Cuanto MÁS BAJO, mejor.',
+  hm_ticket_compra:
+    'Facturación neta dividida entre las compras: cuánto deja cada comprador sumando lo que añadió al pedido.',
+  hm_tasa_bump: 'Qué porcentaje de las compras añadió un order bump.',
+  hm_conversion:
+    'Qué porcentaje de los leads del período terminó comprando en Hotmart (compras ÷ leads). Compara el mismo período, no sigue a cada lead hasta su compra.',
   hm_roas:
     'Retorno de la inversión publicitaria con las ventas atribuidas a cada campaña: por cada $1 invertido, cuántos $ se facturaron. Cuanto MÁS ALTO, mejor. A diferencia del ROAS de cuenta, este SÍ se reparte por campaña.',
   hm_cpa:
-    'Cuánto costó, en promedio, cada venta de Hotmart atribuida a la campaña. Cuanto MÁS BAJO, mejor.',
+    'Cuánto costó, en promedio, cada venta de Hotmart atribuida a la campaña. Cuenta los order bumps y upsells como ventas aparte; para el costo por comprador usa «CPA por compra». Cuanto MÁS BAJO, mejor.',
   hm_ticket_medio:
     'Facturación neta dividida entre el número de ventas: cuánto deja, en promedio, cada compra.',
   hm_neto_usd:
@@ -2443,10 +2636,9 @@ export const METRIC_GLOSSARY: Record<string, string> = {
   hm_tasa_cambio:
     'Cuántas unidades de la moneda del cliente vale 1 USD. Por día es la tasa guardada de ese día; en un período, el promedio de las tasas diarias. Es la tasa con la que se convierte la facturación de Hotmart. Con el cliente en dólares vale 1.',
   // ── Las tres métricas que se llaman "leads" y NO son comparables ──
-  leads_form:
-    'Leads que reporta el píxel de Meta desde sus propios formularios. Puede no coincidir con “Leads (contactos)”: mide otra cosa, en otro sistema, y los mismos contactos pueden estar en ambas. No las sumes.',
+  leads_form: DESCRIPCION_LEADS_META,
   offline_leads:
-    'Leads que el equipo carga a mano en el Google Sheet del cliente. Se solapan con “Leads (contactos)” si el mismo contacto está en los dos sitios.',
+    'Leads que el equipo carga a mano en el Google Sheet del cliente. Se solapan con los «Leads recibidos (contactos)» si el mismo contacto está en los dos sitios.',
   // ── Eventos del píxel ──
   initiates_checkout: 'Veces que alguien empezó un pago en la web, según el píxel de Meta.',
   purchases:
@@ -2526,6 +2718,7 @@ export const LOWER_IS_BETTER = new Set([
   'frequency',
   'hotmart_cpa',
   'hm_cpa',
+  'hm_cpa_compra',
   'hm_reembolsos',
   'hm_neto_reembolsado',
   'hm_tasa_reembolso',
@@ -2561,6 +2754,7 @@ const GOAL_BY_METRIC: Record<string, { key: keyof ClienteGoals; mustNotExceed: b
   hotmart_cpa: { key: 'cpa_max', mustNotExceed: true },
   hotmart_roas: { key: 'roas_min', mustNotExceed: false },
   hm_cpa: { key: 'cpa_max', mustNotExceed: true },
+  hm_cpa_compra: { key: 'cpa_max', mustNotExceed: true },
   hm_roas: { key: 'roas_min', mustNotExceed: false },
   leads_count: { key: 'leads_target', mustNotExceed: false },
   spend: { key: 'budget', mustNotExceed: true },

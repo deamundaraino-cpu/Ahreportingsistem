@@ -347,9 +347,11 @@ async function verificarDatos() {
     return;
   }
 
-  // Elegir el cliente con más leads en los últimos 90 días.
-  const desde = new Date(Date.now() - 90 * 86400_000).toISOString().slice(0, 10);
-  const hasta = new Date().toISOString().slice(0, 10);
+  // Elegir el cliente con más leads en los últimos 90 días, en un rango CERRADO
+  // (hasta anteayer): con hoy dentro, un lead que entra entre la consulta del
+  // total y la agrupada descuadra la comparación sin que el motor falle.
+  const desde = new Date(Date.now() - 92 * 86400_000).toISOString().slice(0, 10);
+  const hasta = new Date(Date.now() - 2 * 86400_000).toISOString().slice(0, 10);
   let mejor: { id: string; nombre: string; publicId: string; leads: number } | null = null;
   for (const c of clientes) {
     const { count } = await db

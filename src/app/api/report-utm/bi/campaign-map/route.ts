@@ -3,10 +3,29 @@ import { createClient } from '@/utils/supabase/server';
 import { reportUtmAdminClient } from '@/lib/report-utm/client';
 import { checkWriteRole } from '@/lib/report-utm/auth';
 import { getCrossDiagnostics } from '@/lib/report-utm/campaign-data';
+import { normLabel } from '@/lib/report-utm/bi-metadata';
 
 export const dynamic = 'force-dynamic';
 
 const NIVELES = new Set(['campaign', 'adset', 'ad']);
+
+/**
+ * ¿La sesión puede ver este cliente? Se pregunta con el cliente de la SESIÓN,
+ * no con el admin: así decide la RLS de `report_utm.clientes` (can_view). Antes
+ * la ruta leía con el cliente admin y devolvía el diagnóstico de cualquier
+ * cliente a cualquier usuario con sesión, y el DELETE borraba por `id` sin mirar
+ * de quién era la corrección.
+ */
+async function clienteVisible(clienteId: string): Promise<boolean> {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .schema('report_utm')
+    .from('clientes')
+    .select('id')
+    .eq('id', clienteId)
+    .maybeSingle();
+  return !error && Boolean(data);
+}
 
 // GET ?cliente_id=&date_from=&date_to=
 //   → overrides + campañas + sugerencias (no cruzados) + cobertura por método
@@ -21,6 +40,9 @@ export async function GET(req: NextRequest) {
   const sp = req.nextUrl.searchParams;
   const cliente_id = sp.get('cliente_id') ?? undefined;
   if (!cliente_id) return NextResponse.json({ error: 'cliente_id requerido' }, { status: 400 });
+  if (!(await clienteVisible(cliente_id))) {
+    return NextResponse.json({ error: 'Cliente no encontrado' }, { status: 404 });
+  }
   const date_from = sp.get('date_from') ?? undefined;
   const date_to = sp.get('date_to') ?? undefined;
 
@@ -89,12 +111,17 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  if (!(await clienteVisible(String(cliente_id)))) {
+    return NextResponse.json({ error: 'Cliente no encontrado' }, { status: 404 });
+  }
+
   const db = await reportUtmAdminClient();
+  const campo =
+    match_field ||
+    (nivel === 'ad' ? 'utm_content' : nivel === 'adset' ? 'utm_term' : 'utm_campaign');
   const fila: Record<string, unknown> = {
     cliente_id,
-    match_field:
-      match_field ||
-      (nivel === 'ad' ? 'utm_content' : nivel === 'adset' ? 'utm_term' : 'utm_campaign'),
+    match_field: campo,
     match_value,
     platform: platform || 'meta',
     campaign_id: campaign_id || null,
@@ -102,18 +129,52 @@ export async function POST(req: NextRequest) {
     // campaña conocida se guarda el nombre de la entidad, que el resolver no usa
     // para el gasto porque prefiere `target_id` (ver claveCampanaDeOverride).
     campaign_name: campaign_name || target_name,
+    // Siempre, también en las de campaña: re-mapear como campaña un valor que
+    // antes era de anuncio dejaba el `nivel`/`target_*` viejo y el título del
+    // anuncio anterior seguía apareciendo.
+    nivel,
+    target_id: nivel === 'campaign' ? null : target_id,
+    target_name: nivel === 'campaign' ? null : target_name,
   };
-  if (nivel !== 'campaign') {
-    fila.nivel = nivel;
-    fila.target_id = target_id;
-    fila.target_name = target_name;
-  }
 
-  const { data, error } = await db
+  // La unicidad de la tabla es sobre el valor CRUDO, pero el resolver compara el
+  // NORMALIZADO: «Promo_Verano» y «promo verano» se guardaban como dos filas que
+  // corregían lo mismo, y cuál ganaba dependía del orden de lectura. Si ya hay
+  // una fila equivalente, se actualiza esa y se borran sus duplicados.
+  const { data: previas } = await db
     .from('utm_campaign_map')
-    .upsert(fila, { onConflict: 'cliente_id,match_field,match_value' })
-    .select()
-    .single();
+    .select('id, match_value')
+    .eq('cliente_id', cliente_id)
+    .eq('match_field', campo);
+  const equivalentes = ((previas ?? []) as Array<{ id: string; match_value: string }>).filter(
+    (p) => normLabel(p.match_value) === normLabel(String(match_value))
+  );
+  let resultado;
+  if (equivalentes.length > 0) {
+    const [principal, ...sobrantes] = equivalentes;
+    resultado = await db
+      .from('utm_campaign_map')
+      .update(fila)
+      .eq('id', principal.id)
+      .select()
+      .single();
+    if (!resultado.error && sobrantes.length > 0) {
+      await db
+        .from('utm_campaign_map')
+        .delete()
+        .in(
+          'id',
+          sobrantes.map((s) => s.id)
+        );
+    }
+  } else {
+    resultado = await db
+      .from('utm_campaign_map')
+      .upsert(fila, { onConflict: 'cliente_id,match_field,match_value' })
+      .select()
+      .single();
+  }
+  const { data, error } = resultado;
 
   if (error) {
     // 42703 / PGRST204: la columna `nivel` no existe → falta la migración 079.
@@ -145,7 +206,20 @@ export async function DELETE(req: NextRequest) {
   if (!id) return NextResponse.json({ error: 'id requerido' }, { status: 400 });
 
   const db = await reportUtmAdminClient();
-  const { error } = await db.from('utm_campaign_map').delete().eq('id', id);
+  const { data: fila } = await db
+    .from('utm_campaign_map')
+    .select('cliente_id')
+    .eq('id', id)
+    .maybeSingle();
+  const clienteId = (fila as { cliente_id?: string } | null)?.cliente_id;
+  if (!clienteId || !(await clienteVisible(clienteId))) {
+    return NextResponse.json({ error: 'Corrección no encontrada' }, { status: 404 });
+  }
+  const { error } = await db
+    .from('utm_campaign_map')
+    .delete()
+    .eq('id', id)
+    .eq('cliente_id', clienteId);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json({ ok: true });
 }

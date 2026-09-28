@@ -10,6 +10,33 @@ y el proyecto adhiere a [Versionado Semántico](https://semver.org/lang/es/):
 
 ### Añadido
 
+- **Respuestas de formulario: un solo sitio y una métrica por respuesta**
+  (auditoría del 2026-09-26, [doc 24](docs/24-respuestas-de-formulario.md)).
+  - Pestaña **Leads** en la ficha del cliente: preguntas de Meta, GHL y el plugin
+    web en una lista, con **«Medir» de un clic** (nombres limpios, variantes
+    fundidas, placeholders apartados, rangos ordenados) y edición en el sitio
+    (renombrar, arrastrar, unir, apartar, segmentos). Los campos de Sheet se
+    configuran en la misma pestaña. Sustituye a la tarjeta «Campos de lead».
+  - **Cada respuesta es una métrica en los informes** (`leadans:<campo>:<resp>`,
+    alias `lf__<campo>__<resp>`, el mismo que en el dashboard), sin crear
+    segmentos. Atajos **CPL** y **%** en los selectores de fórmula de pestañas e
+    informes, lectura en lenguaje natural de la fórmula, widget rápido
+    «Respuestas de formulario» (reparto + tabla por campaña con CPL por
+    respuesta) y columna opcional de CPL en el bloque de respuestas.
+  - **Claves estables por respuesta** (`lead_campos.respuestas`, migración `090`):
+    renombrar o fusionar una respuesta conserva su métrica y reescribe los
+    segmentos. `scripts/migrar-respuestas-lead.ts` congela las claves actuales.
+  - **Cubo único** `report_utm.leads_cubo` (migración `090`): una lectura por
+    año para el total y todas las preguntas, sin tope de cuatro preguntas ni
+    paginación, con los IDs de anuncio para el cruce.
+  - **Preguntas y opciones de las plataformas** (`lead_preguntas`, migración
+    `091`): Meta (`questions` del formulario), GHL (`picklistOptions`) y el
+    plugin de WordPress **0.4.0** (`fields_meta`; casillas unidas por comas).
+  - **Selección múltiple**: una respuesta de casillas cuenta en cada opción.
+  - Respuestas por **conjunto y anuncio** en rankings y gráficas del dashboard.
+  - Etiquetas legibles de preguntas y respuestas en los widgets del BI, también
+    en los informes públicos.
+
 - **Los campos de lead ya son una métrica, no solo una dimensión.** Un
   **segmento** —«Desde 2M» = estos tres buckets— se define bajo el campo en la
   ficha del cliente y aparece como métrica en **todos los tipos de widget** de los
@@ -98,6 +125,27 @@ y el proyecto adhiere a [Versionado Semántico](https://semver.org/lang/es/):
   columna de tipo con valor `venta`.
 
 ### Corregido
+
+- En los rankings, un filtro por **grupo** de campañas no recortaba el gasto de
+  Meta ni de TikTok mientras sí recortaba leads y ventas: CPL y CPA erróneos.
+- El rango «Todo» del dashboard recortaba los leads (y las ventas de Hotmart) a
+  365 días mientras el gasto cubría todo el histórico: CPL y CPA inflados.
+- El enlace público de una pestaña perdía las métricas por respuesta y segmento.
+- En el BI, un filtro por respuesta recortaba los leads pero no las ventas de
+  `sales_events`; agrupar o filtrar por una respuesta ponía el gasto en 0 en vez
+  de «—»; el pivot no aplicaba el filtro de entidad por nombre resuelto; los
+  totales de tabla no sumaban segmentos ni fórmulas totalizables.
+- El selector de campos del BI (desde el commit 2292744) no ofrecía las preguntas
+  como dimensión ni los segmentos y campos calculados en tarjetas y gráficas.
+- El endpoint público del BI aceptaba cualquier `field:` como dimensión o filtro
+  (podía listar correos): ahora solo lo que usa el propio informe.
+- «Apartar» un placeholder creaba una respuesta «(sin respuesta)» duplicada.
+- La caché del dashboard no veía un remapeo de respuestas; la de preguntas
+  sugeridas no veía «Guardar en el catálogo»; promover una pregunta chocaba con
+  un campo desactivado del mismo nombre.
+- Las referencias a campos y segmentos se buscaban por subcadena
+  (`lseg__desde_2` casaba con `lseg__desde_2m`) y no miraban las plantillas
+  globales; borrar un segmento en uso no avisaba.
 
 - **Los alias de campo dinámico no aparecían en el editor de campos calculados del
   BI.** `BiCalcFieldsModal` solo pasaba `formFields` a `BiFormulaInput`, así que

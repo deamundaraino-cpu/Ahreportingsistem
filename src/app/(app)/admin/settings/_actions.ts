@@ -18,7 +18,20 @@ import type { SheetCampoDef, SheetCampoVistaDef, CampoValorCrudo } from '@/lib/s
 import type { FuenteColumnas } from '@/lib/sheets/campos-db';
 import { loadCamposCliente as loadCamposClienteServer } from '@/lib/sheets/campos-db';
 import { leerJsonRespuesta, esTimeoutDeFetch } from '@/lib/fetch-json';
-import { CLAVES_POR_PESTANA, type Pestana } from '@/lib/clientes/config-pestanas';
+import {
+  CLAVES_POR_PESTANA,
+  enmascararSecretosHotmart,
+  prepararParcheHotmart,
+  superponerFormularioHotmart,
+  type Pestana,
+} from '@/lib/clientes/config-pestanas';
+import { encrypt } from '@/lib/secretos';
+import {
+  HOTMART_API_BASE,
+  obtenerToken,
+  TIMEOUT_TOKEN_MS,
+  type ConfigHotmart,
+} from '@/lib/hotmart/cliente';
 import { internalFetch } from '@/lib/internal-fetch';
 import {
   archivarCliente,
@@ -102,6 +115,13 @@ export async function getClientes() {
 }
 
 export async function getCliente(id: string) {
+  // Es una server action: además de la página de ajustes (que el layout de
+  // admin ya cierra a los viewers), cualquiera podía invocarla por POST y leer
+  // el `config_api` de un cliente con el cliente de servicio. Mismo criterio
+  // que `guardarConfigPestana`.
+  const rol = await rolActual();
+  if (!rol || rol === 'viewer') return null;
+
   const supabase = await createAdminClient();
   const { data: cliente, error } = await supabase
     .from('clientes')
@@ -114,7 +134,12 @@ export async function getCliente(id: string) {
     return null;
   }
 
-  return cliente;
+  // La ficha es un componente de cliente: todo lo que devuelva esta acción
+  // viaja al navegador. Los secretos de Hotmart llegan como `SECRETO_GUARDADO`
+  // y el formulario solo los manda si el usuario escribe uno nuevo.
+  return cliente?.config_api
+    ? { ...cliente, config_api: enmascararSecretosHotmart(cliente.config_api) }
+    : cliente;
 }
 
 export async function createCliente(data: { nombre: string }) {
@@ -487,98 +512,114 @@ export async function fetchTikTokAdAccounts(token: string) {
   }
 }
 
+/**
+ * Prueba la conexión de Hotmart con lo que hay en la pestaña.
+ *
+ * El formulario ya no tiene los secretos (llegan como `SECRETO_GUARDADO`), así
+ * que se parte de la config GUARDADA y encima se pone solo lo que el usuario
+ * tecleó. El token sale de `obtenerToken`, el mismo camino que usa el worker:
+ * la versión anterior leía `hotmart_access_token` en claro, que tras el cifrado
+ * es `null`, y guardaba «error» en conexiones de HotConnect que funcionaban.
+ *
+ * El estado se guarda con `fusionar_config_api`: el read-modify-write de antes
+ * podía pisar los tokens que el cron renovara entre la lectura y la escritura.
+ */
 export async function testHotmartConnection(config: any, clienteId?: string) {
-  // Persiste hotmart_connection_status/last_checked_at en config_api del cliente
-  // (read-modify-write para no clobberear otras claves). Best-effort: no rompe el test.
-  const persistStatus = async (status: 'connected' | 'error') => {
-    if (!clienteId) return;
+  // Escribe en `config_api`: mismo permiso que guardar la pestaña.
+  const rol = await rolActual();
+  if (!rol || rol === 'viewer') return { error: 'No autorizado' };
+
+  const formulario: Record<string, unknown> =
+    config && typeof config === 'object' ? (config as Record<string, unknown>) : {};
+
+  let admin: Awaited<ReturnType<typeof createAdminClient>> | null = null;
+  let guardada: Record<string, unknown> = { hotmart_auth_mode: formulario.hotmart_auth_mode };
+  if (clienteId) {
+    admin = await createAdminClient();
+    const { data: fila, error } = await admin
+      .from('clientes')
+      .select('config_api')
+      .eq('id', clienteId)
+      .maybeSingle();
+    if (error) return { error: error.message };
+    if (!fila) return { error: 'El cliente no existe.' };
+    guardada = (fila.config_api ?? {}) as Record<string, unknown>;
+  }
+  const efectiva = superponerFormularioHotmart(guardada, formulario) as ConfigHotmart;
+  const hotconnect = efectiva.hotmart_auth_mode === 'hotconnect';
+
+  // Best-effort: un fallo al guardar el estado no invalida la prueba.
+  const persistir = async (
+    status: 'connected' | 'error',
+    extra: Record<string, unknown> | null = null
+  ) => {
+    if (!clienteId || !admin) return;
     try {
-      const admin = await createAdminClient();
-      const { data: row } = await admin
-        .from('clientes')
-        .select('config_api')
-        .eq('id', clienteId)
-        .single();
-      if (!row) return;
-      await admin
-        .from('clientes')
-        .update({
-          config_api: {
-            ...row.config_api,
-            hotmart_connection_status: status,
-            hotmart_last_checked_at: new Date().toISOString(),
-          },
-        })
-        .eq('id', clienteId);
+      await admin.rpc('fusionar_config_api', {
+        p_cliente_id: clienteId,
+        p_parche: {
+          ...(extra ?? {}),
+          hotmart_connection_status: status,
+          hotmart_last_checked_at: new Date().toISOString(),
+        },
+      });
     } catch {
       /* best-effort */
     }
   };
 
-  let accessToken = config.hotmart_token;
+  const db = admin;
+  const releer =
+    clienteId && db
+      ? async () => {
+          const { data } = await db
+            .from('clientes')
+            .select('config_api')
+            .eq('id', clienteId)
+            .maybeSingle();
+          return (data?.config_api ?? null) as ConfigHotmart | null;
+        }
+      : undefined;
 
-  // Auto-compute Basic Auth from client_id + client_secret if not explicitly set.
-  // En modo HotConnect, se usa el access_token guardado directamente.
-  const hotmartBasic =
-    config.hotmart_auth_mode === 'hotconnect'
-      ? null
-      : config.hotmart_basic ||
-        (config.hotmart_client_id && config.hotmart_client_secret
-          ? Buffer.from(`${config.hotmart_client_id}:${config.hotmart_client_secret}`).toString(
-              'base64'
-            )
-          : null);
-  if (config.hotmart_auth_mode === 'hotconnect') {
-    accessToken = config.hotmart_access_token || accessToken;
-  }
+  // Solo se guarda el parche de HotConnect: si el refresco rotó el refresh
+  // token, NO guardarlo deja la conexión muerta, pase lo que pase después. El
+  // de modo Basic (migración de credenciales) puede llevar lo que el usuario
+  // tecleó y aún no guardó; esa migración la hace el worker con lo guardado.
+  let parcheTokens: Record<string, unknown> | null = null;
 
   try {
-    if (hotmartBasic) {
-      const params = new URLSearchParams();
-      params.append('grant_type', 'client_credentials');
+    const auth = await obtenerToken(efectiva, { releer });
+    if (hotconnect) parcheTokens = auth.parche ?? null;
 
-      const res = await fetch('https://api-sec-vlc.hotmart.com/security/oauth/token', {
-        method: 'POST',
-        headers: {
-          Authorization: `Basic ${hotmartBasic}`,
-          'Content-Type': 'application/x-www-form-urlencoded',
-        },
-        body: params.toString(),
-      });
-      const data = await res.json();
-      if (data.error) {
-        await persistStatus('error');
-        return { error: data.error_description || data.error };
-      }
-      accessToken = data.access_token;
+    if (!auth.token) {
+      await persistir('error', parcheTokens);
+      return { error: auth.motivo ?? 'No se pudo obtener un token de Hotmart.' };
     }
 
-    if (!accessToken) {
-      await persistStatus('error');
-      return { error: 'No hay token disponible. Configura Client ID y Client Secret.' };
-    }
-
-    // Hotmart requires start_date and end_date; use last 7 days as a probe
+    // Hotmart exige start_date y end_date: se sondean los últimos 7 días.
     const now = Date.now();
     const sevenDaysAgo = now - 7 * 24 * 60 * 60 * 1000;
-    const url = new URL('https://developers.hotmart.com/payments/api/v1/sales/history');
+    const url = new URL(`${HOTMART_API_BASE}/payments/api/v1/sales/history`);
     url.searchParams.set('start_date', sevenDaysAgo.toString());
     url.searchParams.set('end_date', now.toString());
     url.searchParams.set('max_results', '1');
 
     const res = await fetch(url.toString(), {
-      headers: { Authorization: `Bearer ${accessToken}` },
+      headers: { Authorization: `Bearer ${auth.token}` },
+      signal: AbortSignal.timeout(TIMEOUT_TOKEN_MS),
     });
-    const data = await res.json();
+    const data = await res.json().catch(() => ({}));
     if (res.status !== 200) {
-      await persistStatus('error');
-      return { error: data.message || data.error_description || 'Error de conexión' };
+      await persistir('error', parcheTokens);
+      return {
+        error: data?.message || data?.error_description || `Error de conexión (HTTP ${res.status})`,
+      };
     }
 
-    await persistStatus('connected');
+    await persistir('connected', parcheTokens);
     return { success: true };
   } catch (err: any) {
-    await persistStatus('error');
+    await persistir('error', parcheTokens);
     return { error: err.message };
   }
 }
@@ -1462,7 +1503,24 @@ export async function guardarConfigPestana(
     }
   }
 
-  const limpio: Record<string, unknown> = { ...parche };
+  let limpio: Record<string, unknown> = { ...parche };
+
+  // Los secretos de Hotmart se cifran aquí, DESPUÉS de filtrar por la pestaña:
+  // el navegador no puede mandar una clave `*_enc` (no es de ninguna pestaña),
+  // solo el valor en claro, y lo que llegue como `SECRETO_GUARDADO` no se toca.
+  if (pestana === 'hotmart') {
+    try {
+      limpio = prepararParcheHotmart(limpio, encrypt);
+    } catch (e) {
+      // Sin `RUTM_ENCRYPTION_KEY` se falla en voz alta: guardar el secreto en
+      // claro creyendo que va cifrado sería peor.
+      console.error('[guardarConfigPestana] cifrado de Hotmart', e);
+      return {
+        error:
+          'No se pudieron cifrar las credenciales de Hotmart (¿falta RUTM_ENCRYPTION_KEY en el servidor?).',
+      };
+    }
+  }
 
   // Misma validación de la clave privada de GA4 que hacía `updateClienteConfig`:
   // el JSON de la service account trae los saltos de línea escapados.

@@ -40,9 +40,16 @@ async function run(request: Request) {
 
   let intQuery = db
     .from('integrations')
-    .select('id, cliente_id, config, status')
+    .select('id, cliente_id, config, status, last_sync_at')
     .eq('tipo', 'meta_lead_ads')
-    .eq('status', 'active');
+    // También las que están en `error`: `syncMetaLeadsForCliente` limpia la caché
+    // de formularios al fallar precisamente para redescubrir en la próxima
+    // corrida, pero el cron solo recogía las activas, así que una integración
+    // que fallaba una vez (un token de Página vencido) no se reintentaba nunca.
+    .in('status', ['active', 'error'])
+    // La más atrasada primero: con el presupuesto agotado, los que se saltan
+    // van rotando en vez de ser siempre los últimos de la lista.
+    .order('last_sync_at', { ascending: true, nullsFirst: true });
   if (onlyClienteId) intQuery = intQuery.eq('cliente_id', onlyClienteId);
 
   const { data: integrations, error: intError } = await intQuery;

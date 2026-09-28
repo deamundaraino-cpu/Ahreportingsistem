@@ -10,6 +10,12 @@
 // La migración la aplica una persona. Hasta entonces el código se comporta como
 // siempre: no pide las columnas ni las escribe. Es el mismo patrón que
 // `columnaExcluidoDisponible` de `lead-exclusion.ts`.
+//
+// La 082 está aplicada en producción desde el 2026-09-28. Por eso la sonda es
+// OPTIMISTA: solo un «columna no existe» la pone en falso. Antes un error de red
+// al sondear devolvía `false`, `adaptarIds` quitaba los IDs y ese lead se
+// guardaba sin ellos para siempre. Para el caso contrario (una base sin la 082)
+// está `insertarLeads`, que reintenta sin IDs si el INSERT se queja de la columna.
 
 export const COLUMNAS_ID = ['campaign_id', 'adset_id', 'ad_id'] as const;
 export type ColumnaId = (typeof COLUMNAS_ID)[number];
@@ -72,19 +78,53 @@ export async function columnasIdDisponibles(
   try {
     const rtm = typeof db?.schema === 'function' ? db.schema('report_utm') : db;
     const { error } = await rtm.from('lead_events').select(COLUMNAS_ID.join(',')).limit(1);
-    // Solo un «columna no existe» (42703) cuenta como NO. Un error de red no
-    // decide nada: se reintenta en la siguiente llamada.
+    // Solo un «columna no existe» cuenta como NO. Un error de red no decide
+    // nada: se responde que sí (sin cachearlo) y se vuelve a sondear la próxima.
     if (error) {
-      if ((error as { code?: string }).code === '42703') {
+      if (esFaltaColumnaId(error)) {
         columnasId = { disponible: false, ts: ahora };
+        return false;
       }
-      return false;
+      return true;
     }
     columnasId = { disponible: true, ts: ahora };
     return true;
   } catch {
-    return false;
+    return true;
   }
+}
+
+/**
+ * ¿El error de PostgREST dice que falta una columna de ID? `42703` lo da
+ * Postgres; `PGRST204` lo da PostgREST cuando su caché de esquema no la conoce
+ * (por ejemplo, justo después de aplicar la migración sin `NOTIFY pgrst`).
+ */
+export function esFaltaColumnaId(error: unknown): boolean {
+  const e = (error ?? {}) as { code?: string; message?: string };
+  if (e.code !== '42703' && e.code !== 'PGRST204') return false;
+  const msg = String(e.message ?? '');
+  return COLUMNAS_ID.some((c) => msg.includes(c));
+}
+
+/**
+ * INSERT en `lead_events` que no pierde el lead por culpa de los IDs: si la base
+ * no tiene las columnas de la 082, reintenta sin ellas y lo recuerda. Devuelve
+ * el error del último intento (o null), con la misma forma que el cliente.
+ */
+export async function insertarLeads(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  db: any,
+  filas: Record<string, unknown> | Record<string, unknown>[]
+): Promise<{ error: { code?: string; message: string } | null }> {
+  const rtm = typeof db?.schema === 'function' ? db.schema('report_utm') : db;
+  const { error } = await rtm.from('lead_events').insert(filas);
+  if (!error || !esFaltaColumnaId(error)) return { error: error ?? null };
+  columnasId = { disponible: false, ts: Date.now() };
+  const sin = Array.isArray(filas)
+    ? filas.map((f) => adaptarIds(f, false))
+    : adaptarIds(filas, false);
+  const reintento = await rtm.from('lead_events').insert(sin);
+  return { error: reintento.error ?? null };
 }
 
 /** Solo para las comprobaciones: olvida lo aprendido sobre las columnas. */
@@ -114,4 +154,26 @@ export async function columnasCruceLead(
   base: readonly string[]
 ): Promise<string[]> {
   return (await columnasIdDisponibles(db)) ? [...base, ...COLUMNAS_ID] : [...base];
+}
+
+// ── Macros sin rellenar ───────────────────────────────────────────────
+
+/**
+ * ¿El valor es una macro de Meta/TikTok sin sustituir (`{{campaign.name}}`,
+ * `{campaign.name}`, `__CAMPAIGN_NAME__`, `%campaign_name%`, también
+ * URL-encoded)? Es el mismo patrón que `classifyInvalidUtm` del diagnóstico.
+ *
+ * Una macro no dice qué campaña es: abarca todas. La atribución de Hotmart la
+ * tomaba por «tracking propio» y dejaba de heredar el lead bueno del comprador.
+ */
+export function esMacroSinRellenar(v: unknown): boolean {
+  if (typeof v !== 'string') return false;
+  return /\{\{.*?\}\}|\{[a-z0-9_.]+\}|__[A-Z0-9_]+__|%[a-z0-9_]+%/i.test(v.trim());
+}
+
+/** ¿El valor sirve como señal de campaña? No vacío y no una macro. */
+export function esSenalDeCampana(v: unknown): boolean {
+  if (v === null || v === undefined) return false;
+  const s = String(v).trim();
+  return s !== '' && !esMacroSinRellenar(s);
 }

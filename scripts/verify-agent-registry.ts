@@ -173,6 +173,71 @@ for (const f of fuentes) {
   );
 }
 
+// ── 4b. Escrituras directas ─────────────────────────────────────────────────
+console.log('\n── Escrituras directas: solo reversibles e internas ─────────');
+
+// Crear y editar informes se aplica al momento (con aprobación por paso no se
+// podía terminar ninguno). La excepción tiene que seguir siendo estrecha.
+for (const t of ALL_TOOLS) {
+  if (t.mutation?.approval !== 'directa') continue;
+  check(`[${t.name}] directa ⇒ riesgo bajo`, t.mutation.risk === 'low');
+  check(`[${t.name}] directa ⇒ dominio informes`, t.domain === 'informes');
+  check(
+    `[${t.name}] directa ⇒ al menos nivel operador`,
+    nivelAlcanza(t.minLevel ?? 'consulta', 'operador')
+  );
+}
+for (const n of ['share_report', 'delete_report', 'set_report_client']) {
+  const t = getTool(n);
+  check(`'${n}' existe y pide aprobación`, Boolean(t) && t!.mutation?.approval !== 'directa');
+}
+{
+  const INFORMES = [
+    'add_report_widget',
+    'create_report',
+    'delete_report',
+    'duplicate_report',
+    'get_report',
+    'list_report_fields',
+    'list_report_revisions',
+    'list_reports',
+    'preview_widget',
+    'remove_calculated_field',
+    'remove_report_widget',
+    'restore_report_revision',
+    'save_as_template',
+    'set_report_client',
+    'share_report',
+    'unshare_report',
+    'update_report',
+    'update_report_widget',
+    'upsert_calculated_field',
+  ];
+  const reales = ALL_TOOLS.filter((t) => t.domain === 'informes')
+    .map((t) => t.name)
+    .sort();
+  check(
+    'las herramientas de informes son las documentadas',
+    JSON.stringify(reales) === JSON.stringify(INFORMES),
+    reales.join(',')
+  );
+
+  // Las que modifican un informe existente guardan antes su revisión.
+  const dir = join(process.cwd(), 'src', 'lib', 'agent', 'tools', 'informes');
+  for (const f of ['edicion.ts', 'ciclo.ts']) {
+    check(
+      `[informes/${f}] escribe a través de escribirConRevision`,
+      readFileSync(join(dir, f), 'utf8').includes('escribirConRevision(')
+    );
+  }
+  check(
+    '[informes] ningún handler actualiza bi_reports.layout sin revisión',
+    !/\.update\(\{\s*layout/.test(
+      readFileSync(join(dir, 'edicion.ts'), 'utf8') + readFileSync(join(dir, 'ciclo.ts'), 'utf8')
+    )
+  );
+}
+
 // ── 5. Niveles de permiso ───────────────────────────────────────────────────
 console.log('\n── Niveles: el mínimo de todos los factores ─────────────────');
 

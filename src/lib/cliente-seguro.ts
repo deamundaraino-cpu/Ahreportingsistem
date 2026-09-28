@@ -19,6 +19,8 @@ import 'server-only';
  * una allowlist falla en el sentido seguro: lo que no está declarado, no viaja.
  */
 
+import { hotmartConectado } from '@/lib/hotmart/cliente';
+
 /** Claves de `config_api` que la UI del dashboard necesita y puede ver. */
 const CLAVES_UI = ['meta_keywords', 'tiktok_accounts', 'google_sheets_conversiones'] as const;
 
@@ -116,13 +118,17 @@ export type ConexionesCliente = {
  * La UI solo pregunta "¿está conectado?", así que no hay ninguna razón para
  * mandarle el token y dejar que lo compruebe ella. Esto permite sanear
  * `config_api` en listados que ven roles no administradores.
+ *
+ * Hotmart se decide con `hotmartConectado`, el criterio único que usa también el
+ * worker: mirar solo `hotmart_token || hotmart_basic` dejaba fuera a los
+ * clientes de HotConnect y a los que ya tienen la credencial cifrada (`*_enc`).
  */
 export function flagsConexion(configApi: unknown): ConexionesCliente {
   const c = esObjeto(configApi) ? configApi : {};
   const tiene = (k: string) => Boolean(c[k]);
   return {
     meta: tiene('meta_token'),
-    hotmart: tiene('hotmart_token') || tiene('hotmart_basic'),
+    hotmart: hotmartConectado(c),
     tiktok: tiene('tiktok_access_token') && tiene('tiktok_advertiser_id'),
     ga: tiene('ga_property_id'),
   };

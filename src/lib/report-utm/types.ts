@@ -14,7 +14,7 @@ export type ReportUtmCliente = {
 export type ReportUtmIntegration = {
   id: string;
   cliente_id: string;
-  tipo: 'hotmart' | 'meta' | 'google' | 's2s' | 'meta_lead_ads' | 'gohighlevel';
+  tipo: 'hotmart' | 'meta' | 'google' | 's2s' | 'meta_lead_ads' | 'gohighlevel' | 'tiktok_lead_ads';
   webhook_secret: string | null;
   s2s_token: string | null;
   access_token_encrypted: string | null;
@@ -27,14 +27,33 @@ export type ReportUtmIntegration = {
   updated_at: string;
 };
 
+/**
+ * La integración de Hotmart tal como llega a la tarjeta: SIN secretos.
+ *
+ * Antes la ficha hacía `select('*')` y pasaba `webhook_secret_enc` (y con él
+ * todo `config`) a un componente de cliente. Del hottok solo viaja si existe y
+ * sus cuatro últimos caracteres.
+ */
+export type ReportUtmHotmartIntegracion = {
+  id: string;
+  cliente_id: string;
+  status: 'active' | 'error' | 'inactive';
+  last_sync_at: string | null;
+  last_error: string | null;
+  hottok_configurado: boolean;
+  hottok_final: string | null;
+};
+
 export type ReportUtmSalesEvent = {
   id: string;
   cliente_id: string;
   platform: string;
   platform_sale_id: string;
   amount: number;
-  currency: string;
-  status: 'approved' | 'pending' | 'refunded' | 'chargeback';
+  /** `null` cuando la pasarela no la mandó (Hotmart ya no cae a 'BRL'). */
+  currency: string | null;
+  // `canceled`: pedido que nunca se cobró. Antes se guardaba como 'refunded'.
+  status: 'approved' | 'pending' | 'refunded' | 'chargeback' | 'canceled';
   utm_source: string | null;
   utm_medium: string | null;
   utm_campaign: string | null;

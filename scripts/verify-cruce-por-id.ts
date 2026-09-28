@@ -17,13 +17,16 @@
 
 import {
   buildResolver,
+  ampliarConEntidades,
   construirIndice,
   esIdMeta,
   matchToCampaign,
+  plataformaDeFuente,
   type CampaignIndex,
   type Override,
 } from '../src/lib/report-utm/campaign-resolver';
 import { normLabel } from '../src/lib/report-utm/bi-metadata';
+import { campanaEnAlcance, parsearAlcance } from '../src/lib/report-utm/alcance-campanas';
 import { adaptarIds, idsPublicitarios } from '../src/lib/report-utm/lead-ids';
 import { utmDeFilaSheet } from '../src/lib/sheets/atribucion';
 import { buildLeadRow as buildLeadRowGhl, idsDeContacto } from '../src/lib/report-utm/ghl-leads';
@@ -72,7 +75,7 @@ function indice(): CampaignIndex {
       [AD_ID, KEY],
       [AD2_ID, KEY],
     ]),
-    byName: new Map([[normLabel(CAMP), KEY]]),
+    byName: new Map([[normLabel(CAMP), new Set([KEY])]]),
     byAdName: new Map([
       [normLabel(AD), new Set([KEY])],
       [normLabel(AD2), new Set([KEY])],
@@ -439,6 +442,221 @@ const filaGhl = buildLeadRowGhl('cliente', contacto, new Map());
 check(
   'GHL: y entran en la fila del lead',
   filaGhl.ad_id === AD_A && filaGhl.adset_id === SET_A && filaGhl.campaign_id === CA
+);
+
+// ── 11. Plataforma, TikTok por ID, campañas homónimas y alcance (2026-09-28) ──
+console.log('\n11. Plataforma, TikTok por ID, homónimas y alcance');
+check('facebook_mobile_feed es Meta', plataformaDeFuente('facebook_mobile_feed') === 'meta');
+check(
+  'ig / th / whatsapp_status son Meta',
+  ['ig', 'th', 'whatsapp_status'].every((s) => plataformaDeFuente(s) === 'meta')
+);
+check('pangle es TikTok', plataformaDeFuente('pangle') === 'tiktok');
+check('google es otra plataforma', plataformaDeFuente('google') === 'otra');
+check('una macro sin rellenar no decide', plataformaDeFuente('{{site_source_name}}') === null);
+
+const TT_CAMP = '1877102050817090';
+const TT_ADSET = '1877102050818578';
+const TT_AD = '1877134253658769';
+const NOMBRE_COMUN = 'Captación Rahue';
+const filasPlat = [
+  {
+    fecha: '2026-09-10',
+    meta_campaigns: [{ campaign_id: '120200000000009001', name: NOMBRE_COMUN, spend: 10 }],
+    tiktok_campaigns: [{ campaign_id: TT_CAMP, name: NOMBRE_COMUN, spend: 20 }],
+    tiktok_ads: [
+      {
+        ad_id: TT_AD,
+        ad_name: 'Video feria',
+        adset_id: TT_ADSET,
+        adset_name: 'Chile 28-60',
+        campaign_id: TT_CAMP,
+        campaign_name: NOMBRE_COMUN,
+        spend: 20,
+      },
+    ],
+    tiktok_adgroups: [
+      { adgroup_id: TT_ADSET, adgroup_name: 'Chile 28-60', campaign_id: TT_CAMP, spend: 20 },
+    ],
+  },
+];
+const idxPlat = construirIndice(filasPlat, '2026-09-01');
+check(
+  'un anuncio de TikTok cruza por su ad_id',
+  matchToCampaign({ ad_id: TT_AD }, idxPlat, []).key === `tiktok:${TT_CAMP}`
+);
+check(
+  'y por su adgroup en utm_id',
+  matchToCampaign({ utm_id: TT_ADSET }, idxPlat, []).key === `tiktok:${TT_CAMP}`
+);
+check(
+  'el mismo nombre en Meta y TikTok sin fuente queda ambiguo',
+  matchToCampaign({ utm_campaign: NOMBRE_COMUN }, idxPlat, []).method === 'ambiguous'
+);
+check(
+  'con utm_source=tiktok cruza con la de TikTok',
+  matchToCampaign({ utm_campaign: NOMBRE_COMUN, utm_source: 'tiktok' }, idxPlat, []).key ===
+    `tiktok:${TT_CAMP}`
+);
+check(
+  'con utm_source=ig cruza con la de Meta',
+  matchToCampaign({ utm_campaign: NOMBRE_COMUN, utm_source: 'ig' }, idxPlat, []).key ===
+    'meta:120200000000009001'
+);
+check(
+  'un lead de Google no cae en el gasto de Meta por nombre',
+  matchToCampaign({ utm_campaign: NOMBRE_COMUN, utm_source: 'google' }, idxPlat, []).key === null
+);
+
+const idxHom = construirIndice(
+  [
+    {
+      fecha: '2026-09-10',
+      meta_campaigns: [
+        { campaign_id: '120200000000009101', name: 'Leads septiembre', spend: 5 },
+        { campaign_id: '120200000000009102', name: 'Leads septiembre', spend: 7 },
+      ],
+      meta_ads: [
+        {
+          ad_id: '120200000000009901',
+          ad_name: 'Reel único',
+          campaign_id: '120200000000009102',
+          spend: 7,
+        },
+      ],
+    },
+  ],
+  '2026-09-01'
+);
+check(
+  'dos campañas con el mismo nombre: ambiguo, no la última escrita',
+  matchToCampaign({ utm_campaign: 'leads septiembre' }, idxHom, []).method === 'ambiguous'
+);
+check(
+  'el anuncio desempata una campaña homónima',
+  matchToCampaign({ utm_campaign: 'leads septiembre', utm_content: 'Reel único' }, idxHom, [])
+    .key === 'meta:120200000000009102'
+);
+const idxViejo = construirIndice(
+  [
+    { fecha: '2026-08-01', meta_campaigns: [{ name: 'Leads agosto', spend: 1 }] },
+    {
+      fecha: '2026-09-10',
+      meta_campaigns: [{ campaign_id: '120200000000009201', name: 'Leads agosto', spend: 1 }],
+    },
+  ],
+  '2026-08-01'
+);
+check(
+  'la misma campaña con y sin ID (filas viejas) no cuenta como homónima',
+  matchToCampaign({ utm_campaign: 'Leads agosto' }, idxViejo, []).key === 'meta:120200000000009201'
+);
+
+const alcance = parsearAlcance('Somos, -Sur Profundo');
+check('alcance: incluye por término', campanaEnAlcance('[SOMOS] Captación', alcance));
+check('alcance: excluye con «-»', !campanaEnAlcance('Somos x Sur Profundo', alcance));
+check('alcance: fuera de los términos no entra', !campanaEnAlcance('Otra marca', alcance));
+check('alcance vacío = sin recorte', parsearAlcance('  ,  ') === null);
+const idxAlc = construirIndice(
+  [
+    {
+      fecha: '2026-09-10',
+      meta_campaigns: [
+        { campaign_id: '120200000000009301', name: '[SOMOS] Leads', spend: 3 },
+        { campaign_id: '120200000000009302', name: '[SUR PROFUNDO] Leads', spend: 4 },
+      ],
+      meta_ads: [
+        {
+          ad_id: '120200000000009399',
+          ad_name: 'Reel',
+          campaign_id: '120200000000009302',
+          spend: 4,
+        },
+      ],
+    },
+  ],
+  '2026-09-01',
+  { alcance: parsearAlcance('somos') }
+);
+check(
+  'con alcance, la campaña del otro cliente no entra en el índice',
+  idxAlc.campaigns.size === 1 && idxAlc.campaigns.has('meta:120200000000009301')
+);
+check('ni sus anuncios', matchToCampaign({ ad_id: '120200000000009399' }, idxAlc, []).key === null);
+
+// Identidad previa a la ventana (ads_entidades_ids, 094): ata IDs viejos sin
+// sumar gasto ni volver ambiguo un nombre actual.
+const idxAmp = construirIndice(
+  [
+    {
+      fecha: '2026-09-10',
+      meta_campaigns: [{ campaign_id: '120200000000009501', name: 'Leads', spend: 9 }],
+    },
+  ],
+  '2026-09-01'
+);
+ampliarConEntidades(idxAmp, [
+  {
+    plataforma: 'meta',
+    nivel: 'campaign',
+    entidad_id: '120200000000009502',
+    entidad_nombre: 'Leads',
+    campana_id: null,
+    campana_nombre: null,
+    adset_id: null,
+    adset_nombre: null,
+  },
+  {
+    plataforma: 'meta',
+    nivel: 'ad',
+    entidad_id: '120200000000009599',
+    entidad_nombre: 'Reel junio',
+    campana_id: '120200000000009502',
+    campana_nombre: 'Leads',
+    adset_id: '120200000000009550',
+    adset_nombre: 'Frío',
+  },
+]);
+check(
+  'un anuncio de hace meses cruza por ID con su campaña',
+  matchToCampaign({ ad_id: '120200000000009599' }, idxAmp, []).key === 'meta:120200000000009502'
+);
+check(
+  'la campaña vieja no suma gasto',
+  idxAmp.campaigns.get('meta:120200000000009502')?.spend === 0
+);
+check(
+  'y su nombre no vuelve ambiguo el de la actual',
+  matchToCampaign({ utm_campaign: 'Leads' }, idxAmp, []).key === 'meta:120200000000009501'
+);
+
+// Una corrección por NOMBRE (de campaña o de conjunto) no desvía un lead cuyo
+// ad_id dice dónde está; una de nivel anuncio sí manda.
+const ovCampana: Override = {
+  match_field: 'utm_campaign',
+  match_value: CAMP,
+  campaign_id: '120200000000000999',
+  campaign_name: 'Otra campaña',
+  platform: 'meta',
+  nivel: 'campaign',
+};
+check(
+  'una corrección de campaña no pisa un ad_id exacto',
+  matchToCampaign({ utm_campaign: CAMP, ad_id: AD_ID }, idx, [ovCampana]).method === 'ad_id'
+);
+check(
+  'sin ID propio, la corrección sí manda',
+  matchToCampaign({ utm_campaign: CAMP }, idx, [ovCampana]).key === 'meta:120200000000000999'
+);
+const ovAnuncio: Override = {
+  ...ovCampana,
+  match_field: 'utm_content',
+  match_value: AD,
+  nivel: 'ad',
+};
+check(
+  'una corrección de nivel anuncio manda también sobre el ID',
+  matchToCampaign({ utm_content: AD, ad_id: AD_ID }, idx, [ovAnuncio]).method === 'override'
 );
 
 console.log(

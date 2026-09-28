@@ -12,6 +12,11 @@ import type { SheetCampoResumen, SheetVistaResumen } from '@/app/(app)/dashboard
 import { clavesDeCampo, claveSinRespuesta, claveSegmento } from './lead-answer-aggregation';
 import { SUFIJO_NUM, SUFIJO_DEN, SUFIJO_MIN, SUFIJO_MAX } from '@/lib/sheets/campos';
 import { METRICAS_EN_USD } from '@/lib/moneda-reporte';
+import {
+  ROTULO_LEADS_META,
+  ROTULO_LEADS_META_TODAS,
+  ROTULO_LEADS_RECIBIDOS,
+} from '@/lib/leads/fuentes-de-lead';
 
 const SUMANDOS_DE_SHEET = [SUFIJO_NUM, SUFIJO_DEN, SUFIJO_MIN, SUFIJO_MAX];
 
@@ -41,6 +46,8 @@ export interface LeadAnswerCampoResumen {
   clave: string;
   nombre: string;
   buckets: string[];
+  /** Clave estable de cada bucket, en el mismo orden (migración 090). */
+  claves?: string[];
   /**
    * El catálogo no sabe qué respuestas produce esta pregunta: no tiene ningún
    * valor agrupado. Solo se puede ofrecer su `(sin respuesta)`… que sin las
@@ -87,10 +94,12 @@ export const AVAILABLE_METRICS: MetricOption[] = [
   { id: 'meta_ctr_link', label: 'Meta: CTR (Enlace)' },
 
   // ── Meta · Leads y Registro ───────────────────────────────────────────────
-  { id: 'meta_leads', label: 'Meta: Leads (Pixel)' },
-  { id: 'meta_cpl', label: 'Meta: Costo por Lead Pixel (CPL)' },
-  { id: 'meta_leads_form', label: 'Meta: Clientes potenciales (Formulario)' },
-  { id: 'meta_cpl_form', label: 'Meta: Costo por Lead Formulario' },
+  // Rótulos compartidos con el BI (ver `fuentes-de-lead.ts`): «Leads» a secas
+  // en las dos vistas hacía comparar dos fuentes distintas como si fueran una.
+  { id: 'meta_leads', label: ROTULO_LEADS_META_TODAS },
+  { id: 'meta_cpl', label: `CPL de ${ROTULO_LEADS_META_TODAS}` },
+  { id: 'meta_leads_form', label: ROTULO_LEADS_META },
+  { id: 'meta_cpl_form', label: `CPL de ${ROTULO_LEADS_META}` },
   { id: 'meta_complete_registration', label: 'Meta: Registros completados' },
   { id: 'meta_cost_per_complete_registration', label: 'Meta: Costo por Registro' },
   { id: 'meta_submit_application', label: 'Meta: Solicitudes enviadas' },
@@ -206,6 +215,63 @@ export const AVAILABLE_METRICS: MetricOption[] = [
   { id: 'ventas_downsell_bruto_usd', label: 'Hotmart: Bruto downsell (USD)' },
   { id: 'ventas_reembolsado_usd', label: 'Hotmart: Reembolsado (USD)' },
 
+  // ── Hotmart · Por campaña (sigue el filtro de la pestaña) ────────────────
+  // Las `ventas_*` y `total_*` de arriba son de TODA la cuenta: en una pestaña
+  // filtrada por campaña dividen toda la facturación entre un gasto recortado.
+  // Las `hm_*` se atribuyen a la campaña de cada venta (su UTM, o la heredada
+  // del lead del comprador) y siguen el filtro de la pestaña y el de cada
+  // bloque. Mismos ids y definiciones que en los informes BI. Las ventas sin
+  // campaña identificada solo cuentan en pestañas SIN filtro de campaña.
+  { id: 'hm_ventas', label: 'Hotmart por campaña: Ventas (#, bumps incluidos)', format: 'number' },
+  {
+    id: 'hm_compras',
+    label: 'Hotmart por campaña: Compras (# pedidos, sin bumps ni upsells)',
+    format: 'number',
+  },
+  { id: 'hm_bumps', label: 'Hotmart por campaña: Order bumps (#)', format: 'number' },
+  { id: 'hm_reembolsos', label: 'Hotmart por campaña: Reembolsos (#)', format: 'number' },
+  { id: 'hm_neto', label: 'Hotmart por campaña: Facturación neta ($)', format: 'currency' },
+  { id: 'hm_bruto', label: 'Hotmart por campaña: Facturación bruta ($)', format: 'currency' },
+  {
+    id: 'hm_neto_reembolsado',
+    label: 'Hotmart por campaña: Neto reembolsado ($)',
+    format: 'currency',
+  },
+  // Sin formato: un ROAS es un múltiplo («2,4x»), ni importe ni porcentaje.
+  { id: 'hm_roas', label: 'Hotmart por campaña: ROAS (neto / inversión Meta + TikTok)' },
+  {
+    id: 'hm_cpa',
+    label: 'Hotmart por campaña: Costo por venta (inversión / ventas)',
+    format: 'currency',
+  },
+  {
+    id: 'hm_cpa_compra',
+    label: 'Hotmart por campaña: Costo por compra (inversión / compras)',
+    format: 'currency',
+  },
+  {
+    id: 'hm_ticket_medio',
+    label: 'Hotmart por campaña: Ticket medio por venta',
+    format: 'currency',
+  },
+  {
+    id: 'hm_ticket_compra',
+    label: 'Hotmart por campaña: Ticket medio por compra',
+    format: 'currency',
+  },
+  { id: 'hm_tasa_reembolso', label: 'Hotmart por campaña: Tasa de reembolso', format: 'percent' },
+  { id: 'hm_tasa_bump', label: 'Hotmart por campaña: Tasa de order bump', format: 'percent' },
+  {
+    id: 'hm_neto_usd',
+    label: 'Hotmart por campaña: Facturación neta (USD)',
+    format: 'currency_usd',
+  },
+  {
+    id: 'hm_bruto_usd',
+    label: 'Hotmart por campaña: Facturación bruta (USD)',
+    format: 'currency_usd',
+  },
+
   // ── Funnel Hotmart · Métricas por pestaña ─────────────────────────────────
   // Se retiraron del selector las que ningún layout, pestaña, informe ni regla
   // usaba (`scripts/inventario-metricas-usadas.ts`, 2026-09-12): neto/bruto/
@@ -263,7 +329,7 @@ export const AVAILABLE_METRICS: MetricOption[] = [
   // Contactos reales del formulario (web + Meta Lead Ads unificados), no lo
   // que reporta el píxel. NO se suma con `meta_leads`: miden lo mismo desde
   // fuentes distintas y un lead puede estar en las dos.
-  { id: 'utm_leads', label: 'UTM Report: Leads (contactos)' },
+  { id: 'utm_leads', label: ROTULO_LEADS_RECIBIDOS },
 
   // ── CRM (GoHighLevel) ─────────────────────────────────────────────────────
   // Ventas que el cliente cierra en su embudo de GHL, recibidas por el webhook

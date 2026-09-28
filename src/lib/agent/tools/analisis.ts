@@ -15,7 +15,8 @@ import 'server-only';
  * el modelo no lo pide, y ese día vuelve ese informe.
  *
  * Por eso el campo `no_aplican` viaja al lado de las cifras: un dato que no
- * aplica no es un dato que falta.
+ * aplica no es un dato que falta. Y por lo mismo viaja `moneda`: un CPL de
+ * 3.500 es caro en dólares y barato en pesos chilenos.
  */
 
 import { z } from 'zod';
@@ -26,6 +27,7 @@ import { flagsConexion } from '@/lib/cliente-seguro';
 import { ApiError } from '@/lib/error-handler';
 import type { AnyAgentTool, AgentContext } from '../types';
 import { exigirCliente } from '../registry';
+import { NOTA_MONEDA } from './metricas';
 
 const periodoSchema = {
   preset: z.enum(PRESETS as [string, ...string[]]).optional(),
@@ -181,7 +183,8 @@ const analyzePerformance: AnyAgentTool = {
     'evaluación contra sus metas. USA ESTA HERRAMIENTA antes de opinar sobre el rendimiento de ' +
     'un cliente: trae el contexto que evita interpretar mal las cifras. ' +
     'Respeta el campo `no_aplican`: lo que aparezca ahí no es un dato que falte, es un dato que ' +
-    'no tiene sentido en esa estrategia, y NO debe reportarse como carencia.',
+    'no tiene sentido en esa estrategia, y NO debe reportarse como carencia.' +
+    NOTA_MONEDA,
   input: z.object({
     client_id: z.string().uuid(),
     tab_id: z
@@ -286,6 +289,8 @@ const analyzePerformance: AnyAgentTool = {
       },
       estrategia: contexto.estrategia,
       metas: contexto.metas,
+      // La de los importes de `metricas` (gasto, CPL, ventas convertidas).
+      moneda: actual.moneda,
       metricas,
       no_aplican: [...noAplican],
       dias_con_datos: actual.rows.length,
@@ -300,7 +305,9 @@ const dailyTrafficReport: AnyAgentTool = {
   description:
     'Dossier del día para todos los clientes activos (o para uno concreto): cifras de ayer, ' +
     'comparación con el día anterior y evaluación contra metas, con el contexto de cada cliente. ' +
-    'Es la materia prima del reporte diario de tráfico.',
+    'Es la materia prima del reporte diario de tráfico. Cada informe lleva su propia `moneda`: ' +
+    'no sumes importes de clientes distintos.' +
+    NOTA_MONEDA,
   input: z.object({
     client_id: z.string().uuid().optional().describe('Omítelo para incluir a todos los clientes.'),
     fecha: z
@@ -353,6 +360,8 @@ const dailyTrafficReport: AnyAgentTool = {
 
         informes.push({
           cliente: contexto.cliente,
+          // Por cliente: uno reporta en USD y otro en CLP en el mismo informe.
+          moneda: hoy.moneda,
           fuentes_ausentes: contexto.perfil.fuentes_ausentes,
           instrucciones: contexto.perfil.instrucciones,
           metricas: {

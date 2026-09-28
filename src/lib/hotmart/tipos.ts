@@ -114,7 +114,28 @@ export type VentaHotmart = {
 
   raw_payload: unknown | null;
   origen: OrigenVenta;
+
+  // ── Migración 089 ─────────────────────────────────────────────
+  // Opcionales: la RPC anterior a la 089 ignora estas claves, así que el
+  // código las envía siempre y funciona antes y después de aplicarla.
+
+  /** Status tal cual lo manda Hotmart (APPROVED, PARTIALLY_REFUNDED…). */
+  estado_crudo?: string | null;
+  /** De dónde sale la tupla UTM. `null`/ausente = sin atribuir. */
+  atribucion_metodo?: AtribucionMetodo | null;
+  /** `lead_events.id` del que se heredó la tupla. */
+  atribucion_lead_id?: string | null;
+  atribucion_at?: string | null;
 };
+
+/**
+ * De dónde sale la tupla UTM de una venta (migración 089):
+ *   tracking       la trajo Hotmart (UTM del checkout, o `sck`/`src` con un ID de anuncio)
+ *   lead_email     heredada del último lead del mismo email antes de la compra
+ *   lead_telefono  ídem por teléfono
+ *   padre          bump/upsell que hereda la de su compra principal
+ */
+export type AtribucionMetodo = 'tracking' | 'lead_email' | 'lead_telefono' | 'padre';
 
 /** Lo que devuelve el parser cuando el payload no es una venta o no se entiende. */
 export type ResultadoParseo =

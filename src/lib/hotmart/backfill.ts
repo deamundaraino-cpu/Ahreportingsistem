@@ -33,6 +33,15 @@ export type OpcionesBackfill = {
   /** Se consulta antes de cada día: permite parar limpio al agotar el tiempo. */
   hayTiempo?: () => boolean;
   log?: (msg: string) => void;
+  /**
+   * Recorrer de `desde` hacia `hasta` en vez de hacia atrás. Lo usa el job de
+   * la cola: el runner reanuda un job parcial HACIA DELANTE (nuevo tramo
+   * `resumeFrom → fecha_fin`), así que un recorrido hacia atrás cortado a
+   * medias no se podía reanudar sin repetir lo ya hecho.
+   */
+  adelante?: boolean;
+  /** Relee la config del cliente si el refresco del token falla (ver `obtenerToken`). */
+  releer?: () => Promise<ConfigHotmart | null | undefined>;
 };
 
 export type ResultadoBackfill = {
@@ -49,6 +58,8 @@ export type ResultadoBackfill = {
   diasIncompletos: string[];
   sinTasa: number;
   monedas: string[];
+  /** Fechas cuyo agregado diario cambió: el llamante las reagrega. */
+  fechasTocadas: string[];
   error?: string;
 };
 
@@ -78,9 +89,10 @@ export async function backfillRango(
     diasIncompletos: [],
     sinTasa: 0,
     monedas: [],
+    fechasTocadas: [],
   };
 
-  const auth = await obtenerToken(cliente.config_api);
+  const auth = await obtenerToken(cliente.config_api, { releer: opts.releer });
   if (!auth.token) {
     return { ...base, error: auth.motivo ?? 'Sin token de Hotmart' };
   }
@@ -90,11 +102,16 @@ export async function backfillRango(
 
   const funnels: FunnelHotmart[] = await cargarFunnels(db, cliente.id);
   const monedas = new Set<string>();
+  const tocadas = new Set<string>();
   const hoy = colombiaToday();
   // Pedir el futuro solo genera días vacíos y gasta cuota.
   const tope = hasta > hoy ? hoy : hasta;
 
-  for (let fecha = tope; fecha >= desde; fecha = addDaysISO(fecha, -1)) {
+  const fechas: string[] = [];
+  for (let f = tope; f >= desde; f = addDaysISO(f, -1)) fechas.push(f);
+  if (opts.adelante) fechas.reverse();
+
+  for (const fecha of fechas) {
     if (opts.maxDias && base.dias >= opts.maxDias) break;
     if (opts.hayTiempo && !opts.hayTiempo()) {
       log(`[backfill] Presupuesto agotado en ${fecha} — se reanuda desde aquí.`);
@@ -121,11 +138,13 @@ export async function backfillRango(
     base.descartadas += r.descartadas;
     base.sinTasa += r.sin_tasa;
     for (const m of r.monedas) monedas.add(m);
+    for (const t of r.fechasTocadas ?? []) tocadas.add(t);
     if (!r.completo) base.diasIncompletos.push(fecha);
     base.ultimoDia = fecha;
   }
 
   base.monedas = Array.from(monedas);
+  base.fechasTocadas = Array.from(tocadas).sort();
   return base;
 }
 

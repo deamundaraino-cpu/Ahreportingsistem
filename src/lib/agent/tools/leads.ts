@@ -95,7 +95,7 @@ const getLeads: AnyAgentTool = {
         const q = rtm
           .from('lead_events')
           .select(
-            `id,created_at,utm_id,utm_campaign,utm_content,utm_term,source${conIds ? `,${COLUMNAS_ID.join(',')}` : ''}${conExclusion ? ',excluido' : ''}`
+            `id,created_at,utm_id,utm_campaign,utm_content,utm_term,utm_source,source${conIds ? `,${COLUMNAS_ID.join(',')}` : ''}${conExclusion ? ',excluido' : ''}`
           )
           .eq('cliente_id', rtmId)
           .gte('created_at', bounds.gte)

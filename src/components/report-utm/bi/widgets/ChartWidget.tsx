@@ -48,12 +48,24 @@ import {
   leadSegLabel,
   supportsPivot,
 } from '@/lib/report-utm/bi-metadata';
-import { useBiQueryBase } from '../BiQueryContext';
+import { useBiQueryBase, useBiEtiquetas } from '../BiQueryContext';
 import { appendWidgetFilters, widgetFilterSignature } from '../widgetQuery';
 import { HelpTip } from '../HelpTip';
-import { readUnavailable, UnavailableNote } from '../widgetDiagnostics';
+import {
+  AvisosConsultaNote,
+  readAvisosConsulta,
+  readTasas,
+  readUnavailable,
+  TasasNote,
+  UnavailableNote,
+} from '../widgetDiagnostics';
 import type { WidgetUnavailable } from '../widgetDiagnostics';
-import { monedaDeMetrica, prefijoMoneda, simboloMoneda } from '@/lib/moneda-reporte';
+import {
+  monedaDeMetrica,
+  prefijoMoneda,
+  simboloMoneda,
+  type AvisoTasas,
+} from '@/lib/moneda-reporte';
 
 /**
  * Prefijo de los importes de la gráfica («$» o «CLP »). Va por contexto porque
@@ -153,6 +165,7 @@ export function ChartWidget({
   onDrill,
 }: Props) {
   const queryBase = useBiQueryBase();
+  const { registrar: registrarEtiquetas } = useBiEtiquetas();
   // Una sola firma para todo lo que obliga a recargar: filtros del informe +
   // filtro propio del widget. Ver widgetQuery.ts.
   const filterSig = widgetFilterSignature(filters, config);
@@ -162,8 +175,12 @@ export function ChartWidget({
   const [error, setError] = useState<string | null>(null);
   /** Motivo por el que la métrica de la gráfica no se pudo medir, si es el caso. */
   const [naInfo, setNaInfo] = useState<WidgetUnavailable | null>(null);
+  const [avisoTasas, setAvisoTasas] = useState<AvisoTasas | null>(null);
+  const [avisosConsulta, setAvisosConsulta] = useState<string[]>([]);
   /** Moneda de reporte del cliente (viaja en `meta` de la respuesta). */
   const [monedaCliente, setMonedaCliente] = useState<string | null>(null);
+  /** Nombres de preguntas, respuestas y segmentos (viajan en `meta.etiquetas`). */
+  const [etiquetas, setEtiquetas] = useState<Record<string, string>>({});
 
   // Fórmula propia del widget: manda sobre `metric` y viaja bajo una clave fija.
   const formula = config.formula?.trim();
@@ -238,6 +255,10 @@ export function ChartWidget({
       .then((json) => {
         setNaInfo(readUnavailable(json.meta, metric));
         setMonedaCliente(json.meta?.moneda ?? null);
+        setEtiquetas(json.meta?.etiquetas ?? {});
+        registrarEtiquetas(json.meta?.etiquetas);
+        setAvisoTasas(readTasas(json.meta));
+        setAvisosConsulta(readAvisosConsulta(json.meta));
         if (usePivot) {
           setPivot(json.data ?? { rows: [], seriesKeys: [] });
           setRows([]);
@@ -263,13 +284,15 @@ export function ChartWidget({
   ]);
 
   const dimLabel =
+    etiquetas[dimension] ??
     DIMENSION_META[dimension]?.label ??
     leadFieldLabel(dimension) ??
     fieldDimLabel(dimension) ??
     dimension;
   const metLabel = formula
     ? formula
-    : (METRIC_META[metric as BiMetric]?.label ??
+    : (etiquetas[metric] ??
+      METRIC_META[metric as BiMetric]?.label ??
       fieldMetricLabel(metric) ??
       offlineFieldLabel(metric) ??
       sheetFieldLabel(metric) ??
@@ -309,13 +332,13 @@ export function ChartWidget({
             className="text-[10px] text-muted-foreground font-mono shrink-0 max-w-[45%] truncate"
             title={`${dimLabel}${
               dimension2
-                ? ` × ${DIMENSION_META[dimension2 as BiDimension]?.label ?? leadFieldLabel(dimension2) ?? fieldDimLabel(dimension2) ?? dimension2}`
+                ? ` × ${etiquetas[dimension2] ?? DIMENSION_META[dimension2 as BiDimension]?.label ?? leadFieldLabel(dimension2) ?? fieldDimLabel(dimension2) ?? dimension2}`
                 : ''
             } · ${metLabel}`}
           >
             {dimLabel}
             {dimension2
-              ? ` × ${DIMENSION_META[dimension2 as BiDimension]?.label ?? leadFieldLabel(dimension2) ?? fieldDimLabel(dimension2) ?? dimension2}`
+              ? ` × ${etiquetas[dimension2] ?? DIMENSION_META[dimension2 as BiDimension]?.label ?? leadFieldLabel(dimension2) ?? fieldDimLabel(dimension2) ?? dimension2}`
               : ''}{' '}
             · {metLabel}
           </span>
@@ -324,6 +347,8 @@ export function ChartWidget({
         {/* Una gráfica plana a cero engaña más que un hueco: si la métrica no
                 se pudo medir, se dice antes de dibujarla. */}
         {!loading && !error && <UnavailableNote info={naInfo} />}
+        {!loading && !error && <TasasNote aviso={avisoTasas} />}
+        {!loading && !error && <AvisosConsultaNote avisos={avisosConsulta} />}
 
         {loading ? (
           <Skeleton className="flex-1 min-h-[180px] rounded-xl" />

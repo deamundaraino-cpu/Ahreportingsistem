@@ -10,7 +10,7 @@ import 'server-only';
 
 import { ApiError, logger } from '@/lib/error-handler';
 import { autorizar, getTool } from './registry';
-import type { AgentContext } from './types';
+import { esDirecta, type AgentContext, type AnyAgentTool } from './types';
 
 export type ResultadoEjecucion = {
   ok: boolean;
@@ -20,6 +20,8 @@ export type ResultadoEjecucion = {
   duracionMs: number;
   /** Propuesta pendiente de aprobación, si la herramienta era de escritura. */
   aprobacionId?: string;
+  /** True si era una escritura directa y ya se aplicó. */
+  aplicado?: boolean;
 };
 
 /**
@@ -68,30 +70,60 @@ async function auditar(
 /**
  * Ejecuta una herramienta del registro.
  *
- * Las herramientas marcadas como mutación NO se ejecutan aquí: se registran
- * como propuesta y esperan aprobación humana. Interceptarlo en el ejecutor, y
- * no confiarlo al prompt, es lo que hace que la regla se cumpla siempre.
+ * Las herramientas marcadas como mutación NO se ejecutan aquí salvo que sean
+ * directas (`esDirecta`): se registran como propuesta y esperan aprobación
+ * humana. Interceptarlo en el ejecutor, y no confiarlo al prompt, es lo que hace
+ * que la regla se cumpla siempre.
  */
 export async function ejecutarTool(
   nombre: string,
   input: unknown,
   ctx: AgentContext
 ): Promise<ResultadoEjecucion> {
-  const t0 = Date.now();
-
   const tool = getTool(nombre);
   if (!tool) {
     return {
       ok: false,
       error: { code: 'NOT_FOUND', message: `No existe la herramienta '${nombre}'.` },
-      duracionMs: Date.now() - t0,
+      duracionMs: 0,
     };
   }
+  return ejecutarConTool(tool, input, ctx);
+}
+
+/**
+ * Lo mismo que `ejecutarTool`, con la herramienta ya resuelta.
+ *
+ * Existe para poder probar el ejecutor con herramientas de mentira sin
+ * registrarlas: la política directa/propuesta se comprueba en test:puro.
+ */
+export async function ejecutarConTool(
+  tool: AnyAgentTool,
+  input: unknown,
+  ctx: AgentContext
+): Promise<ResultadoEjecucion> {
+  const t0 = Date.now();
+  const nombre = tool.name;
 
   try {
     const validado = autorizar(tool, input, ctx);
 
     if (tool.mutation) {
+      // Lo que se puede comprobar ya, se comprueba ya: con los permisos de
+      // quien pide y antes de dejar nada pendiente.
+      await tool.mutation.precheck?.(validado, ctx);
+
+      if (esDirecta(tool)) {
+        const resumen = tool.mutation.summarize(validado);
+        const data = await tool.handler(validado, {
+          ...ctx,
+          operacion: { tool: nombre, resumen },
+        });
+        const duracionMs = Date.now() - t0;
+        await auditar(ctx, { tool: nombre, input: validado, ok: true, duracionMs });
+        return { ok: true, aplicado: true, data, duracionMs };
+      }
+
       const { crearPropuesta } = await import('./approvals');
       const id = await crearPropuesta(ctx, tool, validado);
       const duracionMs = Date.now() - t0;

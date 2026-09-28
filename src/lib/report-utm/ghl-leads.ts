@@ -1,12 +1,16 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { aplicarExclusion, cargarReglaExclusion, type ReglaExclusion } from './lead-exclusion';
+import { excluirDuplicadosLote } from './lead-duplicados';
 import {
   adaptarIds,
   columnasIdDisponibles,
   idsPublicitarios,
+  insertarLeads,
   type IdsPublicitarios,
 } from './lead-ids';
 import { leerSecreto } from '@/lib/secretos';
+import { guardarPreguntas, sincronizarOpcionesEnCampos } from '@/lib/leads/respuestas/preguntas-db';
+import type { PreguntaPlataforma, TipoPlataforma } from '@/lib/leads/respuestas/preguntas-db';
 import {
   fetchContactById,
   fetchCustomFields,
@@ -245,6 +249,33 @@ export function idsDeContacto(contact: GhlContact): IdsPublicitarios {
   return idsPublicitarios(g('campaignId'), g('adGroupId'), g('adId'));
 }
 
+/**
+ * El contacto visto SOLO por su último toque: `lastAttributionSource` como un
+ * bloque entero (o, si GHL no lo tiene, `attributionSource` entero).
+ *
+ * `deriveUtms` mezcla campo a campo el primer toque con el último, que es lo
+ * correcto para un lead (lo que lo trajo). Para una VENTA sin lead previo esa
+ * mezcla puede dar una tupla que no existió nunca —la campaña del primer anuncio
+ * con el `adId` del último—; el bloque entero no.
+ */
+function contactoUltimoToque(contact: GhlContact): GhlContact {
+  return {
+    ...contact,
+    attributionSource: contact.lastAttributionSource ?? contact.attributionSource ?? null,
+    lastAttributionSource: null,
+  };
+}
+
+/** `deriveUtms` del último toque, como bloque. Lo usa la venta sin lead (`ghl-ventas.ts`). */
+export function deriveUtmsUltimoToque(contact: GhlContact): UtmsDerivadas {
+  return deriveUtms(contactoUltimoToque(contact));
+}
+
+/** `idsDeContacto` del último toque, como bloque. */
+export function idsDeContactoUltimoToque(contact: GhlContact): IdsPublicitarios {
+  return idsDeContacto(contactoUltimoToque(contact));
+}
+
 /** Valor de un campo personalizado, sea cual sea la forma en que GHL lo devuelva. */
 export function valorDeCampo(cf: GhlCustomFieldValue): string {
   const v = cf.value ?? cf.fieldValue ?? cf.fieldValueString;
@@ -431,11 +462,18 @@ export async function ingestGhlContact(
   regla?: ReglaExclusion
 ): Promise<{ inserted: boolean; error?: string }> {
   const r = regla ?? (await cargarReglaExclusion(db, clienteId));
-  const row = adaptarIds(
-    aplicarExclusion(buildLeadRow(clienteId, contact, defs, formNameFallback), r),
-    await columnasIdDisponibles(db)
+  const [row] = await excluirDuplicadosLote(
+    db,
+    clienteId,
+    [
+      adaptarIds(
+        aplicarExclusion(buildLeadRow(clienteId, contact, defs, formNameFallback), r),
+        await columnasIdDisponibles(db)
+      ),
+    ],
+    r
   );
-  const { error } = await db.from('lead_events').insert(row);
+  const { error } = await insertarLeads(db, row);
   if (error) {
     // 23505 = unique_violation → el polling ya lo metió. No es un error.
     if ((error as { code?: string }).code === '23505') return { inserted: false };
@@ -482,15 +520,23 @@ export async function ingestGhlContactsBatch(
     .eq('cliente_id', clienteId)
     .in('external_id', ids);
   const existentes = new Set((existing ?? []).map((e: { external_id: string }) => e.external_id));
-  const aInsertar = rows.filter((r) => !existentes.has(r.external_id as string));
+  // Duplicados después de quitar los ya guardados: un contacto que el polling
+  // vuelve a traer no es un duplicado, es el mismo lead.
+  const aInsertar = await excluirDuplicadosLote(
+    db,
+    clienteId,
+    rows.filter((r) => !existentes.has(r.external_id as string)),
+    r,
+    ahora
+  );
   if (aInsertar.length === 0) return 0;
 
-  const { error } = await db.from('lead_events').insert(aInsertar);
+  const { error } = await insertarLeads(db, aInsertar);
   if (!error) return aInsertar.length;
 
   let n = 0;
   for (const r of aInsertar) {
-    const { error: e } = await db.from('lead_events').insert(r);
+    const { error: e } = await insertarLeads(db, r);
     if (!e) n++;
     else if ((e as { code?: string }).code !== '23505') {
       console.error('[ghl-leads] batch fallback insert error', e.message);
@@ -566,6 +612,59 @@ export async function resolveCustomFieldMap(
   }
 }
 
+/** Tipo de dato de GHL → tipo de pregunta. */
+const TIPO_GHL: Record<string, TipoPlataforma> = {
+  SINGLE_OPTIONS: 'opcion',
+  RADIO: 'opcion',
+  MULTIPLE_OPTIONS: 'multiple',
+  CHECKBOX: 'multiple',
+  NUMERICAL: 'numero',
+  MONETORY: 'numero',
+  DATE: 'fecha',
+  PHONE: 'telefono',
+  EMAIL: 'email',
+};
+
+/**
+ * Campos personalizados de GHL → preguntas (`lead_preguntas`, migración 091).
+ * La clave es el NOMBRE del campo: es con el que la respuesta entra en
+ * `raw_fields` (ver `normalizeContactFields`).
+ */
+export function preguntasDeCamposGhl(items: GhlCustomFieldDef[]): PreguntaPlataforma[] {
+  return items
+    .filter((f) => f?.name)
+    .map((f) => {
+      const opciones = f.opciones ?? [];
+      const tipoGhl = String(f.dataType ?? '').toUpperCase();
+      return {
+        form_id: '',
+        form_name: null,
+        clave_origen: f.name,
+        etiqueta: f.name,
+        tipo: TIPO_GHL[tipoGhl] ?? (opciones.length > 0 ? 'opcion' : 'texto'),
+        opciones,
+      };
+    });
+}
+
+/**
+ * Guarda las preguntas del catálogo recién leído y añade a los campos las
+ * opciones nuevas. Best-effort: nunca interrumpe la ingesta.
+ */
+async function registrarPreguntasGhl(
+  db: ReturnType<SupabaseClient['schema']>,
+  clienteId: string,
+  items: GhlCustomFieldDef[]
+): Promise<void> {
+  try {
+    if ((await guardarPreguntas(db, clienteId, 'ghl', preguntasDeCamposGhl(items))) > 0) {
+      await sincronizarOpcionesEnCampos(db, clienteId);
+    }
+  } catch {
+    /* no fatal */
+  }
+}
+
 /** ¿Algún contacto trae un id de campo que el catálogo cacheado no conoce? */
 export function hayCamposDesconocidos(
   contactos: GhlContact[],
@@ -632,6 +731,7 @@ export async function syncGhlLeadsForCliente(
     let defs = catalogo.defs;
     let items = catalogo.items;
     campos = items.length;
+    if (catalogo.refrescado) await registrarPreguntasGhl(db, clienteId, items);
 
     let partial = false;
     await searchContactsPaged(cred, desdeIso, async (batch) => {

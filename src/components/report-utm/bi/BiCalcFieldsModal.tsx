@@ -67,11 +67,8 @@ export function BiCalcFieldsModal({
   // ninguna lista: solo funcionaban si te los sabías de memoria. El hook es el
   // mismo que usa el editor de widgets, de modo que las dos pantallas no pueden
   // volver a ofrecer catálogos distintos.
-  const { formFields, leadSegments, offlineFields, sheetFields, sheetViews } = useBiClientFields(
-    clienteId,
-    dateFrom,
-    dateTo
-  );
+  const { formFields, leadFields, leadSegments, offlineFields, sheetFields, sheetViews } =
+    useBiClientFields(clienteId, dateFrom, dateTo);
   // Vista previa con datos reales del cliente/rango.
   const [realPreview, setRealPreview] = useState<number | null>(null);
   const [previewing, setPreviewing] = useState(false);
@@ -333,6 +330,7 @@ export function BiCalcFieldsModal({
                   sheetFields={sheetFields}
                   sheetViews={sheetViews}
                   leadSegments={leadSegments}
+                  leadFields={leadFields}
                 />
                 <div className="flex items-center justify-between mt-1.5 gap-2">
                   <p className="text-[10px] text-muted-foreground min-w-0 truncate">

@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { fijarZonaDeCliente } from '@/lib/zona-activa';
 import { reportUtmClient } from '@/lib/report-utm/client';
 import { columnaExcluidoDisponible, MOTIVOS_EXCLUSION } from '@/lib/report-utm/lead-exclusion';
 import { leerFiltros, aplicarFiltrosLeads } from '@/lib/report-utm/leads-filtros';
-import { colombiaDateTimeOf } from '@/lib/colombia-date';
+import { colombiaDateTimeOf, colombiaToday } from '@/lib/colombia-date';
+import { COLUMNAS_ID, columnasIdDisponibles } from '@/lib/report-utm/lead-ids';
+import { loadResolver, type CampaignResolver } from '@/lib/report-utm/campaign-resolver';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -63,6 +66,19 @@ const COLUMNS_EXCLUSION: { key: string; header: string }[] = [
   { key: 'excluido_motivo', header: 'Motivo de exclusión' },
 ];
 
+/**
+ * La campaña, el conjunto y el anuncio REALES, resueltos con el mismo resolver
+ * que el BI. Sin ellas el CSV solo traía el UTM crudo, y sus recuentos por
+ * campaña no cuadraban con los del informe (un lead que cruza por `ad_id` o por
+ * un nombre renombrado sale en otra fila). Solo con un cliente elegido: el
+ * resolver es por cliente.
+ */
+const COLUMNS_CRUCE: { key: string; header: string }[] = [
+  { key: '__campana', header: 'Campaña (cruzada)' },
+  { key: '__conjunto', header: 'Conjunto (cruzado)' },
+  { key: '__anuncio', header: 'Anuncio (cruzado)' },
+];
+
 const UTM_KEYS = new Set(['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term']);
 
 /** Decodifica percent-encoding solo si el valor todavía viene codificado. */
@@ -86,17 +102,36 @@ function csvField(v: string): string {
 export async function GET(req: NextRequest) {
   const supabase = await reportUtmClient();
   const f = leerFiltros(req.nextUrl.searchParams);
+  // Días del filtro y fecha de cada fila en la zona del cliente, como la página.
+  if (f.clienteId) await fijarZonaDeCliente({ rtm: f.clienteId });
 
   // Estado de exclusión: por defecto se exporta lo mismo que cuenta el informe.
   // `estado=excluidos` o `estado=todos` para auditar lo que la regla dejó fuera.
   const conExclusion = await columnaExcluidoDisponible(supabase);
 
-  const columnas = conExclusion ? [...COLUMNS, ...COLUMNS_EXCLUSION] : COLUMNS;
+  // Resolver del cliente, si se exporta uno solo. Rango: el del filtro, o los
+  // últimos 90 días si no hay (el índice solo necesita cubrir las campañas).
+  let resolver: CampaignResolver | null = null;
+  if (f.clienteId) {
+    const hasta = f.to ?? colombiaToday();
+    const desde =
+      f.from ??
+      new Date(Date.parse(`${hasta}T00:00:00Z`) - 90 * 86400_000).toISOString().slice(0, 10);
+    resolver = await loadResolver(f.clienteId, desde, hasta).catch(() => null);
+  }
+  const conIds = await columnasIdDisponibles(supabase);
+
+  const columnas = [
+    ...COLUMNS,
+    ...(resolver ? COLUMNS_CRUCE : []),
+    ...(conExclusion ? COLUMNS_EXCLUSION : []),
+  ];
 
   const seleccion =
     'cliente_id, created_at, lead_name, lead_email, lead_phone, form_name, form_plugin, ' +
     'utm_source, utm_medium, utm_campaign, utm_content, utm_term, utm_id, click_id, ' +
     'attribution_method, ip_country, page_url, raw_fields' +
+    (conIds ? `, ${COLUMNAS_ID.join(', ')}` : '') +
     (conExclusion ? ', excluido, excluido_motivo' : '');
 
   // Aplica todos los filtros a una query nueva (se reconstruye por página).
@@ -115,10 +150,16 @@ export async function GET(req: NextRequest) {
 
   // Pagina con `.range()` hasta agotar el dataset: PostgREST devuelve como
   // máximo ≈1000 filas por respuesta, así que un solo request nunca baja todo.
+  //
+  // `id` desempata el orden: `created_at` NO es único (un lote de Meta o de
+  // GHL entra con el mismo instante), y paginar por offset sobre un orden con
+  // empates deja que Postgres reparta las filas empatadas distinto en cada
+  // página — el CSV salía con leads duplicados y otros que no aparecían.
   const rows: Record<string, unknown>[] = [];
   for (let offset = 0; offset < MAX_ROWS; offset += PAGE_SIZE) {
     const { data, error } = await consulta()
       .order('created_at', { ascending: false })
+      .order('id', { ascending: false })
       .range(offset, offset + PAGE_SIZE - 1);
 
     if (error) {
@@ -162,6 +203,9 @@ export async function GET(req: NextRequest) {
     // hora Colombia.
     if (key === 'created_at') return colombiaDateTimeOf(row.created_at as string);
     if (key === 'cliente') return nombreCliente.get(row.cliente_id as string) ?? '';
+    if (resolver && key === '__campana') return resolver.campaignOf(row).label;
+    if (resolver && key === '__conjunto') return resolver.adsetOf(row).label;
+    if (resolver && key === '__anuncio') return resolver.adOf(row).label;
     if (key === 'excluido') return row.excluido === true ? 'sí' : 'no';
     if (key === 'excluido_motivo') {
       const m = row.excluido_motivo as keyof typeof MOTIVOS_EXCLUSION | null;

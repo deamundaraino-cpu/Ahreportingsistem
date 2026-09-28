@@ -56,9 +56,16 @@ CREATE TABLE public.clientes (
   "tiktok_access_token": "...",
   "tiktok_accounts": [{ "advertiser_id": "123", "name": "..." }],
 
-  // Hotmart
-  "hotmart_basic": "...", // basic auth o
-  "hotmart_api_key": "...", // API key / client credentials
+  // Hotmart (ver doc 08). Los secretos van cifrados en las claves *_enc; las
+  // planas (hotmart_basic, hotmart_client_secret, hotmart_token) son heredadas
+  // y se migran a su *_enc la primera vez que se usan.
+  "hotmart_auth_mode": "hotconnect", // ausente = credenciales
+  "hotmart_client_id": "...", // en claro: identifica, no autoriza
+  "hotmart_client_secret_enc": "...", // o bien:
+  "hotmart_basic_enc": "...", // Basic ya armado
+  "hotmart_access_token_enc": "...", // HotConnect
+  "hotmart_refresh_token_enc": "...",
+  "hotmart_token_expires_at": "2026-09-25T12:00:00Z",
 
   // Google Analytics 4
   "ga_property_id": "properties/123456",
@@ -159,6 +166,64 @@ Estructura de `hotmart_funnel_data`:
 
 - **Índices**: `UNIQUE(cliente_id, fecha)`, índice por `sync_hash`, índice GIN sobre `hotmart_funnel_data`.
 - **RLS**: cliente ve sus métricas + admin total.
+
+---
+
+### `hotmart_ventas` (migraciones 065 y 089)
+
+**La única verdad de ventas de Hotmart**: una fila por transacción,
+`UNIQUE (cliente_id, transaction_id)`, con `cliente_id` de `public.clientes`. La
+escriben la API y el webhook con el mismo parser, y de ella salen `metricas_diarias`
+(`agregarDesdeHotmartVentas`), el cubo `hm_*` de las pestañas y la fuente `hotmart`
+del BI. Flujo completo en [doc 08](./08-integraciones.md#hotmart).
+
+Columnas de la 065, por grupos: identidad (`transaction_id`,
+`parent_transaction_id`); fecha (`fecha_venta`, DATE ya en día Colombia,
+`aprobada_at`, `orden_at`); ciclo de vida (`estado`: `aprobada | completa |
+pendiente | reembolsada | chargeback | cancelada | expirada`, `evento_ts`,
+`reembolsada_at`); embudo (`tipo`, `clasificacion_origen`, `tab_id`); producto
+(`producto_id`, `producto_nombre`, `oferta_codigo`, `es_order_bump`); dinero
+(`moneda`, `bruto`, `bruto_usd`, `neto_productor_usd`, `neto_afiliado_usd`,
+`neto_coproductor_usd`, `usd_rate` — sin tasa, NULL y nunca 0); comprador; atribución
+(`utm_*`, `click_id`, y `src` / `sck` / `xcod` en columnas propias); envíos
+(`capi_enviado_at`, `gads_enviado_at`) y trazabilidad (`raw_payload`, `origen`:
+`webhook | api | backfill | reconciliacion`, `sales_event_id`).
+
+**Migración 089 — pendiente de aplicar a 2026-09-25.** Añade:
+
+| Columna              | Qué guarda                                                                                                                                                                            |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `atribucion_metodo`  | De dónde sale la tupla UTM: `tracking` (la trajo Hotmart), `lead_email` / `lead_telefono` (heredada del lead) o `padre` (bump/upsell que hereda de su principal). NULL = sin atribuir |
+| `atribucion_lead_id` | `lead_events.id` del que se heredó. Sin FK: vive en `report_utm` y el lead puede purgarse sin que la venta pierda su campaña                                                          |
+| `atribucion_at`      | Cuándo se atribuyó                                                                                                                                                                    |
+| `notificado_estado`  | Último estado por el que ya se avisó (notificación y webhook saliente). Se reclama con un UPDATE condicional: dos reintentos no avisan dos veces                                      |
+| `estado_crudo`       | El status tal cual lo manda Hotmart (`PARTIALLY_REFUNDED`, `PROTESTED`…); `estado` es su traducción                                                                                   |
+
+Y reescribe o crea tres funciones:
+
+- **`guardar_hotmart_venta(jsonb)`** — misma firma `(id, escrita)`. Antes descartaba
+  entero todo evento con `evento_ts` más viejo, y con él las comisiones que solo trae
+  la API (cuyo `evento_ts` es `approved_date`, anterior al del webhook). Ahora separa
+  dos cosas: el **estado** (`estado`, `fecha_venta`, `origen`, `evento_ts`) solo se
+  mueve si el evento es más reciente o si la API trae un estado más avanzado
+  (`pendiente` < `cancelada`/`expirada` < `aprobada` < `completa` <
+  `reembolsada`/`chargeback`); un estado cobrado o devuelto nunca vuelve a
+  `pendiente`, y cuando el avance lo trae la API `evento_ts` sube a `now()` para que
+  ningún reintento viejo lo deshaga. El **resto de columnas** solo se rellena desde
+  eventos viejos. La tupla UTM va en bloque y el
+  tracking siempre gana a la herencia de un lead. `escrita` sigue significando «se
+  aplicó como el más reciente».
+- **`hotmart_leads_para_atribucion(cliente_rtm, emails, tel9, desde, hasta)`** — leads
+  no excluidos y con campaña cuyo email (minúsculas) o teléfono (últimos 9 dígitos)
+  coincide con compradores. Solo `service_role`. Su normalización tiene que coincidir
+  con la de `src/lib/hotmart/atribucion.ts`.
+- **`hotmart_valores_conteo`** — la lista blanca de columnas admite ahora las `utm_*` y
+  `atribucion_metodo`, para que los segmentadores del BI listen valores de UTM de las
+  ventas.
+
+El código envía las claves nuevas antes de que la 089 exista (la función vieja las
+ignora) y `columnas089Disponibles()` (`src/lib/hotmart/esquema.ts`) sondea si está
+aplicada. Se prueba sin dejar nada escrito con `npx tsx scripts/verify-hotmart-089.ts`.
 
 ---
 
@@ -443,6 +508,11 @@ CREATE TABLE report_utm.integrations (
 );
 ```
 
+El secreto propio va cifrado en `webhook_secret_enc` (migración 066; el
+`webhook_secret` en claro se migra al vuelo). En la integración `hotmart`, el hottok
+que genera Hotmart y pega el usuario se guarda cifrado en `config.hottok_enc`, con
+sus cuatro últimos caracteres en `config.hottok_final`.
+
 ### `report_utm.sales_events` (migraciones 012 + 014)
 
 Tabla núcleo: cada evento de venta con UTMs y atribución.
@@ -455,7 +525,7 @@ CREATE TABLE report_utm.sales_events (
   platform_sale_id TEXT NOT NULL,
   amount      NUMERIC(12,2) NOT NULL DEFAULT 0,
   currency    TEXT DEFAULT 'BRL',
-  status      TEXT DEFAULT 'approved',  -- approved | pending | refunded | chargeback
+  status      TEXT DEFAULT 'approved',  -- approved | pending | refunded | chargeback | canceled (sin CHECK)
   -- UTMs
   utm_source TEXT, utm_medium TEXT, utm_campaign TEXT,
   utm_content TEXT, utm_term TEXT, utm_id TEXT,
@@ -484,6 +554,12 @@ CREATE TABLE report_utm.sales_events (
 ```
 
 Índices por tiempo, UTM, plataforma, status, `click_id`, `visitor_id` y `attribution_method`.
+
+Las filas de Hotmart son un **espejo** de `hotmart_ventas` (enlazadas por
+`hotmart_venta_id`, migración 066): el webhook solo las escribe cuando el evento se
+aplicó allí como el más reciente, un pedido cancelado queda como `canceled` (no
+`refunded`) y sin divisa en el payload `currency` es NULL. El BI no las cuenta en
+`sales.*`: esas ventas se miden en la fuente `hotmart`.
 
 ### `report_utm.tracking_links` (migración 012)
 
@@ -603,6 +679,8 @@ CREATE TABLE report_utm.outbound_deliveries (
 | **018**   | `ranking_tables` (JSONB) en layouts y tabs                                                |
 | **019**   | `tiktok_ads`, `tiktok_adgroups` (JSONB)                                                   |
 | **020**   | `meta_forms` (JSONB)                                                                      |
+| 021–088   | Ver la cabecera de cada archivo. Hotmart: 065 (`hotmart_ventas`), 066, 067, 070           |
+| **089**   | Atribución y guarda por estado en `hotmart_ventas` (**pendiente de aplicar**)             |
 
 ---
 

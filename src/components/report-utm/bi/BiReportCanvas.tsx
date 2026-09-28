@@ -25,9 +25,8 @@ import { HelpTip } from './HelpTip';
 import type { CalculatedField } from './BiTypes';
 import type { AdvancedFilter } from '@/lib/report-utm/bi-metadata';
 import {
-  isFieldDim,
+  isDimensionFilterKey,
   fieldDimLabel,
-  isLeadFieldDim,
   leadFieldLabel,
   ADVANCED_FILTER_KEY,
   parseAdvancedFilter,
@@ -55,9 +54,17 @@ import { BiWidgetCard } from './BiWidgetCard';
 import { BiSectionContainer, CONTAINER_PREFIX } from './BiSectionContainer';
 import { BiWidgetEditor } from './BiWidgetEditor';
 import { BiGlobalFilters } from './BiGlobalFilters';
-import { BiQueryProvider, publicQueryBase, DEFAULT_BI_QUERY_BASE } from './BiQueryContext';
-import { QUICK_WIDGETS, buildQuickWidget } from './BiQuickWidgets';
+import {
+  BiQueryProvider,
+  EtiquetaBi,
+  publicQueryBase,
+  DEFAULT_BI_QUERY_BASE,
+} from './BiQueryContext';
+import { QUICK_WIDGETS, buildQuickWidget, buildRespuestasPreset } from './BiQuickWidgets';
+import { useBiClientFields } from './useBiClientFields';
+import { respuestasDeCampo } from './fuentesDelCliente';
 import { exportReportPdf } from './exportPdf';
+import { SyncFreshnessBadge } from '@/app/(app)/dashboard/components/SyncFreshnessBadge';
 
 // ── Helpers de árbol de 2 niveles (raíz + secciones) ──────────────────
 // El layout es un array plano de bloques; un bloque 'section' contiene
@@ -132,6 +139,12 @@ interface Props {
    * autenticado, que devolvería 401 a un cliente sin sesión.
    */
   publicToken?: string;
+  /**
+   * Cliente del dashboard (`public.clientes.id`) cuyo semáforo de última
+   * sincronización se muestra en la cabecera. Solo el visor interno: los
+   * enlaces públicos lo pintan en su propia cabecera, leído en el servidor.
+   */
+  frescuraClienteId?: string | null;
 }
 
 // Fecha de calendario LOCAL (mismo criterio que el preset "Este mes" de los filtros)
@@ -151,30 +164,12 @@ function genId(): string {
   return Math.random().toString(36).slice(2, 10);
 }
 
-/**
- * Claves de `filters` que son filtros de dimensión del informe (los que se ven
- * como chips "Filtrando por"). Se distinguen de las claves de contexto
- * (cliente_id, fechas, __adv) porque son las únicas que se persisten —y se
- * borran— al guardar el informe.
- */
-function isDimensionFilterKey(k: string): boolean {
-  return (
-    k.startsWith('utm_') ||
-    k === 'ip_country' ||
-    k === 'form_name' ||
-    k === 'form_plugin' ||
-    k === 'attribution_method' ||
-    k === 'platform' ||
-    isFieldDim(k) ||
-    isLeadFieldDim(k)
-  );
-}
-
 export function BiReportCanvas({
   report: initialReport,
   readonly,
   lockedDates,
   publicToken,
+  frescuraClienteId,
 }: Props) {
   const [report, setReport] = useState<BiReport>(initialReport);
   const [filters, setFilters] = useState<BiFilters>(() => {
@@ -306,6 +301,46 @@ export function BiReportCanvas({
     setEditingWidget(null);
     setEditorOpen(true);
   }, []);
+
+  // Preguntas del catálogo de Leads del cliente, para el preset «Respuestas».
+  // Solo se piden en modo edición: es donde está el menú que las usa.
+  const { leadFields: preguntasCliente } = useBiClientFields(
+    editMode ? (filters.cliente_id ?? undefined) : undefined,
+    filters.date_from ?? undefined,
+    filters.date_to ?? undefined
+  );
+
+  /**
+   * Inserta el reparto de una pregunta y su tabla por campaña con leads y CPL
+   * por respuesta. Los campos calculados del CPL se guardan al momento (tienen
+   * su propio PATCH, como en el modal de campos); los widgets quedan pendientes
+   * del «Guardar» del informe, como cualquier widget nuevo.
+   */
+  const handleAddRespuestas = useCallback(
+    async (clave: string) => {
+      const f = preguntasCliente.find((x) => x.clave === clave);
+      if (!f) return;
+      const existentes = report.calculated_fields ?? [];
+      const { widgets, calculados } = buildRespuestasPreset(
+        { clave: f.clave, nombre: f.nombre, respuestas: respuestasDeCampo(f) },
+        genId,
+        existentes
+      );
+      setReport((prev) => ({ ...prev, layout: [...prev.layout, ...widgets] }));
+      setDirty(true);
+      setQuickOpen(false);
+      if (calculados.length > 0) {
+        const todos = [...existentes, ...calculados];
+        setReport((prev) => ({ ...prev, calculated_fields: todos }));
+        await fetch(`/api/report-utm/bi/reports/${report.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ calculated_fields: todos }),
+        });
+      }
+    },
+    [preguntasCliente, report.calculated_fields, report.id]
+  );
 
   /** Inserta en la raíz un scorecard ya configurado desde los presets rápidos. */
   const handleAddQuick = useCallback((presetIndex: number) => {
@@ -535,8 +570,8 @@ export function BiReportCanvas({
   };
 
   const activeDrills = Object.entries(filters).filter(([k, v]) => v && isDimensionFilterKey(k));
-  // El chip de un campo de lead se etiqueta desde su clave (un slug legible):
-  // el canvas no carga el catálogo del cliente solo para pintar el chip.
+  // El chip de un campo de lead usa el nombre que registraron los widgets
+  // (`meta.etiquetas`, ver <EtiquetaBi>); esto es solo el respaldo.
   const drillLabel = (k: string) => leadFieldLabel(k) ?? fieldDimLabel(k) ?? k.replace('utm_', '');
 
   // ¿Los filtros de dimensión activos difieren de los guardados en el informe?
@@ -667,6 +702,11 @@ export function BiReportCanvas({
             {report.descripcion && (
               <p className="mt-0.5 text-sm text-muted-foreground">{report.descripcion}</p>
             )}
+            {frescuraClienteId && (
+              <div className="mt-1">
+                <SyncFreshnessBadge clienteId={frescuraClienteId} />
+              </div>
+            )}
           </div>
           {!readonly && (
             <div className="flex items-center gap-2">
@@ -731,6 +771,23 @@ export function BiReportCanvas({
                               {p.label}
                             </button>
                           ))}
+                          {preguntasCliente.length > 0 && (
+                            <>
+                              <p className="px-3 pt-2 pb-1 text-[9px] font-semibold uppercase tracking-wider text-muted-foreground border-t border-border mt-1">
+                                Respuestas de formulario
+                              </p>
+                              {preguntasCliente.map((f) => (
+                                <button
+                                  key={f.clave}
+                                  onClick={() => void handleAddRespuestas(f.clave)}
+                                  title="Reparto de respuestas y tabla por campaña con leads y CPL de cada respuesta"
+                                  className="w-full px-3 py-1.5 text-left text-[11px] text-foreground hover:bg-accent transition-colors"
+                                >
+                                  {f.nombre}
+                                </button>
+                              ))}
+                            </>
+                          )}
                         </div>
                       </>
                     )}
@@ -830,7 +887,7 @@ export function BiReportCanvas({
                 onClick={() => handleDrill(k, v as string)}
                 className="flex items-center gap-1 px-2 py-1 rounded-full bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 text-[11px] font-medium hover:bg-emerald-500/25 transition-colors"
               >
-                {drillLabel(k)}: {v}
+                <EtiquetaBi clave={k} fallback={drillLabel(k)} />: {v}
                 <X className="h-3 w-3" />
               </button>
             ))}

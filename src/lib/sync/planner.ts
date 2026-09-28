@@ -97,20 +97,45 @@ export async function planDiario(db: any, opts?: { triggeredBy?: string }): Prom
   // Estos tres sí iteran clientes internamente y son baratos: un job global por
   // tipo basta. `sheets_leads` se retiró en la migración 059: su hoja pasó a
   // sincronizarse por `sheets_conversiones`, como el resto de Google Sheets.
-  const globales: SyncJobTipo[] = ['meta_leads', 'ghl_leads'];
+  //
+  // Cada tipo en su propio try: `sync_jobs_tipo_check` de producción no llegó a
+  // incluir `ghl_leads` (la parte de la 074 que lo añadía no se aplicó), y el
+  // INSERT rechazado lanzaba y abortaba el plan ENTERO, así que la
+  // reconciliación diaria de Hotmart de abajo no se encolaba nunca. Lo corrige
+  // la migración 094; hasta entonces, un tipo rechazado se anota y se sigue.
+  const globales: SyncJobTipo[] = ['meta_leads', 'ghl_leads', 'ghl_oportunidades', 'tiktok_leads'];
   for (const tipo of globales) {
-    const job = await enqueueJob(db, {
-      tipo,
-      start: ayer,
-      end: hoy,
-      prioridad: PRIORIDAD.diario,
-      triggeredBy,
-    });
-    if (job) {
-      total++;
-      detalle[tipo] = 1;
+    try {
+      const job = await enqueueJob(db, {
+        tipo,
+        start: ayer,
+        end: hoy,
+        prioridad: PRIORIDAD.diario,
+        triggeredBy,
+      });
+      if (job) {
+        total++;
+        detalle[tipo] = 1;
+      }
+    } catch (e) {
+      console.error(`[planDiario] no se pudo encolar ${tipo}:`, (e as Error)?.message ?? e);
+      detalle[`${tipo}_error`] = 1;
     }
   }
+
+  /**
+   * Reconciliación de Hotmart A DIARIO (antes, solo en la semanal).
+   *
+   * La sync del día pide las compras de ayer y hoy, y `sales/history` filtra
+   * por fecha de COMPRA: un reembolso de hoy sobre una venta de hace dos
+   * semanas no aparece nunca en ella. Esperar al domingo dejaba hasta siete
+   * días de facturación inflada. Además el job barre aprobaciones tardías y
+   * atribuye por lead lo reciente que quedó sin campaña. Es barato: un cliente
+   * con Hotmart, unas pocas páginas.
+   */
+  const hm = await planHotmartReconciliacion(db, { triggeredBy: `${triggeredBy}:hotmart` });
+  total += hm.encolados;
+  if (hm.encolados > 0) detalle.hotmart_reconciliar = hm.encolados;
 
   return { encolados: total, detalle };
 }
@@ -189,8 +214,8 @@ export async function planCierreMes(db: any, periodo?: string): Promise<PlanResu
 }
 
 /**
- * Reconciliación: verifica que el gasto guardado de Meta cuadre con el real de
- * cada cuenta y repara los días que no.
+ * Reconciliación: verifica que el gasto guardado de Meta y TikTok cuadre con el
+ * real de cada cuenta y repara los días que no.
  *
  * Existe porque el dashboard suma `meta_campaigns[]` filtrado por keyword, no la
  * columna `meta_spend`: un array truncado hace que un día muestre $0 aunque haya
@@ -220,7 +245,13 @@ export async function planReconciliacion(
     const tieneMeta =
       (Array.isArray(cfg.meta_accounts) && cfg.meta_accounts.length > 0) ||
       (!!cfg.meta_token && !!cfg.meta_account_id);
-    if (!tieneMeta) continue;
+    // La ruta de reconciliación audita Meta Y TikTok (cada una solo si el
+    // cliente la tiene). Filtrar solo por Meta dejaba sin auditar a un cliente
+    // que anuncia únicamente en TikTok.
+    const tieneTikTok =
+      (Array.isArray(cfg.tiktok_accounts) && cfg.tiktok_accounts.length > 0) ||
+      (!!cfg.tiktok_access_token && !!cfg.tiktok_advertiser_id);
+    if (!tieneMeta && !tieneTikTok) continue;
 
     const job = await enqueueJob(db, {
       tipo: 'reconciliar',

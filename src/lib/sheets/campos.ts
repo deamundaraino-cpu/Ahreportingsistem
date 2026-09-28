@@ -26,6 +26,13 @@ export const BUCKET_TOTAL = '(total)';
 export const BUCKET_OTROS = '(otros)';
 
 /**
+ * Etiqueta reservada: un valor mapeado a ella es «no respondió», no una
+ * respuesta con ese nombre (ver `bucketDeValor`). La forma buena de apartar un
+ * valor es mapearlo a vacío; esta se acepta por los mapas guardados antes.
+ */
+export const ETIQUETA_SIN_RESPUESTA = '(sin respuesta)';
+
+/**
  * Un origen del dato: qué pestañas y qué columnas dentro de ellas.
  * `sheet_id` y `tab_name` aceptan '*' como comodín — lo normal es
  * `{ sheet_id: 'uuid', tab_name: 'Form A', columnas: ['rango_de_ingresos'] }`.
@@ -203,8 +210,21 @@ export function bucketDeValor(
   const norm = normalizarValorCrudo(crudo);
   if (!norm) return null;
 
-  const mapeado = campo.valores_map?.[norm];
-  if (mapeado) return mapeado;
+  const mapa = campo.valores_map ?? {};
+  const mapeado = mapa[norm];
+  // `(sin respuesta)` es una etiqueta RESERVADA: es lo que escribía el botón
+  // «Apartar» antes de la auditoría del 2026-09-26 y hay mapas guardados con
+  // ella. Se lee como lo que siempre quiso decir —no respondió—, no como una
+  // respuesta llamada así.
+  if (mapeado && mapeado.trim().toLowerCase() !== ETIQUETA_SIN_RESPUESTA) return mapeado;
+  if (mapeado) return null;
+  // Mapeado a vacío = «tratar como sin respuesta»: es como se guarda un
+  // placeholder («Seleccione una opción») que el analista aparta. Antes se
+  // mapeaba a una etiqueta literal «(sin respuesta)», que contaba como una
+  // respuesta más y salía duplicada junto al «(sin respuesta)» real
+  // (auditoría del 2026-09-26). Tiene que comprobarse ANTES de `sin_mapear`:
+  // con `crudo` el valor volvería a salir tal cual.
+  if (Object.prototype.hasOwnProperty.call(mapa, norm)) return null;
 
   if (campo.sin_mapear === 'ignorar') return null;
   if (campo.sin_mapear === 'otros') return BUCKET_OTROS;

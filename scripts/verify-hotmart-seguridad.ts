@@ -8,11 +8,14 @@
  *   npx tsx scripts/verify-hotmart-seguridad.ts
  */
 
+import crypto from 'node:crypto';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { firmarState, verificarState, VENTANA_STATE_MS } from '../src/lib/hotmart/oauth-state';
 import { leerSecreto, cifrarSecreto, hayClaveDeCifrado } from '../src/lib/secretos';
 import { encrypt } from '../src/lib/report-utm/encryption';
+import { generateWebhookSecret, verifyWebhookSignature } from '../src/lib/report-utm/webhook-auth';
+import { salir } from './_salida';
 
 // Claves de PRUEBA. Los módulos leen el entorno de forma perezosa (dentro de la
 // función, no al importarse), así que asignarlas aquí llega a tiempo.
@@ -187,6 +190,130 @@ check(
 );
 
 // ════════════════════════════════════════════════════════════
+seccion('Webhook: el hottok es el de HOTMART, no un secreto nuestro');
+// ════════════════════════════════════════════════════════════
+// AGUJERO REAL (2026-09-25): la validación comparaba `X-HOTMART-HOTTOK` con el
+// secreto que generamos nosotros. Hotmart no lo conoce — su hottok es fijo por
+// cuenta y no se edita — así que ningún evento legítimo podía validar, y por
+// eso `sales_events` tenía 0 filas. Ahora la cabecera (o `body.hottok`) se
+// compara con el hottok que el usuario PEGA desde Hotmart.
+const NUESTRO = generateWebhookSecret();
+const HOTTOK = 'hOtToK-De-La-CuEnTa-9f8e7d6c5b4a';
+const cuerpo = JSON.stringify({ event: 'PURCHASE_APPROVED', data: {} });
+type ArgsFirma = Parameters<typeof verifyWebhookSignature>[0];
+const firma = (over: Partial<ArgsFirma>) =>
+  verifyWebhookSignature({
+    rawBody: cuerpo,
+    secret: NUESTRO,
+    signatureHeader: null,
+    hottokHeader: null,
+    hottokQuery: null,
+    payload: JSON.parse(cuerpo),
+    hottokHotmart: HOTTOK,
+    ...over,
+  });
+
+check('cabecera con el hottok de Hotmart → válido', firma({ hottokHeader: HOTTOK }).valid);
+check(
+  'y el método es «hottok»',
+  firma({ hottokHeader: HOTTOK }).method === 'hottok',
+  String(firma({ hottokHeader: HOTTOK }).method)
+);
+check('con espacios alrededor también', firma({ hottokHeader: `  ${HOTTOK} ` }).valid);
+check(
+  'body.hottok con el hottok de Hotmart → válido',
+  firma({ payload: { event: 'PURCHASE_APPROVED', hottok: HOTTOK } }).valid
+);
+check(
+  'heredado: ?hottok= con NUESTRO secreto → válido',
+  (() => {
+    const r = firma({ hottokQuery: NUESTRO });
+    return r.valid && r.method === 'query';
+  })()
+);
+check(
+  'HMAC del cuerpo con nuestro secreto → válido',
+  (() => {
+    const hmac = crypto.createHmac('sha256', NUESTRO).update(cuerpo, 'utf8').digest('hex');
+    const r = firma({ signatureHeader: hmac });
+    return r.valid && r.method === 'hmac';
+  })()
+);
+
+// ── Rechazos ────────────────────────────────────────────────
+check('sin ninguna credencial en la petición → inválido', !firma({}).valid);
+check('cabecera con un valor equivocado → inválido', !firma({ hottokHeader: 'otro-valor' }).valid);
+check(
+  'cabecera con distinta LONGITUD (prefijo del hottok) → inválido',
+  !firma({ hottokHeader: HOTTOK.slice(0, -1) }).valid
+);
+check('cabecera más larga que el hottok → inválido', !firma({ hottokHeader: `${HOTTOK}x` }).valid);
+check(
+  'body.hottok equivocado → inválido',
+  !firma({ payload: { hottok: 'no-es-el-hottok' } }).valid
+);
+// Lo que hacía la versión vieja: nuestro secreto en la cabecera. Hotmart nunca
+// lo manda ahí; aceptarlo solo ampliaría lo que un atacante puede probar.
+check(
+  'cabecera con NUESTRO secreto → inválido (la cabecera es del hottok de Hotmart)',
+  !firma({ hottokHeader: NUESTRO }).valid
+);
+check(
+  '?hottok= con el hottok de Hotmart → inválido (la query es la vía heredada)',
+  !firma({ hottokQuery: HOTTOK }).valid
+);
+check('HMAC equivocado → inválido', !firma({ signatureHeader: 'ab'.repeat(32) }).valid);
+check(
+  'nada configurado (sin secreto ni hottok) → inválido aunque la petición traiga algo',
+  !firma({ secret: null, hottokHotmart: null, hottokHeader: HOTTOK, hottokQuery: NUESTRO }).valid
+);
+check(
+  'hottok vacío guardado no valida una cabecera vacía',
+  !firma({ secret: null, hottokHotmart: '', hottokHeader: '' }).valid
+);
+
+// ── Solo una de las dos credenciales ────────────────────────
+check(
+  'solo hottok de Hotmart (sin secreto nuestro) → la cabecera valida',
+  firma({ secret: null, hottokHeader: HOTTOK }).valid
+);
+check(
+  'solo secreto nuestro (sin hottok) → la cabecera NO valida',
+  !firma({ hottokHotmart: null, hottokHeader: HOTTOK }).valid
+);
+check(
+  'solo secreto nuestro (sin hottok) → la query heredada sí',
+  firma({ hottokHotmart: null, hottokQuery: NUESTRO }).valid
+);
+
+// ── Compatibilidad: GHL y S2S no pasan `hottokHotmart` ──────
+const sinModoHotmart = (over: Partial<ArgsFirma>) => {
+  const base: ArgsFirma = {
+    rawBody: cuerpo,
+    secret: NUESTRO,
+    signatureHeader: null,
+    hottokHeader: null,
+    hottokQuery: null,
+    payload: null,
+    ...over,
+  };
+  delete base.hottokHotmart;
+  return verifyWebhookSignature(base);
+};
+check(
+  'GHL: cabecera con nuestro secreto → válido',
+  sinModoHotmart({ hottokHeader: NUESTRO }).valid
+);
+check('GHL: query con nuestro secreto → válido', sinModoHotmart({ hottokQuery: NUESTRO }).valid);
+check('GHL: valor equivocado → inválido', !sinModoHotmart({ hottokHeader: HOTTOK }).valid);
+check('GHL: sin secreto → inválido', !sinModoHotmart({ secret: null, hottokHeader: '' }).valid);
+
+// ── El hottok se guarda cifrado y se lee con el mismo helper ─
+const hottokEnc = cifrarSecreto(HOTTOK)!;
+check('el hottok cifrado no contiene el valor', !hottokEnc.includes(HOTTOK));
+check('y se descifra con leerSecreto', leerSecreto(hottokEnc, null).valor === HOTTOK);
+
+// ════════════════════════════════════════════════════════════
 seccion('Guardarraíl estático: ningún token de Hotmart en claro');
 // ════════════════════════════════════════════════════════════
 // Si alguien vuelve a escribir `hotmart_access_token: <valor>` en una llamada a
@@ -281,4 +408,4 @@ check(
 
 // ════════════════════════════════════════════════════════════
 console.log(`\n${fallos === 0 ? '✓ TODO OK' : `✗ ${fallos} FALLO(S)`}\n`);
-process.exit(fallos === 0 ? 0 : 1);
+salir(fallos);

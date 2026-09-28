@@ -13,6 +13,7 @@ import {
   parsearApi,
   instanteISO,
   comisionesPendientes,
+  desplegarSrc,
 } from '../src/lib/hotmart/parser';
 import { clasificarEvento, estadoDeEvento, estadoDeStatusApi } from '../src/lib/hotmart/eventos';
 import type { ItemComisiones, ItemHistorial, VentaHotmart } from '../src/lib/hotmart/tipos';
@@ -120,6 +121,10 @@ seccion('Eventos que no son ventas: 200, no 422');
 // error, la ruta respondía 422 y escribía `last_error` en la integración. La
 // tarjeta de la UI quedaba en rojo PERMANENTE aunque la ingesta funcionara.
 for (const ev of [
+  // Auditoría 2026-09-25: el carrito abandonado no es una venta, y la disputa
+  // no cambia el estado (bajaba una venta cobrada a pendiente).
+  'PURCHASE_OUT_OF_SHOPPING_CART',
+  'PURCHASE_PROTEST',
   'SUBSCRIPTION_CANCELLATION',
   'SWITCH_PLAN',
   'UPDATE_SUBSCRIPTION_CHARGE_DATE',
@@ -220,7 +225,10 @@ check('sck en su columna', vBase.sck === 'sck-1');
 check('xcod en su columna', vBase.xcod === 'xc-1');
 check('sin utm_source, cae a src', vBase.utm_source === 'src-1');
 check('sin utm_content, cae a sck', vBase.utm_content === 'sck-1');
-check('sin click_id, cae a xcod', vBase.click_id === 'xc-1');
+// Auditoría 2026-09-25: `xcod` es un código libre del productor, no un click
+// id. Caer a él mandaba ese código a Meta CAPI como fbclid y a Google Ads como gclid.
+check('sin click_id, NO cae a xcod', vBase.click_id === null, String(vBase.click_id));
+check('src/sck sin forma de tupla no se marcan como tracking', !vBase.atribucion_metodo);
 
 // `purchase.origin` es la ubicación canónica en 2.0.0 y el parser viejo NO la
 // miraba: solo `tracking`, `customData` y la raíz.
@@ -380,6 +388,154 @@ check(
     return !r.ok;
   })()
 );
+
+// ════════════════════════════════════════════════════════════
+seccion('La API: estados que faltaban y un status desconocido no es venta');
+// ════════════════════════════════════════════════════════════
+// BUG REAL: `estadoDeStatusApi(status) ?? 'aprobada'`. NO_FUNDS, BLOCKED u
+// OVERDUE entraban como facturación cobrada.
+for (const [status, esperado] of [
+  ['PRINTED_BILLET', 'pendiente'],
+  ['PROCESSING_TRANSACTION', 'pendiente'],
+  ['PRE_ORDER', 'pendiente'],
+  ['OVERDUE', 'pendiente'],
+  ['NO_FUNDS', 'cancelada'],
+  ['BLOCKED', 'cancelada'],
+  ['PROTESTED', 'aprobada'],
+  ['PARTIALLY_REFUNDED', 'aprobada'],
+] as const) {
+  const r = parsearApi({ ...itemHist, purchase: { ...itemHist.purchase, status } }, undefined, {
+    ahora: AHORA,
+  });
+  check(`status ${status} → ${esperado}`, r.ok && r.venta.estado === esperado);
+  check(`status ${status} se guarda crudo`, r.ok && r.venta.estado_crudo === status);
+}
+{
+  const r = parsearApi(
+    { ...itemHist, purchase: { ...itemHist.purchase, status: 'ALGO_NUEVO' } },
+    undefined,
+    { ahora: AHORA }
+  );
+  check(
+    'un status desconocido NO se cuenta como aprobada',
+    !r.ok && r.motivo === 'ilegible' && r.detalle.startsWith('status desconocido')
+  );
+}
+{
+  // La API no da la fecha del reembolso: se sella cuando se VE, no con la de
+  // aprobación (que dejaba el reembolso fechado el día de la compra).
+  const r = parsearApi(
+    { ...itemHist, purchase: { ...itemHist.purchase, status: 'REFUNDED' } },
+    undefined,
+    { ahora: AHORA }
+  );
+  check(
+    'la API sella reembolsada_at con el momento en que lo ve',
+    r.ok && r.venta.reembolsada_at === AHORA.toISOString(),
+    r.ok ? String(r.venta.reembolsada_at) : ''
+  );
+}
+
+// ════════════════════════════════════════════════════════════
+seccion('Tracking de la API: source y external_code');
+// ════════════════════════════════════════════════════════════
+// `sales/history` los llama distinto que el webhook. Antes solo se leía
+// `source_sck`: `src` y `xcod` quedaban NULL en todas las ventas de la API.
+{
+  const r = parsearApi(
+    {
+      ...itemHist,
+      purchase: {
+        ...itemHist.purchase,
+        tracking: { source: 'mi-src', source_sck: 'mi-sck', external_code: 'mi-xcod' },
+      },
+    },
+    undefined,
+    { ahora: AHORA }
+  );
+  check('tracking.source → src', r.ok && r.venta.src === 'mi-src');
+  check('tracking.source_sck → sck', r.ok && r.venta.sck === 'mi-sck');
+  check('tracking.external_code → xcod', r.ok && r.venta.xcod === 'mi-xcod');
+}
+{
+  // `sck={{ad.id}}`: el ID del anuncio va a utm_id y cuenta como tracking.
+  const r = parsearApi(
+    {
+      ...itemHist,
+      purchase: { ...itemHist.purchase, tracking: { source_sck: '120248702759870774' } },
+    },
+    undefined,
+    { ahora: AHORA }
+  );
+  check('un sck que es ID de anuncio va a utm_id', r.ok && r.venta.utm_id === '120248702759870774');
+  check('y marca la venta como tracking', r.ok && r.venta.atribucion_metodo === 'tracking');
+}
+
+// ════════════════════════════════════════════════════════════
+seccion('src con la tupla UTM empaquetada (Cris tributario)');
+// ════════════════════════════════════════════════════════════
+// Valores reales de `tracking.source` (2026-07/08): campaña-ubicación-red-anuncio-conjunto.
+{
+  const SRC =
+    '[12/07][EBOOK][VENTAS][HOTMART][PERPETUO][ADS GANADORES/NUEVOS JUL] - Copia-Instagram_Feed-ig-[AD 3 JUL][NUESTRO EBOOK]-[ADVANTAGE][CHILE][30-50][AUTOMATICO] - AD 3 GANADOR';
+  const t = desplegarSrc(SRC);
+  check(
+    'campaña con « - Copia» intacta',
+    t?.utm_campaign ===
+      '[12/07][EBOOK][VENTAS][HOTMART][PERPETUO][ADS GANADORES/NUEVOS JUL] - Copia',
+    t?.utm_campaign ?? ''
+  );
+  check('ubicación → utm_source', t?.utm_source === 'Instagram_Feed');
+  check('red → utm_medium', t?.utm_medium === 'ig');
+  check(
+    'anuncio → utm_content',
+    t?.utm_content === '[AD 3 JUL][NUESTRO EBOOK]',
+    t?.utm_content ?? ''
+  );
+  check(
+    'conjunto con [30-50] y « - » intactos → utm_term',
+    t?.utm_term === '[ADVANTAGE][CHILE][30-50][AUTOMATICO] - AD 3 GANADOR',
+    t?.utm_term ?? ''
+  );
+
+  const t2 = desplegarSrc(
+    '[12/08][EBOOK][VENTAS][HOTMART][CHILE][P. FRIO][RE TEST ADS]-Facebook_Mobile_Reels-fb-[AD 2][TANDA 4]-[ADVANTAGE][CHILE][30-50] - ADS TANDA 4'
+  );
+  check(
+    'otra campaña se despliega',
+    t2?.utm_campaign === '[12/08][EBOOK][VENTAS][HOTMART][CHILE][P. FRIO][RE TEST ADS]'
+  );
+  check('su anuncio', t2?.utm_content === '[AD 2][TANDA 4]');
+  check('su conjunto', t2?.utm_term === '[ADVANTAGE][CHILE][30-50] - ADS TANDA 4');
+
+  check(
+    'null-null-null-null-null no es una tupla',
+    desplegarSrc('null-null-null-null-null') === null
+  );
+  check('un src suelto no se despliega', desplegarSrc('src-1') === null);
+  check('sin src no hay tupla', desplegarSrc(null) === null);
+
+  const r = parsearApi(
+    { ...itemHist, purchase: { ...itemHist.purchase, tracking: { source: SRC } } },
+    undefined,
+    { ahora: AHORA }
+  );
+  check(
+    'la venta de la API hereda la campaña de src',
+    r.ok && r.venta.utm_campaign === t?.utm_campaign
+  );
+  check('y queda como tracking', r.ok && r.venta.atribucion_metodo === 'tracking');
+  check('src se conserva crudo', r.ok && r.venta.src === SRC);
+
+  // Una UTM explícita manda: src no se despliega encima.
+  const w = venta(
+    parsearWebhook(
+      webhook({}, { origin: { src: SRC }, customData: { utm_campaign: 'explicita' } }),
+      AHORA
+    )
+  )!;
+  check('una utm_campaign explícita gana a la de src', w.utm_campaign === 'explicita');
+}
 
 // ════════════════════════════════════════════════════════════
 seccion('Método de pago, cuotas y país de checkout');

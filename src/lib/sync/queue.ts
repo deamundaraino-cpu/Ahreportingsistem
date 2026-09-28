@@ -30,6 +30,14 @@ export type SyncJobTipo =
    * en `integrations.config.sync_cursor`, no en el job.
    */
   | 'ghl_leads'
+  /**
+   * Oportunidades ganadas de GoHighLevel (últimos 90 días) → `sales_events`, y
+   * reversión de las que dejaron de estar ganadas. Red de seguridad del webhook
+   * de ventas (ghl-oportunidades.ts). Requiere la migración 094.
+   */
+  | 'ghl_oportunidades'
+  /** Leads de formularios de TikTok (tiktok-leads.ts). Requiere la migración 094. */
+  | 'tiktok_leads'
   | 'cierre_mes'
   /** Compara el gasto guardado contra el real de la cuenta y repara los días que divergen. */
   | 'reconciliar'

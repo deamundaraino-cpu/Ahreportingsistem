@@ -26,7 +26,7 @@ En este orden de probabilidad:
    se reparten por esa dimensión (el gasto no se reparte por país; las sesiones de
    GA4 no se reparten por campaña). Cambia la dimensión.
 2. **El cliente está sin enlace.** En `/admin/settings` aparece «Sin enlace».
-   Sin enlace, cinco de las siete fuentes devuelven cero en silencio. Usa
+   Sin enlace, seis de las ocho fuentes devuelven cero en silencio. Usa
    «Enlazar con…» en esa fila.
 3. **Los leads no cruzan con las campañas.** `/cruce-campanas`. Si casi
    todo cae en «(sin campaña)», es etiquetado UTM, no un fallo: corrígelo ahí (por
@@ -69,6 +69,11 @@ llega a la campana y al grupo de WhatsApp del equipo una vez al día como mucho.
 - Revisa la **moneda de reporte** del cliente (ficha del cliente): tiene que ser la
   de su cuenta de Meta. Hotmart se convierte a esa moneda con la tasa del día de
   cada venta.
+- En una pestaña **filtrada por campaña**, `total_roas` y las `ventas_*` son de
+  cuenta: dividen toda la facturación entre el gasto recortado. Usa `hm_roas` /
+  `hm_cpa_compra`, que siguen el filtro ([doc 18](./18-fuentes-y-cruces.md#ventas-de-hotmart-por-campaña-hm_)).
+  Si salen casi a cero, lo normal es que las ventas no traigan campaña: añade
+  `sck={{ad.id}}` al enlace del checkout ([doc 08](./08-integraciones.md#atribución-de-dónde-sale-la-campaña-de-una-venta)).
 - Si la venta es anterior a julio de 2026 y la moneda no es USD, puede faltar la
   tasa de ese día: `npx tsx --conditions=react-server scripts/backfill-fx-historico.ts --desde=2026-01-01 --monedas=CLP`
   (simula; añade `--apply` para guardar).

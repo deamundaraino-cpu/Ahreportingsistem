@@ -11,9 +11,10 @@
 // real eran indistinguibles en pantalla — y de ahí venían los siete banners
 // escritos a mano para explicar un cero a posteriori.
 
-import { AlertCircle } from 'lucide-react';
+import { AlertCircle, AlertTriangle, Coins } from 'lucide-react';
 import type { QueryDiagnostics } from '@/lib/report-utm/bi/diagnostics';
 import { explainSkipReason } from '@/lib/report-utm/bi/diagnostics';
+import { textoAvisoTasas, type AvisoTasas } from '@/lib/moneda-reporte';
 
 export interface WidgetUnavailable {
   /** Texto en español, listo para mostrar. */
@@ -91,4 +92,52 @@ export function readValue(
   if (v === undefined || v === '') return 0;
   const n = Number(v);
   return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * Días convertidos sin su tasa de cambio (`meta.tasas`). La cifra se pinta
+ * igual —con la tasa más cercana, o en USD si no había ninguna—, pero se dice.
+ */
+export function readTasas(meta: { tasas?: AvisoTasas } | undefined): AvisoTasas | null {
+  const t = meta?.tasas;
+  return t && (t.sinTasa?.length || t.aproximadas?.length)
+    ? { sinTasa: t.sinTasa ?? [], aproximadas: t.aproximadas ?? [] }
+    : null;
+}
+
+/**
+ * Degradaciones de la consulta (`meta.avisos_consulta`): el cruce con las
+ * campañas no se pudo cargar, o una lectura quedó incompleta. Antes pasaban en
+ * silencio y el widget pintaba una cifra que parecía definitiva.
+ */
+export function readAvisosConsulta(meta: { avisos_consulta?: string[] } | undefined): string[] {
+  return Array.isArray(meta?.avisos_consulta) ? meta!.avisos_consulta! : [];
+}
+
+export function AvisosConsultaNote({ avisos }: { avisos: string[] }) {
+  if (avisos.length === 0) return null;
+  return (
+    <div className="space-y-0.5">
+      {avisos.map((a) => (
+        <p
+          key={a}
+          className="flex items-start gap-1 text-[10px] leading-snug text-amber-600 dark:text-amber-400"
+        >
+          <AlertTriangle className="h-3 w-3 shrink-0 mt-[1px]" />
+          <span>{a}</span>
+        </p>
+      ))}
+    </div>
+  );
+}
+
+export function TasasNote({ aviso }: { aviso: AvisoTasas | null }) {
+  const texto = textoAvisoTasas(aviso);
+  if (!texto) return null;
+  return (
+    <p className="flex items-start gap-1 text-[10px] leading-snug text-muted-foreground">
+      <Coins className="h-3 w-3 shrink-0 mt-[1px]" />
+      <span>{texto}</span>
+    </p>
+  );
 }

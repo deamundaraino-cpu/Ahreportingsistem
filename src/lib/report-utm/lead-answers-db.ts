@@ -5,7 +5,9 @@
  * trabajo son tres pasos, en este orden:
  *
  *   1. La base pliega los leads a (día Colombia × valor crudo × tupla UTM) con
- *      su recuento — `report_utm.bi_respuestas_por_dia`, migración 071.
+ *      su recuento — `report_utm.leads_cubo` (migración 090: una sola lectura
+ *      para el total y todas las preguntas) o, sin ella, las RPC anteriores
+ *      `bi_leads_por_dia` y `bi_respuestas_por_dia` (071).
  *   2. Node aplica el catálogo de campos de lead (`bucketDeValor`) para convertir
  *      el valor crudo en su bucket, y resuelve la campaña UNA VEZ POR TUPLA UTM
  *      con la cascada de 7 pasos de `campaign-resolver`.
@@ -24,10 +26,13 @@
  */
 
 import { colombiaRangeBounds } from '@/lib/colombia-date';
-import { bucketDeValor, ordenarBuckets } from './lead-campos';
+import { argsZona } from '@/lib/zona-activa';
 import type { LeadCampoDef, LeadSegmentoLite } from './lead-campos';
 import { loadResolver, SIN_CAMPANA } from './campaign-resolver';
 import type { CampaignResolver } from './campaign-resolver';
+import { cargarCuboCrudo, esFuncionAusente, ventanas } from '@/lib/leads/respuestas/cubo-db';
+import type { CuboCrudo, TuplaCubo } from '@/lib/leads/respuestas/cubo-db';
+import { construirDataset } from '@/lib/leads/respuestas/cubo';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -54,6 +59,15 @@ export interface LeadAnswerCatalogo {
   nombre: string;
   /** Buckets en el orden configurado (`valores_orden`), o por frecuencia. */
   buckets: string[];
+  /**
+   * Clave estable de cada bucket, en el mismo orden (`lf__<campo>__<clave>`).
+   * Sale de `lead_campos.respuestas` (migración 090) o, si falta, del slug
+   * determinista de `clavesDeRespuestas`. Opcional por compatibilidad con
+   * datasets armados antes de la 090.
+   */
+  claves?: string[];
+  /** Pregunta de selección múltiple: sus buckets solapan (ver `respondidosPorFecha`). */
+  multiple?: boolean;
   claves_origen: string[];
   origen: 'catalogo' | 'auto';
   /** Leads del período que respondieron este campo. */
@@ -94,6 +108,20 @@ export interface LeadAnswerDataset {
    * gráfica o columna que quiera usarla el trafficker.
    */
   totalesPorFecha: Record<string, Array<[number, number]>>;
+  /**
+   * Solo para preguntas de selección múltiple: fecha → índice de campo → pares
+   * [campaña, n] de los leads que respondieron ALGO. Sus buckets solapan (un
+   * lead cuenta en cada opción que eligió), así que la suma de buckets ya no es
+   * «los que respondieron» y `(sin respuesta)` se calcula contra esto.
+   */
+  respondidosPorFecha?: Record<string, Record<number, Array<[number, number]>>>;
+  /**
+   * El mismo cubo a nivel de CONJUNTO y ANUNCIO, solo si el layout lo pide (un
+   * ranking o una gráfica por anuncio/conjunto con métricas de respuestas). Va
+   * aparte y es opcional porque multiplica el tamaño: hay decenas de campañas
+   * pero cientos de tuplas de atribución.
+   */
+  niveles?: NivelesDataset;
   /** Alguna consulta se truncó o falló: la UI tiene que decirlo. */
   incompleto: boolean;
   /**
@@ -110,6 +138,26 @@ export interface LeadAnswerDataset {
    * cuando el cliente tenía doce mil.
    */
   camposAusentes?: string[];
+}
+
+/**
+ * Cubo por tupla de atribución, con su campaña, conjunto y anuncio resueltos.
+ * Los índices de `porFecha` y `totalesPorFecha` son de TUPLA; `tuplas[i]` dice a
+ * qué campaña (índice de `campanas` del dataset), conjunto y anuncio pertenece.
+ * El índice 0 de `conjuntos` y `anuncios` es siempre «sin conjunto/anuncio».
+ */
+export interface NivelesDataset {
+  tuplas: Array<[iCampana: number, iConjunto: number, iAnuncio: number]>;
+  conjuntos: string[];
+  conjuntoIds: (string | null)[];
+  anuncios: string[];
+  anuncioIds: (string | null)[];
+  /** fecha → índice de campo → [bucket, tupla, n] */
+  porFecha: Record<string, Array<Array<[number, number, number]>>>;
+  /** fecha → [tupla, n] */
+  totalesPorFecha: Record<string, Array<[number, number]>>;
+  /** Selección múltiple: fecha → índice de campo → [tupla, n] que respondieron. */
+  respondidosPorFecha?: Record<string, Record<number, Array<[number, number]>>>;
 }
 
 export function datasetVacio(): LeadAnswerDataset {
@@ -219,16 +267,6 @@ async function traerTodasLasFilas(
   return { filas, error: null, truncado: total !== null && filas.length < total };
 }
 
-/** Mensaje típico de PostgREST cuando falta la migración 071. */
-function esFuncionAusente(error: any): boolean {
-  const msg = String(error?.message ?? '');
-  return (
-    error?.code === 'PGRST202' ||
-    error?.code === '42883' ||
-    /could not find the function|does not exist|schema cache/i.test(msg)
-  );
-}
-
 /**
  * Sintetiza un `LeadCampoDef` a partir de unas claves crudas, para las preguntas
  * auto-detectadas que todavía no están en el catálogo.
@@ -282,7 +320,6 @@ function pruneCache(now: number): void {
   }
 }
 
-/** Firma estable de los campos pedidos, para no servir un dataset de otra consulta. */
 /**
  * Firma de los segmentos que van a viajar en el cubo. Entra en la clave de caché
  * junto a la de los campos: sin ella, editar los buckets de un segmento seguiría
@@ -302,11 +339,27 @@ function firmaDeSegmentos(
     .join('|');
 }
 
-function firmaDeCampos(campos: LeadCampoDef[]): string {
+/**
+ * Firma COMPLETA de la definición de los campos pedidos.
+ *
+ * Antes solo entraba cuántas entradas tenía `valores_map` (auditoría del
+ * 2026-09-26): remapear una respuesta de un bucket a otro no cambiaba la firma y
+ * el dashboard seguía sirviendo la cifra vieja durante el TTL. Ahora entra todo
+ * lo que decide un número: el mapa entero, el orden, la política de lo no
+ * mapeado, el tipo y las claves de respuesta.
+ */
+export function firmaDeCampos(campos: LeadCampoDef[]): string {
   return campos
-    .map(
-      (c) =>
-        `${c.clave}:${c.claves_origen.join('~')}:${Object.keys(c.valores_map ?? {}).length}:${c.sin_mapear}`
+    .map((c) =>
+      JSON.stringify([
+        c.clave,
+        c.claves_origen,
+        Object.entries(c.valores_map ?? {}).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
+        c.valores_orden ?? [],
+        c.sin_mapear,
+        c.tipo ?? null,
+        (c.respuestas ?? []).map((r) => [r.clave, r.nombre, r.alias ?? []]),
+      ])
     )
     .join('|');
 }
@@ -315,8 +368,12 @@ function firmaDeCampos(campos: LeadCampoDef[]): string {
  * Índice nombre de campaña → `campaign_id`, para que el diccionario del dataset
  * pueda llevar el id. Lo necesitan los grupos de campaña del dashboard, que
  * mapean por id además de por patrón de nombre.
+ *
+ * Exportado para el cubo de ventas de Hotmart (`hotmart/cubo-db.ts`): los dos
+ * cubos tienen que dar el MISMO id a la misma campaña, o un grupo de campañas
+ * recortaría leads y ventas de forma distinta.
  */
-function idsPorNombre(resolver: CampaignResolver | null): Map<string, string | null> {
+export function idsPorNombre(resolver: CampaignResolver | null): Map<string, string | null> {
   const out = new Map<string, string | null>();
   if (!resolver) return out;
   for (const agg of resolver.index.campaigns.values()) {
@@ -325,6 +382,132 @@ function idsPorNombre(resolver: CampaignResolver | null): Map<string, string | n
     if (!out.has(agg.name)) out.set(agg.name, agg.campaign_id);
   }
   return out;
+}
+
+// ── Camino anterior a la 090 ──────────────────────────────────────────
+// Mientras `report_utm.leads_cubo` no exista (la migración la aplica una
+// persona), el cubo se arma con las RPC de siempre y se convierte al MISMO
+// formato crudo. A partir de ahí el procesamiento es uno solo (`cubo.ts`): no
+// hay dos implementaciones del bucketizado que puedan divergir.
+
+async function cargarCuboAnterior(
+  db: any,
+  rtmClienteId: string,
+  dateFrom: string,
+  dateTo: string,
+  campos: LeadCampoDef[],
+  conTotales: boolean
+): Promise<{ crudo: CuboCrudo; incompleto: boolean }> {
+  const tuplas: TuplaCubo[] = [];
+  const idx = new Map<string, number>();
+  const tupla = (r: any): number => {
+    const t: TuplaCubo = [
+      r.utm_id ?? null,
+      r.utm_campaign ?? null,
+      r.utm_content ?? null,
+      r.utm_term ?? null,
+      null,
+      null,
+      null,
+      r.utm_source ?? null,
+    ];
+    const k = JSON.stringify(t);
+    let i = idx.get(k);
+    if (i === undefined) {
+      i = tuplas.length;
+      tuplas.push(t);
+      idx.set(k, i);
+    }
+    return i;
+  };
+  const totales: CuboCrudo['totales'] = [];
+  const respuestas: CuboCrudo['respuestas'] = [];
+  let incompleto = false;
+
+  // Ventanas en serie, igual que la RPC nueva: el rango «Todo» ya no se recorta.
+  for (const [ini, fin] of ventanas(dateFrom, dateTo)) {
+    const bounds = colombiaRangeBounds(ini, fin);
+    const totalesPromise = conTotales
+      ? traerTodasLasFilas((desde, hasta) =>
+          db
+            .rpc('bi_leads_por_dia', {
+              p_cliente_id: rtmClienteId,
+              p_desde: bounds.gte,
+              p_hasta: bounds.lt,
+              p_limite: LIMITE_FILAS_RPC,
+              ...argsZona(),
+            })
+            .range(desde, hasta)
+        )
+      : null;
+
+    const porCampo = await Promise.all(
+      campos.map(async (campo) => {
+        if ((campo.claves_origen ?? []).length === 0) return { filas: [] as any[], parcial: true };
+        const { filas, error, truncado } = await traerTodasLasFilas((desde, hasta) =>
+          db
+            .rpc('bi_respuestas_por_dia', {
+              p_cliente_id: rtmClienteId,
+              p_desde: bounds.gte,
+              p_hasta: bounds.lt,
+              p_claves_json: campo.claves_origen,
+              p_limite: LIMITE_FILAS_RPC,
+              ...argsZona(),
+            })
+            .range(desde, hasta)
+        );
+        if (error) {
+          if (!esFuncionAusente(error)) {
+            console.error('[lead-answers] bi_respuestas_por_dia falló:', error.message);
+          }
+          return { filas: [] as any[], parcial: true };
+        }
+        return { filas, parcial: truncado };
+      })
+    );
+    porCampo.forEach(({ filas, parcial }, iCampo) => {
+      if (parcial) incompleto = true;
+      for (const f of filas) {
+        const dia = String(f.dia ?? '').slice(0, 10);
+        const n = Number(f.n ?? 0);
+        if (!dia || !n) continue;
+        respuestas.push([dia, tupla(f), iCampo, String(f.valor ?? ''), n]);
+      }
+    });
+
+    if (totalesPromise) {
+      const { filas, error, truncado } = await totalesPromise;
+      if (error) {
+        if (!esFuncionAusente(error)) {
+          console.error('[lead-answers] bi_leads_por_dia falló:', error.message);
+        }
+        incompleto = true;
+      } else {
+        if (truncado) incompleto = true;
+        for (const f of filas) {
+          const dia = String(f.dia ?? '').slice(0, 10);
+          const n = Number(f.n ?? 0);
+          if (!dia || !n) continue;
+          totales.push([dia, tupla(f), n]);
+        }
+      }
+    }
+  }
+  return { crudo: { tuplas, totales, respuestas, truncado: false }, incompleto };
+}
+
+/** La tupla del cubo en la forma que lee el resolver de campañas. */
+function registroDeTupla(t: TuplaCubo) {
+  return {
+    utm_id: t[0],
+    utm_campaign: t[1],
+    utm_content: t[2],
+    utm_term: t[3],
+    campaign_id: t[4],
+    adset_id: t[5],
+    ad_id: t[6],
+    utm_source: t[7] ?? null,
+  };
 }
 
 /**
@@ -337,6 +520,10 @@ function idsPorNombre(resolver: CampaignResolver | null): Map<string, string | n
  * `db` tiene que venir YA acotado al esquema report_utm
  * (`createAdminClient().schema('report_utm')`), igual que en `lead-campos-db.ts`:
  * así quien llama decide una sola vez con qué credenciales entra.
+ *
+ * Con la migración 090 es UNA lectura por ventana de un año para el total y
+ * todas las preguntas, sin tope de preguntas. Sin ella, el camino anterior (una
+ * RPC por pregunta, con tope `MAX_CAMPOS_POR_CARGA`).
  */
 export async function cargarRespuestasLead(
   db: any,
@@ -346,10 +533,9 @@ export async function cargarRespuestasLead(
   campos: LeadCampoDef[],
   origenes: Record<string, 'catalogo' | 'auto'> = {},
   /**
-   * Traer el total diario de contactos. Es la consulta cara —lee todos los
-   * leads del rango— y solo hace falta si algo la va a usar: un bloque de
-   * respuestas (que lo necesita para su `(sin respuesta)`) o una fórmula que
-   * mencione `utm_leads`/`lf__`. Ver `layoutUsaRespuestasLead`.
+   * Traer el total diario de contactos. Solo hace falta si algo lo va a usar:
+   * un bloque de respuestas (que lo necesita para su `(sin respuesta)`) o una
+   * fórmula que mencione `utm_leads`/`lf__`. Ver `layoutUsaRespuestasLead`.
    */
   conTotales = true,
   /**
@@ -357,251 +543,95 @@ export async function cargarRespuestasLead(
    * ninguna consulta extra aquí: el cubo ya viene desglosado por bucket, así que
    * un segmento es una suma sobre un subconjunto de índices.
    */
-  segmentosPorCampo: Record<string, LeadSegmentoLite[]> = {}
+  segmentosPorCampo: Record<string, LeadSegmentoLite[]> = {},
+  /**
+   * `niveles`: construir también el cubo por conjunto y anuncio. Solo cuando un
+   * ranking o una gráfica por anuncio/conjunto usa métricas de respuestas.
+   */
+  opciones: { niveles?: boolean } = {}
 ): Promise<LeadAnswerDataset> {
   // Sin campos SÍ se sigue si se piden totales: `utm_leads` tiene que existir
   // aunque el cliente no tenga ninguna pregunta configurada.
   if (!rtmClienteId) return datasetVacio();
   if (campos.length === 0 && !conTotales) return datasetVacio();
+  if (!dateFrom || !dateTo || dateFrom > dateTo) return datasetVacio();
 
-  // El recorte por el tope NO puede ser silencioso: con campos venidos de
-  // fórmulas es fácil pasar de cuatro, y las preguntas sobrantes desaparecerían
-  // con aspecto de "no hay datos".
-  const usados = campos.slice(0, MAX_CAMPOS_POR_CARGA);
-  const recortado = campos.length > MAX_CAMPOS_POR_CARGA;
-  const key = `${rtmClienteId}|${dateFrom}|${dateTo}|${conTotales ? 't' : ''}|${firmaDeCampos(usados)}|${firmaDeSegmentos(usados, segmentosPorCampo)}`;
+  const key = `${rtmClienteId}|${dateFrom}|${dateTo}|${conTotales ? 't' : ''}|${firmaDeCampos(campos)}|${firmaDeSegmentos(campos, segmentosPorCampo)}|${opciones.niveles ? 'n' : ''}`;
   const now = Date.now();
   const hit = datasetCache.get(key);
   if (hit && now - hit.ts <= DATASET_TTL_MS) return hit.ds;
 
-  const bounds = colombiaRangeBounds(dateFrom, dateTo);
-
-  // El resolver se carga UNA vez para todos los campos: ya cachea 60 s por su
-  // cuenta, pero pedirlo N veces en paralelo dispararía N construcciones del
-  // índice antes de que la primera llegue a poblar su caché.
+  // El resolver se carga UNA vez para todos los campos.
   const resolver = await loadResolver(rtmClienteId, dateFrom, dateTo).catch(() => null);
   const idsCampana = idsPorNombre(resolver);
 
-  // Diccionario compartido por todos los campos. El índice 0 se reserva a
-  // `(sin campaña)` para que el filtro de pestaña pueda excluirlo sin buscarlo
-  // por nombre.
-  const campanas: string[] = [SIN_CAMPANA];
-  const campanaIds: (string | null)[] = [null];
-  const idxCampana = new Map<string, number>([[SIN_CAMPANA, 0]]);
+  let crudo: CuboCrudo | null = null;
+  let incompleto = false;
+  let usados = campos;
+  try {
+    crudo = await cargarCuboCrudo(
+      db,
+      rtmClienteId,
+      dateFrom,
+      dateTo,
+      campos.map((c) => c.claves_origen ?? [])
+    );
+    // Una pregunta sin claves de origen no puede aportar nada: se declara.
+    if (crudo && campos.some((c) => (c.claves_origen ?? []).length === 0)) incompleto = true;
+  } catch (err) {
+    console.error('[lead-answers] leads_cubo falló:', (err as Error).message);
+    return { ...datasetVacio(), incompleto: true };
+  }
+  if (!crudo) {
+    // Sin la 090: el camino anterior, con su tope de preguntas. El recorte NO
+    // puede ser silencioso: las preguntas sobrantes desaparecerían con aspecto
+    // de "no hay datos".
+    usados = campos.slice(0, MAX_CAMPOS_POR_CARGA);
+    const r = await cargarCuboAnterior(db, rtmClienteId, dateFrom, dateTo, usados, conTotales);
+    crudo = r.crudo;
+    incompleto = r.incompleto || campos.length > MAX_CAMPOS_POR_CARGA;
+  }
 
-  const indiceDeCampana = (label: string): number => {
-    const yaEsta = idxCampana.get(label);
-    if (yaEsta !== undefined) return yaEsta;
-    const i = campanas.length;
-    campanas.push(label);
-    campanaIds.push(idsCampana.get(label) ?? null);
-    idxCampana.set(label, i);
-    return i;
-  };
-
-  // Memo por tupla UTM: es el ahorro que justifica el diseño. Un cliente con
-  // 1.300 filas plegadas tiene ~30 tuplas distintas.
-  const memoTupla = new Map<string, number>();
-  const campanaDeTupla = (r: any): number => {
-    const k = `${r.utm_id ?? ''}|${r.utm_campaign ?? ''}|${r.utm_content ?? ''}|${r.utm_term ?? ''}`;
-    const yaEsta = memoTupla.get(k);
-    if (yaEsta !== undefined) return yaEsta;
-    const label = resolver
-      ? resolver.campaignOf({
-          utm_id: r.utm_id,
-          utm_campaign: r.utm_campaign,
-          utm_content: r.utm_content,
-          utm_term: r.utm_term,
-        }).label
-      : // Sin resolver (cliente sin enlazar o sin índice) no se puede afirmar
-        // a qué campaña pertenece un lead. Se etiqueta como tal en vez de
-        // inventar el cruce con el utm_campaign crudo, que parecería resuelto.
-        SIN_CAMPANA;
-    const i = indiceDeCampana(label || SIN_CAMPANA);
-    memoTupla.set(k, i);
-    return i;
-  };
-
-  const porFecha: Record<string, Array<Array<[number, number, number]>>> = {};
-  const catalogo: LeadAnswerCatalogo[] = [];
-  let incompleto = recortado;
-
-  // El total diario va en paralelo con los desgloses: es una consulta mucho más
-  // barata (no toca `raw_fields`) y no depende de qué campos se pidan.
-  const totalesPromise = conTotales
-    ? traerTodasLasFilas((desde, hasta) =>
-        db
-          .rpc('bi_leads_por_dia', {
-            p_cliente_id: rtmClienteId,
-            p_desde: bounds.gte,
-            p_hasta: bounds.lt,
-            p_limite: LIMITE_FILAS_RPC,
-          })
-          .range(desde, hasta)
-      )
-    : null;
-
-  const respuestas = await Promise.all(
-    usados.map(async (campo) => {
-      if ((campo.claves_origen ?? []).length === 0)
-        return { campo, filas: [] as any[], parcial: true };
-      const { filas, error, truncado } = await traerTodasLasFilas((desde, hasta) =>
-        db
-          .rpc('bi_respuestas_por_dia', {
-            p_cliente_id: rtmClienteId,
-            p_desde: bounds.gte,
-            p_hasta: bounds.lt,
-            p_claves_json: campo.claves_origen,
-            p_limite: LIMITE_FILAS_RPC,
-          })
-          .range(desde, hasta)
-      );
-      if (error) {
-        if (!esFuncionAusente(error)) {
-          console.error('[lead-answers] bi_respuestas_por_dia falló:', error.message);
-        }
-        return { campo, filas: [] as any[], parcial: true };
-      }
-      // Truncado ≠ fallo: las filas que llegaron son buenas y se usan; lo
-      // que hay que impedir es que se presenten como el total.
-      return { campo, filas, parcial: truncado };
-    })
-  );
-
-  respuestas.forEach(({ campo, filas, parcial }, iCampo) => {
-    if (parcial) incompleto = true;
-
-    // Acumulador (fecha → bucket → campaña → n). Se agrega aquí y no al
-    // emitir porque varias filas crudas caen en el mismo bucket: es
-    // exactamente el caso de Goodprop, cuyas dos variantes de escritura del
-    // mismo rango tienen que sumarse, no aparecer como dos barras.
-    const acc = new Map<string, Map<string, Map<number, number>>>();
-    const bucketsVistos = new Map<string, number>();
-    let cobertura = 0;
-
-    for (const fila of filas) {
-      const bucket = bucketDeValor(campo, fila.valor);
-      // `null` = el analista mandó ignorar ese valor (`sin_mapear:'ignorar'`
-      // o un valor vacío). No cuenta como respuesta.
-      if (!bucket) continue;
-
-      const dia = String(fila.dia ?? '').slice(0, 10);
-      if (!dia) continue;
-      const n = Number(fila.n ?? 0);
-      if (!n) continue;
-
-      cobertura += n;
-      bucketsVistos.set(bucket, (bucketsVistos.get(bucket) ?? 0) + n);
-
-      const iCampana = campanaDeTupla(fila);
-
-      let porBucket = acc.get(dia);
-      if (!porBucket) {
-        porBucket = new Map();
-        acc.set(dia, porBucket);
-      }
-      let porCampana = porBucket.get(bucket);
-      if (!porCampana) {
-        porCampana = new Map();
-        porBucket.set(bucket, porCampana);
-      }
-      porCampana.set(iCampana, (porCampana.get(iCampana) ?? 0) + n);
-    }
-
-    // Orden de los buckets: el configurado manda (es lo que hace que los
-    // rangos de ingresos salgan de menor a mayor y no alfabéticamente). Para
-    // una pregunta auto-detectada no hay orden declarado, así que se ordena
-    // por frecuencia, que es lo más útil de leer.
-    const tieneOrden = (campo.valores_orden ?? []).length > 0;
-    const buckets = tieneOrden
-      ? ordenarBuckets(campo, Array.from(bucketsVistos.keys()))
-      : Array.from(bucketsVistos.entries())
-          .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-          .map(([b]) => b);
-
-    const idxBucket = new Map(buckets.map((b, i) => [b, i]));
-
-    for (const [dia, porBucket] of acc) {
-      const tripletes: Array<[number, number, number]> = [];
-      for (const [bucket, porCampana] of porBucket) {
-        const iBucket = idxBucket.get(bucket);
-        if (iBucket === undefined) continue;
-        for (const [iCampana, n] of porCampana) tripletes.push([iBucket, iCampana, n]);
-      }
-      if (tripletes.length === 0) continue;
-      const delDia = porFecha[dia] ?? (porFecha[dia] = []);
-      // Hueco explícito para los campos que ese día no tienen nada: el
-      // índice del array TIENE que coincidir con el del catálogo.
-      while (delDia.length < iCampo) delDia.push([]);
-      delDia[iCampo] = tripletes;
-    }
-
-    catalogo.push({
-      clave: campo.clave,
-      nombre: campo.nombre,
-      buckets,
-      claves_origen: campo.claves_origen ?? [],
+  const ds = construirDataset(
+    crudo,
+    usados.map((campo) => ({
+      campo,
       origen: origenes[campo.clave] ?? 'catalogo',
-      cobertura,
       segmentos: segmentosPorCampo[campo.clave],
-    });
-  });
-
-  // Rellena los huecos de cola: un día donde solo respondió el primer campo
-  // deja el array corto y el lector accedería a `undefined`.
-  for (const dia of Object.keys(porFecha)) {
-    const delDia = porFecha[dia];
-    while (delDia.length < catalogo.length) delDia.push([]);
-  }
-
-  // ── Totales del día ───────────────────────────────────────────────
-  // Se resuelven con el MISMO memo de tuplas y el mismo diccionario que los
-  // desgloses: si usaran índices distintos, filtrar por campaña recortaría el
-  // total y el desglose por criterios que no coinciden, y `(sin respuesta)`
-  // podría salir negativo.
-  const totalesPorFecha: Record<string, Array<[number, number]>> = {};
-  if (totalesPromise) {
-    const { filas, error, truncado } = await totalesPromise;
-    if (error) {
-      if (!esFuncionAusente(error)) {
-        console.error('[lead-answers] bi_leads_por_dia falló:', error.message);
-      }
-      incompleto = true;
-    } else {
-      if (truncado) incompleto = true;
-
-      const acc = new Map<string, Map<number, number>>();
-      for (const fila of filas) {
-        const dia = String(fila.dia ?? '').slice(0, 10);
-        if (!dia) continue;
-        const n = Number(fila.n ?? 0);
-        if (!n) continue;
-        const iCampana = campanaDeTupla(fila);
-        let porCampana = acc.get(dia);
-        if (!porCampana) {
-          porCampana = new Map();
-          acc.set(dia, porCampana);
-        }
-        porCampana.set(iCampana, (porCampana.get(iCampana) ?? 0) + n);
-      }
-      for (const [dia, porCampana] of acc) {
-        totalesPorFecha[dia] = [...porCampana.entries()];
-      }
+    })),
+    {
+      campanaDeTupla: resolver
+        ? (t) =>
+            resolver.campaignOf({
+              utm_id: t[0],
+              utm_campaign: t[1],
+              utm_content: t[2],
+              utm_term: t[3],
+              campaign_id: t[4],
+              adset_id: t[5],
+              ad_id: t[6],
+              utm_source: t[7] ?? null,
+            }).label
+        : null,
+      idsCampana,
+      conTotales,
+      incompleto,
+      niveles:
+        opciones.niveles && resolver
+          ? {
+              conjuntoDe: (t) => ({
+                label: resolver.adsetOf(registroDeTupla(t)).label,
+                id: t[5],
+              }),
+              anuncioDe: (t) => ({ label: resolver.adOf(registroDeTupla(t)).label, id: t[6] }),
+            }
+          : undefined,
     }
-  }
-
-  const ds: LeadAnswerDataset = {
-    campanas,
-    campanaIds,
-    campos: catalogo,
-    porFecha,
-    totalesPorFecha,
-    incompleto,
-  };
+  );
 
   // Un dataset incompleto NO se cachea: reintentar en la siguiente carga es
   // mejor que servir un minuto entero de cifras parciales.
-  if (!incompleto) {
+  if (!ds.incompleto) {
     pruneCache(now);
     datasetCache.set(key, { ds, ts: now });
   }

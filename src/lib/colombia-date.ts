@@ -15,13 +15,126 @@ export const COLOMBIA_UTC_OFFSET_MS = 5 * 60 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
+// ════════════════════════════════════════════════════════════════════════
+// Zona del cliente (activada el 2026-09-28)
+// ════════════════════════════════════════════════════════════════════════
+//
+// Los helpers de abajo se llaman «colombia*» porque durante meses todo el
+// sistema agrupó en día de Colombia. Pero el gasto de Meta llega en el día de la
+// CUENTA, y cinco de los seis clientes tienen la cuenta en Chile (UTC-3/-4): las
+// ventas y los leads entre las 22:00 y las 24:00 de Chile caían en el día
+// siguiente respecto a su gasto.
+//
+// Ahora, dentro de la consulta de un cliente, estos helpers usan SU zona. Quién
+// la aporta: `zona-activa.ts` (servidor), que la guarda en un contexto de la
+// petición y se registra aquí. Fuera de ese contexto —el worker, el navegador, el
+// planificador— no hay proveedor y todo sigue en Colombia, como siempre.
+//
+// Sin imports a propósito: este archivo lo compila también el `sync-worker`
+// con su propio tsconfig, y `Intl` es del propio runtime.
+
+const ZONA_COLOMBIA = 'America/Bogota';
+let proveedorZona: (() => string | null) | null = null;
+let zonaDeConfig: ((config: unknown) => string | null) | null = null;
+
+/** Lo llama `zona-activa.ts` al cargarse. No lo uses desde otro sitio. */
+export function registrarProveedorZona(
+  fn: () => string | null,
+  deConfig?: (config: unknown) => string | null
+): void {
+  proveedorZona = fn;
+  if (deConfig) zonaDeConfig = deConfig;
+}
+
+/** La zona de la consulta en curso, o null si es Colombia (el camino rápido). */
+function zonaVigente(): string | null {
+  const z = proveedorZona?.() ?? null;
+  return z && z !== ZONA_COLOMBIA ? z : null;
+}
+
+/** Día de calendario (yyyy-MM-dd) de un instante en una zona IANA. */
+function diaEn(t: number, zona: string): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: zona,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date(t));
+}
+
+/** Desfase de la zona en ese instante, en minutos (UTC-3 → -180). */
+function desfaseEn(zona: string, t: number): number {
+  const partes = new Intl.DateTimeFormat('en-US', {
+    timeZone: zona,
+    hourCycle: 'h23',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  }).formatToParts(new Date(t));
+  const v = (k: string) => Number(partes.find((p) => p.type === k)?.value ?? 0);
+  const comoUtc = Date.UTC(
+    v('year'),
+    v('month') - 1,
+    v('day'),
+    v('hour'),
+    v('minute'),
+    v('second')
+  );
+  return Math.round((comoUtc - Math.floor(t / 1000) * 1000) / 60_000);
+}
+
+/** Instante ISO (UTC) de la medianoche local de `fecha` en la zona. */
+function medianocheEn(fecha: string, zona: string): string {
+  const utc = Date.parse(`${fecha}T00:00:00Z`);
+  // Dos pasadas: la segunda corrige el día en que cambia el horario de verano.
+  let t = utc - desfaseEn(zona, utc) * 60_000;
+  t = utc - desfaseEn(zona, t) * 60_000;
+  return new Date(t).toISOString();
+}
+
 /** Fecha de "hoy" en hora Colombia (yyyy-MM-dd). */
 export function colombiaToday(now: Date = new Date()): string {
+  const zona = zonaVigente();
+  if (zona) return diaEn(now.getTime(), zona);
   return new Date(now.getTime() - COLOMBIA_UTC_OFFSET_MS).toISOString().slice(0, 10);
+}
+
+/**
+ * «Hoy» para mostrar los datos de un cliente (yyyy-MM-dd).
+ *
+ * Punto ÚNICO por el que pasan los rangos por defecto de las vistas de un
+ * cliente (dashboard interno, `/report/[clientId]`, espejo público). Con su
+ * `config_api` se usa la zona del cliente (`zona-horaria.ts`, registrada por
+ * `zona-activa.ts`); sin ella, la de la consulta en curso o la de Colombia.
+ */
+export function hoyCliente(config?: unknown, now: Date = new Date()): string {
+  // Con la config a mano (páginas del cliente fuera de una consulta), su zona.
+  const zona = config !== undefined ? (zonaDeConfig?.(config) ?? null) : null;
+  if (zona && zona !== ZONA_COLOMBIA) return diaEn(now.getTime(), zona);
+  return colombiaToday(now);
+}
+
+/**
+ * Rango por defecto de las vistas de un cliente: los últimos `dias` días
+ * INCLUSIVE hasta hoy (30 → hoy y los 29 anteriores), igual que el preset
+ * «Últimos 30 días» del selector para que el botón lo reconozca.
+ */
+export function rangoPorDefectoCliente(
+  dias = 30,
+  config?: unknown,
+  now: Date = new Date()
+): { from: string; to: string } {
+  const hoy = hoyCliente(config, now);
+  return { from: addDaysISO(hoy, -(dias - 1)), to: hoy };
 }
 
 /** Fecha de "ayer" en hora Colombia (yyyy-MM-dd). */
 export function colombiaYesterday(now: Date = new Date()): string {
+  const zona = zonaVigente();
+  if (zona) return addDaysISO(diaEn(now.getTime(), zona), -1);
   return new Date(now.getTime() - COLOMBIA_UTC_OFFSET_MS - DAY_MS).toISOString().slice(0, 10);
 }
 
@@ -93,8 +206,12 @@ export function colombiaDateOf(instant: string | Date | null | undefined): strin
     if (ISO_DATE.test(instant)) return instant;
     const t = Date.parse(instant);
     if (Number.isNaN(t)) return instant.slice(0, 10);
+    const zona = zonaVigente();
+    if (zona) return diaEn(t, zona);
     return new Date(t - COLOMBIA_UTC_OFFSET_MS).toISOString().slice(0, 10);
   }
+  const zona = zonaVigente();
+  if (zona) return diaEn(instant.getTime(), zona);
   return new Date(instant.getTime() - COLOMBIA_UTC_OFFSET_MS).toISOString().slice(0, 10);
 }
 
@@ -114,6 +231,10 @@ export function colombiaDateTimeOf(instant: string | Date | null | undefined): s
   if (typeof instant === 'string' && ISO_DATE.test(instant)) return instant;
   const t = typeof instant === 'string' ? Date.parse(instant) : instant.getTime();
   if (Number.isNaN(t)) return typeof instant === 'string' ? instant : '';
+  const zona = zonaVigente();
+  if (zona) {
+    return new Date(t + desfaseEn(zona, t) * 60_000).toISOString().slice(0, 16).replace('T', ' ');
+  }
   return new Date(t - COLOMBIA_UTC_OFFSET_MS).toISOString().slice(0, 16).replace('T', ' ');
 }
 
@@ -133,6 +254,10 @@ export function colombiaDateTimeOf(instant: string | Date | null | undefined): s
  */
 export function colombiaRangeBounds(dateFrom: string, dateTo: string): { gte: string; lt: string } {
   const siguiente = addDaysISO(dateTo, 1);
+  const zona = zonaVigente();
+  if (zona && ISO_DATE.test(dateFrom) && ISO_DATE.test(siguiente)) {
+    return { gte: medianocheEn(dateFrom, zona), lt: medianocheEn(siguiente, zona) };
+  }
   return {
     gte: `${dateFrom}T00:00:00${COLOMBIA_UTC_OFFSET}`,
     lt: `${siguiente}T00:00:00${COLOMBIA_UTC_OFFSET}`,

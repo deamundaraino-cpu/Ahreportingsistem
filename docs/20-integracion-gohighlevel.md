@@ -238,10 +238,64 @@ entra sola y deja de haber que cargarla a mano.
    `opportunity_id`, `contact_id`, `monetary_value` y `status`.
 4. **Publicá** el workflow.
 
-La venta queda en `report_utm.sales_events` con la atribución del contacto (así
-cruza con la campaña que trajo el lead), aparece en `/ventas`, en los
+La venta queda en `report_utm.sales_events`, aparece en `/ventas`, en los
 informes (ROAS, CPA, tasa de conversión) y en el dashboard como `crm_ventas` /
 `crm_revenue`. Una oportunidad es una venta aunque GHL reenvíe el webhook.
+
+Para las ventas el PIT necesita además el scope **`opportunities.readonly`**
+(fecha real del cierre y sync de respaldo). Sin él la venta del webhook entra
+igual, pero fechada a la hora de llegada.
+
+### Atribución: el último lead antes de la venta
+
+La venta hereda **como bloque** la tupla UTM (`utm_source` … `utm_id`) y los IDs
+de anuncio (`campaign_id`/`adset_id`/`ad_id` → `ad_campaign_id`/`ad_set_id`/
+`ad_id`) del **último lead del mismo cliente** que sea de ese contacto
+(`external_id = ghl:<contactId>`, mismo email o mismo teléfono por sus últimos 9
+dígitos, la misma normalización que Hotmart) y anterior al cierre (365 días hacia
+atrás, 5 min de tolerancia). `attribution_method = 'lead'`.
+
+- Se salta el lead cuya **única** señal de campaña es una macro sin rellenar
+  (`{{campaign.name}}`, `__CID__`). Un lead orgánico sí cuenta: si el último
+  toque fue orgánico, la venta también.
+- Los leads excluidos (duplicados, contactos que ya existían) **sí** cuentan: la
+  exclusión decide si un lead es captación, no si ese toque ocurrió.
+- Sin lead: el `lastAttributionSource` del contacto entero (nunca mezclado campo
+  a campo con el primer toque, que es lo que hace `deriveUtms` para los leads).
+  Sin contacto: `attribution_method = 'none'`.
+
+Código: `src/lib/report-utm/ghl-ventas-atribucion.ts` (puro, probado en
+`scripts/verify-ghl-ventas.ts`) y `ghl-ventas.ts`.
+
+### Fecha y estado
+
+- `sale_timestamp` y `created_at` = **instante del cierre** de la oportunidad
+  (`lastStatusChangeAt` si el estado es `won`; `lastStageChangeAt` si el Workflow
+  dispara por etapa sin estado), del payload o de la oportunidad releída. El BI
+  fecha las ventas por `created_at`. Un reenvío **conserva** la fecha guardada.
+- **Estado vacío**: por compatibilidad cuenta como venta (Workflow por etapa).
+  Para que no cuente, poné `"ventas_estado_vacio_es_ganada": false` en el
+  `config` de la integración.
+- **Reversión**: si el webhook llega con `lost`, `abandoned` u `open` para una
+  oportunidad que ya era venta, esa fila pasa a `status = 'canceled'` y sale de
+  los totales (el BI solo suma `approved`). Si vuelve a `won`, se re-aprueba con
+  su fecha original.
+
+### Sync de respaldo de oportunidades
+
+`/api/cron/sync-ghl-oportunidades` (CRON_SECRET; `?clienteId=` para uno solo)
+recorre las oportunidades `won` de los últimos 90 días con
+`GET /opportunities/search` y registra las que falten por el **mismo camino** que
+el webhook; las ventas ya `approved` no se reescriben. Después relee una a una
+las ventas guardadas que ya no salen como ganadas y las revierte si están
+`lost`/`abandoned`, borradas, u `open` habiendo entrado con `won` explícito. Una
+venta que entró sin estado (Workflow por etapa) nunca se revierte por seguir
+`open`: en GHL lo está toda su vida.
+
+**Pendiente:** no tiene job diario en el planner. `sync_jobs.tipo` tiene un CHECK
+y en producción ni siquiera incluye `ghl_leads` (la parte de la 074 que lo
+amplía no está aplicada), así que un tipo nuevo haría falta en una migración.
+Hasta entonces, se dispara a mano o desde un cron externo.
 
 ## Qué contactos cuentan como lead
 

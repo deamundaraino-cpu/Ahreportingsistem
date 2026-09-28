@@ -122,6 +122,16 @@ function buildRequest(job: SyncJob, appUrl: string): { url: string; method: 'GET
       if (job.cliente_id) p.set('clienteId', job.cliente_id);
       return { url: `${base}/api/cron/sync-ghl-leads?${p}`, method: 'POST' };
     }
+    case 'ghl_oportunidades': {
+      const p = new URLSearchParams();
+      if (job.cliente_id) p.set('clienteId', job.cliente_id);
+      return { url: `${base}/api/cron/sync-ghl-oportunidades?${p}`, method: 'POST' };
+    }
+    case 'tiktok_leads': {
+      const p = new URLSearchParams();
+      if (job.cliente_id) p.set('clienteId', job.cliente_id);
+      return { url: `${base}/api/cron/sync-tiktok-leads?${p}`, method: 'POST' };
+    }
     case 'cierre_mes':
       return { url: `${base}/api/cron/cierre-mes?${qs}`, method: 'POST' };
     case 'reconciliar':
@@ -268,7 +278,12 @@ async function recordRun(
       finished_at: new Date().toISOString(),
       duracion_ms: Date.now() - startedAt,
       estado,
-      filas_escritas: results.filter((r: any) => r?.status === 'ok').length,
+      // Un worker que sabe cuántas filas escribió lo dice en `filas_escritas`
+      // (Hotmart). Los demás cuentan resultados `ok`, uno por día sincronizado.
+      filas_escritas:
+        typeof body?.filas_escritas === 'number'
+          ? body.filas_escritas
+          : results.filter((r: any) => r?.status === 'ok').length,
       filas_saltadas: results.filter((r: any) => String(r?.status ?? '').startsWith('skipped'))
         .length,
       stats: {

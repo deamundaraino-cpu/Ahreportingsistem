@@ -8,30 +8,34 @@ Plataforma multi-cliente para agencias de publicidad que **consolida métricas d
 
 ## Índice de la documentación
 
-| #   | Documento                                                          | Contenido                                                                                                                     |
-| --- | ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------- |
-| 01  | [Introducción](./01-introduccion.md)                               | Qué resuelve la aplicación, conceptos clave y glosario                                                                        |
-| 02  | [Arquitectura](./02-arquitectura.md)                               | Stack tecnológico, estructura de carpetas, flujos de datos                                                                    |
-| 03  | [Instalación y configuración](./03-instalacion-y-configuracion.md) | Requisitos, variables de entorno, puesta en marcha local                                                                      |
-| 04  | [Modelo de datos](./04-modelo-de-datos.md)                         | Tablas, columnas, RLS, estructuras JSONB y migraciones                                                                        |
-| 05  | [Autenticación y roles](./05-autenticacion-y-roles.md)             | Supabase Auth, roles, RBAC y middleware                                                                                       |
-| 06  | [Rutas y páginas (UI)](./06-rutas-y-paginas.md)                    | Mapa completo de páginas, route groups y server actions                                                                       |
-| 07  | [API REST](./07-api-rest.md)                                       | Todos los endpoints HTTP, métodos, auth y payloads                                                                            |
-| 08  | [Integraciones externas](./08-integraciones.md)                    | Meta, TikTok, Hotmart, GA4 y Google Sheets                                                                                    |
-| 09  | [Motor de fórmulas](./09-motor-de-formulas.md)                     | Evaluación de métricas, macros y alias semánticos                                                                             |
-| 10  | [Sistema de layouts y dashboards](./10-sistema-de-layouts.md)      | Layouts, tabs, tarjetas, gráficos y rankings                                                                                  |
-| 12  | [Módulo Report-UTM](./12-modulo-report-utm.md)                     | Tracking, pixel, webhooks y atribución multi-touch                                                                            |
-| 13  | [MCP y tokens de API](./13-mcp-y-tokens-api.md)                    | Servidor MCP y gestión de tokens programáticos                                                                                |
-| 14  | [Cron jobs y workers](./14-cron-y-workers.md)                      | Sincronizaciones automáticas y tareas programadas                                                                             |
-| 15  | [Despliegue y operación](./15-despliegue.md)                       | Vercel, crons, headers de seguridad y monitoreo                                                                               |
-| 16  | [Campos de Sheet](./16-campos-de-sheet.md)                         | Guía paso a paso: conectar un Google Sheet y convertir sus columnas en métricas                                               |
-| 17  | [Campos de lead](./17-campos-de-lead.md)                           | Convertir las respuestas de los formularios en dimensiones y filtros de los informes                                          |
-| 18  | [Fuentes de datos y cruces](./18-fuentes-y-cruces.md)              | Qué cruza con qué y por qué, recetario de widgets y diagnóstico de informes vacíos                                            |
-| 19  | [Guía: segmentos de lead](./19-guia-segmentos-de-lead.md)          | Medir con las respuestas de los formularios: crear segmentos, usarlos en widgets y fórmulas, y el catálogo actual por cliente |
-| 20  | [Integración GoHighLevel](./20-integracion-gohighlevel.md)         | Guía paso a paso: conectar una location de GHL para que sus contactos entren como leads del UTM report                        |
-| 21  | [Auditoría de UTMs](./21-auditoria-utms-ghl.md)                    | Qué arrastra GoHighLevel, qué toma el UTM Report y cómo comprobar los campos ocultos del formulario                           |
-| 22  | [Plantilla de agente interno](./22-plantilla-agente-interno.md)    | Plantilla de prompt para dar de alta y probar un agente interno, y por qué el agente usa API y no una suscripción             |
-| 23  | [Runbook de empalme](./23-runbook-empalme.md)                      | Si algo falla, qué mirar: informes vacíos, leads excluidos, sync caída, cuenta de Meta parada, ventas del CRM                 |
+> **¿Acabas de recibir el proyecto?** Empieza por el [Informe de entrega](./00-informe-de-entrega.md): estado actual, qué está sin desplegar, cuidados con la base de datos y plan de las primeras semanas.
+
+| #   | Documento                                                          | Contenido                                                                                                                                |
+| --- | ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| 01  | [Introducción](./01-introduccion.md)                               | Qué resuelve la aplicación, conceptos clave y glosario                                                                                   |
+| 02  | [Arquitectura](./02-arquitectura.md)                               | Stack tecnológico, estructura de carpetas, flujos de datos                                                                               |
+| 03  | [Instalación y configuración](./03-instalacion-y-configuracion.md) | Requisitos, variables de entorno, puesta en marcha local                                                                                 |
+| 04  | [Modelo de datos](./04-modelo-de-datos.md)                         | Tablas, columnas, RLS, estructuras JSONB y migraciones                                                                                   |
+| 05  | [Autenticación y roles](./05-autenticacion-y-roles.md)             | Supabase Auth, roles, RBAC y middleware                                                                                                  |
+| 06  | [Rutas y páginas (UI)](./06-rutas-y-paginas.md)                    | Mapa completo de páginas, route groups y server actions                                                                                  |
+| 07  | [API REST](./07-api-rest.md)                                       | Todos los endpoints HTTP, métodos, auth y payloads                                                                                       |
+| 08  | [Integraciones externas](./08-integraciones.md)                    | Meta, TikTok, Hotmart, GA4 y Google Sheets                                                                                               |
+| 09  | [Motor de fórmulas](./09-motor-de-formulas.md)                     | Evaluación de métricas, macros y alias semánticos                                                                                        |
+| 10  | [Sistema de layouts y dashboards](./10-sistema-de-layouts.md)      | Layouts, tabs, tarjetas, gráficos y rankings                                                                                             |
+| 12  | [Módulo Report-UTM](./12-modulo-report-utm.md)                     | Tracking, pixel, webhooks y atribución multi-touch                                                                                       |
+| 13  | [MCP y tokens de API](./13-mcp-y-tokens-api.md)                    | Servidor MCP y gestión de tokens programáticos                                                                                           |
+| 14  | [Cron jobs y workers](./14-cron-y-workers.md)                      | Sincronizaciones automáticas y tareas programadas                                                                                        |
+| 15  | [Despliegue y operación](./15-despliegue.md)                       | Vercel, crons, headers de seguridad y monitoreo                                                                                          |
+| 16  | [Campos de Sheet](./16-campos-de-sheet.md)                         | Guía paso a paso: conectar un Google Sheet y convertir sus columnas en métricas                                                          |
+| 17  | [Campos de lead](./17-campos-de-lead.md)                           | Convertir las respuestas de los formularios en dimensiones y filtros de los informes                                                     |
+| 18  | [Fuentes de datos y cruces](./18-fuentes-y-cruces.md)              | Qué cruza con qué y por qué, recetario de widgets y diagnóstico de informes vacíos                                                       |
+| 19  | [Guía: segmentos de lead](./19-guia-segmentos-de-lead.md)          | Medir con las respuestas de los formularios: crear segmentos, usarlos en widgets y fórmulas, y el catálogo actual por cliente            |
+| 20  | [Integración GoHighLevel](./20-integracion-gohighlevel.md)         | Guía paso a paso: conectar una location de GHL para que sus contactos entren como leads del UTM report                                   |
+| 21  | [Auditoría de UTMs](./21-auditoria-utms-ghl.md)                    | Qué arrastra GoHighLevel, qué toma el UTM Report y cómo comprobar los campos ocultos del formulario                                      |
+| 22  | [Plantilla de agente interno](./22-plantilla-agente-interno.md)    | Plantilla de prompt para dar de alta y probar un agente interno, y por qué el agente usa API y no una suscripción                        |
+| 23  | [Runbook de empalme](./23-runbook-empalme.md)                      | Si algo falla, qué mirar: informes vacíos, leads excluidos, sync caída, cuenta de Meta parada, ventas del CRM                            |
+| 24  | [Respuestas de formulario](./24-respuestas-de-formulario.md)       | Un solo sitio (pestaña «Leads»): medir una pregunta en un clic y usar cada respuesta como métrica (leads, CPL, %) en pestañas e informes |
+| 25  | [Auditoría del cruce por canal](./25-auditoria-cruce-canales.md)   | Cruce por plataforma e IDs, cuenta compartida, zona horaria por cliente, atribución de ventas y paridad entre superficies (2026-09-28)   |
 
 ---
 

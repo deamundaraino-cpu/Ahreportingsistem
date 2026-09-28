@@ -38,6 +38,8 @@ import {
   leadFieldLabel,
   makeLeadSegMetric,
   leadSegLabel,
+  makeLeadAnsMetric,
+  leadAnsLabel,
   makeSheetDim,
   makeSheetMetric,
   makeSheetView,
@@ -61,6 +63,7 @@ import { BiFormulaInput } from './BiFormulaInput';
 import { HelpTip } from './HelpTip';
 import { BiAdvancedFilterBuilder } from './BiAdvancedFilterBuilder';
 import { BiFieldPicker } from './BiFieldPicker';
+import { fuentesDelCliente, respuestasDeCampo } from './fuentesDelCliente';
 import { DEFAULT_BI_QUERY_BASE } from './BiQueryContext';
 import { parseExpr, isExprError } from '@/lib/report-utm/bi/expr';
 
@@ -369,6 +372,25 @@ export function BiWidgetEditor({
     value: makeLeadSegMetric(s.clave),
     label: s.campo_nombre ? `${s.campo_nombre}: ${s.nombre}` : s.nombre,
   }));
+  // Cada respuesta de cada pregunta, como métrica: no hace falta crear un
+  // segmento por respuesta para poder medirla (auditoría del 2026-09-26).
+  const leadAnsMetricOptions = leadFields.flatMap((f) =>
+    respuestasDeCampo(f).map((r) => ({
+      value: makeLeadAnsMetric(f.clave, r.clave),
+      label: `${f.nombre}: ${r.nombre}`,
+    }))
+  );
+  // Fuentes propias del cliente para el selector fuente → campo.
+  const extraSources = fuentesDelCliente({
+    formFields,
+    leadFields,
+    leadSegments,
+    offlineFields,
+    sheetFields,
+    sheetViews,
+    customConversions,
+    calculatedFields: calculatedFields.map((c) => ({ name: c.name, format: c.format })),
+  });
 
   // Etapas ofrecibles del embudo: el catálogo fijo más los segmentos de lead.
   // Con segmentos acumulados —«Leads totales → Desde 1.3M → Desde 2M»— el embudo
@@ -377,6 +399,7 @@ export function BiWidgetEditor({
   const funnelStageOptions: MetricOpt[] = [
     ...FUNNEL_STAGE_METRICS.map((m) => ({ value: String(m), label: METRIC_META[m].label })),
     ...leadSegMetricOptions,
+    ...leadAnsMetricOptions,
   ];
 
   // ── Dimensiones agrupadas ─────────────────────────────────────────────
@@ -450,6 +473,7 @@ export function BiWidgetEditor({
     offlineFieldLabel(k, offlineFields) ??
     sheetFieldLabel(k, sheetFields, sheetViews) ??
     leadSegLabel(k, leadSegments) ??
+    leadAnsLabel(k, leadFields) ??
     calculatedFields.find((c) => c.name === k)?.name ??
     k;
   const resolveDimLabel = (d: string) =>
@@ -514,6 +538,7 @@ export function BiWidgetEditor({
       title: 'Campos de formulario',
       items: allowCalc ? fieldMetricOptions : [],
     },
+    { key: 'leadans', title: 'Respuestas de formulario', items: leadAnsMetricOptions },
     { key: 'leadsegs', title: 'Segmentos de lead', items: leadSegMetricOptions },
     { key: 'sheetviews', title: 'Vistas de Sheet', items: sheetViewOptions },
     { key: 'sheet', title: 'Campos de Sheet', items: sheetMetricOptions },
@@ -1051,6 +1076,7 @@ export function BiWidgetEditor({
                       sheetFields={sheetFields}
                       sheetViews={sheetViews}
                       leadSegments={leadSegments}
+                      leadFields={leadFields}
                     />
                     <div className="grid grid-cols-2 gap-2">
                       <div>
@@ -1205,6 +1231,7 @@ export function BiWidgetEditor({
                         onChange={(id) => setMetric(id)}
                         clienteId={clienteId}
                         dimension={dim}
+                        extraSources={extraSources}
                       />
                     )}
                     {hasNoData(String(metric)) && (
@@ -1236,6 +1263,7 @@ export function BiWidgetEditor({
                     value={dim}
                     onChange={(id) => setDim(id)}
                     clienteId={clienteId}
+                    extraSources={extraSources}
                   />
                   {showAdDimWarning && (
                     <div className="mt-2 flex items-start gap-2 rounded-lg border border-amber-300/60 dark:border-amber-500/30 bg-amber-50/60 dark:bg-amber-500/10 px-3 py-2">

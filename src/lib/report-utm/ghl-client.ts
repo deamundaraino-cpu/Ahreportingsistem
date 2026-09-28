@@ -11,6 +11,9 @@
  * y mantener una app, y se revoca desde la propia location.
  *
  * Scopes mínimos del PIT: `contacts.readonly` y `locations/customFields.readonly`.
+ * Las ventas (`ghl-ventas.ts`, `ghl-oportunidades.ts`) necesitan además
+ * `opportunities.readonly`: sin él la venta del webhook se sigue guardando (con la
+ * hora de llegada en vez de la de cierre) y el sync de respaldo falla con 401.
  */
 
 const BASE = 'https://services.leadconnectorhq.com';
@@ -92,6 +95,13 @@ export type GhlCustomFieldDef = {
   name: string;
   fieldKey?: string | null;
   dataType?: string | null;
+  /**
+   * Opciones de un desplegable, casillas o radio. GHL las devuelve en
+   * `picklistOptions` (texto) y en las versiones nuevas también en `options`
+   * ({key, label}). Se conservan desde la migración 091: son las respuestas
+   * reales de la pregunta, que antes se tiraban.
+   */
+  opciones?: { valor: string; etiqueta: string | null }[];
 };
 
 export type GhlCredenciales = {
@@ -149,6 +159,27 @@ export async function fetchContactById(
   return contacto?.id ? contacto : null;
 }
 
+/** Opciones de un campo de GHL, en cualquiera de sus dos formatos. */
+export function opcionesDeCampoGhl(
+  f: Record<string, unknown>
+): { valor: string; etiqueta: string | null }[] {
+  const out: { valor: string; etiqueta: string | null }[] = [];
+  const pick = f.picklistOptions;
+  if (Array.isArray(pick)) {
+    for (const o of pick)
+      if (o !== null && o !== undefined && String(o).trim())
+        out.push({ valor: String(o), etiqueta: String(o) });
+  }
+  const opts = f.options;
+  if (out.length === 0 && Array.isArray(opts)) {
+    for (const o of opts as Record<string, unknown>[]) {
+      const valor = String(o?.label ?? o?.key ?? '').trim();
+      if (valor) out.push({ valor, etiqueta: o?.label ? String(o.label) : valor });
+    }
+  }
+  return out;
+}
+
 /** Catálogo de campos personalizados de la location (resuelve los ids opacos del contacto). */
 export async function fetchCustomFields(cred: GhlCredenciales): Promise<GhlCustomFieldDef[]> {
   const url = `${BASE}/locations/${encodeURIComponent(cred.locationId)}/customFields?model=contact`;
@@ -162,6 +193,7 @@ export async function fetchCustomFields(cred: GhlCredenciales): Promise<GhlCusto
       name: String(f.name),
       fieldKey: f.fieldKey ? String(f.fieldKey) : null,
       dataType: f.dataType ? String(f.dataType) : null,
+      opciones: opcionesDeCampoGhl(f as unknown as Record<string, unknown>),
     }));
 }
 
@@ -230,4 +262,106 @@ export async function testConnection(cred: GhlCredenciales): Promise<{ total: nu
   });
   const cuerpo = await leerRespuesta(res, 'POST /contacts/search');
   return { total: Number(cuerpo.total ?? 0) };
+}
+
+// ── Oportunidades (ventas del CRM) ────────────────────────────────────
+
+/** Oportunidad tal como la devuelven `GET /opportunities/search` y `/opportunities/{id}`. */
+export type GhlOportunidad = {
+  id: string;
+  name?: string | null;
+  monetaryValue?: number | string | null;
+  pipelineId?: string | null;
+  pipelineStageId?: string | null;
+  /** `open` | `won` | `lost` | `abandoned`. */
+  status?: string | null;
+  source?: string | null;
+  contactId?: string | null;
+  locationId?: string | null;
+  /** Para una ganada, el instante en que pasó a `won`. */
+  lastStatusChangeAt?: string | null;
+  lastStageChangeAt?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+  contact?: {
+    id?: string | null;
+    name?: string | null;
+    email?: string | null;
+    phone?: string | null;
+    tags?: string[] | null;
+  } | null;
+};
+
+/** Máximo que acepta `GET /opportunities/search` por página. */
+export const OPP_PAGE_LIMIT = 100;
+/** Tope de páginas por pasada del sync: 50 × 100 = 5.000 oportunidades. */
+const MAX_PAGINAS_OPP = 50;
+
+/** Una oportunidad por id. `null` si GHL dice 404 (borrada o de otra location). */
+export async function fetchOpportunityById(
+  oportunidadId: string,
+  cred: GhlCredenciales
+): Promise<GhlOportunidad | null> {
+  const res = await fetch(`${BASE}/opportunities/${encodeURIComponent(oportunidadId)}`, {
+    headers: headers(cred.token),
+  });
+  if (res.status === 404) return null;
+  const cuerpo = await leerRespuesta(res, `GET /opportunities/${oportunidadId}`);
+  const o = (cuerpo.opportunity ?? cuerpo) as GhlOportunidad;
+  return o?.id ? o : null;
+}
+
+/**
+ * Recorre las oportunidades de un estado, de la más RECIENTE a la más antigua
+ * por fecha de creación (el orden por defecto de GHL), invocando `onBatch` por
+ * página.
+ *
+ * Paginación por cursor (`startAfter` + `startAfterId` que devuelve `meta`), no
+ * por `page`: el cursor no se desplaza si entra una oportunidad nueva a mitad
+ * del recorrido.
+ *
+ * No se usa el filtro `date` de la API a propósito: filtra por CREACIÓN, y una
+ * oportunidad creada hace cuatro meses puede ganarse ayer. Quien llama decide
+ * cuándo parar devolviendo `false` (al salir de su ventana de creación, o por
+ * presupuesto de tiempo). `completo` dice si se recorrió la lista entera.
+ */
+export async function searchOpportunitiesPaged(
+  cred: GhlCredenciales,
+  status: 'open' | 'won' | 'lost' | 'abandoned' | 'all',
+  onBatch: (oportunidades: GhlOportunidad[]) => Promise<boolean | void>
+): Promise<{ completo: boolean }> {
+  let startAfter: string | null = null;
+  let startAfterId: string | null = null;
+
+  for (let pagina = 1; pagina <= MAX_PAGINAS_OPP; pagina++) {
+    const qs = new URLSearchParams({
+      location_id: cred.locationId,
+      status,
+      limit: String(OPP_PAGE_LIMIT),
+    });
+    if (startAfter && startAfterId) {
+      qs.set('startAfter', startAfter);
+      qs.set('startAfterId', startAfterId);
+    }
+    const res = await fetch(`${BASE}/opportunities/search?${qs}`, {
+      headers: headers(cred.token),
+    });
+    const cuerpo = await leerRespuesta(res, 'GET /opportunities/search');
+    const lista = (cuerpo.opportunities ?? []) as GhlOportunidad[];
+    if (!Array.isArray(lista) || lista.length === 0) return { completo: true };
+
+    const seguir = await onBatch(lista);
+    if (seguir === false) return { completo: false };
+
+    const meta = (cuerpo.meta ?? {}) as Record<string, unknown>;
+    const sigAfter = meta.startAfter ?? null;
+    const sigId = meta.startAfterId ?? null;
+    // Sin cursor no se puede avanzar: pedir la misma página sería un bucle.
+    if (lista.length < OPP_PAGE_LIMIT || sigAfter === null || sigId === null) {
+      return { completo: true };
+    }
+    startAfter = String(sigAfter);
+    startAfterId = String(sigId);
+  }
+  return { completo: false };
 }

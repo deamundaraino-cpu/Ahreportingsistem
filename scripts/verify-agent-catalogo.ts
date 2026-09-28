@@ -12,7 +12,7 @@
  */
 import { catalogoPublico } from '../src/lib/agent/catalogo';
 import { ALL_TOOLS, getTool } from '../src/lib/agent/registry';
-import { nivelAlcanza } from '../src/lib/agent/types';
+import { esDirecta, nivelAlcanza } from '../src/lib/agent/types';
 import { ALL_PERMISSIONS } from '../src/lib/api-token-auth';
 
 let ok = 0,
@@ -155,6 +155,23 @@ check(
 check(
   'hay al menos una escritura de riesgo alto documentada',
   catalogo.some((t) => t.riesgo === 'high')
+);
+
+// Directa o con aprobación: es lo que el panel tiene que dejar claro antes de
+// llamar, porque cambia qué devuelve la herramienta (`aplicado` o
+// `pendiente_de_aprobacion`).
+for (const t of ALL_TOOLS) {
+  const doc = catalogo.find((d) => d.name === t.name)!;
+  const esperado = t.mutation ? (esDirecta(t) ? 'directa' : 'requerida') : null;
+  check(`[${t.name}] la aprobación coincide con el registro`, doc.aprobacion === esperado);
+}
+check(
+  'hay escrituras directas documentadas (crear y editar informes)',
+  catalogo.some((t) => t.aprobacion === 'directa' && t.name === 'create_report')
+);
+check(
+  'ninguna de riesgo alto se documenta como directa',
+  catalogo.filter((t) => t.riesgo === 'high').every((t) => t.aprobacion === 'requerida')
 );
 
 console.log(`\n${fail === 0 ? '✅' : '❌'} ${ok} comprobaciones pasadas, ${fail} fallidas\n`);

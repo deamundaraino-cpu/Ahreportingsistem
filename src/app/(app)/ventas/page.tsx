@@ -133,6 +133,8 @@ export default async function VentasPage({
             <option value="pending">Pending</option>
             <option value="refunded">Refunded</option>
             <option value="chargeback">Chargeback</option>
+            {/* Pedido que nunca se cobró. Antes se guardaba como «refunded». */}
+            <option value="canceled">Cancelada</option>
           </SelectField>
           <InputField
             label="UTM source"
@@ -228,7 +230,8 @@ export default async function VentasPage({
                       <AttributionBadge method={s.attribution_method} />
                     </td>
                     <td className="px-6 py-3 text-right text-xs font-mono font-semibold text-foreground whitespace-nowrap tabular-nums">
-                      {formatCurrency(s.amount, s.currency)}
+                      {/* Sin divisa no se inventa una: Hotmart ya no cae a 'BRL'. */}
+                      {formatCurrency(s.amount, s.currency ?? '').trim()}
                     </td>
                     <td className="px-6 py-3 text-right">
                       <Link

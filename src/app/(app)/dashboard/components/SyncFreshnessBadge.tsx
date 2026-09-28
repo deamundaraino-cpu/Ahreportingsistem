@@ -5,6 +5,17 @@ import { formatDistanceToNow } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { getDataFreshness } from '../_actions';
 
+/**
+ * Lo mínimo que el semáforo necesita de `getDataFreshness`. Una página de
+ * servidor puede leerlo ella misma y pasarlo ya hecho (`datos`): los informes
+ * públicos lo hacen así para no exponer al visitante una acción con el id del
+ * cliente ni el texto del último error de sincronización.
+ */
+export type FrescuraDatos = {
+  data: { synced_at?: string | null; is_partial?: boolean | null } | null;
+  lastRun: { estado?: string | null; error?: string | null } | null;
+};
+
 type Display = {
   color: 'verde' | 'ambar' | 'rojo';
   etiqueta: string;
@@ -30,16 +41,25 @@ type Display = {
 export function SyncFreshnessBadge({
   clienteId,
   refreshKey = 0,
+  datos,
+  ocultarError = false,
 }: {
   clienteId: string;
   refreshKey?: number;
+  /** Frescura ya leída en el servidor: si viene, no se llama a la acción. */
+  datos?: FrescuraDatos | null;
+  /** No mostrar el texto del último error (vistas públicas). */
+  ocultarError?: boolean;
 }) {
   const [display, setDisplay] = useState<Display | null>(null);
 
   useEffect(() => {
-    if (!clienteId) return;
+    if (!clienteId && !datos) return;
     let activo = true;
-    getDataFreshness(clienteId)
+    const fuente: Promise<FrescuraDatos> = datos
+      ? Promise.resolve(datos)
+      : getDataFreshness(clienteId);
+    fuente
       .then((res) => {
         if (!activo) return;
         const syncedAt = res.data?.synced_at ? new Date(res.data.synced_at) : null;
@@ -65,7 +85,7 @@ export function SyncFreshnessBadge({
           relativo: syncedAt
             ? formatDistanceToNow(syncedAt, { addSuffix: true, locale: es })
             : 'sin registro',
-          errorMsg: res.lastRun?.error ?? null,
+          errorMsg: ocultarError ? null : (res.lastRun?.error ?? null),
         });
       })
       .catch(() => {
@@ -74,7 +94,7 @@ export function SyncFreshnessBadge({
     return () => {
       activo = false;
     };
-  }, [clienteId, refreshKey]);
+  }, [clienteId, refreshKey, datos, ocultarError]);
 
   if (!display) return null;
   const { color, etiqueta, relativo, errorMsg } = display;

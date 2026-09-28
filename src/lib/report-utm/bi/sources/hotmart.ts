@@ -41,7 +41,10 @@ export const HOTMART_SOURCE: DataSource = {
   clientKey: { scope: 'public', via: 'public_cliente_id' },
   grainKind: 'row',
   grain: ['id'],
-  joinAxes: ['date', 'platform', 'campaign', 'adset', 'ad', 'sales_column'],
+  // `utm` sí, `lead_column` no: la venta trae sus UTM (propias o heredadas del
+  // lead), pero no tiene país IP, formulario ni campos de formulario. Con un
+  // filtro de esos la fuente no devuelve nada (`filtroSoloDeLeads`).
+  joinAxes: ['date', 'platform', 'campaign', 'adset', 'ad', 'utm', 'sales_column'],
   dateColumn: 'fecha_venta',
   dateType: 'date',
   fields: [
@@ -54,11 +57,29 @@ export const HOTMART_SOURCE: DataSource = {
       'hotmart',
       { agg: 'count', column: 'id', recommended: true, funnelStage: 100 }
     ),
+    // Pedidos frente a transacciones: el bump y el upsell de un comprador son
+    // ventas aparte pero NO compras nuevas. Ver src/lib/hotmart/metricas.ts.
+    measure(
+      S,
+      'compras',
+      'Compras Hotmart (#)',
+      'Pedidos cobrados de Hotmart: cada comprador cuenta UNA vez aunque añada order bumps o upsells. Es el número con el que se calcula el costo por comprador.',
+      'hotmart',
+      { agg: 'count', column: 'id', recommended: true, funnelStage: 101 }
+    ),
+    measure(
+      S,
+      'bumps',
+      'Order bumps (#)',
+      'Order bumps cobrados: productos añadidos al pedido en el mismo checkout.',
+      'hotmart',
+      { agg: 'count', column: 'id' }
+    ),
     money(
       S,
       'revenue_neto',
-      'Facturación Hotmart (neto)',
-      'Dinero que realmente llega a la cuenta: la comisión del productor, ya descontada la tarifa de Hotmart. Convertido a dólares.',
+      'Facturación Hotmart neta (por venta)',
+      'Dinero que realmente llega a la cuenta: la comisión del productor, ya descontada la tarifa de Hotmart. Convertido a la moneda del cliente.',
       'hotmart',
       { column: 'neto_productor_usd', recommended: true }
     ),
@@ -66,7 +87,7 @@ export const HOTMART_SOURCE: DataSource = {
       S,
       'revenue_bruto',
       'Facturación Hotmart (bruto)',
-      'Precio pagado por el comprador antes de comisiones, convertido a dólares.',
+      'Precio pagado por el comprador antes de comisiones, convertido a la moneda del cliente.',
       'hotmart',
       { column: 'bruto_usd' }
     ),
@@ -91,7 +112,7 @@ export const HOTMART_SOURCE: DataSource = {
     measure(
       S,
       'reembolsos',
-      'Reembolsos (#)',
+      'Reembolsos Hotmart (# por venta)',
       'Cantidad de ventas del período que acabaron reembolsadas o en contracargo. Se cuentan en la fecha de la VENTA, no en la del reembolso.',
       'hotmart',
       { agg: 'sum', column: 'reembolsos', direction: 'down' }
@@ -110,10 +131,16 @@ export const HOTMART_SOURCE: DataSource = {
       S,
       'tasa_reembolso',
       'Tasa de reembolso',
-      'Qué porcentaje de la facturación acabó devuelta. Cuanto MÁS BAJO, mejor.',
+      'Qué porcentaje de lo facturado acabó devuelto (reembolsado ÷ facturado antes de devolver). Cuanto MÁS BAJO, mejor.',
       'hotmart',
-      'hotmart.revenue_reembolsado / hotmart.revenue_neto',
-      { format: 'percent', nullUnless: ['hotmart.revenue_neto'], direction: 'down' }
+      // El neto ya EXCLUYE lo devuelto: dividir solo entre él daba 100 % cuando
+      // se devolvía la mitad.
+      'hotmart.revenue_reembolsado / (hotmart.revenue_neto + hotmart.revenue_reembolsado)',
+      {
+        format: 'percent',
+        nullUnless: ['hotmart.revenue_neto', 'hotmart.revenue_reembolsado'],
+        direction: 'down',
+      }
     ),
     derived(
       S,
@@ -135,7 +162,7 @@ export const HOTMART_SOURCE: DataSource = {
       S,
       'cpa',
       'CPA (Hotmart real)',
-      'Cuánto costó, en promedio, cada venta de Hotmart atribuida a la campaña. Cuanto MÁS BAJO, mejor.',
+      'Cuánto costó, en promedio, cada venta de Hotmart atribuida a la campaña. Cuenta los order bumps y upsells como ventas aparte; para el costo por comprador usa «CPA por compra». Cuanto MÁS BAJO, mejor.',
       'hotmart',
       'ads.spend / hotmart.ventas',
       {
@@ -154,6 +181,48 @@ export const HOTMART_SOURCE: DataSource = {
       'hotmart',
       'hotmart.revenue_neto / hotmart.ventas',
       { format: 'currency', nullUnless: ['hotmart.ventas'] }
+    ),
+    derived(
+      S,
+      'cpa_compra',
+      'CPA por compra (Hotmart)',
+      'Cuánto costó, en promedio, conseguir cada comprador (gasto ÷ compras). A diferencia del CPA por venta, no se abarata con los bumps y upsells. Cuanto MÁS BAJO, mejor.',
+      'hotmart',
+      'ads.spend / hotmart.compras',
+      {
+        format: 'currency',
+        nullUnless: ['ads.spend', 'hotmart.compras'],
+        recommended: true,
+        direction: 'down',
+        goal: 'cpa_max',
+      }
+    ),
+    derived(
+      S,
+      'ticket_compra',
+      'Ticket por compra',
+      'Facturación neta dividida entre las compras: cuánto deja cada comprador sumando lo que añadió al pedido.',
+      'hotmart',
+      'hotmart.revenue_neto / hotmart.compras',
+      { format: 'currency', nullUnless: ['hotmart.compras'] }
+    ),
+    derived(
+      S,
+      'tasa_bump',
+      'Tasa de order bump',
+      'Qué porcentaje de las compras añadió un order bump.',
+      'hotmart',
+      'hotmart.bumps / hotmart.compras',
+      { format: 'percent', nullUnless: ['hotmart.compras'] }
+    ),
+    derived(
+      S,
+      'conversion',
+      'Conversión lead → compra',
+      'Qué porcentaje de los leads del período terminó comprando en Hotmart (compras ÷ leads). Compara el mismo período, no sigue a cada lead hasta su compra.',
+      'hotmart',
+      'hotmart.compras / leads.count',
+      { format: 'percent', nullUnless: ['leads.count'] }
     ),
     // Declarada como convertida ÷ sin convertir para que el registro sepa de
     // qué fuente cuelga; el motor la calcula como el promedio de las tasas

@@ -25,35 +25,85 @@ export interface DiaOffline {
  * y aplana las columnas numéricas de `custom_fields` con el prefijo `sheet_`
  * (sistema anterior de "una columna = una métrica", que sigue vivo para los
  * layouts que ya lo usan).
+ *
+ * `columnasPorcentaje`: claves de `custom_fields` declaradas como `percentage`
+ * en la config del Sheet (ver `columnasPorcentajeOffline`). Hasta el 2026-09-28
+ * se SUMABAN como cualquier otra (tres filas al 40 % daban 120 %) mientras el BI
+ * las promediaba ponderadas por la cantidad; ahora las dos vistas coinciden.
  */
-export function agruparOfflinePorFecha(rows: any[]): Map<string, DiaOffline> {
+export function agruparOfflinePorFecha(
+  rows: any[],
+  columnasPorcentaje: ReadonlySet<string> = new Set()
+): Map<string, DiaOffline> {
   const porFecha = new Map<string, DiaOffline>();
 
   for (const row of rows ?? []) {
-    const dia = porFecha.get(row.fecha) ?? {
-      summary: { offline_leads: 0, offline_ventas: 0, offline_revenue: 0, offline_total: 0 },
-      rows: [] as any[],
-    };
-
-    const cantidad = row.cantidad || 0;
-    const valor = Number(row.valor) || 0;
-    if (row.tipo === 'lead') dia.summary.offline_leads += cantidad;
-    if (row.tipo === 'venta') dia.summary.offline_ventas += cantidad;
-    dia.summary.offline_revenue += valor;
-    dia.summary.offline_total += cantidad;
-
-    for (const [k, v] of Object.entries((row.custom_fields as Record<string, any>) || {})) {
-      if (typeof v === 'number') {
-        const key = `sheet_${k}`;
-        dia.summary[key] = (dia.summary[key] ?? 0) + Number(v);
-      }
-    }
-
+    const dia = porFecha.get(row.fecha) ?? { summary: resumenOfflineVacio(), rows: [] as any[] };
+    sumarFilaOffline(dia.summary, row, columnasPorcentaje);
     dia.rows.push(row);
     porFecha.set(row.fecha, dia);
   }
 
   return porFecha;
+}
+
+/** Resumen de un día sin conversiones offline. */
+export function resumenOfflineVacio(): Record<string, number> {
+  return { offline_leads: 0, offline_ventas: 0, offline_revenue: 0, offline_total: 0 };
+}
+
+/**
+ * Suma una fila de `conversiones_offline` al resumen de su día (muta `summary`).
+ *
+ * Es la ÚNICA definición de cómo se agrega una fila offline: la usan el merge de
+ * arriba y el filtro de Sheet de una tarjeta (`enrichOfflineRow`), que rehace el
+ * resumen solo con las filas que pasan el filtro. Con dos copias, una columna de
+ * porcentaje se promediaba sin filtro y se sumaba con él.
+ */
+export function sumarFilaOffline(
+  summary: Record<string, number>,
+  row: any,
+  columnasPorcentaje: ReadonlySet<string>
+): void {
+  const cantidad = Number(row.cantidad) || 0;
+  const valor = Number(row.valor) || 0;
+  if (row.tipo === 'lead') summary.offline_leads += cantidad;
+  if (row.tipo === 'venta') summary.offline_ventas += cantidad;
+  summary.offline_revenue += valor;
+  summary.offline_total += cantidad;
+
+  for (const [k, v] of Object.entries((row.custom_fields as Record<string, any>) || {})) {
+    if (typeof v !== 'number' || !Number.isFinite(v)) continue;
+    const key = `sheet_${k}`;
+    if (columnasPorcentaje.has(k)) {
+      // Porcentaje: promedio ponderado por la cantidad de la fila, como el BI
+      // (`queryOfflineDirect`) y el propio agregado del Sheet
+      // (`computeConversionesAggregates`). Los sumandos viajan en la fila
+      // para que `reagregarNoAditivas` rehaga el promedio en cualquier rango.
+      const num = (summary[`${key}__num`] ?? 0) + v * cantidad;
+      const den = (summary[`${key}__den`] ?? 0) + cantidad;
+      summary[`${key}__num`] = num;
+      summary[`${key}__den`] = den;
+      summary[key] = den > 0 ? num / den : 0;
+    } else {
+      summary[key] = (summary[key] ?? 0) + v;
+    }
+  }
+}
+
+/**
+ * Columnas de porcentaje que ya trae una fila enriquecida: las que llevan su
+ * denominador (`sheet_x__den`). Así el filtro de Sheet, que corre en el
+ * navegador sin la config del cliente, sabe cuáles promediar.
+ */
+export function columnasPorcentajeDeFila(row: Record<string, unknown>): Set<string> {
+  const out = new Set<string>();
+  for (const k of Object.keys(row ?? {})) {
+    if (k.startsWith('sheet_') && k.endsWith('__den')) {
+      out.add(k.slice('sheet_'.length, -'__den'.length));
+    }
+  }
+  return out;
 }
 
 export interface MergeInput {

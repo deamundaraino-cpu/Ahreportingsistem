@@ -69,6 +69,7 @@ const CATALOGO = [
     scopes: ['read:clients'],
     minLevel: 'consulta',
     riesgo: null,
+    aprobacion: null,
     parametros: [],
   },
   {
@@ -78,6 +79,7 @@ const CATALOGO = [
     scopes: ['read:metrics'],
     minLevel: 'consulta',
     riesgo: null,
+    aprobacion: null,
     parametros: [
       {
         nombre: 'client_id',
@@ -96,12 +98,23 @@ const CATALOGO = [
     ],
   },
   {
+    name: 'create_report',
+    domain: 'informes',
+    description: 'Crea un informe BI y devuelve su id al momento.',
+    scopes: ['write:reports'],
+    minLevel: 'operador',
+    riesgo: 'low',
+    aprobacion: 'directa',
+    parametros: [],
+  },
+  {
     name: 'share_report',
     domain: 'informes',
     description: 'Genera un enlace público para un informe.',
     scopes: ['write:reports'],
     minLevel: 'admin',
     riesgo: 'high',
+    aprobacion: 'requerida',
     parametros: [
       {
         nombre: 'report_id',
@@ -206,7 +219,7 @@ async function main() {
   check('pide el catálogo una sola vez', pedidas === 1, String(pedidas));
   check(
     'muestra el total del catálogo',
-    texto().includes('de 3'),
+    texto().includes('de 4'),
     texto().match(/\d+ de \d+/)?.[0]
   );
 
@@ -257,6 +270,10 @@ async function main() {
   );
   check('y muestra el nivel que exige', texto().includes('nivel admin'));
   check(
+    'una escritura directa se distingue de una que espera aprobación',
+    texto().includes('escribe · directo (auditado)')
+  );
+  check(
     'explica que las escrituras esperan aprobación',
     texto().includes('pendiente_de_aprobacion') && texto().includes('24 horas')
   );
@@ -286,7 +303,7 @@ async function main() {
   );
   check(
     'el contador refleja el filtro',
-    texto().includes('1 de 3'),
+    texto().includes('1 de 4'),
     texto().match(/\d+ de \d+/)?.[0]
   );
 
@@ -300,7 +317,7 @@ async function main() {
   check('avisa cuando no hay coincidencias', texto().includes('Ninguna herramienta coincide'));
 
   buscar('');
-  check('al vaciar el buscador vuelve el catálogo entero', texto().includes('de 3'));
+  check('al vaciar el buscador vuelve el catálogo entero', texto().includes('de 4'));
 
   // ── 6. El enlace a la creación del token ────────────────────────────────────
   console.log('\n── El paso 1 lleva a crear el token ────────────────────────');

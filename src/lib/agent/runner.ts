@@ -24,6 +24,7 @@ import { z } from 'zod';
 import { logger } from '@/lib/error-handler';
 import { ejecutarTool } from './execute';
 import { toolsFor } from './registry';
+import { GUIA_INFORMES_CORTA } from './guias/informes';
 import {
   llamarLlm,
   leerPolitica,
@@ -83,8 +84,16 @@ export type OpcionesTurno = {
  * Prompt del sistema.
  *
  * Lo estable va primero (y es lo que se cachea); lo variable, después.
+ *
+ * La guía de informes solo entra si el contexto tiene herramientas de informes:
+ * a un contacto sin `read:reports` no le sirve, y cada línea del prompt se paga
+ * en cada petición.
  */
-export function construirSystem(ctx: AgentContext, contextoExtra?: string): string {
+export function construirSystem(
+  ctx: AgentContext,
+  contextoExtra?: string,
+  dominios?: DominioTool[]
+): string {
   const base = [
     'Eres el asistente de una agencia de publicidad digital. Ayudas al equipo a entender cómo van',
     'sus clientes y a operar la plataforma de reporting.',
@@ -114,9 +123,11 @@ export function construirSystem(ctx: AgentContext, contextoExtra?: string): stri
     '  estás respondiendo («hasta la sincronización de las 14:05…»).',
     '· Cuando una herramienta devuelva `fuente` y `actualizado_a`, menciónalos si la hora importa.',
     '',
-    'Cuando pidas una acción de escritura, recuerda que NO se ejecuta al momento: queda como',
-    'propuesta y una persona autorizada tiene que aprobarla. Dilo con claridad en tu respuesta,',
-    'sin dar por hecho que ya está hecha.',
+    'Escrituras: casi todas NO se ejecutan al momento. Quedan como propuesta',
+    '(`pendiente_de_aprobacion`) y una persona autorizada tiene que aprobarla. Dilo con claridad en',
+    'tu respuesta, sin dar por hecho que ya está hecha. La excepción es crear y editar informes BI:',
+    'esas se aplican al momento (`estado: aplicado`) y se pueden deshacer con',
+    '`restore_report_revision`.',
     '',
     'Sobre las campañas: puedes leerlas y recomendar cambios, pero no puedes pausarlas ni tocar',
     'presupuestos. Eso lo hace el equipo en Meta.',
@@ -125,7 +136,13 @@ export function construirSystem(ctx: AgentContext, contextoExtra?: string): stri
     'repetir la pregunta. Da las cifras con su unidad y redondeadas con sensatez.',
   ].join('\n');
 
-  return contextoExtra ? `${base}\n\n── Contexto de esta conversación ──\n${contextoExtra}` : base;
+  const conInformes = toolsFor(ctx, dominios).some((t) => t.domain === 'informes')
+    ? `${base}\n\n${GUIA_INFORMES_CORTA}`
+    : base;
+
+  return contextoExtra
+    ? `${conInformes}\n\n── Contexto de esta conversación ──\n${contextoExtra}`
+    : conInformes;
 }
 
 /**
@@ -144,7 +161,7 @@ export async function ejecutarTurno(opts: OpcionesTurno): Promise<ResultadoTurno
   );
 
   const mensajes: MensajeLlm[] = [
-    { role: 'system', content: construirSystem(ctx, opts.contextoExtra) },
+    { role: 'system', content: construirSystem(ctx, opts.contextoExtra, opts.dominios) },
     ...(opts.historial ?? []),
     { role: 'user', content: entrada },
   ];

@@ -132,7 +132,11 @@ const DOMINIOS: { id: string; titulo: string; resumen: string }[] = [
     titulo: 'Contexto y estrategia',
     resumen: 'Qué vende cada cliente, hasta dónde mide y qué metas se le aplican.',
   },
-  { id: 'informes', titulo: 'Informes BI', resumen: 'Crear, revisar y compartir informes.' },
+  {
+    id: 'informes',
+    titulo: 'Informes BI',
+    resumen: 'Crear, editar, previsualizar y compartir informes.',
+  },
   {
     id: 'operaciones',
     titulo: 'Operaciones y tareas',
@@ -220,10 +224,16 @@ function FilaTool({ tool, appUrl }: { tool: ToolDoc; appUrl: string }) {
                 className={`text-[10px] px-1.5 py-0.5 rounded border ${
                   tool.riesgo === 'high'
                     ? 'bg-red-500/10 text-red-700 dark:text-red-400 border-red-500/20'
-                    : 'bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/20'
+                    : tool.aprobacion === 'directa'
+                      ? 'bg-sky-500/10 text-sky-700 dark:text-sky-400 border-sky-500/20'
+                      : 'bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/20'
                 }`}
               >
-                {tool.riesgo === 'high' ? 'escribe · riesgo alto' : 'escribe · aprobación'}
+                {tool.riesgo === 'high'
+                  ? 'escribe · riesgo alto'
+                  : tool.aprobacion === 'directa'
+                    ? 'escribe · directo (auditado)'
+                    : 'escribe · aprobación'}
               </span>
             )}
           </div>
@@ -627,7 +637,10 @@ export function McpDocs({ appUrl, onIrATokens }: { appUrl: string; onIrATokens: 
               ['read:reports', 'Informes BI y plantillas.'],
               ['write:sync', 'Encolar una sincronización.'],
               ['write:context', 'Perfil del cliente, estrategia de pestaña y correcciones.'],
-              ['write:reports', 'Crear informes, añadir o quitar widgets, compartir.'],
+              [
+                'write:reports',
+                'Crear y editar informes (al momento), compartir y borrar (con aprobación).',
+              ],
               ['write:tasks', 'Tareas del roadmap y reglas de alerta.'],
               ['write:logs', 'Bitácoras del cliente.'],
               ['write:clients', 'Alta y edición de clientes, y consulta de usuarios y accesos.'],
@@ -744,13 +757,19 @@ export function McpDocs({ appUrl, onIrATokens }: { appUrl: string; onIrATokens: 
           existen en la cuenta.
         </p>
         <Aviso>
-          <p className="font-medium">Ninguna escritura se ejecuta sola.</p>
+          <p className="font-medium">Casi ninguna escritura se ejecuta sola.</p>
           <p>
-            Las herramientas marcadas como <em>escribe</em> registran una propuesta y devuelven{' '}
-            <C>pendiente_de_aprobacion</C> con un resumen en castellano. Una persona distinta de
-            quien la propuso tiene que aprobarla, y la propuesta caduca a las 24 horas. Las de{' '}
-            <em>riesgo alto</em> —compartir un informe, dar de alta un cliente, dar acceso a un
-            usuario— exigen que quien apruebe sea administrador.
+            Las herramientas marcadas como <em>escribe · aprobación</em> registran una propuesta y
+            devuelven <C>pendiente_de_aprobacion</C> con un resumen en castellano. Una persona
+            distinta de quien la propuso tiene que aprobarla, y la propuesta caduca a las 24 horas.
+            Las de <em>riesgo alto</em> —compartir o borrar un informe, dar de alta un cliente, dar
+            acceso a un usuario— exigen que quien apruebe sea administrador.
+          </p>
+          <p>
+            La excepción son las marcadas <em>escribe · directo (auditado)</em>: crear y editar
+            informes BI. Se aplican al momento y devuelven <C>aplicado</C> con un <C>revision_id</C>
+            ; cada cambio guarda antes el estado anterior y <C>restore_report_revision</C> lo
+            deshace.
           </p>
         </Aviso>
         <p className="text-muted-foreground text-xs">
@@ -804,19 +823,29 @@ export function McpDocs({ appUrl, onIrATokens }: { appUrl: string; onIrATokens: 
         <Bloque
           codigo={`{
   "name": "adshouse-reporting",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "protocolVersion": "2024-11-05",
-  "capabilities": { "tools": {} }
+  "capabilities": { "tools": {}, "prompts": {} }
 }`}
         />
         <div className="rounded-lg border border-border overflow-hidden">
           {(
             [
-              ['initialize', 'no', 'Negociación inicial.'],
+              [
+                'initialize',
+                'no',
+                'Negociación inicial. Sus instructions traen la guía de uso de los informes.',
+              ],
               ['ping', 'no', 'Comprobar que responde.'],
               ['notifications/initialized', 'no', 'Aviso de arranque del cliente.'],
               ['tools/list', 'sí', 'Las herramientas que permite tu token.'],
               ['tools/call', 'sí', 'Ejecuta una. El resultado viaja como texto JSON.'],
+              [
+                'prompts/list',
+                'sí',
+                'Prompts guiados (crear_informe, revisar_informe). Necesita read:reports.',
+              ],
+              ['prompts/get', 'sí', 'El texto de un prompt con sus argumentos ya puestos.'],
             ] as const
           ).map(([metodo, auth, texto]) => (
             <div
@@ -840,7 +869,10 @@ export function McpDocs({ appUrl, onIrATokens }: { appUrl: string; onIrATokens: 
         <p className="text-muted-foreground">
           Códigos de error: <C>-32001</C> token inválido o permisos insuficientes, <C>-32600</C> el
           cuerpo no declara <C>{String.raw`"jsonrpc": "2.0"`}</C>, <C>-32601</C> método desconocido,{' '}
-          <C>-32602</C> falta el nombre de la herramienta, <C>-32603</C> error al ejecutarla.
+          <C>-32602</C> falta el nombre de la herramienta o del prompt, <C>-32603</C> error interno.
+          Si una herramienta falla por los datos que recibe (un widget inválido, un informe que no
+          existe), la respuesta es un resultado normal con <C>isError: true</C> y el motivo en el
+          texto, para que el asistente lo lea y se corrija.
         </p>
         <Aviso>
           <p>

@@ -28,15 +28,24 @@ import { anchoTextoPx, truncarAAncho } from '@/lib/chart-labels';
 import { useAnchoContenedor } from '@/lib/hooks/useAnchoContenedor';
 import { TickCategoriaX } from '@/components/charts/ChartTicks';
 import { TextoTruncado } from '@/components/ui/tooltip';
+import { decimalesDe, prefijoMoneda, simboloMoneda } from '@/lib/moneda-reporte';
+import { useMonedaReporte } from './MonedaReporteContext';
 import { evaluateFormula, aggregateFormula } from '@/lib/formula-engine';
 import { format, parseISO, isValid, startOfWeek, startOfMonth, startOfYear } from 'date-fns';
 import { es } from 'date-fns/locale';
 import type { ChartDef, TabCampaignFilter } from '@/lib/layout-types';
 import { enrichMetaRow } from '@/lib/campaign-filter';
 import { enrichOfflineRow } from '@/lib/offline-filter';
-import { aggregateRankingRows, dimensionSoportaRespuestas } from '@/lib/ranking-aggregation';
+import {
+  aggregateRankingRows,
+  dimensionSoportaRespuestas,
+  cuboDeFilas,
+  dimensionSoportaHotmart,
+} from '@/lib/ranking-aggregation';
 import { reDerivarRespuestas } from '@/lib/dashboard/lead-answer-row';
+import { reDerivarHotmart } from '@/lib/dashboard/hotmart-cubo-row';
 import { formulaUsaRespuestas } from '@/lib/dashboard/lead-answer-aggregation';
+import { formulaUsaHotmart } from '@/lib/dashboard/hotmart-cubo';
 
 // ─── Palette ──────────────────────────────────────────────────────────────────
 const PALETTE: Record<string, string> = {
@@ -104,9 +113,18 @@ function fmt(n: number): string {
   return n % 1 === 0 ? String(Math.round(n)) : n.toFixed(1);
 }
 
-function fmtVal(n: number, unit?: string): string {
+/**
+ * Lo que va delante de un importe en la moneda de reporte del cliente: «$» en
+ * USD, «CLP » en pesos. Antes era siempre «$», y en un cliente que reporta en
+ * CLP un «$233.487» no decía de qué moneda era.
+ */
+function prefijoDe(moneda: string): string {
+  return prefijoMoneda(simboloMoneda(null, moneda));
+}
+
+function fmtVal(n: number, unit?: string, moneda: string = 'USD'): string {
   if (unit === 'currency') {
-    return `$${n.toLocaleString('es-ES', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
+    return `${prefijoDe(moneda)}${n.toLocaleString('es-AR', { minimumFractionDigits: 0, maximumFractionDigits: decimalesDe(moneda) })}`;
   }
   if (unit === 'percent') {
     return `${n.toFixed(1)}%`;
@@ -118,7 +136,8 @@ function fmtAxis(
   val: number,
   axisId: 'left' | 'right',
   yAxes?: ('left' | 'right')[],
-  units?: string[]
+  units?: string[],
+  moneda: string = 'USD'
 ): string {
   const seriesIndex = yAxes
     ? yAxes.findIndex((ax) => {
@@ -132,9 +151,10 @@ function fmtAxis(
   const unit = seriesIndex !== -1 && units ? units[seriesIndex] : undefined;
 
   if (unit === 'currency') {
-    if (Math.abs(val) >= 1_000_000) return `$${(val / 1_000_000).toFixed(1)}M`;
-    if (Math.abs(val) >= 1_000) return `$${(val / 1_000).toFixed(1)}k`;
-    return `$${val}`;
+    const pre = prefijoDe(moneda);
+    if (Math.abs(val) >= 1_000_000) return `${pre}${(val / 1_000_000).toFixed(1)}M`;
+    if (Math.abs(val) >= 1_000) return `${pre}${(val / 1_000).toFixed(1)}k`;
+    return `${pre}${val}`;
   }
   if (unit === 'percent') {
     return `${val}%`;
@@ -176,6 +196,9 @@ function buildGroupedData(
       // pintaba los contactos de todo el cliente contra un gasto recortado.
       const leads = reDerivarRespuestas(r, campaignFilter!);
       if (leads) r = { ...r, ...leads };
+      // Y lo mismo con las ventas de Hotmart por campaña (`hm_*`).
+      const ventas = reDerivarHotmart(r, campaignFilter!);
+      if (ventas) r = { ...r, ...ventas };
     }
     if (sheetFilter) {
       r = enrichOfflineRow(r, sheetFilter);
@@ -345,6 +368,7 @@ const TICK_FONT = 11;
 // De paso gana el `max-width` + `break-words` que le faltaban, que es
 // exactamente lo que impedía que un nombre largo lo estirase sin límite.
 function CustomTooltip({ active, payload, label, categories, localUnits }: any) {
+  const moneda = useMonedaReporte();
   if (!active || !payload?.length) return null;
   return (
     <div className="rounded-lg border border-border bg-popover text-popover-foreground px-3 py-2.5 shadow-md min-w-[140px] max-w-[320px]">
@@ -367,7 +391,7 @@ function CustomTooltip({ active, payload, label, categories, localUnits }: any) 
               {e.name}
             </span>
             <span className="text-xs font-semibold font-mono text-foreground shrink-0">
-              {fmtVal(val, unit)}
+              {fmtVal(val, unit, moneda)}
             </span>
           </div>
         );
@@ -398,6 +422,7 @@ function EtiquetaPie({
   anchoSvg,
   datos,
 }: any) {
+  const moneda = useMonedaReporte();
   // Una porción invisible no tiene dónde poner su etiqueta, y ponerla igual
   // amontona texto sobre texto. El nombre sigue estando en la leyenda y en el
   // tooltip, que es donde se puede leer.
@@ -411,7 +436,7 @@ function EtiquetaPie({
   const anclaje = cos >= 0 ? 'start' : 'end';
 
   const item = datos?.find((t: any) => t.name === name);
-  const valor = fmtVal(value, item?.unit);
+  const valor = fmtVal(value, item?.unit, moneda);
   const nombreCompleto = String(name ?? '');
 
   // Píxeles reales hasta el borde por el lado en el que crece el texto.
@@ -571,15 +596,18 @@ function SingleMetricChart({
    * Se apartan ANTES de construir los datos. La alternativa —dejarlas pasar—
    * las pinta en 0 por la coerción de `null → 0` de más abajo, y una línea
    * plana en cero afirma que no hubo leads, que es falso: el cubo resuelve el
-   * lead a campaña, no a anuncio.
+   * lead a campaña, no a anuncio. Las ventas de Hotmart por campaña (`hm_*`),
+   * igual: se resuelven a campaña, no a anuncio ni a conjunto.
    */
-  const formulasNoAplicables = useMemo(
-    () =>
-      chart.dimension && !dimensionSoportaRespuestas(chart.dimension)
-        ? todasLasFormulas.filter(formulaUsaRespuestas)
-        : [],
-    [chart.dimension, todasLasFormulas]
-  );
+  const formulasNoAplicables = useMemo(() => {
+    const dim = chart.dimension;
+    if (!dim) return [];
+    return todasLasFormulas.filter(
+      (f) =>
+        (formulaUsaRespuestas(f) && !dimensionSoportaRespuestas(dim, cuboDeFilas(sourceMetrics))) ||
+        (formulaUsaHotmart(f) && !dimensionSoportaHotmart(dim))
+    );
+  }, [chart.dimension, todasLasFormulas, sourceMetrics]);
   const formulas = useMemo(
     () => todasLasFormulas.filter((f) => !formulasNoAplicables.includes(f)),
     [todasLasFormulas, formulasNoAplicables]
@@ -693,7 +721,8 @@ function SingleMetricChart({
               {formulasNoAplicables.length === 1
                 ? 'Serie omitida'
                 : `${formulasNoAplicables.length} series omitidas`}
-              : los contactos de formulario solo se resuelven a campaña, no a anuncio ni a conjunto.
+              : los contactos de formulario y las ventas de Hotmart por campaña solo se resuelven a
+              campaña, no a anuncio ni a conjunto.
             </p>
           )}
           <div className="flex flex-wrap gap-2.5 mt-2">
@@ -839,6 +868,7 @@ function ChartBody({
   localTypes: string[];
   localUnits: string[];
 }) {
+  const moneda = useMonedaReporte();
   const H = chart.height || 240;
   const type = chart.type;
   const circularData =
@@ -912,7 +942,7 @@ function ChartBody({
               <YAxis
                 yAxisId="left"
                 orientation="left"
-                tickFormatter={(val) => fmtAxis(val, 'left', chart.yAxes, localUnits)}
+                tickFormatter={(val) => fmtAxis(val, 'left', chart.yAxes, localUnits, moneda)}
                 tick={TICK}
                 axisLine={false}
                 tickLine={false}
@@ -923,7 +953,7 @@ function ChartBody({
               <YAxis
                 yAxisId="right"
                 orientation="right"
-                tickFormatter={(val) => fmtAxis(val, 'right', chart.yAxes, localUnits)}
+                tickFormatter={(val) => fmtAxis(val, 'right', chart.yAxes, localUnits, moneda)}
                 tick={TICK}
                 axisLine={false}
                 tickLine={false}
@@ -953,7 +983,9 @@ function ChartBody({
                   // gris por defecto y sería ilegible en tema claro.
                   className="recharts-label"
                   style={{ fontSize: 9, fontFamily: 'monospace' }}
-                  formatter={(val: any) => (typeof val === 'number' ? fmtVal(val, unitVal) : val)}
+                  formatter={(val: any) =>
+                    typeof val === 'number' ? fmtVal(val, unitVal, moneda) : val
+                  }
                 />
               );
 
@@ -1085,7 +1117,8 @@ function ChartBody({
                     // el resto del chrome. El hex de antes era gris claro y en
                     // tema claro quedaba casi invisible.
                     fontSize: 10,
-                    formatter: (val: any, index: number) => fmtVal(val, circularData[index]?.unit),
+                    formatter: (val: any, index: number) =>
+                      fmtVal(val, circularData[index]?.unit, moneda),
                   }
                 : false
             }
@@ -1110,7 +1143,7 @@ function ChartBody({
             dataKey="x"
             type="number"
             name={catX ?? 'X'}
-            tickFormatter={(val) => fmtVal(val, localUnits[0])}
+            tickFormatter={(val) => fmtVal(val, localUnits[0], moneda)}
             tick={TICK}
             axisLine={false}
             tickLine={false}
@@ -1120,7 +1153,7 @@ function ChartBody({
             dataKey="y"
             type="number"
             name={catY ?? 'Y'}
-            tickFormatter={(val) => fmtVal(val, localUnits[1])}
+            tickFormatter={(val) => fmtVal(val, localUnits[1], moneda)}
             tick={TICK}
             axisLine={false}
             tickLine={false}
@@ -1162,7 +1195,7 @@ function ChartBody({
                     dominantBaseline="middle"
                     style={{ fill: '#fff', fontSize: 11, fontWeight: 600 }}
                   >
-                    {fmtVal(value, circularData[index]?.unit)}
+                    {fmtVal(value, circularData[index]?.unit, moneda)}
                   </text>
                 )}
               />

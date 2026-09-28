@@ -3,7 +3,7 @@ Contributors: adshouse, robinsonzapata
 Requires at least: 5.8
 Tested up to: 6.7
 Requires PHP: 7.4
-Stable tag: 0.3.2
+Stable tag: 0.5.0
 License: Proprietary — Ad House Internal Use
 
 Tracking UTM server-side para WordPress. Capta leads de formularios con atribución multi-touch, propaga UTMs a checkout y registra cada conversión con primer y último toque.
@@ -60,7 +60,7 @@ Métodos de atribución (cascada):
 
 * Sin cookies de terceros — todo en cookies first-party SameSite=Lax de 90 días
 * Autenticación HMAC-SHA256 — el S2S Token nunca aparece en el HTML del sitio
-* Fire-and-forget — wp_remote_post con blocking=false, sin retraso en la carga
+* Envío con acuse — espera la respuesta como mucho 3 s y, si falla, reintenta por WP-Cron (1, 5 y 15 min) sin duplicar el lead
 * MutationObserver — detecta links de checkout que aparecen dinámicamente
 
 == Instalación ==
@@ -109,13 +109,25 @@ El pixel JS detecta links a dominios de checkout (Hotmart, CartPanda, Shopify, e
 
 = ¿Afecta la velocidad del sitio? =
 
-Mínimamente. El pixel JS se carga con `defer` para no bloquear el renderizado. Los envíos S2S usan `wp_remote_post` con `blocking: false` (fire-and-forget), por lo que el servidor no espera la respuesta antes de servir la página al visitante.
+Mínimamente. El pixel JS se carga con `defer` para no bloquear el renderizado. El envío S2S de un lead espera la respuesta de la plataforma como mucho 3 segundos (antes era fire-and-forget y un fallo perdía el lead sin aviso); si no llega, el reintento va por WP-Cron y el visitante no espera más.
 
 = ¿Dónde puedo ver los leads capturados? =
 
 En reportes.adshouse.cloud → sección "Leads". Podés filtrar por cliente, plugin, UTM source y rango de fechas.
 
 == Changelog ==
+
+= 0.5.0 =
+* El envío de cada lead espera la respuesta (3 s como mucho). Antes era fire-and-forget: un error de la plataforma perdía el lead sin aviso.
+* Si el envío falla (red, 408, 429 o 5xx) se reintenta por WP-Cron a 1, 5 y 15 minutos.
+* Cada lead lleva un `external_id`: un reintento o un doble clic ya no guardan el lead dos veces.
+* Se envía la IP pública del visitante (no la privada del proxy) y su país si el sitio usa Cloudflare.
+* Se reenvían las cookies de primer y último toque del pixel: un formulario en una página sin UTM ya no llega sin atribución.
+
+= 0.4.0 =
+* Cada lead viaja con el tipo y las opciones de sus desplegables, casillas y radios (CF7, Gravity Forms, WPForms y Elementor): la plataforma ofrece cada respuesta con su nombre real.
+* Las casillas se envían unidas por comas, para poder separar cada opción elegida.
+* Fix: las casillas de Gravity Forms llegaban vacías.
 
 = 0.3.2 =
 * Fix: el pixel JS no se ejecutaba nunca. La configuración se inyectaba con la clave `cliente_slug` y el script espera `cliente`, así que abortaba en la primera línea ("pixel inactive" en consola).
@@ -155,6 +167,12 @@ En reportes.adshouse.cloud → sección "Leads". Podés filtrar por cliente, plu
 * Panel de configuración básico
 
 == Upgrade Notice ==
+
+= 0.5.0 =
+Recomendada: los leads que fallaban al enviarse se perdían; ahora se reintentan sin duplicarse, y llevan la IP y la atribución del visitante.
+
+= 0.4.0 =
+Recomendada: envía el tipo y las opciones de cada pregunta de los formularios, para medir cada respuesta en los informes.
 
 = 0.3.2 =
 Actualización recomendada para todos los sitios: hasta esta versión el pixel JS no llegaba a ejecutarse y solo funcionaba la captura de leads por servidor. Subí el ZIP nuevo y volvé a activar; la configuración guardada se conserva.

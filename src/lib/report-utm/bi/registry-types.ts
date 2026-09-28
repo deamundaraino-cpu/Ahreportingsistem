@@ -43,7 +43,15 @@ export type JoinAxis =
   | 'campaign'
   | 'adset'
   | 'ad'
-  /** Cualquier columna de `lead_events` (ip_country, form_name, utm_*…). */
+  /**
+   * Las UTM crudas (utm_source, utm_medium, utm_id, campaña cruda). Eje propio
+   * desde la auditoría de Hotmart (2026-09-25): leads, ventas de `sales_events`
+   * y ventas de Hotmart las tienen las tres, pero solo los leads tienen las
+   * demás columnas de `lead_column` (país, formulario…). Con un solo eje, abrir
+   * el cruce por source a Hotmart abría también el cruce por formulario.
+   */
+  | 'utm'
+  /** Cualquier otra columna de `lead_events` (ip_country, form_name…). */
   | 'lead_column'
   /** Columnas exclusivas de `sales_events` (product_name, transaction_type…). */
   | 'sales_column'

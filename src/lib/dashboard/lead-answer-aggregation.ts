@@ -22,7 +22,23 @@ import type { CampaignFilterSpec, LeadAnswerBlockDef } from '@/lib/layout-types'
 // contaría distinto en el dashboard y en los informes.
 import { segmentoIncluyeBucket } from '@/lib/report-utm/lead-campos';
 import type { LeadSegmentoLite } from '@/lib/report-utm/lead-campos';
+// El vocabulario de claves es UNO para el dashboard y los informes: vive en
+// `leads/respuestas/claves` y aquí solo se reexporta con los nombres de siempre.
+import {
+  CLAVE_TOTAL_LEADS,
+  PREFIJO_RESPUESTA,
+  PREFIJO_SEGMENTO,
+  SIN_RESPUESTA,
+  slugRespuesta,
+  clavesDeRespuestas,
+  claveFormulaRespuesta,
+  extraerReferenciasDeLead,
+  textoUsaMetricasDeLead,
+} from '@/lib/leads/respuestas/claves';
 export type { LeadSegmentoLite };
+import type { NivelesDataset } from '@/lib/report-utm/lead-answers-db';
+export type { NivelesDataset };
+export { CLAVE_TOTAL_LEADS, PREFIJO_RESPUESTA, PREFIJO_SEGMENTO, slugRespuesta };
 
 /** Etiqueta del diccionario reservada a los leads que no cruzaron campaña. */
 export const SIN_CAMPANA = '(sin campaña)';
@@ -39,6 +55,10 @@ export interface LeadAnswerCatalogoLite {
   cobertura: number;
   /** Segmentos definidos sobre este campo. Un campo autodetectado no tiene. */
   segmentos?: LeadSegmentoLite[];
+  /** Clave estable de cada bucket (mismo orden). Ver `LeadAnswerCatalogo.claves`. */
+  claves?: string[];
+  /** Selección múltiple: los buckets solapan y «respondieron» va aparte. */
+  multiple?: boolean;
 }
 
 export interface LeadAnswerDatasetLite {
@@ -47,6 +67,10 @@ export interface LeadAnswerDatasetLite {
   campos: LeadAnswerCatalogoLite[];
   porFecha: Record<string, Array<Array<[number, number, number]>>>;
   totalesPorFecha?: Record<string, Array<[number, number]>>;
+  /** Selección múltiple: fecha → índice de campo → [campaña, n] que respondieron algo. */
+  respondidosPorFecha?: Record<string, Record<number, Array<[number, number]>>>;
+  /** Cubo por conjunto y anuncio (opcional). Ver `NivelesDataset`. */
+  niveles?: NivelesDataset;
   incompleto: boolean;
   /**
    * Claves que un bloque pide y el catálogo activo no tiene. La agregación no
@@ -57,28 +81,11 @@ export interface LeadAnswerDatasetLite {
 }
 
 // ── Claves de fórmula ─────────────────────────────────────────────────
-
-/** Contactos del día según Report-UTM. NO es `meta_leads`: ver migración 072. */
-export const CLAVE_TOTAL_LEADS = 'utm_leads';
-
-/** Prefijo de las claves por respuesta: `lf__<campo>__<respuesta>`. */
-export const PREFIJO_RESPUESTA = 'lf__';
+// `utm_leads`, `lf__<campo>__<respuesta>` y `lseg__<segmento>`: ver
+// `src/lib/leads/respuestas/claves.ts`, que es donde se definen para todos.
 
 /** Sufijo del bucket de los que no respondieron esa pregunta. */
-export const SUFIJO_SIN_RESPUESTA = 'sin_respuesta';
-
-/**
- * Prefijo de las claves de SEGMENTO: `lseg__<clave>`.
- *
- * Es la misma cadena que el alias del BI, a propósito: quien aprende
- * `lseg__desde_2m` en una pestaña lo escribe igual en un informe. Los campos de
- * Sheet divergen (`sf_` aquí, `sf__` allí) por una colisión histórica con el
- * prefijo `sheet_`; aquí no hay ninguna, así que no se hereda la incoherencia.
- *
- * Un segmento SOLAPA buckets, así que NO entra en la suma
- * «respuestas + sin_respuesta = utm_leads». Ver `clavesDelDia`.
- */
-export const PREFIJO_SEGMENTO = 'lseg__';
+export const SUFIJO_SIN_RESPUESTA = SIN_RESPUESTA;
 
 /** Clave de fórmula de un segmento. */
 export function claveSegmento(seg: Pick<LeadSegmentoLite, 'clave'>): string {
@@ -86,43 +93,27 @@ export function claveSegmento(seg: Pick<LeadSegmentoLite, 'clave'>): string {
 }
 
 /**
- * Etiqueta de respuesta → fragmento de clave de fórmula.
- *
- * Se deriva de la ETIQUETA y no de la posición: el orden de los buckets cambia
- * con el rango de fechas cuando la pregunta no tiene orden configurado, así que
- * una clave posicional apuntaría a otra respuesta al cambiar el período — y una
- * tarjeta guardada empezaría a medir otra cosa sin avisar.
- */
-export function slugRespuesta(label: string): string {
-  return String(label)
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
-    .replace(/[^a-z0-9]+/g, '_')
-    .replace(/^_+|_+$/g, '')
-    .slice(0, 40)
-    .replace(/_+$/, '');
-}
-
-/**
  * Claves de fórmula de un campo, en el orden de sus buckets.
  *
  * Devuelve pares (bucket, clave) ya desambiguados: dos respuestas distintas
  * pueden producir el mismo slug ("$2M a $3M" y "$2M – $3M" si no se agruparon),
- * y dos claves iguales harían que una tapara a la otra en silencio.
+ * y dos claves iguales harían que una tapara a la otra en silencio. La clave NO
+ * depende de la posición del bucket (que cambia con el período): es la guardada
+ * en el catálogo o, si falta, un slug desempatado por orden alfabético.
  */
 export function clavesDeCampo(
-  campo: Pick<LeadAnswerCatalogoLite, 'clave' | 'buckets'>
+  campo: Pick<LeadAnswerCatalogoLite, 'clave' | 'buckets' | 'claves'>
 ): Array<{ bucket: string; clave: string }> {
-  const usadas = new Set<string>([SUFIJO_SIN_RESPUESTA]);
-  return campo.buckets.map((bucket) => {
-    const base = slugRespuesta(bucket) || 'respuesta';
-    let slug = base;
-    let i = 2;
-    while (usadas.has(slug)) slug = `${base}_${i++}`;
-    usadas.add(slug);
-    return { bucket, clave: `${PREFIJO_RESPUESTA}${campo.clave}__${slug}` };
-  });
+  // Las claves estables vienen del servidor (`lead_campos.respuestas`, 090).
+  // Sin ellas —dataset antiguo— se derivan igual que en el servidor.
+  const claves =
+    campo.claves && campo.claves.length === campo.buckets.length
+      ? campo.claves
+      : clavesDeRespuestas(campo.buckets);
+  return campo.buckets.map((bucket, i) => ({
+    bucket,
+    clave: claveFormulaRespuesta(campo.clave, claves[i]),
+  }));
 }
 
 /** Clave del bucket "no respondió" de un campo. */
@@ -138,12 +129,7 @@ export function claveSinRespuesta(campo: Pick<LeadAnswerCatalogoLite, 'clave'>):
  * dimensión— para decir «no aplica» en vez de pintar un cero.
  */
 export function formulaUsaRespuestas(f: string | null | undefined): boolean {
-  if (!f) return false;
-  return (
-    new RegExp(`\\b${CLAVE_TOTAL_LEADS}\\b`).test(f) ||
-    f.includes(PREFIJO_RESPUESTA) ||
-    f.includes(PREFIJO_SEGMENTO)
-  );
+  return textoUsaMetricasDeLead(f);
 }
 
 /**
@@ -159,12 +145,18 @@ export function camposEnFormula(
   segmentos: { clave: string; campoClave: string }[] = []
 ): string[] {
   if (!f) return [];
-  const out = new Set(claves.filter((c) => f.includes(`${PREFIJO_RESPUESTA}${c}__`)));
+  // Tokens EXACTOS (`extraerReferenciasDeLead`), no subcadenas: con
+  // `includes`, una fórmula con `lseg__desde_2m` cargaba también el campo de
+  // `lseg__desde_2`.
+  const refs = extraerReferenciasDeLead(f);
+  const conocidas = new Set(claves);
+  const out = new Set(refs.respuestas.map((r) => r.campo).filter((c) => conocidas.has(c)));
+  const segsUsados = new Set(refs.segmentos.map((r) => r.clave));
   // Un segmento se nombra por SU clave, no por la del campo, pero para contarlo
   // hace falta cargar el campo padre. Sin esto, una tarjeta cuya única métrica
   // es `lseg__desde_2m` pediría un dataset sin ese campo y mostraría 0.
   for (const s of segmentos) {
-    if (f.includes(`${PREFIJO_SEGMENTO}${s.clave}`)) out.add(s.campoClave);
+    if (segsUsados.has(s.clave)) out.add(s.campoClave);
   }
   return [...out];
 }
@@ -223,13 +215,23 @@ export function desglosePorCampana(
   ds.campos.forEach((campo, iCampo) => {
     const claves = clavesDeCampo(campo);
     const segmentos = campo.segmentos ?? [];
+    // Selección múltiple: los que respondieron salen de su propio contador,
+    // porque la suma de sus buckets cuenta dos veces a quien eligió dos.
+    if (campo.multiple) {
+      for (const [iCampana, n] of ds.respondidosPorFecha?.[fecha]?.[iCampo] ?? []) {
+        if (!permitidas.has(iCampana)) continue;
+        respondieron[iCampo].set(iCampana, (respondieron[iCampo].get(iCampana) ?? 0) + n);
+      }
+    }
     for (const [iBucket, iCampana, n] of delDia?.[iCampo] ?? []) {
       if (!permitidas.has(iCampana)) continue;
       const c = claves[iBucket];
       if (!c) continue;
       const v = dame(iCampana);
       v[c.clave] = (v[c.clave] ?? 0) + n;
-      respondieron[iCampo].set(iCampana, (respondieron[iCampo].get(iCampana) ?? 0) + n);
+      if (!campo.multiple) {
+        respondieron[iCampo].set(iCampana, (respondieron[iCampo].get(iCampana) ?? 0) + n);
+      }
       // Igual que en `clavesDelDia`: los segmentos suman aparte y no entran
       // en `respondieron`, porque solapan buckets.
       for (const seg of segmentos) {
@@ -260,6 +262,91 @@ export function desglosePorCampana(
     nombre: ds.campanas[iCampana] ?? SIN_CAMPANA,
     valores,
     esSinCampana: iCampana === 0,
+  }));
+}
+
+/** Lo que aporta UN conjunto o UN anuncio a UN día, ya filtrado por campaña. */
+export interface AporteDeEntidad {
+  id: string | null;
+  nombre: string;
+  valores: Record<string, number>;
+  /** El lead no trae conjunto/anuncio identificable. */
+  esSinEntidad: boolean;
+}
+
+/**
+ * Desglose de un día por CONJUNTO o ANUNCIO, para los rankings a ese nivel.
+ *
+ * Misma aritmética que `desglosePorCampana` (respuestas, segmentos y «sin
+ * respuesta» cerrando contra el total), sobre el cubo por tupla. El filtro de
+ * campañas se aplica por la CAMPAÑA de cada tupla, igual que al gasto del
+ * ranking. Devuelve [] si el dataset no trae el nivel (no se pidió).
+ */
+export function desglosePorEntidad(
+  ds: LeadAnswerDatasetLite,
+  fecha: string,
+  permitidas: Set<number>,
+  nivel: 'conjunto' | 'anuncio'
+): AporteDeEntidad[] {
+  const nv = ds.niveles;
+  if (!nv) return [];
+  const col = nivel === 'conjunto' ? 1 : 2;
+  const nombres = nivel === 'conjunto' ? nv.conjuntos : nv.anuncios;
+  const ids = nivel === 'conjunto' ? nv.conjuntoIds : nv.anuncioIds;
+  const entidadDe = (iT: number) => nv.tuplas[iT]?.[col] ?? 0;
+  const pasa = (iT: number) => permitidas.has(nv.tuplas[iT]?.[0] ?? 0);
+
+  const porEntidad = new Map<number, Record<string, number>>();
+  const dame = (i: number) => {
+    let v = porEntidad.get(i);
+    if (!v) porEntidad.set(i, (v = {}));
+    return v;
+  };
+  const totales = nv.totalesPorFecha[fecha];
+  for (const [iT, n] of totales ?? []) {
+    if (!pasa(iT)) continue;
+    const v = dame(entidadDe(iT));
+    v[CLAVE_TOTAL_LEADS] = (v[CLAVE_TOTAL_LEADS] ?? 0) + n;
+  }
+  const respondieron = ds.campos.map(() => new Map<number, number>());
+  ds.campos.forEach((campo, iCampo) => {
+    const claves = clavesDeCampo(campo);
+    const segmentos = campo.segmentos ?? [];
+    if (campo.multiple) {
+      for (const [iT, n] of nv.respondidosPorFecha?.[fecha]?.[iCampo] ?? []) {
+        if (!pasa(iT)) continue;
+        const e = entidadDe(iT);
+        respondieron[iCampo].set(e, (respondieron[iCampo].get(e) ?? 0) + n);
+      }
+    }
+    for (const [iBucket, iT, n] of nv.porFecha[fecha]?.[iCampo] ?? []) {
+      if (!pasa(iT)) continue;
+      const c = claves[iBucket];
+      if (!c) continue;
+      const e = entidadDe(iT);
+      const v = dame(e);
+      v[c.clave] = (v[c.clave] ?? 0) + n;
+      if (!campo.multiple) respondieron[iCampo].set(e, (respondieron[iCampo].get(e) ?? 0) + n);
+      for (const seg of segmentos) {
+        if (!segmentoIncluyeBucket(seg, c.bucket)) continue;
+        const k = claveSegmento(seg);
+        v[k] = (v[k] ?? 0) + n;
+      }
+    }
+  });
+  if (totales) {
+    for (const [e, valores] of porEntidad) {
+      const total = valores[CLAVE_TOTAL_LEADS] ?? 0;
+      ds.campos.forEach((campo, iCampo) => {
+        valores[claveSinRespuesta(campo)] = Math.max(0, total - (respondieron[iCampo].get(e) ?? 0));
+      });
+    }
+  }
+  return [...porEntidad.entries()].map(([i, valores]) => ({
+    id: ids[i] ?? null,
+    nombre: nombres[i] ?? '',
+    valores,
+    esSinEntidad: i === 0,
   }));
 }
 
@@ -303,12 +390,17 @@ export function clavesDelDia(
     for (const seg of segmentos) out[claveSegmento(seg)] = 0;
 
     let respondieron = 0;
+    if (campo.multiple) {
+      for (const [iCampana, n] of ds.respondidosPorFecha?.[fecha]?.[iCampo] ?? []) {
+        if (permitidas.has(iCampana)) respondieron += n;
+      }
+    }
     for (const [iBucket, iCampana, n] of delDia?.[iCampo] ?? []) {
       if (!permitidas.has(iCampana)) continue;
       const c = claves[iBucket];
       if (!c) continue;
       out[c.clave] += n;
-      respondieron += n;
+      if (!campo.multiple) respondieron += n;
       // Los segmentos se acumulan aquí pero NO tocan `respondieron`: solapan
       // buckets a propósito, así que sumarlos rompería el invariante
       // «respuestas + sin_respuesta = utm_leads» y dejaría el
@@ -403,9 +495,14 @@ function filtroVacio(
  * ranking y las gráficas. Eso trae gratis los grupos de campaña, los ocho
  * operadores y la combinación Y/O de los filtros compuestos de pestaña. Una
  * reimplementación aquí habría divergido a la primera pestaña con `__cf:`.
+ *
+ * Solo mira el diccionario, así que sirve igual para el cubo de ventas de
+ * Hotmart (`hotmart-cubo.ts`), que usa la misma codificación: una venta y un lead
+ * de la misma campaña tienen que pasar o no pasar el filtro JUNTOS, o el costo por
+ * venta dividiría cifras recortadas por criterios distintos.
  */
 export function campanasPermitidas(
-  ds: LeadAnswerDatasetLite,
+  ds: Pick<LeadAnswerDatasetLite, 'campanas' | 'campanaIds'>,
   keyword: AnyCampaignFilter,
   campaignFilter: CampaignFilterSpec | undefined,
   campaignGroups: any[] | undefined
@@ -525,7 +622,12 @@ export function serieDiaria(
       if (!permitidas.has(iCampana)) continue;
       if (iBucket >= porBucket.length) continue;
       porBucket[iBucket] += n;
-      respondieron += n;
+      if (!campo.multiple) respondieron += n;
+    }
+    if (campo.multiple) {
+      for (const [iCampana, n] of ds.respondidosPorFecha?.[fecha]?.[iCampo] ?? []) {
+        if (permitidas.has(iCampana)) respondieron += n;
+      }
     }
     let total = 0;
     for (const [iCampana, n] of ds.totalesPorFecha?.[fecha] ?? []) {

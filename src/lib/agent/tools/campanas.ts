@@ -17,6 +17,7 @@ import { getMetricasCliente } from '@/lib/metrics/client-metrics';
 import { resolverPeriodo, PRESETS } from '@/lib/date-presets';
 import type { AnyAgentTool } from '../types';
 import { exigirCliente } from '../registry';
+import { NOTA_MONEDA } from './metricas';
 
 const periodoSchema = {
   preset: z.enum(PRESETS as [string, ...string[]]).optional(),
@@ -92,7 +93,8 @@ const listCampaigns: AnyAgentTool = {
   description:
     'Campañas de Meta con actividad en el periodo, con su inversión, impresiones, clics y leads ' +
     'acumulados, ordenadas por gasto. Pasa `tab_id` para ver solo las de una estrategia. ' +
-    'Es de solo lectura: para pausar una campaña o cambiar un presupuesto hay que hacerlo en Meta.',
+    'Es de solo lectura: para pausar una campaña o cambiar un presupuesto hay que hacerlo en Meta.' +
+    NOTA_MONEDA,
   input: z.object({
     client_id: z.string().uuid(),
     tab_id: z.string().uuid().optional(),
@@ -133,6 +135,8 @@ const listCampaigns: AnyAgentTool = {
     return {
       period: { from: res.rango.from, to: res.rango.to, etiqueta: periodo.etiqueta },
       tab: res.tab,
+      // La de `spend`, `cpl` y `cpc`.
+      moneda: res.moneda,
       total_campanas: todas.length,
       campaigns: todas.slice(0, limite).map((c) => ({
         ...c,
@@ -153,7 +157,8 @@ const getCampaignPerformance: AnyAgentTool = {
   domain: 'campanas',
   description:
     'Evolución diaria de UNA campaña concreta, para ver cómo se ha comportado en el tiempo. ' +
-    'El identificador se obtiene de list_campaigns.',
+    'El identificador se obtiene de list_campaigns.' +
+    NOTA_MONEDA,
   input: z.object({
     client_id: z.string().uuid(),
     campaign_id: z.string().min(1).describe('campaign_id devuelto por list_campaigns.'),
@@ -196,6 +201,7 @@ const getCampaignPerformance: AnyAgentTool = {
     return {
       period: { from: res.rango.from, to: res.rango.to, etiqueta: periodo.etiqueta },
       campaign: { id: input.campaign_id, name: nombre },
+      moneda: res.moneda,
       dias: serie.length,
       serie,
       warnings:

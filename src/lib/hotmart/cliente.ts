@@ -17,7 +17,9 @@
 // worker existen para evitar.
 
 import { hotmartFetch } from '../rate-limit';
-import { cifrarSecreto, leerSecreto } from '../secretos';
+import { colombiaRangeBounds } from '../colombia-date';
+import { cifrarSecreto, hayClaveDeCifrado, leerSecreto } from '../secretos';
+import { SECRETOS_HOTMART } from '../clientes/config-pestanas';
 import type { PaginaHotmart } from './tipos';
 
 export const HOTMART_AUTH_BASE = 'https://api-sec-vlc.hotmart.com';
@@ -25,6 +27,13 @@ export const HOTMART_API_BASE = 'https://developers.hotmart.com';
 
 /** 60 × 100 = 6.000 transacciones por tanda. El tope que ya usaba el worker. */
 export const MAX_PAGINAS = 60;
+
+/**
+ * Tope de una petición de token. Sin él, un Hotmart colgado dejaba el worker
+ * esperando hasta que la plataforma mataba la función, y con ella el resto de
+ * clientes de la tanda.
+ */
+export const TIMEOUT_TOKEN_MS = 15_000;
 
 /**
  * Config de Hotmart dentro de `clientes.config_api`.
@@ -38,6 +47,8 @@ export type ConfigHotmart = {
   hotmart_access_token_enc?: string | null;
   hotmart_refresh_token_enc?: string | null;
   hotmart_basic_enc?: string | null;
+  hotmart_client_secret_enc?: string | null;
+  hotmart_token_enc?: string | null;
   /** @deprecated en claro — se migra a `hotmart_access_token_enc` al leerla. */
   hotmart_access_token?: string | null;
   /** @deprecated en claro — se migra a `hotmart_refresh_token_enc` al leerla. */
@@ -45,8 +56,16 @@ export type ConfigHotmart = {
   /** @deprecated en claro — se migra a `hotmart_basic_enc` al leerla. */
   hotmart_basic?: string | null;
   hotmart_token_expires_at?: string | null;
+  /** No es secreto: identifica la credencial, no la autoriza. Va en claro. */
   hotmart_client_id?: string | null;
+  /** @deprecated en claro — se migra a `hotmart_client_secret_enc` al leerla. */
   hotmart_client_secret?: string | null;
+  /**
+   * @deprecated en claro — se migra a `hotmart_token_enc` al leerla.
+   *
+   * Access token pegado a mano («Access Token Temporal» del formulario). La
+   * sincronización no lo usa: `obtenerToken` pide uno nuevo en cada corrida.
+   */
   hotmart_token?: string | null;
   [k: string]: unknown;
 };
@@ -81,24 +100,79 @@ export function hotmartConectado(config: ConfigHotmart | null | undefined): bool
       config.hotmart_refresh_token
     );
   }
+  // La cifrada primero: tras la migración la clave en claro queda en `null`.
   return Boolean(
     config.hotmart_basic_enc ||
     config.hotmart_basic ||
+    config.hotmart_token_enc ||
     config.hotmart_token ||
-    (config.hotmart_client_id && config.hotmart_client_secret)
+    (config.hotmart_client_id && (config.hotmart_client_secret_enc || config.hotmart_client_secret))
   );
+}
+
+/** Client secret descifrado, si lo hay. */
+export function clientSecretDe(config: ConfigHotmart) {
+  return leerSecreto(config.hotmart_client_secret_enc, config.hotmart_client_secret);
 }
 
 /** Credencial Basic derivada de la config, si la hay. */
 export function basicDeConfig(config: ConfigHotmart): string | null {
   const { valor } = leerSecreto(config.hotmart_basic_enc, config.hotmart_basic);
   if (valor) return valor;
-  if (config.hotmart_client_id && config.hotmart_client_secret) {
-    return Buffer.from(`${config.hotmart_client_id}:${config.hotmart_client_secret}`).toString(
-      'base64'
-    );
+  const secret = clientSecretDe(config).valor;
+  if (config.hotmart_client_id && secret) {
+    return Buffer.from(`${config.hotmart_client_id}:${secret}`).toString('base64');
   }
   return null;
+}
+
+/**
+ * Parche que cifra las credenciales Basic que sigan en claro.
+ *
+ * Misma migración perezosa que los tokens de HotConnect: cada vez que alguien
+ * usa la credencial, se reescribe cifrada y la copia en claro pasa a `null`.
+ * También limpia la copia en claro que sobreviviera junto a una cifrada y las
+ * cadenas vacías (`hotmart_basic: ''`) que dejó el formulario antiguo.
+ *
+ * Sin clave de cifrado devuelve `null`: `cifrarSecreto` lanzaría y dejaría al
+ * cliente sin sincronizar por algo que no es un fallo de Hotmart.
+ */
+export function parcheMigracionCredenciales(config: ConfigHotmart): Record<string, unknown> | null {
+  if (!hayClaveDeCifrado()) return null;
+  const parche: Record<string, unknown> = {};
+  for (const [plana, cifrada] of Object.entries(SECRETOS_HOTMART)) {
+    const enClaro = config[plana];
+    if (enClaro === undefined || enClaro === null) continue;
+    const guardada = config[cifrada] as string | null | undefined;
+    const leido = leerSecreto(guardada, String(enClaro));
+    // Se escribe la cifrada salvo que la guardada ya sea la buena. Sin esta
+    // comprobación, un valor ya cifrado metido en la clave en claro (que
+    // `leerSecreto` no marca para migrar) se perdería al vaciar esa clave.
+    const cifradaValida = Boolean(guardada) && leerSecreto(guardada, null).valor !== null;
+    if (leido.valor && !cifradaValida) parche[cifrada] = cifrarSecreto(leido.valor);
+    parche[plana] = null;
+  }
+  return Object.keys(parche).length > 0 ? parche : null;
+}
+
+/**
+ * ¿Otro proceso renovó los tokens de HotConnect entre `antes` y `despues`?
+ *
+ * El cron (a 30 min del vencimiento) y el refresco en línea de `obtenerToken`
+ * (a 60 s) pueden gastar el MISMO refresh token, que Hotmart rota en cada uso:
+ * el segundo en llegar recibe `invalid_grant` aunque la conexión esté sana.
+ * Se compara el vencimiento y el refresh token descifrado (el cifrado cambia
+ * con cada IV aunque el valor sea el mismo).
+ */
+export function renovadoPorOtro(antes: ConfigHotmart, despues: ConfigHotmart | null | undefined) {
+  if (!despues) return false;
+  const vence = (c: ConfigHotmart) => {
+    const ms = c.hotmart_token_expires_at ? new Date(c.hotmart_token_expires_at).getTime() : 0;
+    return Number.isNaN(ms) ? 0 : ms;
+  };
+  if (vence(despues) > vence(antes)) return true;
+  const nuevo = refreshTokenDe(despues).valor;
+  return Boolean(nuevo) && nuevo !== refreshTokenDe(antes).valor;
 }
 
 export type ResultadoToken = {
@@ -109,6 +183,15 @@ export type ResultadoToken = {
   parche?: Record<string, unknown> | null;
 };
 
+export type OpcionesToken = {
+  /**
+   * Vuelve a leer `config_api` de la base. Si el refresco de HotConnect falla,
+   * se relee UNA vez: si otro proceso rotó el token entre medias, se usa el
+   * suyo en lugar de dar la conexión por muerta.
+   */
+  releer?: () => Promise<ConfigHotmart | null | undefined>;
+};
+
 /**
  * Consigue un access token válido, sea cual sea el modo de conexión.
  *
@@ -117,8 +200,14 @@ export type ResultadoToken = {
  * y se puede llamar desde el worker, el cron y el backfill sin que cada uno
  * reinvente el read-modify-write de `config_api` (que además pisaba cambios
  * concurrentes: por eso existe ahora la RPC `fusionar_config_api`).
+ *
+ * En modo Basic el `parche` trae la migración de las credenciales en claro a
+ * sus claves `*_enc`; quien ya persiste el de HotConnect lo persiste igual.
  */
-export async function obtenerToken(config: ConfigHotmart): Promise<ResultadoToken> {
+export async function obtenerToken(
+  config: ConfigHotmart,
+  opciones: OpcionesToken = {}
+): Promise<ResultadoToken> {
   if (config.hotmart_auth_mode === 'hotconnect') {
     const access = accessTokenDe(config);
     const refresh = refreshTokenDe(config);
@@ -165,10 +254,19 @@ export async function obtenerToken(config: ConfigHotmart): Promise<ResultadoToke
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: params.toString(),
+      signal: AbortSignal.timeout(TIMEOUT_TOKEN_MS),
     });
     const data = await res.json().catch(() => ({}));
     if (!data?.access_token) {
-      return { token: null, motivo: `Error refrescando HotConnect: ${JSON.stringify(data)}` };
+      const motivo = `Error refrescando HotConnect: ${JSON.stringify(data)}`;
+      // Lo típico es `invalid_grant` porque el cron (u otra corrida) acaba de
+      // gastar este refresh token. Se relee una sola vez: la llamada recursiva
+      // va SIN `releer`, así que no puede entrar en bucle.
+      if (opciones.releer) {
+        const releida = await opciones.releer().catch(() => null);
+        if (releida && renovadoPorOtro(config, releida)) return obtenerToken(releida);
+      }
+      return { token: null, motivo };
     }
     const expiresIn = Number(data.expires_in) || 6 * 60 * 60;
     return {
@@ -197,13 +295,17 @@ export async function obtenerToken(config: ConfigHotmart): Promise<ResultadoToke
         'Content-Type': 'application/x-www-form-urlencoded',
         Authorization: `Basic ${basic}`,
       },
+      signal: AbortSignal.timeout(TIMEOUT_TOKEN_MS),
     }
   );
   const data = await res.json().catch(() => ({}));
   if (!data?.access_token) {
     return { token: null, motivo: `Error client_credentials: ${JSON.stringify(data)}` };
   }
-  return { token: String(data.access_token), parche: null };
+  // La migración va con el token y no antes: los que persisten el parche solo
+  // lo hacen cuando hay token, y así una credencial que Hotmart rechaza no se
+  // reescribe.
+  return { token: String(data.access_token), parche: parcheMigracionCredenciales(config) };
 }
 
 /**
@@ -389,8 +491,8 @@ export async function paginarHotmart<T>(opts: {
  * fijo, así que el ancla `-05:00` es exacta todo el año.
  */
 export function ventanaDiaColombia(fecha: string): { inicio: number; fin: number } {
-  return {
-    inicio: new Date(`${fecha}T00:00:00.000-05:00`).getTime(),
-    fin: new Date(`${fecha}T23:59:59.999-05:00`).getTime(),
-  };
+  // `colombiaRangeBounds` corta en la zona de la consulta en curso: dentro de
+  // la sincronización de un cliente, SU día (zona-activa.ts); fuera, Colombia.
+  const b = colombiaRangeBounds(fecha, fecha);
+  return { inicio: Date.parse(b.gte), fin: Date.parse(b.lt) - 1 };
 }

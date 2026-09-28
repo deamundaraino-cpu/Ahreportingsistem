@@ -17,8 +17,10 @@ import {
   TrendingUp,
   TrendingDown,
   Minus,
+  HelpCircle,
 } from 'lucide-react';
 import type { CardDef, TextBlockDef, CardThreshold } from '@/lib/layout-types';
+import { descripcionFuenteLead } from '@/lib/leads/fuentes-de-lead';
 import dynamic from 'next/dynamic';
 import { Skeleton } from '@/components/ui/skeleton';
 
@@ -128,6 +130,10 @@ export const SortableCard = React.memo(function SortableCard({
   const deltaPositive = hasDelta && (card.delta ?? 0) >= 0;
   const deltaAbs = hasDelta ? Math.abs(card.delta ?? 0) : 0;
 
+  // «Total Leads» puede ser lo que atribuye Meta o los contactos recibidos: el
+  // rótulo lo escribe el usuario, así que la fuente se explica aparte.
+  const fuenteLead = descripcionFuenteLead(card.formula);
+
   return (
     <Card
       ref={setNodeRef}
@@ -192,8 +198,13 @@ export const SortableCard = React.memo(function SortableCard({
         </div>
       )}
       <CardHeader className="pb-2">
-        <CardDescription className="text-muted-foreground font-medium pr-8">
-          {card.label}
+        <CardDescription className="text-muted-foreground font-medium pr-8 flex items-center gap-1.5">
+          <span className="truncate">{card.label}</span>
+          {fuenteLead && (
+            <span title={fuenteLead} aria-label={fuenteLead} className="flex-shrink-0 cursor-help">
+              <HelpCircle className="w-3.5 h-3.5 text-muted-foreground/60" />
+            </span>
+          )}
         </CardDescription>
       </CardHeader>
       <CardContent className="overflow-hidden">

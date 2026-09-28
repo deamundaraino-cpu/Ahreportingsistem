@@ -4,7 +4,7 @@ import { Loader2, Filter, Check } from 'lucide-react';
 import type { BiFilters, WidgetConfig } from '../BiTypes';
 import type { BiDimension } from '@/lib/report-utm/bi-metadata';
 import { DIMENSION_META, fieldDimLabel, leadFieldLabel } from '@/lib/report-utm/bi-metadata';
-import { useBiQueryBase } from '../BiQueryContext';
+import { useBiQueryBase, useBiEtiquetas } from '../BiQueryContext';
 import { useValoresDistintos } from '../useValoresDistintos';
 import { parseSeleccion, serializarSeleccion } from '@/lib/report-utm/bi-valores';
 
@@ -18,9 +18,11 @@ interface Props {
 
 export function SlicerWidget({ title, config, filters, onSetFilter, onSetDateRange }: Props) {
   const queryBase = useBiQueryBase();
+  const { etiquetas } = useBiEtiquetas();
   const dimension = (config.dimension as BiDimension) ?? 'utm_source';
   const mode = config.slicer_mode ?? 'dropdown';
   const dimLabel =
+    etiquetas[dimension] ??
     DIMENSION_META[dimension]?.label ??
     leadFieldLabel(dimension) ??
     fieldDimLabel(dimension) ??

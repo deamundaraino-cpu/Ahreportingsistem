@@ -19,6 +19,7 @@
  */
 
 import type { LeadSegmentoDef } from './lead-campos';
+import { extraerReferenciasDeLead } from '@/lib/leads/respuestas/claves';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -40,28 +41,16 @@ const TABLAS_LAYOUT: { tabla: string; origen: OrigenReferencia; porCliente: bool
   // Las plantillas no pertenecen a un cliente: una que nombre esta clave se
   // rompería en cuanto se aplicara, así que también cuentan.
   { tabla: 'tab_templates', origen: 'plantilla', porCliente: false },
+  // Las plantillas globales del dashboard (las que una pestaña usa por
+  // `plantilla_id`). Faltaban hasta la auditoría del 2026-09-26.
+  { tabla: 'layouts_reporte', origen: 'plantilla', porCliente: false },
 ];
 
-/**
- * Tokens de texto con los que un campo aparece dentro de una fórmula o de la
- * configuración de un widget.
- *
- * - `leadfield:<clave>` — dimensión o filtro del BI
- * - `lf__<clave>__` — métrica "leads que respondieron X" en una fórmula
- */
-function tokensDeCampo(clave: string): string[] {
-  return [`leadfield:${clave}`, `lf__${clave}__`];
-}
-
-/**
- * Tokens de un segmento. Van con el campo porque un segmento muere con su padre:
- * `lead_campo_segmentos.campo_id` tiene `ON DELETE CASCADE`, y `loadLeadSegmentos`
- * descarta los segmentos cuyo campo no venga en la lista, así que desactivar el
- * campo también apaga sus segmentos.
- */
-function tokensDeSegmento(clave: string): string[] {
-  return [`leadseg:${clave}`, `lseg__${clave}`];
-}
+// Formas en que aparece un campo (y sus segmentos, que mueren con él por el
+// `ON DELETE CASCADE` de `lead_campo_segmentos.campo_id`):
+//   `leadfield:<clave>` (dimensión o filtro), `lf__<clave>__<resp>` y
+//   `leadans:<clave>:<resp>` (respuestas), `lseg__<seg>` y `leadseg:<seg>`.
+// Se reconocen con `extraerReferenciasDeLead`, por TOKEN EXACTO.
 
 /** Nombre legible de una fila de layout, que no siempre tiene `nombre`. */
 function nombreDeFila(fila: any, origen: OrigenReferencia): string {
@@ -81,26 +70,46 @@ export async function referenciasDeCampoLead(
   opts: {
     rtmClienteId: string;
     publicClienteId?: string | null;
+    /** Campo buscado. Vacío = solo se buscan los segmentos. */
     clave: string;
     /** Segmentos hijos, que caen con el padre. */
     segmentos?: Pick<LeadSegmentoDef, 'clave' | 'nombre'>[];
+    /**
+     * Solo estas respuestas del campo (claves), no el campo entero: es lo que
+     * se pregunta antes de retirar o fusionar una respuesta. La pregunta sigue
+     * existiendo, así que `leadfield:` y los bloques no cuentan.
+     */
+    respuestas?: string[];
   }
 ): Promise<ReferenciaCampo[]> {
-  const { rtmClienteId, publicClienteId, clave, segmentos = [] } = opts;
-  if (!clave) return [];
+  const { rtmClienteId, publicClienteId, clave, segmentos = [], respuestas } = opts;
+  if (!clave && segmentos.length === 0) return [];
 
   const out: ReferenciaCampo[] = [];
+  const segsPorClave = new Map(segmentos.map((s) => [s.clave, s]));
 
-  const tokensCampo = tokensDeCampo(clave);
-  const tokensSeg = segmentos.map((s) => ({ seg: s, tokens: tokensDeSegmento(s.clave) }));
-
-  /** Busca los tokens en el texto de una fila y devuelve el motivo, o null. */
+  /**
+   * Busca las referencias en el texto de una fila y devuelve el motivo, o null.
+   *
+   * Por TOKEN EXACTO: con `includes`, un campo `rango` daba por usado
+   * `leadfield:rango_de_ingresos`, y un segmento `desde_2` daba por usado
+   * `lseg__desde_2m` (auditoría del 2026-09-26).
+   */
   const motivoEnTexto = (txt: string): string | null => {
-    for (const t of tokensCampo) if (txt.includes(t)) return `usa \`${t}\``;
-    for (const { seg, tokens } of tokensSeg) {
-      for (const t of tokens) {
-        if (txt.includes(t)) return `usa el segmento «${seg.nombre}» (\`${t}\`)`;
+    const refs = extraerReferenciasDeLead(txt);
+    if (clave) {
+      if (!respuestas) {
+        const c = refs.campos.find((x) => x.clave === clave);
+        if (c) return `usa \`${c.texto}\``;
       }
+      const rsp = refs.respuestas.find(
+        (x) => x.campo === clave && (!respuestas || respuestas.includes(x.resp))
+      );
+      if (rsp) return `usa \`${rsp.texto}\``;
+    }
+    for (const x of refs.segmentos) {
+      const seg = segsPorClave.get(x.clave);
+      if (seg) return `usa el segmento «${seg.nombre}» (\`${x.texto}\`)`;
     }
     return null;
   };
@@ -138,7 +147,10 @@ export async function referenciasDeCampoLead(
       //    clave va desnuda (`{"origen":"catalogo","clave":"…"}`) y buscarla como
       //    subcadena daría positivos falsos con cualquier otro campo `clave`.
       const bloques = Array.isArray(fila.lead_answer_blocks) ? fila.lead_answer_blocks : [];
-      const bloque = bloques.find((b: any) => b?.origen === 'catalogo' && b?.clave === clave);
+      const bloque =
+        clave && !respuestas
+          ? bloques.find((b: any) => b?.origen === 'catalogo' && b?.clave === clave)
+          : undefined;
       if (bloque) {
         out.push({
           origen,

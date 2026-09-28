@@ -14,6 +14,7 @@
 
 import type { DataSource } from '../registry-types';
 import { measure, derived, dimension, pixelEvent, money } from '../field-builders';
+import { ROTULO_LEADS_META, DESCRIPCION_LEADS_META } from '@/lib/leads/fuentes-de-lead';
 
 const S = 'ads';
 
@@ -153,13 +154,10 @@ export const ADS_SOURCE: DataSource = {
     // mismos contactos pueden estar en ambas, así que no son sumables.
     // `conflictsWith` lo hace legible por máquina en vez de dejarlo solo en
     // la prosa de la etiqueta.
-    pixelEvent(
-      S,
-      'leads_form',
-      'Leads del píxel de Meta',
-      'Leads que reporta el píxel de Meta desde sus propios formularios. Puede no coincidir con “Leads (contactos)”: mide otra cosa, en otro sistema, y los mismos contactos pueden estar en ambas. No las sumes.',
-      { conflictsWith: ['leads.count', 'offline.leads'], funnelStage: 70 }
-    ),
+    pixelEvent(S, 'leads_form', ROTULO_LEADS_META, DESCRIPCION_LEADS_META, {
+      conflictsWith: ['leads.count', 'offline.leads'],
+      funnelStage: 70,
+    }),
     pixelEvent(
       S,
       'purchases',

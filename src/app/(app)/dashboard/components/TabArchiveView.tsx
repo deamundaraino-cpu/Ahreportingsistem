@@ -24,12 +24,21 @@ function resolveTabCards(tab: any, allLayouts: any[], initialLayout: any): CardD
   return initialLayout?.tarjetas || [];
 }
 
+/**
+ * Plataformas del cliente para el motor de fórmulas. Desde que un campo de una
+ * plataforma no conectada cuenta como «sin dato» (formula-engine, 2026-09-28),
+ * pasar solo `meta` haría que el ROAS de un cliente CON Hotmart saliera «—» en
+ * el archivo cuando el periodo no tuvo ventas. El dashboard pasa las reales.
+ */
+const PLATAFORMAS_POR_DEFECTO = new Set(['meta']);
+
 function computeCardValue(
   card: CardDef,
   tab: any,
   metrics: any[],
   campaignGroups: any[],
-  dateOverride?: { from: string; to: string }
+  dateOverride?: { from: string; to: string },
+  availablePlatforms: Set<string> = PLATAFORMAS_POR_DEFECTO
 ): number | null {
   let rows = metrics;
   const from = dateOverride !== undefined ? dateOverride.from : tab.fecha_inicio;
@@ -43,7 +52,7 @@ function computeCardValue(
   if (card.sheetFilter) {
     rows = rows.map((r) => enrichOfflineRow(r, card.sheetFilter));
   }
-  return aggregateFormula(card.formula, rows, {}, {}, new Set(['meta']), {});
+  return aggregateFormula(card.formula, rows, {}, {}, availablePlatforms, {});
 }
 
 export function TabArchiveView({
@@ -56,6 +65,7 @@ export function TabArchiveView({
   onClose,
   onToggleArchived,
   isTeam,
+  availablePlatforms,
 }: {
   tabs: any[];
   metrics: any[];
@@ -66,6 +76,8 @@ export function TabArchiveView({
   onClose: () => void;
   onToggleArchived: (tabId: string, archived: boolean) => Promise<void>;
   isTeam: boolean;
+  /** Plataformas conectadas del cliente (las mismas que usa el dashboard). */
+  availablePlatforms?: Set<string>;
 }) {
   const monedaReporte = useMonedaReporte();
   const [expandedTabIds, setExpandedTabIds] = useState<Set<string>>(new Set());
@@ -327,7 +339,8 @@ export function TabArchiveView({
                                 tab,
                                 archiveMetrics,
                                 campaignGroups,
-                                tabDateOverrides[tab.id]
+                                tabDateOverrides[tab.id],
+                                availablePlatforms
                               )
                             : null;
                           const formatted = formatValue(value, {

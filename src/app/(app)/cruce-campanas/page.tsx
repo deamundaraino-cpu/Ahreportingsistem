@@ -65,7 +65,7 @@ interface Coverage {
   methods: Record<string, number>;
 }
 interface AmbiguoRow {
-  field: 'utm_content' | 'utm_term';
+  field: 'utm_campaign' | 'utm_content' | 'utm_term';
   value: string;
   count: number;
   candidates: { name: string; platform: 'meta' | 'tiktok'; spend: number }[];
@@ -79,8 +79,11 @@ interface CoberturaIds {
   ad: number;
 }
 
-// Confianza mínima para incluir una sugerencia en el "Confirmar todas".
-const BULK_CONFIDENCE = 80;
+// Confianza mínima para incluir una sugerencia en el "Confirmar todas". Era 80:
+// una sugerencia por similitud se convierte en una corrección permanente que
+// captura también los leads futuros con ese valor, así que solo las casi
+// idénticas se confirman en bloque; el resto, una a una.
+const BULK_CONFIDENCE = 95;
 
 // Etiqueta corta por método de match (para badges en la tabla).
 const METHOD_LABEL: Record<string, string> = {
@@ -266,6 +269,18 @@ export default function CruceCampanasPage() {
         r.suggestion.confidence >= BULK_CONFIDENCE
     );
     if (targets.length === 0) return;
+    const muestra = targets
+      .slice(0, 8)
+      .map((r) => `• ${r.value} → ${r.suggestion!.campaign_name}`)
+      .join('\n');
+    const resto = targets.length > 8 ? `\n… y ${targets.length - 8} más` : '';
+    if (
+      !window.confirm(
+        `Se crearán ${targets.length} correcciones permanentes:\n\n${muestra}${resto}\n\n` +
+          'También se aplicarán a los leads futuros con esos valores. ¿Continuar?'
+      )
+    )
+      return;
     setBulkBusy(true);
     try {
       for (const r of targets) {
@@ -765,7 +780,11 @@ function AmbiguosPanel({ rows }: { rows: AmbiguoRow[] }) {
               <tr key={`${r.field}|${r.value}`} className="hover:bg-accent align-top">
                 <td className="px-6 py-3 text-xs font-mono text-foreground max-w-[320px]">
                   <span className="mr-2 px-1.5 py-0.5 rounded-md text-[10px] text-muted-foreground bg-muted">
-                    {r.field === 'utm_content' ? 'anuncio' : 'conjunto'}
+                    {r.field === 'utm_content'
+                      ? 'anuncio'
+                      : r.field === 'utm_campaign'
+                        ? 'campaña'
+                        : 'conjunto'}
                   </span>
                   <span className="break-all">{r.value}</span>
                 </td>

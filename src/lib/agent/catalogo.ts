@@ -19,7 +19,13 @@ import 'server-only';
 
 import { z } from 'zod';
 import { ALL_TOOLS } from './registry';
-import type { AnyAgentTool, DominioTool, NivelAgente, RiesgoMutacion } from './types';
+import {
+  esDirecta,
+  type AnyAgentTool,
+  type DominioTool,
+  type NivelAgente,
+  type RiesgoMutacion,
+} from './types';
 import type { TokenPermission } from '@/lib/api-token-auth';
 
 /** Un parámetro de entrada, ya legible para una persona. */
@@ -44,6 +50,11 @@ export type ToolDoc = {
   minLevel: NivelAgente;
   /** `null` si es de solo lectura; si no, el riesgo de la escritura. */
   riesgo: RiesgoMutacion | null;
+  /**
+   * Cómo se aplica la escritura: `directa` (al momento, auditada y reversible)
+   * o `requerida` (queda como propuesta). `null` si es de solo lectura.
+   */
+  aprobacion: 'directa' | 'requerida' | null;
   parametros: ParametroDoc[];
 };
 
@@ -145,6 +156,7 @@ export function catalogoPublico(): ToolDoc[] {
     scopes: tool.scopes,
     minLevel: tool.minLevel ?? 'consulta',
     riesgo: tool.mutation?.risk ?? null,
+    aprobacion: tool.mutation ? (esDirecta(tool) ? 'directa' : 'requerida') : null,
     parametros: parametrosDe(tool),
   }));
 }

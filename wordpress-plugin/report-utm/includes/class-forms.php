@@ -155,6 +155,24 @@ class ReportUTM_Forms {
         $posted     = $submission->get_posted_data();
         $raw_fields = $this->sanitize_fields( $posted );
 
+        // Tipo y opciones de los desplegables, casillas y radios (0.4.0): el
+        // servidor los usa para ofrecer cada respuesta con su nombre real.
+        $fields_meta = [];
+        if ( method_exists( $contact_form, 'scan_form_tags' ) ) {
+            foreach ( $contact_form->scan_form_tags() as $tag ) {
+                $base = $tag->basetype ?? '';
+                if ( ! in_array( $base, [ 'select', 'checkbox', 'radio' ], true ) || empty( $tag->name ) ) continue;
+                $values = is_array( $tag->raw_values ?? null ) ? $tag->raw_values : ( $tag->values ?? [] );
+                $labels = is_array( $tag->labels ?? null ) ? $tag->labels : $values;
+                $opciones = [];
+                foreach ( $values as $i => $v ) {
+                    $opciones[] = [ 'value' => (string) $v, 'label' => (string) ( $labels[ $i ] ?? $v ) ];
+                }
+                $multiple = $base === 'checkbox' || ( $base === 'select' && $tag->has_option( 'multiple' ) );
+                $fields_meta[ sanitize_key( $tag->name ) ] = $this->meta_de_campo( $base, $multiple, $opciones );
+            }
+        }
+
         // Mapeo por nombres comunes de campos CF7
         $lead_name  = $this->find_field( $raw_fields, [ 'your-name', 'name', 'nombre', 'full-name', 'fullname', 'tu-nombre' ] );
         $lead_email = $this->find_field( $raw_fields, [ 'your-email', 'email', 'correo', 'mail', 'tu-email' ] );
@@ -168,6 +186,7 @@ class ReportUTM_Forms {
             'lead_email'  => $lead_email,
             'lead_phone'  => $lead_phone,
             'raw_fields'  => $raw_fields,
+            'fields_meta' => (object) $fields_meta,
         ] );
     }
 
@@ -180,7 +199,8 @@ class ReportUTM_Forms {
      * @param array $form  Definición del formulario con $form['fields']
      */
     public function on_gravity_forms_submission( $entry, $form ): void {
-        $raw_fields = [];
+        $raw_fields  = [];
+        $fields_meta = [];
         $lead_name  = null;
         $lead_email = null;
         $lead_phone = null;
@@ -198,8 +218,24 @@ class ReportUTM_Forms {
                 $raw_fields[ $field_label ?: "campo_{$field_id}" ] = $val;
                 if ( ! $lead_name && $val ) $lead_name = $val;
             } else {
-                $val = sanitize_text_field( rgar( $entry, (string) $field_id ) );
-                $raw_fields[ $field_label ?: "campo_{$field_id}" ] = $val;
+                $clave = $field_label ?: "campo_{$field_id}";
+                // Las casillas guardan cada opción en una sub-entrada (5.1,
+                // 5.2…): `rgar( $entry, '5' )` venía vacío. El export de Gravity
+                // las devuelve unidas por comas, que el servidor sabe partir.
+                if ( in_array( $field_type, [ 'checkbox', 'multiselect' ], true ) && method_exists( $field, 'get_value_export' ) ) {
+                    $val = sanitize_text_field( (string) $field->get_value_export( $entry, (string) $field_id, true ) );
+                } else {
+                    $val = sanitize_text_field( rgar( $entry, (string) $field_id ) );
+                }
+                $raw_fields[ $clave ] = $val;
+
+                if ( in_array( $field_type, [ 'select', 'radio', 'checkbox', 'multiselect' ], true ) && ! empty( $field->choices ) ) {
+                    $opciones = [];
+                    foreach ( (array) $field->choices as $c ) {
+                        $opciones[] = [ 'value' => (string) ( $c['value'] ?? $c['text'] ?? '' ), 'label' => (string) ( $c['text'] ?? $c['value'] ?? '' ) ];
+                    }
+                    $fields_meta[ $clave ] = $this->meta_de_campo( $field_type, in_array( $field_type, [ 'checkbox', 'multiselect' ], true ), $opciones );
+                }
 
                 // Mapeo automático por tipo de campo
                 if ( ! $lead_email && $field_type === 'email' && $val ) $lead_email = $val;
@@ -218,6 +254,7 @@ class ReportUTM_Forms {
             'lead_email'  => $lead_email,
             'lead_phone'  => $lead_phone,
             'raw_fields'  => $raw_fields,
+            'fields_meta' => (object) $fields_meta,
         ] );
     }
 
@@ -232,7 +269,8 @@ class ReportUTM_Forms {
      * @param int   $entry_id  ID del entry guardado
      */
     public function on_wpforms_complete( $fields, $entry, $form_data, $entry_id ): void {
-        $raw_fields = [];
+        $raw_fields  = [];
+        $fields_meta = [];
         $lead_name  = null;
         $lead_email = null;
         $lead_phone = null;
@@ -240,9 +278,24 @@ class ReportUTM_Forms {
         foreach ( $fields as $field ) {
             $label = strtolower( $field['name'] ?? "campo_{$field['id']}" );
             $type  = strtolower( $field['type'] ?? '' );
-            $val   = sanitize_text_field( $field['value'] ?? '' );
+            // Las casillas de WPForms llegan separadas por saltos de línea, que
+            // `sanitize_text_field` convertía en espacios y ya no se podían
+            // separar. Se unen por comas antes de sanear.
+            $crudo = (string) ( $field['value'] ?? '' );
+            if ( $type === 'checkbox' ) $crudo = implode( ', ', array_filter( array_map( 'trim', preg_split( '/\r?\n/', $crudo ) ) ) );
+            $val   = sanitize_text_field( $crudo );
 
             $raw_fields[ $label ] = $val;
+
+            $def = $form_data['fields'][ $field['id'] ?? '' ] ?? null;
+            if ( in_array( $type, [ 'select', 'radio', 'checkbox' ], true ) && ! empty( $def['choices'] ) ) {
+                $opciones = [];
+                foreach ( (array) $def['choices'] as $c ) {
+                    $opciones[] = [ 'value' => (string) ( $c['value'] ?? $c['label'] ?? '' ), 'label' => (string) ( $c['label'] ?? '' ) ];
+                }
+                $multiple = $type === 'checkbox' || ! empty( $def['multiple'] );
+                $fields_meta[ $label ] = $this->meta_de_campo( $type, $multiple, $opciones );
+            }
 
             if ( ! $lead_email && $type === 'email' && $val ) $lead_email = $val;
             if ( ! $lead_phone && $type === 'phone' && $val ) $lead_phone = $val;
@@ -261,6 +314,7 @@ class ReportUTM_Forms {
             'lead_email'  => $lead_email,
             'lead_phone'  => $lead_phone,
             'raw_fields'  => $raw_fields,
+            'fields_meta' => (object) $fields_meta,
         ] );
     }
 
@@ -275,8 +329,14 @@ class ReportUTM_Forms {
     public function on_elementor_form( $record, $handler ): void {
         // $record->get('fields') devuelve:
         // [ 'field_id' => [ 'value' => '...', 'type' => 'email|tel|text|...', 'title' => 'Label' ] ]
-        $fields     = $record->get( 'fields' );
-        $raw_fields = [];
+        $fields      = $record->get( 'fields' );
+        $raw_fields  = [];
+        $fields_meta = [];
+        // Definición de los campos (tipo y opciones «etiqueta|valor» por línea).
+        $defs = [];
+        foreach ( (array) $record->get_form_settings( 'form_fields' ) as $d ) {
+            if ( ! empty( $d['custom_id'] ) ) $defs[ $d['custom_id'] ] = $d;
+        }
         $lead_name  = null;
         $lead_email = null;
         $lead_phone = null;
@@ -289,6 +349,19 @@ class ReportUTM_Forms {
 
             // Guardar en raw_fields usando label o ID como clave
             $raw_fields[ $label ?: $id ] = $val;
+
+            $def = $defs[ $id ] ?? null;
+            if ( $def && in_array( $type, [ 'select', 'radio', 'checkbox' ], true ) && ! empty( $def['field_options'] ) ) {
+                $opciones = [];
+                foreach ( preg_split( '/\r?\n/', (string) $def['field_options'] ) as $linea ) {
+                    $linea = trim( $linea );
+                    if ( $linea === '' ) continue;
+                    $partes = explode( '|', $linea, 2 );
+                    $opciones[] = [ 'label' => trim( $partes[0] ), 'value' => trim( $partes[1] ?? $partes[0] ) ];
+                }
+                $multiple = $type === 'checkbox' || ( $def['allow_multiple'] ?? '' ) === 'true';
+                $fields_meta[ $label ?: $id ] = $this->meta_de_campo( $type, $multiple, $opciones );
+            }
 
             if ( ! $val ) continue;
 
@@ -310,6 +383,7 @@ class ReportUTM_Forms {
             'lead_email'  => $lead_email,
             'lead_phone'  => $lead_phone,
             'raw_fields'  => $raw_fields,
+            'fields_meta' => (object) $fields_meta,
         ] );
     }
 
@@ -332,7 +406,10 @@ class ReportUTM_Forms {
             if ( str_starts_with( $key, '_' ) ) continue;
 
             if ( is_array( $val ) ) {
-                $val = implode( ' ', array_filter( array_map( 'sanitize_text_field', $val ) ) );
+                // Casillas: unidas por comas (0.4.0) para que el servidor pueda
+                // separar cada opción elegida. Con espacios se fundían en una
+                // sola respuesta imposible de partir.
+                $val = implode( ', ', array_filter( array_map( 'sanitize_text_field', $val ) ) );
             } else {
                 $val = sanitize_text_field( (string) $val );
             }
@@ -340,6 +417,26 @@ class ReportUTM_Forms {
             $out[ sanitize_key( $key ) ] = $val;
         }
         return $out;
+    }
+
+    /**
+     * Metadatos de un campo de opciones: tipo, si admite varias y sus opciones.
+     * Se recortan (≤ 200 opciones, 300 caracteres) porque viajan con cada lead.
+     *
+     * @param string $type     Tipo del constructor (select, radio, checkbox…)
+     * @param bool   $multiple ¿Se pueden elegir varias?
+     * @param array  $opciones [ [ 'label' => …, 'value' => … ], … ]
+     * @return array
+     */
+    private function meta_de_campo( string $type, bool $multiple, array $opciones ): array {
+        $out = [];
+        foreach ( array_slice( $opciones, 0, 200 ) as $o ) {
+            $valor = mb_substr( sanitize_text_field( (string) ( $o['value'] ?? '' ) ), 0, 300 );
+            $label = mb_substr( sanitize_text_field( (string) ( $o['label'] ?? $valor ) ), 0, 300 );
+            if ( $valor === '' && $label === '' ) continue;
+            $out[] = [ 'value' => $valor !== '' ? $valor : $label, 'label' => $label !== '' ? $label : $valor ];
+        }
+        return [ 'type' => sanitize_key( $type ), 'multiple' => $multiple, 'options' => $out ];
     }
 
     /**

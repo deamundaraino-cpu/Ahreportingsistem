@@ -1,5 +1,11 @@
 # 19 · Guía práctica: medir con las respuestas de los formularios
 
+> **Actualización 2026-09-26.** Cada respuesta ya es una métrica en los informes y
+> en las pestañas sin crear un segmento (`lf__<campo>__<respuesta>`), y los segmentos
+> se crean, editan y renombran desde la pestaña «Leads» de la ficha del cliente.
+> Ver [doc 24](./24-respuestas-de-formulario.md). Los caminos B y C de abajo ya no
+> hacen falta para medir una respuesta suelta.
+
 Cómo usar los **segmentos de campo de lead** (migración `073`) para responder
 preguntas del tipo _«¿cuánto me cuesta un lead que gana más de 2 millones?»_
 sin salir del editor de widgets.
@@ -389,7 +395,7 @@ Renombrar es libre; la clave es inmutable desde el alta.
 | Lógica pura         | [`lead-campos.ts`](../src/lib/report-utm/lead-campos.ts): `segmentoIncluyeBucket`, `cuentaEnSegmento`, `bucketsAcumulados` |
 | Motor del BI        | [`bi-query.ts`](../src/lib/report-utm/bi-query.ts): `collectLeadSegClaves`, `aggregateLeads`, `mergeResults`               |
 | Cubo del dashboard  | [`lead-answer-aggregation.ts`](../src/lib/dashboard/lead-answer-aggregation.ts): `claveSegmento`, `clavesDelDia`           |
-| UI                  | [`LeadSegmentosEditor`](../src/components/report-utm/LeadSegmentosEditor.tsx)                                              |
+| UI                  | [`LeadsConfigCard`](../src/components/report-utm/leads/LeadsConfigCard.tsx) (pestaña «Leads»)                              |
 | API                 | `/api/report-utm/lead-campos/segmentos` · `/api/report-utm/bi/lead-fields`                                                 |
 | Comprobaciones      | `verify-lead-segmentos.ts` (puro) · `verify-lead-segmentos-db.ts` (datos reales)                                           |
 | Migración de datos  | `npx tsx scripts/migrar-segmentos-lead.ts` — informe · `--aplicar` · `--revertir <copia>`                                  |

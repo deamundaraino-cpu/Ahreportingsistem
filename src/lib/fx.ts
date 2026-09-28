@@ -46,10 +46,26 @@ export function fuenteParaFecha(
   return fecha >= addDaysISO(hoy, -1) ? 'latest' : 'historica';
 }
 
-/** Tasas resueltas en esta corrida — evita repetir la consulta por transacción. */
-type FxMemo = Map<string, Promise<FxLookup>>;
+/**
+ * Cuánto se recuerda un resultado sin la tasa del día ('none' o 'stale').
+ *
+ * Una tasa buena ('cache' / 'api') se recuerda mientras viva el proceso: la
+ * cacheada no se reescribe nunca y la de la API ya quedó escrita en `fx_rates`.
+ * Un fallo o una aproximación, en cambio, caducan: en el worker VPS el proceso
+ * vive días, y una API de FX caída cinco minutos dejaba esa moneda sin convertir
+ * (o con la última tasa conocida) hasta el siguiente reinicio. Diez minutos
+ * siguen ahorrando la consulta por transacción dentro de una misma corrida.
+ */
+export const FX_MEMO_TTL_SIN_TASA_MS = 10 * 60_000;
 
-const memoByRun: FxMemo = new Map();
+/** Tasas resueltas en esta corrida — evita repetir la consulta por transacción. */
+type EntradaMemo = {
+  promise: Promise<FxLookup>;
+  /** Epoch ms desde el que ya no vale. Infinity mientras está pendiente o si la tasa es buena. */
+  expiraMs: number;
+};
+
+const memoByRun = new Map<string, EntradaMemo>();
 
 function memoKey(moneda: string, fecha: string) {
   return `${fecha}|${moneda.toUpperCase()}`;
@@ -167,11 +183,108 @@ export async function capturarTasasDelDia(db: any, hoy: string = colombiaToday()
   } catch {
     // Una API de FX caída no debe tumbar la sincronización.
   }
+  try {
+    await rellenarHuecosRecientes(db, hoy);
+  } catch {
+    // Igual: el relleno es un extra, nunca un motivo para fallar.
+  }
+}
+
+/** Cuántos días hacia atrás revisa `rellenarHuecosRecientes`. */
+export const DIAS_RELLENO_FX = 7;
+
+/**
+ * Días de los últimos `DIAS_RELLENO_FX` (sin contar hoy) a los que les falta la
+ * tasa de alguna moneda de reporte, con las monedas que faltan. Puro.
+ */
+export function huecosFx(
+  guardadas: Array<{ fecha: string; moneda: string }>,
+  hoy: string,
+  monedas: readonly string[] = MONEDAS_REPORTE,
+  dias: number = DIAS_RELLENO_FX
+): Array<{ fecha: string; monedas: string[] }> {
+  const quiero = monedas.map((m) => m.toUpperCase()).filter((m) => m !== 'USD');
+  const tengo = new Set(
+    guardadas.map((g) => `${String(g.fecha).slice(0, 10)}|${String(g.moneda).toUpperCase()}`)
+  );
+  const out: Array<{ fecha: string; monedas: string[] }> = [];
+  for (let i = 1; i <= dias; i++) {
+    const fecha = addDaysISO(hoy, -i);
+    const faltan = quiero.filter((m) => !tengo.has(`${fecha}|${m}`));
+    if (faltan.length > 0) out.push({ fecha, monedas: faltan });
+  }
+  return out;
+}
+
+/**
+ * Un día que el worker no corrió (caída, despliegue) se quedaba sin tasa para
+ * siempre, y sus ventas se convertían con la de otro día. Aquí se rellenan los
+ * huecos de la última semana con la cotización HISTÓRICA de cada día
+ * (`fuenteParaFecha`). Solo inserta lo que falta: una tasa guardada no se
+ * reescribe nunca, porque es la que congeló las ventas de ese día.
+ *
+ * Lo normal es que no falte nada: entonces cuesta una consulta y ninguna
+ * llamada a la API.
+ */
+async function rellenarHuecosRecientes(db: any, hoy: string): Promise<void> {
+  const desde = addDaysISO(hoy, -DIAS_RELLENO_FX);
+  const { data, error } = await db
+    .from('fx_rates')
+    .select('fecha, moneda')
+    .gte('fecha', desde)
+    .lt('fecha', hoy)
+    .in(
+      'moneda',
+      [...MONEDAS_REPORTE].filter((m) => m !== 'USD')
+    );
+  if (error) return;
+  for (const h of huecosFx((data ?? []) as Array<{ fecha: string; moneda: string }>, hoy)) {
+    await preloadUsdRates(db, h.monedas, h.fecha);
+  }
+}
+
+/** Los tres niveles de respaldo, sin memo. `cur` ya viene en mayúsculas y no es USD. */
+async function resolverTasa(db: any, cur: string, fecha: string): Promise<FxLookup> {
+  // 1. Cache exacta (fecha + moneda).
+  const { data: exact } = await db
+    .from('fx_rates')
+    .select('usd_rate')
+    .eq('fecha', fecha)
+    .eq('moneda', cur)
+    .maybeSingle();
+  if (exact?.usd_rate) return { rate: Number(exact.usd_rate), source: 'cache' };
+
+  // 2. API de la fecha que toca → cachear para el resto de la corrida y días futuros.
+  const got = await tasasPara(fecha);
+  const fresh = got?.rates.get(cur);
+  if (got && fresh) {
+    await db
+      .from('fx_rates')
+      .upsert([{ fecha, moneda: cur, usd_rate: fresh, fuente: got.fuente }], {
+        onConflict: 'fecha,moneda',
+        ignoreDuplicates: true,
+      });
+    return { rate: fresh, source: 'api' };
+  }
+
+  // 3. Última tasa conocida: aproximada, pero infinitamente mejor que 0.
+  // No se guarda: congelaría una aproximación como si fuera la del día.
+  const { data: stale } = await db
+    .from('fx_rates')
+    .select('usd_rate')
+    .eq('moneda', cur)
+    .order('fecha', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (stale?.usd_rate) return { rate: Number(stale.usd_rate), source: 'stale' };
+
+  return { rate: null, source: 'none' };
 }
 
 /**
  * USD por 1 unidad de `moneda` en `fecha`.
- * Resultado memoizado por corrida del proceso.
+ * Resultado memoizado por corrida del proceso; los que no traen la tasa del día
+ * ('none' / 'stale') solo durante `FX_MEMO_TTL_SIN_TASA_MS`.
  */
 export async function getUsdRate(db: any, moneda: string, fecha: string): Promise<FxLookup> {
   const cur = String(moneda || '').toUpperCase();
@@ -180,51 +293,28 @@ export async function getUsdRate(db: any, moneda: string, fecha: string): Promis
 
   const key = memoKey(cur, fecha);
   const hit = memoByRun.get(key);
-  if (hit) return hit;
+  if (hit && Date.now() < hit.expiraMs) return hit.promise;
 
-  const promise = (async (): Promise<FxLookup> => {
-    // 1. Cache exacta (fecha + moneda).
-    const { data: exact } = await db
-      .from('fx_rates')
-      .select('usd_rate')
-      .eq('fecha', fecha)
-      .eq('moneda', cur)
-      .maybeSingle();
-    if (exact?.usd_rate) return { rate: Number(exact.usd_rate), source: 'cache' };
-
-    // 2. API de la fecha que toca → cachear para el resto de la corrida y días futuros.
-    const got = await tasasPara(fecha);
-    const fresh = got?.rates.get(cur);
-    if (got && fresh) {
-      await db
-        .from('fx_rates')
-        .upsert([{ fecha, moneda: cur, usd_rate: fresh, fuente: got.fuente }], {
-          onConflict: 'fecha,moneda',
-          ignoreDuplicates: true,
-        });
-      return { rate: fresh, source: 'api' };
+  // Mientras está pendiente no caduca: las llamadas concurrentes comparten la promesa.
+  const entrada = { expiraMs: Infinity } as EntradaMemo;
+  entrada.promise = resolverTasa(db, cur, fecha).then(
+    (r) => {
+      // Sin la tasa del día: se recuerda un rato y después se vuelve a intentar.
+      if (r.source === 'none' || r.source === 'stale') {
+        entrada.expiraMs = Date.now() + FX_MEMO_TTL_SIN_TASA_MS;
+      }
+      return r;
+    },
+    () => {
+      // Un fallo transitorio no debe quedar memoizado. Solo se borra la entrada
+      // propia: tras un `clearFxMemo` la clave puede ser ya de otra llamada.
+      if (memoByRun.get(key) === entrada) memoByRun.delete(key);
+      return { rate: null, source: 'none' } as FxLookup;
     }
+  );
 
-    // 3. Última tasa conocida: aproximada, pero infinitamente mejor que 0.
-    // No se guarda: congelaría una aproximación como si fuera la del día.
-    const { data: stale } = await db
-      .from('fx_rates')
-      .select('usd_rate')
-      .eq('moneda', cur)
-      .order('fecha', { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    if (stale?.usd_rate) return { rate: Number(stale.usd_rate), source: 'stale' };
-
-    return { rate: null, source: 'none' };
-  })().catch(() => {
-    // Un fallo transitorio no debe quedar memoizado.
-    memoByRun.delete(key);
-    return { rate: null, source: 'none' } as FxLookup;
-  });
-
-  memoByRun.set(key, promise);
-  return promise;
+  memoByRun.set(key, entrada);
+  return entrada.promise;
 }
 
 /** Limpia el memo (útil en tests y en procesos de larga duración como el worker VPS). */

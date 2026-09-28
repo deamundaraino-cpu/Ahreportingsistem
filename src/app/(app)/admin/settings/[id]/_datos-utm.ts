@@ -3,10 +3,11 @@ import { cache } from 'react';
 import { headers } from 'next/headers';
 import { reportUtmClient } from '@/lib/report-utm/client';
 import { createClient, createAdminClient } from '@/utils/supabase/server';
-import type { ReportUtmIntegration } from '@/lib/report-utm/types';
+import type { ReportUtmHotmartIntegracion, ReportUtmIntegration } from '@/lib/report-utm/types';
 import type { ClienteGoals } from '@/lib/report-utm/bi-metadata';
-import { monedaDeClienteUtm, ultimasTasasGuardadas } from '@/lib/moneda-reporte';
-import type { MonedaReporte, TasaGuardada } from '@/lib/moneda-reporte';
+import { resolverMonedaDeClienteUtm, ultimasTasasGuardadas } from '@/lib/moneda-reporte';
+import type { MonedaReporte, MonedaResuelta, TasaGuardada } from '@/lib/moneda-reporte';
+import { rpcDuplicadosDisponible } from '@/lib/report-utm/lead-duplicados';
 import {
   columnaExcluidoDisponible,
   leerRegla,
@@ -19,22 +20,46 @@ type IntegS2S = Pick<
   'id' | 'cliente_id' | 'status' | 'last_sync_at' | 'last_error'
 >;
 
+type HotmartFila = Pick<
+  ReportUtmIntegration,
+  'id' | 'cliente_id' | 'status' | 'config' | 'last_sync_at' | 'last_error'
+>;
+
+/** La fila de Hotmart sin `config`: del hottok solo sale si existe y su final. */
+function hotmartSegura(fila: HotmartFila | null): ReportUtmHotmartIntegracion | null {
+  if (!fila) return null;
+  const config = (fila.config ?? {}) as Record<string, unknown>;
+  const final = typeof config.hottok_final === 'string' ? config.hottok_final : null;
+  return {
+    id: fila.id,
+    cliente_id: fila.cliente_id,
+    status: fila.status,
+    last_sync_at: fila.last_sync_at,
+    last_error: fila.last_error,
+    hottok_configurado: typeof config.hottok_enc === 'string' && config.hottok_enc.length > 0,
+    hottok_final: final,
+  };
+}
+
 export interface DatosUtm {
   metaLeads: Integ | null;
   metaCapi: Integ | null;
   googleAds: Integ | null;
   ghl: Integ | null;
   s2s: IntegS2S | null;
-  hotmart: ReportUtmIntegration | null;
+  hotmart: ReportUtmHotmartIntegracion | null;
   outbound: unknown[];
   metaConnected: boolean;
   webhookOrigin: string;
   /** Slug del cliente en report_utm: es lo que se pega en el plugin de WordPress. */
   slug: string | null;
-  moneda: MonedaReporte;
+  /** Moneda efectiva, su origen (ajuste, Meta o defecto) y las monedas de Meta. */
+  moneda: MonedaResuelta;
   ultimasTasas: Partial<Record<MonedaReporte, TasaGuardada>>;
   reglaExclusion: ReglaExclusion;
   migracionExclusion: boolean;
+  /** ¿Está la migración 093 (duplicados al ingresar)? */
+  migracionDuplicados: boolean;
   goals: ClienteGoals;
   logoUrl?: string;
   accent?: string;
@@ -78,14 +103,13 @@ export const cargarDatosUtm = cache(
       moneda,
       ultimasTasas,
       migracionExclusion,
+      migracionDuplicados,
     ] = await Promise.all([
       supabase.from('clientes').select('slug, config').eq('id', rtmClienteId).maybeSingle(),
-      supabase
-        .from('integrations')
-        .select('*')
-        .eq('cliente_id', rtmClienteId)
-        .eq('tipo', 'hotmart')
-        .maybeSingle<ReportUtmIntegration>(),
+      // Nada de `select('*')`: iba entero a un componente de cliente, con
+      // `webhook_secret_enc` incluido. `config` se lee solo para derivar si hay
+      // hottok, y no sale de aquí (ver `hotmartSegura`).
+      integ('hotmart', 'id, cliente_id, status, config, last_sync_at, last_error'),
       integ('meta'),
       integ('google'),
       integ('s2s', 'id, cliente_id, status, last_sync_at, last_error'),
@@ -98,10 +122,11 @@ export const cargarDatosUtm = cache(
         )
         .eq('cliente_id', rtmClienteId)
         .order('created_at', { ascending: false }),
-      monedaDeClienteUtm(admin, rtmClienteId),
+      resolverMonedaDeClienteUtm(admin, rtmClienteId),
       // `fx_rates` vive en `public`: el cliente de arriba es el de report_utm.
       ultimasTasasGuardadas(admin),
       columnaExcluidoDisponible(supabase),
+      rpcDuplicadosDisponible(supabase),
     ]);
 
     // ¿Meta conectado? Token + cuenta en `public.clientes.config_api`: es la
@@ -137,7 +162,7 @@ export const cargarDatosUtm = cache(
       googleAds: (googleAds as Integ | null) ?? null,
       ghl: (ghl as Integ | null) ?? null,
       s2s: (s2s as IntegS2S | null) ?? null,
-      hotmart: hotmart ?? null,
+      hotmart: hotmartSegura(hotmart as HotmartFila | null),
       outbound: outbound ?? [],
       metaConnected,
       webhookOrigin: `${proto}://${host}`,
@@ -146,6 +171,7 @@ export const cargarDatosUtm = cache(
       ultimasTasas,
       reglaExclusion: leerRegla(config),
       migracionExclusion,
+      migracionDuplicados,
       goals: (config.goals ?? {}) as ClienteGoals,
       logoUrl: typeof config.logo_url === 'string' ? config.logo_url : undefined,
       accent: typeof config.accent === 'string' ? config.accent : undefined,

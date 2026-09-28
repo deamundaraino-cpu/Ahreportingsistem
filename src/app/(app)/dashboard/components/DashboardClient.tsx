@@ -69,6 +69,7 @@ import {
   Table2,
   CreditCard,
   ListChecks,
+  Coins,
 } from 'lucide-react';
 import type {
   ColDef,
@@ -94,8 +95,12 @@ import { RankingTableBlock } from './RankingTableBlock';
 import { LeadAnswerBlock } from './LeadAnswerBlock';
 import type { LeadAnswerDatasetLite } from '@/lib/dashboard/lead-answer-aggregation';
 import { refDeCubo, clavesYRefDelDia } from '@/lib/dashboard/lead-answer-row';
+import { refDeCuboHotmart, clavesHotmartYRefDelDia } from '@/lib/dashboard/hotmart-cubo-row';
+import type { HotmartCuboLite } from '@/lib/dashboard/hotmart-cubo';
+import { diasFueraDeCaptacion } from '@/lib/dashboard/rango-captacion';
 import { TabArchiveView } from './TabArchiveView';
 import { MonedaReporteProvider, useMonedaReporte } from './MonedaReporteContext';
+import { precioUsdEnFila, textoAvisoTasas, type AvisoTasas } from '@/lib/moneda-reporte';
 
 const SupportModule = dynamic(
   () => import('./SupportModule').then((m) => ({ default: m.SupportModule })),
@@ -156,6 +161,30 @@ function inyectarRespuestas(
   // permite que una tarjeta o una columna con `campaignFilter` propio recalcule
   // estas cifras en vez de arrastrar las de toda la pestaña. Ver lead-answer-row.
   return filas.map((row: any) => ({ ...row, ...clavesYRefDelDia(ref, String(row.fecha ?? '')) }));
+}
+
+/**
+ * Añade a cada fila las ventas de Hotmart POR CAMPAÑA (`hm_ventas`,
+ * `hm_compras`, `hm_neto`…), recortadas por el filtro de la pestaña.
+ *
+ * Mismo patrón y misma razón que `inyectarRespuestas`: el recorte lo decide la
+ * pestaña activa, y la fila se lleva el cubo por referencia para que una
+ * tarjeta o columna con `campaignFilter` propio lo vuelva a recortar. A
+ * diferencia de `ventas_*` —que son de toda la cuenta—, estas claves dividen
+ * bien entre el gasto filtrado de la pestaña.
+ */
+function inyectarHotmart(
+  filas: any[],
+  ds: HotmartCuboLite | null | undefined,
+  keyword: string | TabCampaignFilter,
+  campaignGroups: any[] | undefined
+): any[] {
+  const ref = refDeCuboHotmart(ds, keyword, campaignGroups);
+  if (!ref) return filas;
+  return filas.map((row: any) => ({
+    ...row,
+    ...clavesHotmartYRefDelDia(ref, String(row.fecha ?? '')),
+  }));
 }
 
 // ─── Helper Functions ────────────────────────────────────────────────────────
@@ -1017,17 +1046,23 @@ function DynamicDashboard({
     }));
   }
 
-  // Step 1: date-filter only (no campaign enrichment)
-  const baseRows = useMemo(() => {
-    let rows = metrics;
-    if (activeTabObj?.fecha_inicio) {
-      rows = rows.filter((m: any) => m.fecha >= activeTabObj.fecha_inicio);
-    }
-    if (activeTabObj?.fecha_finalizacion) {
-      rows = rows.filter((m: any) => m.fecha <= activeTabObj.fecha_finalizacion);
-    }
-    return rows;
-  }, [metrics, activeTabObj]);
+  // Step 1: las filas del calendario, SIN recortar a la ventana de captación de la
+  // pestaña. `fecha_inicio`/`fecha_finalizacion` son del presupuesto y el ritmo
+  // (`varContext`, `getTabTotalSpend`), no un filtro de datos: recortar aquí hacía
+  // que la pestaña dijera «1–28 sep» y pintara 1–23 sep, y que el período anterior
+  // (que nunca se recortó) comparara 28 días contra 23. Ver `rango-captacion.ts`.
+  const baseRows = metrics;
+
+  // Días del calendario fuera de la captación: solo para avisarlo en su tarjeta.
+  const diasFueraCaptacion = useMemo(
+    () =>
+      diasFueraDeCaptacion(
+        metrics.map((m: any) => m.fecha),
+        activeTabObj?.fecha_inicio,
+        activeTabObj?.fecha_finalizacion
+      ),
+    [metrics, activeTabObj]
+  );
 
   const allCampaignNames = useMemo(() => {
     const names = new Set<string>();
@@ -1101,6 +1136,17 @@ function DynamicDashboard({
       }
 
       const landingSessions = fb?.landing_sessions ?? 0;
+      // Precio público del funnel de la pestaña (bruta = precio × compras). Se
+      // configura en USD y el resto de la fila ya está en la moneda de reporte:
+      // se convierte con la tasa del DÍA; una fila sin tasa no aporta al
+      // promedio (`precioUsdEnFila`) en vez de colar dólares entre pesos. Y va
+      // con su par `__num`/`__den` porque es un PROMEDIO: sumarlo entre días
+      // daba precio × días (ver `PROMEDIOS_DE_FILA`).
+      const precio = precioUsdEnFila(
+        Number(activeTabObj?.hotmart_funnel?.principal_price_usd ?? 0),
+        row.tasa_cambio,
+        monedaReporte
+      );
       return {
         ...row,
         // Si hay landing pages configuradas, reemplazar ga_sessions con las sesiones del funnel
@@ -1108,8 +1154,13 @@ function DynamicDashboard({
         funnel_principal_count: fb?.principal?.count ?? 0,
         funnel_principal_neto: fb?.principal?.net ?? 0,
         funnel_principal_bruto: fb?.principal?.gross ?? 0,
-        // Precio público configurado en el funnel del tab (para calcular bruta = precio × count)
-        funnel_principal_price: Number(activeTabObj?.hotmart_funnel?.principal_price_usd ?? 0),
+        funnel_principal_price: precio.valor,
+        ...(precio.den !== undefined
+          ? {
+              funnel_principal_price__num: precio.num,
+              funnel_principal_price__den: precio.den,
+            }
+          : {}),
         funnel_bump_count: fb?.bump?.count ?? 0,
         funnel_bump_neto: fb?.bump?.net ?? 0,
         funnel_bump_bruto: fb?.bump?.gross ?? 0,
@@ -1124,8 +1175,21 @@ function DynamicDashboard({
       };
     });
 
-    return inyectarRespuestas(conFunnel, data.leadAnswers, effectiveKeyword, data.campaignGroups);
-  }, [baseRows, effectiveKeyword, activeTabObj, data.campaignGroups, data.leadAnswers]);
+    return inyectarHotmart(
+      inyectarRespuestas(conFunnel, data.leadAnswers, effectiveKeyword, data.campaignGroups),
+      data.hotmartCubo,
+      effectiveKeyword,
+      data.campaignGroups
+    );
+  }, [
+    baseRows,
+    effectiveKeyword,
+    activeTabObj,
+    data.campaignGroups,
+    data.leadAnswers,
+    data.hotmartCubo,
+    monedaReporte,
+  ]);
 
   // Previous period rows (no tab date filter needed — already a different date range)
   const prevFilteredMetrics = useMemo(() => {
@@ -1138,14 +1202,20 @@ function DynamicDashboard({
       )
     );
     // El periodo anterior recibe las MISMAS claves: sin esto, una tarjeta con
-    // `utm_leads` mostraría su delta contra cero y siempre diría "+100%".
-    return inyectarRespuestas(
-      enriched,
-      data.prevLeadAnswers,
+    // `utm_leads` (o `hm_*`) mostraría su delta contra cero y siempre diría "+100%".
+    return inyectarHotmart(
+      inyectarRespuestas(enriched, data.prevLeadAnswers, effectiveKeyword, data.campaignGroups),
+      data.prevHotmartCubo,
       effectiveKeyword,
       data.campaignGroups
     );
-  }, [prevMetrics, effectiveKeyword, data.campaignGroups, data.prevLeadAnswers]);
+  }, [
+    prevMetrics,
+    effectiveKeyword,
+    data.campaignGroups,
+    data.prevLeadAnswers,
+    data.prevHotmartCubo,
+  ]);
 
   /**
    * Las mismas filas que `baseRows`, pero con las claves de Report-UTM SIN el
@@ -1157,14 +1227,25 @@ function DynamicDashboard({
    * `rawMetrics` que no es raw y volvería a descuadrar en silencio.
    */
   const baseRowsConRespuestas = useMemo(
-    () => inyectarRespuestas(baseRows, data.leadAnswers, '', data.campaignGroups),
-    [baseRows, data.leadAnswers, data.campaignGroups]
+    () =>
+      inyectarHotmart(
+        inyectarRespuestas(baseRows, data.leadAnswers, '', data.campaignGroups),
+        data.hotmartCubo,
+        '',
+        data.campaignGroups
+      ),
+    [baseRows, data.leadAnswers, data.hotmartCubo, data.campaignGroups]
   );
 
   /** Referencia del cubo con el filtro de la pestaña, para las filas de relleno. */
   const refCuboPestana = useMemo(
     () => refDeCubo(data.leadAnswers, effectiveKeyword, data.campaignGroups),
     [data.leadAnswers, effectiveKeyword, data.campaignGroups]
+  );
+  /** Ídem para las ventas de Hotmart por campaña. */
+  const refHotmartPestana = useMemo(
+    () => refDeCuboHotmart(data.hotmartCubo, effectiveKeyword, data.campaignGroups),
+    [data.hotmartCubo, effectiveKeyword, data.campaignGroups]
   );
 
   /**
@@ -1182,6 +1263,20 @@ function DynamicDashboard({
       ...(data.leadAnswerCatalogo ?? []).filter((c: any) => !vistos.has(c.clave)),
     ];
   }, [data.leadAnswers, data.leadAnswerCatalogo]);
+
+  /**
+   * Inversión de la pestaña (Meta + TikTok, ya recortada por su filtro de
+   * campañas y sus fechas): es el numerador del «CPL por respuesta» del bloque
+   * de respuestas, igual que `total_spend` en una fórmula.
+   */
+  const inversionPestana = useMemo(
+    () =>
+      filteredMetrics.reduce(
+        (s: number, r: any) => s + (Number(r.meta_spend) || 0) + (Number(r.tiktok_spend) || 0),
+        0
+      ),
+    [filteredMetrics]
+  );
 
   const visibleCols = useMemo(() => {
     return activeLayout.columnas.filter((c: ColDef) => !c.hidden);
@@ -1421,6 +1516,15 @@ function DynamicDashboard({
               <p className="text-sm text-foreground font-semibold">
                 {fechaInicioStr} - {fechaFinStr}
               </p>
+              {diasFueraCaptacion > 0 && (
+                <p
+                  className="text-[11px] text-muted-foreground mt-1"
+                  title="Las cifras siguen al calendario. El rango de captación solo se usa para el presupuesto y los días faltantes."
+                >
+                  El calendario incluye {diasFueraCaptacion}{' '}
+                  {diasFueraCaptacion === 1 ? 'día' : 'días'} fuera de la captación
+                </p>
+              )}
             </div>
             <CalendarDays className="w-7 h-7 text-blue-500/50" />
           </CardContent>
@@ -1451,11 +1555,7 @@ function DynamicDashboard({
                   <p className="text-sm text-muted-foreground/70">Calculando...</p>
                 ) : (
                   <p className="text-lg md:text-xl font-bold text-emerald-600 dark:text-emerald-400 font-mono">
-                    $
-                    {rem.toLocaleString('en-US', {
-                      minimumFractionDigits: 0,
-                      maximumFractionDigits: 0,
-                    })}
+                    {formatValue(rem, { prefix: '$', decimals: 0, moneda: monedaReporte })}
                   </p>
                 )}
               </div>
@@ -1475,11 +1575,7 @@ function DynamicDashboard({
                   <p className="text-sm text-muted-foreground/70">Calculando...</p>
                 ) : (
                   <p className="text-lg md:text-xl font-bold text-indigo-600 dark:text-indigo-400 font-mono">
-                    $
-                    {dailyBudget.toLocaleString('en-US', {
-                      minimumFractionDigits: 0,
-                      maximumFractionDigits: 0,
-                    })}
+                    {formatValue(dailyBudget, { prefix: '$', decimals: 0, moneda: monedaReporte })}
                     /día
                   </p>
                 )}
@@ -1504,6 +1600,7 @@ function DynamicDashboard({
         onClose={() => setShowArchive(false)}
         onToggleArchived={handleToggleArchived}
         isTeam={isTeam}
+        availablePlatforms={platformSet}
       />
     );
   }
@@ -1836,6 +1933,10 @@ function DynamicDashboard({
                           pestanaNombre={activeTabObj?.nombre ?? 'Vista general'}
                           rangoLabel={`${searchParams.get('from') ?? ''} a ${searchParams.get('to') ?? ''}`.trim()}
                           filtroLabel={tabFilterLabel(activeTabObj?.keyword_meta)}
+                          inversion={inversionPestana}
+                          formatearMoneda={(n: number) =>
+                            formatValue(n, { prefix: '$', decimals: 0, moneda: monedaReporte })
+                          }
                         />
                       </SortableTable>
                     );
@@ -2182,6 +2283,8 @@ function DynamicDashboard({
                                       // estas claves ese día mostraba `—` en vez de sus contactos, que el
                                       // cubo sí conoce.
                                       ...clavesYRefDelDia(refCuboPestana, dayStr),
+                                      // Lo mismo con las ventas de Hotmart por campaña.
+                                      ...clavesHotmartYRefDelDia(refHotmartPestana, dayStr),
                                     };
                                     weekRows.push(raw);
 
@@ -2785,6 +2888,7 @@ export function DashboardClient({
   // importes (tarjetas, tablas, ranking, archivo, extras).
   return (
     <MonedaReporteProvider value={data.moneda ?? 'USD'}>
+      <AvisoTasasDashboard aviso={data.tasas ?? null} />
       <Suspense fallback={null}>
         <DynamicDashboard
           data={data}
@@ -2797,5 +2901,21 @@ export function DashboardClient({
         />
       </Suspense>
     </MonedaReporteProvider>
+  );
+}
+
+/**
+ * Días del rango cuyo dinero de Hotmart se convirtió sin la tasa de cambio de
+ * ese día (se usó la más cercana) o sin ninguna (quedó en USD). Discreto: la
+ * cifra es razonable, pero no es la tasa congelada de la venta.
+ */
+function AvisoTasasDashboard({ aviso }: { aviso: AvisoTasas | null }) {
+  const texto = textoAvisoTasas(aviso);
+  if (!texto) return null;
+  return (
+    <p className="mb-3 flex items-start gap-1.5 text-[11px] leading-snug text-muted-foreground">
+      <Coins className="h-3 w-3 shrink-0 mt-[1px]" />
+      <span>{texto}</span>
+    </p>
   );
 }

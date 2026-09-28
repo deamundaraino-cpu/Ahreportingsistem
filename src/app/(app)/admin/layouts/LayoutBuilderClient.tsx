@@ -270,6 +270,90 @@ const METRIC_CATALOG = [
       },
     ],
   },
+  // Las de arriba son de TODA la cuenta: en una pestaña filtrada por campaña
+  // dividen toda la facturación entre un gasto recortado. Estas se atribuyen a
+  // la campaña de cada venta y siguen el filtro de la pestaña y el de cada
+  // bloque. Mismos ids y definiciones que en los informes BI.
+  {
+    category: 'Hotmart · por campaña (sigue el filtro de la pestaña)',
+    color: 'pink',
+    metrics: [
+      {
+        id: 'hm_ventas',
+        label: 'Ventas (#)',
+        desc:
+          'Transacciones cobradas, atribuidas a la campaña por el UTM de la venta (o el heredado del lead del comprador). ' +
+          'Cada order bump y cada upsell cuenta como una venta aparte. Las ventas sin campaña identificada solo cuentan en pestañas sin filtro de campaña',
+      },
+      {
+        id: 'hm_compras',
+        label: 'Compras (#)',
+        desc: 'Pedidos cobrados, sin contar bumps ni upsells: es el número de compradores. Úsalo para el CPA',
+      },
+      { id: 'hm_bumps', label: 'Order bumps (#)', desc: 'Order bumps cobrados de la campaña' },
+      {
+        id: 'hm_reembolsos',
+        label: 'Reembolsos (#)',
+        desc: 'Ventas devueltas o con contracargo, imputadas a la fecha de la venta',
+      },
+      {
+        id: 'hm_neto',
+        label: 'Facturación neta ($)',
+        desc: 'Comisión del productor de las ventas cobradas de la campaña, convertida a la moneda de reporte del cliente con la tasa del día de cada venta',
+      },
+      {
+        id: 'hm_bruto',
+        label: 'Facturación bruta ($)',
+        desc: 'Precio pagado por el comprador, en la moneda de reporte del cliente',
+      },
+      {
+        id: 'hm_neto_reembolsado',
+        label: 'Neto reembolsado ($)',
+        desc: 'Neto de las ventas devueltas, en la moneda de reporte del cliente',
+      },
+      {
+        id: 'hm_roas',
+        label: 'ROAS',
+        desc: 'Facturación neta / inversión (Meta + TikTok) de las mismas campañas',
+      },
+      {
+        id: 'hm_cpa',
+        label: 'Costo por venta',
+        desc: 'Inversión / ventas. Los bumps cuentan como venta: para el costo por comprador usa el costo por compra',
+      },
+      {
+        id: 'hm_cpa_compra',
+        label: 'Costo por compra (CPA)',
+        desc: 'Inversión / compras: lo que cuesta conseguir un comprador',
+      },
+      { id: 'hm_ticket_medio', label: 'Ticket medio por venta', desc: 'Facturación neta / ventas' },
+      {
+        id: 'hm_ticket_compra',
+        label: 'Ticket medio por compra',
+        desc: 'Facturación neta / compras: lo que deja cada comprador, bumps incluidos',
+      },
+      {
+        id: 'hm_tasa_reembolso',
+        label: 'Tasa de reembolso %',
+        desc: 'Neto reembolsado / (neto + neto reembolsado) × 100',
+      },
+      {
+        id: 'hm_tasa_bump',
+        label: 'Tasa de order bump %',
+        desc: 'Order bumps / compras × 100',
+      },
+      {
+        id: 'hm_neto_usd',
+        label: 'Facturación neta (USD)',
+        desc: 'La facturación neta sin convertir, en dólares',
+      },
+      {
+        id: 'hm_bruto_usd',
+        label: 'Facturación bruta (USD)',
+        desc: 'La facturación bruta sin convertir, en dólares',
+      },
+    ],
+  },
   {
     category: 'Funnel Hotmart · Por pestaña',
     color: 'orange',

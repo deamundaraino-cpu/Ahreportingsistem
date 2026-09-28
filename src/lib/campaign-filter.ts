@@ -1,5 +1,6 @@
 import type { CampaignFilterOperator, CampaignFilterSpec, TabCampaignFilter } from './layout-types';
 import { reDerivarRespuestas } from './dashboard/lead-answer-row';
+import { reDerivarHotmart } from './dashboard/hotmart-cubo-row';
 
 /** Filtro admitido en todo el pipeline: string simple, un spec, o compuesto Y/O. */
 export type AnyCampaignFilter = string | CampaignFilterSpec | TabCampaignFilter | undefined;
@@ -191,6 +192,28 @@ export function tiktokRowIsIncomplete(row: any): boolean {
   return desgloseIncompleto(row?.tiktok_spend, row?.tiktok_campaigns);
 }
 
+/**
+ * Frecuencia de un conjunto de campañas: Σimpresiones ÷ Σalcance.
+ *
+ * Antes era la SUMA de las frecuencias de cada campaña (tres campañas con
+ * frecuencia 2 daban 6). La frecuencia es un cociente y no se suma: se
+ * recalcula sobre sus bases, igual que el BI (`bi-query.ts`). Una campaña
+ * antigua sin `reach` en el JSONB aporta el alcance que implica su propia
+ * frecuencia (impresiones ÷ frecuencia), para no caer a 0 por falta del campo.
+ */
+export function frecuenciaDeCampanas(campaigns: any[]): number {
+  let impresiones = 0;
+  let alcance = 0;
+  for (const c of campaigns) {
+    const impr = parseInt(c?.impressions || '0') || 0;
+    const reach = parseInt(c?.reach || '0') || 0;
+    const freq = parseFloat(c?.frequency || '0') || 0;
+    impresiones += impr;
+    alcance += reach > 0 ? reach : freq > 0 ? impr / freq : 0;
+  }
+  return alcance > 0 ? impresiones / alcance : 0;
+}
+
 export function enrichMetaRow(row: any, filter: AnyCampaignFilter, campaignGroups?: any[]): any {
   if (!row.meta_campaigns || !Array.isArray(row.meta_campaigns)) return row;
 
@@ -217,7 +240,7 @@ export function enrichMetaRow(row: any, filter: AnyCampaignFilter, campaignGroup
     meta_clicks: ri('clicks'),
     meta_link_clicks: ri('link_clicks'),
     meta_reach: ri('reach'),
-    meta_frequency: rf('frequency'),
+    meta_frequency: frecuenciaDeCampanas(matching),
     // Leads y conversiones estándar
     meta_leads: ri('leads'),
     meta_leads_form: ri('leads_form'),
@@ -345,6 +368,11 @@ export function applyCompoundFilter(
   // salía hundido sin ningún aviso.
   const leads = reDerivarRespuestas(out, campaignFilter);
   if (leads) out = { ...out, ...leads };
+  // Ventas de Hotmart por campaña (`hm_*`): mismo mecanismo y mismo motivo. Sin
+  // esto, `meta_spend / hm_compras` con filtro propio dividía el gasto de UNA
+  // campaña entre las compras de toda la pestaña.
+  const ventas = reDerivarHotmart(out, campaignFilter);
+  if (ventas) out = { ...out, ...ventas };
   return out;
 }
 

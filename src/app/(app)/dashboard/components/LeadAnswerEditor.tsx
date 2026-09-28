@@ -128,6 +128,18 @@ export function LeadAnswerEditor({
           />
           Ocultar respuestas sin leads
         </label>
+        <label
+          className="flex items-center gap-2 text-xs text-foreground/90"
+          title="Inversión de la pestaña ÷ leads de cada respuesta. El gasto no se reparte: es el costo de conseguir un lead de ese tipo con toda la inversión."
+        >
+          <input
+            type="checkbox"
+            checked={!!def.mostrarCpl}
+            onChange={(e) => patch({ mostrarCpl: e.target.checked })}
+            className="accent-sky-500"
+          />
+          Mostrar CPL por respuesta
+        </label>
       </div>
 
       <div>

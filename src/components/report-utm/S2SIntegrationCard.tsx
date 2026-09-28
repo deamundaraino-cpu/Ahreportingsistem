@@ -18,7 +18,7 @@ import { ACENTO } from './acento';
  * y saber si un sitio quedó atrás. Mantener en sync con RUTM_VERSION de
  * `wordpress-plugin/report-utm/report-utm.php` al regenerar el ZIP.
  */
-const PLUGIN_VERSION = '0.3.2';
+const PLUGIN_VERSION = '0.4.0';
 
 const ACCENT = ACENTO.badge;
 const ICON_BG = ACENTO.iconoFondo;

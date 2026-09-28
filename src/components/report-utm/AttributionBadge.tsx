@@ -13,6 +13,12 @@ const CONFIG = {
     cls: 'bg-blue-50 text-blue-700 dark:bg-blue-500/10 dark:text-blue-400',
     title: 'Cruzado por cookie de visitante. Multi-touch parcial.',
   },
+  lead: {
+    label: 'lead',
+    icon: Tag,
+    cls: 'bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400',
+    title: 'UTM e IDs heredados del último lead del contacto antes de la venta (ventas de GHL).',
+  },
   utm_only: {
     label: 'utm',
     icon: Tag,

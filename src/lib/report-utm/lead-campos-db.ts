@@ -12,8 +12,21 @@
  */
 
 import { fetchAllRows } from '@/lib/supabase-paginate';
-import { normalizarClaveLead, normalizarValorCrudo, esClaveOfrecible } from './lead-campos';
-import type { LeadCampoDef, LeadSegmentoDef, ClaveDetectada, CampoValorCrudo } from './lead-campos';
+import {
+  normalizarClaveLead,
+  normalizarValorCrudo,
+  esClaveOfrecible,
+  etiquetasDeCampo,
+} from './lead-campos';
+import type {
+  LeadCampoDef,
+  LeadSegmentoDef,
+  ClaveDetectada,
+  CampoValorCrudo,
+  TipoPregunta,
+} from './lead-campos';
+import { clavesDeRespuestas, reasignarClaves } from '@/lib/leads/respuestas/claves';
+import type { RespuestaClave } from '@/lib/leads/respuestas/claves';
 import { colombiaRangeBounds } from '@/lib/colombia-date';
 import { columnaExcluidoDisponible } from './lead-exclusion';
 
@@ -45,7 +58,27 @@ function toCampo(row: any): LeadCampoDef {
     max_valores: row.max_valores ?? 200,
     activo: row.activo !== false,
     orden: row.orden ?? 0,
+    respuestas: Array.isArray(row.respuestas) ? (row.respuestas as RespuestaClave[]) : [],
+    tipo: (row.tipo as TipoPregunta | null) ?? null,
+    sincronizar_opciones: row.sincronizar_opciones !== false,
   };
+}
+
+// ── ¿Está aplicada la 090? ────────────────────────────────────────────
+// La migración la aplica una persona. Hasta entonces se escribe como siempre:
+// sin `respuestas`, `tipo` ni `sincronizar_opciones`. Mismo patrón que
+// `columnasIdDisponibles` (lead-ids.ts).
+
+const REINTENTO_SIN_COLUMNAS_MS = 5 * 60_000;
+let columnas090: { disponible: boolean; ts: number } | null = null;
+
+export async function columnasRespuestasDisponibles(db: any): Promise<boolean> {
+  const ahora = Date.now();
+  if (columnas090 && (columnas090.disponible || ahora - columnas090.ts < REINTENTO_SIN_COLUMNAS_MS))
+    return columnas090.disponible;
+  const { error } = await db.from('lead_campos').select('respuestas').limit(1);
+  columnas090 = { disponible: !error, ts: ahora };
+  return !error;
 }
 
 /**
@@ -94,6 +127,8 @@ export interface LeadCampoInput {
   sin_mapear?: 'crudo' | 'otros' | 'ignorar';
   activo?: boolean;
   orden?: number;
+  tipo?: TipoPregunta | null;
+  sincronizar_opciones?: boolean;
 }
 
 /**
@@ -104,14 +139,14 @@ export interface LeadCampoInput {
 export async function saveLeadCampo(
   db: any,
   input: LeadCampoInput
-): Promise<{ error?: string; id?: string }> {
+): Promise<{ error?: string; id?: string; renombres?: Array<[string, string]> }> {
   const claves = Array.from(
     new Set((input.claves_origen ?? []).map(normalizarClaveLead).filter(Boolean))
   );
   if (!input.nombre?.trim()) return { error: 'El campo necesita un nombre.' };
   if (claves.length === 0) return { error: 'Selecciona al menos una pregunta de formulario.' };
 
-  const payload = {
+  const payload: Record<string, unknown> = {
     cliente_id: input.cliente_id,
     nombre: input.nombre.trim(),
     descripcion: input.descripcion?.trim() || null,
@@ -123,10 +158,54 @@ export async function saveLeadCampo(
     orden: input.orden ?? 0,
   };
 
+  // ── Claves de respuesta (090) y renombres ─────────────────────────
+  // Cada respuesta conserva su clave aunque el analista la renombre: es lo que
+  // tienen guardado las tarjetas (`lf__<campo>__<clave>`). Y los segmentos,
+  // que guardan ETIQUETAS, se reescriben en el mismo guardado; antes renombrar
+  // una respuesta los dejaba contando cero sin ningún aviso.
+  const anterior: LeadCampoDef | null = input.id
+    ? await db
+        .from('lead_campos')
+        .select('*')
+        .eq('id', input.id)
+        .maybeSingle()
+        .then(({ data }: any) => (data ? toCampo(data) : null))
+    : null;
+  const nuevo = {
+    valores_map: payload.valores_map as Record<string, string>,
+    valores_orden: payload.valores_orden as string[],
+    sin_mapear: payload.sin_mapear as LeadCampoDef['sin_mapear'],
+  };
+  const respuestasAnteriores: RespuestaClave[] = anterior
+    ? anterior.respuestas && anterior.respuestas.length > 0
+      ? anterior.respuestas
+      : // Sin claves guardadas (campo anterior a la 090): se congelan las que
+        // se estaban derivando, para que ninguna tarjeta cambie de significado.
+        (() => {
+          const et = etiquetasDeCampo(anterior);
+          const cl = clavesDeRespuestas(et);
+          return et.map((nombre, i) => ({ clave: cl[i], nombre }));
+        })()
+    : [];
+  const { respuestas, renombres } = reasignarClaves({
+    mapaAnterior: anterior?.valores_map ?? {},
+    mapaNuevo: nuevo.valores_map,
+    respuestasAnteriores,
+    etiquetasNuevas: etiquetasDeCampo(nuevo),
+  });
+
+  if (await columnasRespuestasDisponibles(db)) {
+    payload.respuestas = respuestas;
+    if (input.tipo !== undefined) payload.tipo = input.tipo;
+    if (input.sincronizar_opciones !== undefined)
+      payload.sincronizar_opciones = input.sincronizar_opciones;
+  }
+
   if (input.id) {
     const { error } = await db.from('lead_campos').update(payload).eq('id', input.id);
     if (error) return { error: error.message };
-    return { id: input.id };
+    if (renombres.size > 0) await renombrarEnSegmentos(db, input.id, renombres);
+    return { id: input.id, renombres: [...renombres.entries()] };
   }
 
   const { data, error } = await db
@@ -143,6 +222,37 @@ export async function saveLeadCampo(
     return { error: error.message };
   }
   return { id: data?.id };
+}
+
+/**
+ * Aplica los renombres de respuesta a los segmentos del campo: un segmento
+ * guarda las ETIQUETAS de sus respuestas, así que «Calificadas» → «Calificados»
+ * lo dejaba vacío. Nunca lanza: un fallo aquí no deshace el guardado del campo,
+ * pero se registra.
+ */
+async function renombrarEnSegmentos(
+  db: any,
+  campoId: string,
+  renombres: Map<string, string>
+): Promise<void> {
+  const { data, error } = await db
+    .from('lead_campo_segmentos')
+    .select('id, valores')
+    .eq('campo_id', campoId);
+  if (error) {
+    console.error('[lead-campos] no se pudieron leer los segmentos a renombrar:', error.message);
+    return;
+  }
+  for (const seg of (data ?? []) as { id: string; valores: string[] | null }[]) {
+    const antes = seg.valores ?? [];
+    const despues = [...new Set(antes.map((v) => renombres.get(v) ?? v))];
+    if (despues.length === antes.length && despues.every((v, i) => v === antes[i])) continue;
+    const { error: e } = await db
+      .from('lead_campo_segmentos')
+      .update({ valores: despues })
+      .eq('id', seg.id);
+    if (e) console.error('[lead-campos] no se pudo renombrar en el segmento', seg.id, e.message);
+  }
 }
 
 export async function deleteLeadCampo(db: any, id: string): Promise<{ error?: string }> {

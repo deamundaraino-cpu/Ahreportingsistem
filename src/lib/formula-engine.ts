@@ -1,7 +1,8 @@
 /**
  * Formula Engine — evaluates simple arithmetic formulas against a metric row.
  * Supports: +, -, *, / and references to raw DB columns.
- * Returns null when division by zero or any referenced value is missing (0).
+ * Returns null on division by zero, when a denominator has no data, or when every
+ * referenced value is missing (ver «Aritmética con dato faltante», más abajo).
  */
 import { filterCampaignList, type AnyCampaignFilter } from './campaign-filter';
 import { CLAVE_TASA_CAMBIO, decimalesDe } from './moneda-reporte';
@@ -119,7 +120,9 @@ export const FIELD_MAP: Record<string, string> = {
   funnel_principal_count: 'funnel_principal_count',
   funnel_principal_neto: 'funnel_principal_neto',
   funnel_principal_bruto: 'funnel_principal_bruto',
-  funnel_principal_price: 'funnel_principal_price', // precio público USD configurado en el tab
+  // Precio público del tab (configurado en USD), ya en la moneda de reporte y
+  // PROMEDIADO entre días, no sumado (ver `PROMEDIOS_DE_FILA`).
+  funnel_principal_price: 'funnel_principal_price',
   funnel_bump_count: 'funnel_bump_count',
   funnel_bump_neto: 'funnel_bump_neto',
   funnel_bump_bruto: 'funnel_bump_bruto',
@@ -184,7 +187,9 @@ export const MACRO_MAP: Record<string, string> = {
   meta_cost_per_thruplay: 'meta_spend / meta_video_thruplay',
   meta_cost_per_messaging_conversation: 'meta_spend / meta_messaging_conversations_started',
   meta_cost_per_result: 'meta_spend / meta_results',
-  meta_roas: '(ventas_principal + ventas_bump + ventas_upsell) / meta_spend',
+  // Incluye el DOWNSELL, como `total_roas` (auditoría del 2026-09-25): sin él,
+  // un cliente con downsell veía un ROAS de Meta más bajo que el real.
+  meta_roas: '(ventas_principal + ventas_bump + ventas_upsell + ventas_downsell) / meta_spend',
 
   // ── TikTok: macros derivadas ─────────────────────────────────────────
   tiktok_cpc: 'tiktok_spend / tiktok_clicks',
@@ -261,17 +266,63 @@ export const MACRO_MAP: Record<string, string> = {
   // ── Reembolsos ──────────────────────────────────────────────────────
   // Antes NO existían: la API se pedía filtrada a APPROVED+COMPLETE, así que
   // una venta devuelta contaba como facturación para siempre.
-  total_facturacion_neta_real:
-    '(ventas_principal + ventas_bump + ventas_upsell + ventas_downsell) - ventas_reembolsado',
+  //
+  // Auditoría del 2026-09-25: `ventas_*` YA excluye las ventas devueltas
+  // (`agregarDesdeHotmartVentas` solo suma las cobradas; lo devuelto va aparte a
+  // `ventas_reembolsado`). Restar `ventas_reembolsado` aquí lo descontaba DOS
+  // veces. La «neta real» es por tanto la neta; se conserva el id para no romper
+  // un layout que la tuviera.
+  total_facturacion_neta_real: 'ventas_principal + ventas_bump + ventas_upsell + ventas_downsell',
+  // Mismo motivo: el denominador tiene que ser lo facturado ANTES de devolver
+  // (neto cobrado + reembolsado), o devolver la mitad daba 100 %. Y en
+  // porcentaje (× 100), que es como lo formatea el catálogo; ningún layout
+  // guardado la usaba (inventario del 2026-09-25), así que nada la multiplicaba
+  // ya a mano. Misma definición que `hm_tasa_reembolso`.
   total_tasa_reembolso:
-    'ventas_reembolsado / (ventas_principal + ventas_bump + ventas_upsell + ventas_downsell)',
+    '(ventas_reembolsado / (ventas_principal + ventas_bump + ventas_upsell + ventas_downsell + ventas_reembolsado)) * 100',
 
   // ── Moneda de reporte: totales en dólares, sin convertir ────────────
   total_facturacion_neta_usd:
     'ventas_principal_usd + ventas_bump_usd + ventas_upsell_usd + ventas_downsell_usd',
   total_facturacion_bruta_usd:
     'ventas_principal_bruto_usd + ventas_bump_bruto_usd + ventas_upsell_bruto_usd + ventas_downsell_bruto_usd',
+
+  // ── Hotmart por campaña (`hm_*`): las derivadas del BI ──────────────
+  // Mismas definiciones que `derivadasHotmart` (hotmart/metricas.ts), para que
+  // `hm_cpa` diga lo mismo en una pestaña y en un informe. Las claves base las
+  // pone el cubo de ventas (`dashboard/hotmart-cubo.ts`) y siguen el filtro de
+  // campañas de la pestaña; el gasto es el de las dos plataformas, recortado por
+  // el mismo filtro. Todas empiezan por `hm_`: es lo que hace que el servidor
+  // sepa que tiene que cargar el cubo (`formulaUsaHotmart`).
+  //
+  // Una diferencia con el BI: aquí un ROAS con gasto y 0 ventas da 0 (con Hotmart
+  // conectado, 0 ventas es un dato), allí «—». Sin Hotmart conectado las claves
+  // `hm_*` no existen en la fila y la fórmula ya da null.
+  hm_roas: 'hm_neto / (meta_spend + tiktok_spend)',
+  // Por TRANSACCIÓN cobrada: bumps y upsells cuentan aparte. Para el costo de
+  // conseguir un comprador, `hm_cpa_compra`.
+  hm_cpa: '(meta_spend + tiktok_spend) / hm_ventas',
+  hm_cpa_compra: '(meta_spend + tiktok_spend) / hm_compras',
+  hm_ticket_medio: 'hm_neto / hm_ventas',
+  hm_ticket_compra: 'hm_neto / hm_compras',
+  // Sobre lo facturado ANTES de devolver: `hm_neto` ya excluye lo reembolsado.
+  hm_tasa_reembolso: '(hm_neto_reembolsado / (hm_neto + hm_neto_reembolsado)) * 100',
+  hm_tasa_bump: '(hm_bumps / hm_compras) * 100',
 };
+
+/**
+ * Métricas de fila que son un PROMEDIO y no un total: el motor las reagrega como
+ * Σ`__num` / Σ`__den` (ver `reagregarNoAditivas`).
+ *
+ * `funnel_principal_price` es el precio público del principal, configurado en la
+ * pestaña. Se inyecta en CADA fila (en la moneda de reporte, con la tasa del
+ * día), así que sumarlo daba precio × días, y `funnel_facturacion_bruta` de un
+ * mes salía treinta veces el precio por las compras.
+ */
+export const PROMEDIOS_DE_FILA: ReadonlySet<string> = new Set([
+  CLAVE_TASA_CAMBIO,
+  'funnel_principal_price',
+]);
 
 // ── Semantic Aliases ─────────────────────────────────────────────────────────
 // High-level metric names that can be mapped to different data sources per layout.
@@ -334,12 +385,16 @@ export const SEMANTIC_ALIASES: Record<
   '$funnel.principal_neto': {
     label: 'Funnel — Neto Principal',
     defaultSource: 'funnel_principal_neto',
-    options: [{ value: 'funnel_principal_neto', label: 'Funnel — Neto Principal (USD)' }],
+    options: [
+      { value: 'funnel_principal_neto', label: 'Funnel — Neto Principal (moneda del cliente)' },
+    ],
   },
   '$funnel.principal_bruto': {
     label: 'Funnel — Bruto Principal',
     defaultSource: 'funnel_principal_bruto',
-    options: [{ value: 'funnel_principal_bruto', label: 'Funnel — Bruto Principal (USD)' }],
+    options: [
+      { value: 'funnel_principal_bruto', label: 'Funnel — Bruto Principal (moneda del cliente)' },
+    ],
   },
   '$funnel.bump_count': {
     label: 'Funnel — # Order Bumps',
@@ -349,7 +404,9 @@ export const SEMANTIC_ALIASES: Record<
   '$funnel.bump_neto': {
     label: 'Funnel — Neto Order Bump',
     defaultSource: 'funnel_bump_neto',
-    options: [{ value: 'funnel_bump_neto', label: 'Funnel — Neto Order Bump (USD)' }],
+    options: [
+      { value: 'funnel_bump_neto', label: 'Funnel — Neto Order Bump (moneda del cliente)' },
+    ],
   },
   '$funnel.upsell_count': {
     label: 'Funnel — # Upsells',
@@ -359,7 +416,7 @@ export const SEMANTIC_ALIASES: Record<
   '$funnel.upsell_neto': {
     label: 'Funnel — Neto Upsell',
     defaultSource: 'funnel_upsell_neto',
-    options: [{ value: 'funnel_upsell_neto', label: 'Funnel — Neto Upsell (USD)' }],
+    options: [{ value: 'funnel_upsell_neto', label: 'Funnel — Neto Upsell (moneda del cliente)' }],
   },
   '$funnel.upsell_visits': {
     label: 'Funnel — Visitas Pág. Upsell',
@@ -443,8 +500,9 @@ export function resolveAliasesWithFallback(
       const metaAlt = config.options.find((o) => o.value.startsWith('meta_'));
       if (metaAlt) selected = metaAlt.value;
     } else if (selected.startsWith('ventas_') && !availablePlatforms.has('hotmart')) {
-      // ventas_* fields come from Hotmart commissions API — fallback to 0 implicitly
-      // (no Meta equivalent for revenue, just leave as-is so formula returns null gracefully)
+      // ventas_* fields come from Hotmart — no Meta equivalent for revenue. Se dejan
+      // tal cual: sin Hotmart conectado su 0 cuenta como «sin dato»
+      // (`plataformaAusente`), así que un ROAS da null («—») y no 0.
     }
 
     expr = expr.replaceAll(alias, selected);
@@ -489,43 +547,101 @@ function expandFormulaRecursive(
   return expr;
 }
 
+// ── Aritmética con «dato faltante» ─────────────────────────────────────────
+//
+// Hasta el 2026-09-28 un campo sin dato valía 0, así que un ROAS sin Hotmart
+// conectado salía «0.00x» (0 ÷ gasto) donde el BI y la doc 09 dicen «—». El
+// evaluador arrastra ahora, junto al número, de dónde sale:
+//
+//   · `const`    — un literal de la fórmula (el `* 100` de un porcentaje).
+//   · `dato`     — al menos un campo con valor real (0 incluido: 0 leads es 0).
+//   · `faltante` — solo campos sin dato (el marcador `M` en la expresión).
+//
+// Reglas, pensadas para no romper las fórmulas donde el 0 es legítimo:
+//
+//   · `a + b`, `a − b`, `a × b`: faltante solo si LOS DOS lados lo son. Un
+//     `meta_spend + tiktok_spend` sin TikTok sigue siendo el gasto de Meta.
+//     Un literal no «rescata» a un faltante: `(x / y) * 100` sigue faltante.
+//   · `a ÷ b`: si el DENOMINADOR es faltante, la fórmula entera es null (dividir
+//     entre algo que no se midió no da un número). Si el numerador es faltante,
+//     el cociente también (ROAS sin ventas medibles = «—», no 0).
+//   · Resultado faltante → null («—»).
+
+/** Marcador de campo sin dato dentro de la expresión saneada. */
+const MARCA_FALTANTE = 'M';
 /**
- * Safely evaluates a pure arithmetic expression (digits, spaces, + - * / . ( )).
+ * Prefijo del valor de un campo CON dato (`D12.5`). Sin él, el número de un
+ * campo sería indistinguible de un literal de la fórmula, y `gasto + M` se
+ * leería como «constante + faltante» = faltante.
+ */
+const MARCA_DATO = 'D';
+
+type Procedencia = 'const' | 'dato' | 'faltante';
+interface Valor {
+  n: number;
+  p: Procedencia;
+}
+
+/** Procedencia de `a op b` para + − ×. */
+function combinar(a: Procedencia, b: Procedencia): Procedencia {
+  if (a === 'const') return b;
+  if (b === 'const') return a;
+  return a === 'faltante' && b === 'faltante' ? 'faltante' : 'dato';
+}
+
+/** Señal interna: un denominador sin dato anula la fórmula entera. */
+class DenominadorFaltante extends Error {}
+
+/**
+ * Safely evaluates a pure arithmetic expression (digits, spaces, + - * / . ( ),
+ * the missing-value marker `M` and the field-value prefix `D`).
  * Replaces `new Function`/`eval`, which are blocked by the production CSP
  * (script-src has no 'unsafe-eval'). The caller MUST sanitize the input to the
  * allowed character set before calling this. Recursive-descent parser with
- * standard precedence and unary +/-. Returns NaN on malformed input.
+ * standard precedence and unary +/-. Returns NaN on malformed input and null
+ * when the result is not measurable (see the rules above).
  */
-function safeEvalArithmetic(input: string): number {
+function safeEvalArithmetic(input: string): number | null {
   const s = input;
   let i = 0;
   const skipWs = () => {
     while (i < s.length && s[i] === ' ') i++;
   };
 
-  const parseExpression = (): number => {
+  const parseExpression = (): Valor => {
     let left = parseTerm();
     skipWs();
     while (i < s.length && (s[i] === '+' || s[i] === '-')) {
       const op = s[i++];
       const right = parseTerm();
-      left = op === '+' ? left + right : left - right;
+      left = {
+        n: op === '+' ? left.n + right.n : left.n - right.n,
+        p: combinar(left.p, right.p),
+      };
       skipWs();
     }
     return left;
   };
-  const parseTerm = (): number => {
+  const parseTerm = (): Valor => {
     let left = parseFactor();
     skipWs();
     while (i < s.length && (s[i] === '*' || s[i] === '/')) {
       const op = s[i++];
       const right = parseFactor();
-      left = op === '*' ? left * right : left / right;
+      if (op === '*') {
+        left = { n: left.n * right.n, p: combinar(left.p, right.p) };
+      } else {
+        if (right.p === 'faltante') throw new DenominadorFaltante();
+        left = {
+          n: left.n / right.n,
+          p: left.p === 'faltante' ? 'faltante' : combinar(left.p, right.p),
+        };
+      }
       skipWs();
     }
     return left;
   };
-  const parseFactor = (): number => {
+  const parseFactor = (): Valor => {
     skipWs();
     if (s[i] === '+') {
       i++;
@@ -533,7 +649,8 @@ function safeEvalArithmetic(input: string): number {
     }
     if (s[i] === '-') {
       i++;
-      return -parseFactor();
+      const v = parseFactor();
+      return { n: -v.n, p: v.p };
     }
     if (s[i] === '(') {
       i++;
@@ -542,17 +659,84 @@ function safeEvalArithmetic(input: string): number {
       if (s[i] === ')') i++;
       return val;
     }
+    if (s[i] === MARCA_FALTANTE) {
+      i++;
+      return { n: 0, p: 'faltante' };
+    }
+    if (s[i] === MARCA_DATO) {
+      i++;
+      let signo = 1;
+      if (s[i] === '-') {
+        signo = -1;
+        i++;
+      }
+      const inicio = i;
+      while (i < s.length && ((s[i] >= '0' && s[i] <= '9') || s[i] === '.')) i++;
+      if (i === inicio) return { n: NaN, p: 'dato' };
+      return { n: signo * parseFloat(s.slice(inicio, i)), p: 'dato' };
+    }
     const start = i;
     while (i < s.length && ((s[i] >= '0' && s[i] <= '9') || s[i] === '.')) i++;
-    if (i === start) return NaN;
-    return parseFloat(s.slice(start, i));
+    if (i === start) return { n: NaN, p: 'const' };
+    return { n: parseFloat(s.slice(start, i)), p: 'const' };
   };
 
-  const result = parseExpression();
+  let result: Valor;
+  try {
+    result = parseExpression();
+  } catch (e) {
+    if (e instanceof DenominadorFaltante) return null;
+    throw e;
+  }
   skipWs();
   // Trailing unparsed characters → malformed
   if (i !== s.length) return NaN;
-  return result;
+  if (result.p === 'faltante') return null;
+  return result.n;
+}
+
+/**
+ * Un número como texto SIN notación exponencial.
+ *
+ * `String(1e-7)` es `"1e-7"`, y la `e` no pasa la validación de caracteres
+ * seguros: la fórmula entera devolvía null. Pasaba con cualquier valor muy
+ * pequeño (una tasa invertida, un ratio de microcéntimos) o enorme.
+ */
+export function numeroSinExponente(v: number): string {
+  const s = String(v);
+  if (!/e/i.test(s)) return s;
+  if (Math.abs(v) < 1) {
+    // 20 decimales: por debajo de 1e-20 el valor ya no mueve ninguna cifra que
+    // se muestre. Los ceros de cola se recortan para no alargar la expresión.
+    return v.toFixed(20).replace(/0+$/, '').replace(/\.$/, '') || '0';
+  }
+  // ≥ 1e21: `toFixed` también usa exponente; BigInt da los dígitos enteros.
+  return BigInt(Math.round(v)).toString();
+}
+
+/**
+ * Plataformas de las que dependen columnas de `metricas_diarias` que existen
+ * (con DEFAULT 0) aunque el cliente no tenga la integración. Sin la plataforma,
+ * su 0 no es «cero ventas» sino «no se mide»: cuenta como faltante. Un valor
+ * distinto de 0 se respeta siempre (es un dato, venga de donde venga).
+ *
+ * `hm_*` NO está: lo pone el cubo de ventas solo cuando existe, y ahí 0 ventas
+ * sí es un dato. Tampoco `meta_*`: Meta es la plataforma base de todo cliente.
+ */
+const PREFIJOS_DE_PLATAFORMA: [string, string][] = [
+  ['ventas_', 'hotmart'],
+  ['hotmart_', 'hotmart'],
+  ['funnel_', 'hotmart'],
+  ['ga_', 'ga4'],
+  ['tiktok_', 'tiktok'],
+];
+
+function plataformaAusente(field: string, availablePlatforms: Set<string> | undefined): boolean {
+  if (!availablePlatforms) return false;
+  for (const [prefijo, plataforma] of PREFIJOS_DE_PLATAFORMA) {
+    if (field.startsWith(prefijo)) return !availablePlatforms.has(plataforma);
+  }
+  return false;
 }
 
 /**
@@ -619,6 +803,32 @@ export function limpiarCacheDeFormulas(): void {
   _exprCache.clear();
 }
 
+/**
+ * Texto que sustituye a un campo en la expresión: su número (sin exponente) o
+ * el marcador de faltante.
+ *
+ * Faltante = el contexto no lo da y la fila lo trae como `null`/no numérico, o
+ * es una columna de una plataforma que el cliente no tiene y vale 0. Un campo
+ * del catálogo que la fila simplemente NO trae sigue valiendo 0: las filas de
+ * un día sin conversiones offline no llevan `offline_*`, y ahí 0 es el dato.
+ */
+function valorDeCampo(
+  field: string,
+  row: Record<string, any>,
+  context: Record<string, number>,
+  availablePlatforms: Set<string> | undefined
+): string {
+  if (context[field] !== undefined) return MARCA_DATO + numeroSinExponente(context[field]);
+  const crudo = row[field];
+  if (crudo === undefined) {
+    return plataformaAusente(field, availablePlatforms) ? MARCA_FALTANTE : `${MARCA_DATO}0`;
+  }
+  const n = crudo === null || crudo === '' ? NaN : parseFloat(crudo);
+  if (!Number.isFinite(n)) return MARCA_FALTANTE;
+  if (n === 0 && plataformaAusente(field, availablePlatforms)) return MARCA_FALTANTE;
+  return MARCA_DATO + numeroSinExponente(n);
+}
+
 export function evaluateFormula(
   formula: string,
   row: Record<string, any>,
@@ -655,30 +865,27 @@ export function evaluateFormula(
     });
 
     for (const [field] of Object.entries(allFields)) {
-      let val = 0;
-      if (context[field] !== undefined) {
-        val = context[field];
-      } else {
-        val = parseFloat(row[field] ?? '0') || 0;
-      }
       // Use word boundary-safe replacement to avoid partial matches
       const regex = new RegExp(`\\b${field}\\b`, 'g');
-      expr = expr.replaceAll(regex, val.toString());
+      if (!regex.test(expr)) continue;
+      regex.lastIndex = 0;
+      expr = expr.replaceAll(regex, valorDeCampo(field, row, context, availablePlatforms));
     }
 
     // Replace any remaining meta_custom_* identifiers with 0
     // (custom conversions referenced in formulas but absent from the row default to 0)
-    expr = expr.replace(/\bmeta_custom_\w+\b/g, '0');
+    expr = expr.replace(/\bmeta_custom_\w+\b/g, `${MARCA_DATO}0`);
 
     // Only allow safe characters: digits, operators, spaces, parentheses, dots
-    if (!/^[\d\s\+\-\*\/\.\(\)]+$/.test(expr)) return null;
+    // and the value markers (`M` faltante, `D` dato; ver `safeEvalArithmetic`).
+    if (!/^[\d\s\+\-\*\/\.\(\)MD]+$/.test(expr)) return null;
 
     // Evaluate WITHOUT eval/new Function — the production CSP (script-src sin
     // 'unsafe-eval') bloquea new Function y haría que toda métrica calculada
     // devolviera null ("–"). safeEvalArithmetic parsea la expresión saneada.
     const result = safeEvalArithmetic(expr);
-    if (!isFinite(result) || isNaN(result)) return null;
-    return result as number;
+    if (result === null || !isFinite(result) || isNaN(result)) return null;
+    return result;
   } catch {
     return null;
   }
@@ -702,7 +909,7 @@ export function aggregateFormula(
   if (rows.length === 0 && Object.keys(context).length === 0) return null;
 
   // Accumulate all known fields into a single total row
-  const totalRow: Record<string, number> = {};
+  const totalRow: Record<string, number | null> = {};
 
   // Collect all unique fields from FIELD_MAP and all rows (for dynamic custom fields)
   const allKnownFields = new Set(Object.keys(FIELD_MAP));
@@ -722,7 +929,24 @@ export function aggregateFormula(
   });
 
   for (const field of allKnownFields) {
-    totalRow[field] = rows.reduce((sum, r) => sum + (parseFloat(r[field] ?? '0') || 0), 0);
+    // Se suman los valores que hay. Si NINGUNA fila trae un número y alguna lo
+    // trae como `null`, el total es `null` (faltante, ver `valorDeCampo`): el
+    // rango entero no tiene ese dato, y sumarlo como 0 lo afirmaría.
+    let suma = 0;
+    let conNumero = false;
+    let conNulo = false;
+    for (const r of rows) {
+      const crudo = r[field];
+      if (crudo === undefined) continue;
+      const n = crudo === null || crudo === '' ? NaN : parseFloat(crudo);
+      if (Number.isFinite(n)) {
+        suma += n;
+        conNumero = true;
+      } else {
+        conNulo = true;
+      }
+    }
+    totalRow[field] = !conNumero && conNulo ? null : suma;
   }
 
   // Sumar no vale para promedios ni extremos: se recalculan sobre sus sumandos.
@@ -746,28 +970,38 @@ export function aggregateFormula(
  * importes pero no para un promedio (30, 32, 28 → 90 en vez de 30). Los campos
  * de Sheet resuelven esto llevando sus sumandos dentro de la propia fila
  * (`sf_x__num` / `sf_x__den`, o `__min` / `__max`), así que aquí basta con
- * detectarlos por el nombre y recalcular.
+ * detectarlos por el nombre y recalcular. Igual las columnas de porcentaje de
+ * las conversiones offline (`sheet_x__num` / `sheet_x__den`, ponderadas por la
+ * cantidad de la fila; ver `agruparOfflinePorFecha`).
  *
- * Deliberadamente acotado a `sf_`/`sv_` y a `tasa_cambio` (que nace con su par
- * `__num`/`__den` en `convertirFilasMetricas`): cualquier otra métrica queda
- * EXACTAMENTE como estaba. Eso incluye `meta_frequency`, `ga_bounce_rate` y
- * `ga_avg_session_duration`, que hoy también se suman mal — corregirlas cambiaría
- * cifras de dashboards que los clientes ya dieron por buenas, y es una decisión
- * aparte.
+ * Hasta el 2026-09-28 `meta_frequency`, `ga_bounce_rate`,
+ * `ga_avg_session_duration` y `tasa_calificacion` se quedaban SUMADAS (la
+ * frecuencia de 30 días era la suma de 30 frecuencias diarias). Se había dejado
+ * así para no mover cifras publicadas; el usuario decidió corregirlas y avisar a
+ * los clientes. Ahora se recalculan como en el BI (`bi-query.ts`):
+ *
+ *   · frecuencia = impresiones ÷ alcance. El alcance sigue siendo la SUMA de los
+ *     alcances diarios (las personas únicas del rango no se pueden reconstruir
+ *     desde filas diarias), igual que en el BI;
+ *   · rebote y duración media = promedio ponderado por `ga_sessions`;
+ *   · tasa de calificación = calificados ÷ totales × 100.
+ *
+ * Sin base (alcance 0, sesiones 0) el valor queda `null`: «—», no 0.
  */
 export function reagregarNoAditivas(
-  totalRow: Record<string, number>,
+  totalRow: Record<string, number | null>,
   rows: Record<string, unknown>[]
 ): void {
   const esCampoDeSheet = (base: string) => base.startsWith('sf_') || base.startsWith('sv_');
-  const esPromedio = (base: string) => esCampoDeSheet(base) || base === CLAVE_TASA_CAMBIO;
+  const esPromedio = (base: string) =>
+    esCampoDeSheet(base) || base.startsWith('sheet_') || PROMEDIOS_DE_FILA.has(base);
 
   for (const clave of Object.keys(totalRow)) {
     // Promedio: Σnumerador / Σdenominador, correcto a cualquier grano.
     if (clave.endsWith('__den')) {
       const base = clave.slice(0, -'__den'.length);
       if (!esPromedio(base)) continue;
-      const den = totalRow[clave];
+      const den = totalRow[clave] ?? 0;
       totalRow[base] = den > 0 ? (totalRow[base + '__num'] ?? 0) / den : 0;
       continue;
     }
@@ -782,6 +1016,52 @@ export function reagregarNoAditivas(
       const vals = rows.map((r) => Number(r[clave])).filter((n) => Number.isFinite(n));
       totalRow[base] = vals.length > 0 ? (esMin ? Math.min(...vals) : Math.max(...vals)) : 0;
     }
+  }
+
+  reagregarTasasDeFila(totalRow, rows);
+}
+
+/** Número de una celda, o null si no trae uno. */
+function numeroDe(v: unknown): number | null {
+  if (v === null || v === undefined || v === '') return null;
+  const n = typeof v === 'number' ? v : parseFloat(String(v));
+  return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * Frecuencia, tasas de GA4 y tasa de calificación sobre un total (ver
+ * `reagregarNoAditivas`). Exportada aparte para quien suma filas por su cuenta
+ * (la consolidación del ranking) y necesita el mismo recálculo.
+ */
+export function reagregarTasasDeFila(
+  totalRow: Record<string, number | null>,
+  rows: Record<string, unknown>[]
+): void {
+  if ('meta_frequency' in totalRow) {
+    const reach = totalRow.meta_reach ?? 0;
+    totalRow.meta_frequency = reach > 0 ? (totalRow.meta_impressions ?? 0) / reach : null;
+  }
+
+  // Ponderadas por sesiones: se acumula tasa × sesiones de CADA fila; sumar la
+  // tasa y multiplicar después daría otro número.
+  for (const clave of ['ga_bounce_rate', 'ga_avg_session_duration'] as const) {
+    if (!(clave in totalRow)) continue;
+    let num = 0;
+    let den = 0;
+    for (const r of rows) {
+      const tasa = numeroDe(r[clave]);
+      const sesiones = numeroDe(r.ga_sessions);
+      if (tasa === null || sesiones === null || sesiones <= 0) continue;
+      num += tasa * sesiones;
+      den += sesiones;
+    }
+    totalRow[clave] = den > 0 ? num / den : null;
+  }
+
+  if ('tasa_calificacion' in totalRow) {
+    const totales = totalRow.leads_totales ?? 0;
+    totalRow.tasa_calificacion =
+      totales > 0 ? ((totalRow.leads_calificados ?? 0) / totales) * 100 : null;
   }
 }
 
@@ -832,12 +1112,18 @@ export function formatValue(
   // otra moneda se pinta su código y sus decimales («CLP 233.487»); en dólares,
   // exactamente igual que siempre. Un prefijo `USD ` (gemelas sin convertir) no
   // se toca.
+  //
+  // En otra moneda, además, con los separadores del BI (es-AR, «CLP 233.487»,
+  // igual que `formatearMoneda`): la misma cifra no debe leerse distinta en un
+  // informe y en una pestaña. En dólares no cambia nada.
   const moneda = String(opts.moneda || 'USD').toUpperCase();
+  let locale = 'en-US';
   if (prefix === '$' && moneda !== 'USD') {
     prefix = `${moneda} `;
     decimals = decimalesDe(moneda);
+    locale = 'es-AR';
   }
-  const formatted = value.toLocaleString('en-US', {
+  const formatted = value.toLocaleString(locale, {
     minimumFractionDigits: decimals,
     maximumFractionDigits: decimals,
   });

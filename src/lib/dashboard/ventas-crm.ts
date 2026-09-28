@@ -10,24 +10,47 @@
  * sin tocarlo.
  *
  * Es aditivo: con cero ventas del CRM las filas no cambian.
+ *
+ * ── Mismo criterio que el BI (2026-09-28) ───────────────────────
+ * Antes contaba solo `platform = 'gohighlevel'`, fechaba por `sale_timestamp`
+ * y cortaba en 10.000 filas sin avisar, mientras el BI (`queryReportUtmSales` de
+ * `bi-query.ts`) cuenta TODA plataforma que no sea Hotmart, fecha por
+ * `created_at` y pagina. Un mismo cliente enseñaba dos cifras de ventas según la
+ * pantalla. Ahora es el criterio del BI: `status = 'approved'`,
+ * `platform <> 'hotmart'` (Hotmart se cuenta en su propia fuente, convertida y
+ * con reembolsos), día Colombia de `created_at` y paginación por keyset. Las
+ * ventas de GHL guardan `created_at` = instante del cierre (`ghl-ventas.ts`), así
+ * que fechar por él no las mueve de día.
  */
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-import { colombiaDateOf, colombiaRangeBounds } from '@/lib/colombia-date';
+import { colombiaDateOf, colombiaRangeBounds, colombiaToday } from '@/lib/colombia-date';
+import { fetchAllRows } from '@/lib/supabase-paginate';
+
+/** Suelo del rango «todo»: el mismo `2020-01-01` que usa el resto del dashboard. */
+const INICIO_TODO = '2020-01-01';
 
 export const CLAVE_CRM_VENTAS = 'crm_ventas';
 export const CLAVE_CRM_REVENUE = 'crm_revenue';
 
 export type VentasCrmDia = { ventas: number; importe: number };
 
-/** Agrega por día Colombia. Puro. */
+/**
+ * Agrega por día Colombia de `created_at`, el campo con el que fecha el BI.
+ * `sale_timestamp`/`received_at` quedan de respaldo para filas sin él. Puro.
+ */
 export function agruparVentasCrm(
-  filas: Array<{ sale_timestamp?: string | null; received_at?: string | null; amount?: unknown }>
+  filas: Array<{
+    created_at?: string | null;
+    sale_timestamp?: string | null;
+    received_at?: string | null;
+    amount?: unknown;
+  }>
 ): Map<string, VentasCrmDia> {
   const out = new Map<string, VentasCrmDia>();
   for (const f of filas) {
-    const ts = f.sale_timestamp ?? f.received_at;
+    const ts = f.created_at ?? f.sale_timestamp ?? f.received_at;
     if (!ts) continue;
     const dia = colombiaDateOf(new Date(ts));
     const cur = out.get(dia) ?? { ventas: 0, importe: 0 };
@@ -63,7 +86,10 @@ export function inyectarVentasCrm<T extends Record<string, any>>(
   return out.sort((a, b) => String(a.fecha).localeCompare(String(b.fecha)));
 }
 
-/** Lee las ventas aprobadas del CRM del cliente del reporting en el rango. */
+/**
+ * Lee las ventas aprobadas de `sales_events` (todo menos Hotmart) del cliente
+ * del reporting en el rango. `desde = 'all'` se acota a [2020-01-01, hasta].
+ */
 export async function cargarVentasCrmPorDia(
   db: any,
   publicId: string,
@@ -79,17 +105,26 @@ export async function cargarVentasCrmPorDia(
   const rtmId = espejo?.[0]?.id as string | undefined;
   if (!rtmId) return new Map();
 
-  let q = rtm
-    .from('sales_events')
-    .select('sale_timestamp, received_at, amount')
-    .eq('cliente_id', rtmId)
-    .eq('platform', 'gohighlevel')
-    .eq('status', 'approved');
-  if (desde !== 'all') {
-    const b = colombiaRangeBounds(desde, hasta);
-    q = q.gte('sale_timestamp', b.gte).lt('sale_timestamp', b.lt);
-  }
-  const { data, error } = await q.limit(10_000);
-  if (error) return new Map();
-  return agruparVentasCrm(data ?? []);
+  const esFecha = (v: string) => /^\d{4}-\d{2}-\d{2}$/.test(v);
+  const inicio = desde === 'all' || !esFecha(desde) ? INICIO_TODO : desde;
+  const fin = esFecha(hasta) ? hasta : colombiaToday();
+  const b = colombiaRangeBounds(inicio, fin);
+
+  // Estricto: un recuento parcial con pinta de definitivo es peor que nada, y
+  // quien llama ya convierte el fallo en «sin ventas del CRM».
+  const data = await fetchAllRows(
+    () =>
+      rtm
+        .from('sales_events')
+        .select('id, created_at, amount')
+        .eq('cliente_id', rtmId)
+        .neq('platform', 'hotmart')
+        .eq('status', 'approved')
+        .gte('created_at', b.gte)
+        .lt('created_at', b.lt),
+    1000,
+    200_000,
+    { estricto: true }
+  );
+  return agruparVentasCrm(data as Array<{ created_at?: string | null; amount?: unknown }>);
 }

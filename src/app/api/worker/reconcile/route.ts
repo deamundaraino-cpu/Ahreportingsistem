@@ -1,7 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { NextResponse } from 'next/server';
 import { requireCronAuth } from '@/lib/cron-auth';
-import { metaFetch, tiktokFetch, setRetryDeadline } from '@/lib/rate-limit';
+import { conDeadline, metaFetch, tiktokFetch, setRetryDeadline } from '@/lib/rate-limit';
 import {
   construirResumen,
   normalizarFilas,
@@ -10,6 +10,7 @@ import {
 } from '@/lib/sync/reconcile';
 import { enqueueJob } from '@/lib/sync/queue';
 import { colombiaToday } from '@/lib/date-utils';
+import { trocearRangoDias } from '@/lib/tiktok/rangos';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -32,7 +33,8 @@ export const maxDuration = 60;
  * reencolan SOLO los días divergentes agrupados en rangos contiguos.
  *
  *   Meta   → level=account, fields=spend, time_increment=1
- *   TikTok → data_level=AUCTION_ADVERTISER, dimensions=[stat_time_day]
+ *   TikTok → data_level=AUCTION_ADVERTISER, dimensions=[stat_time_day], en
+ *            ventanas de ≤30 días (TikTok rechaza rangos diarios más largos)
  *
  *   GET|POST /api/worker/reconcile?client_id=<uuid>&start=&end=&heal=1&platforms=meta,tiktok
  *
@@ -138,49 +140,69 @@ async function fetchAdvertiserSpend(
 ): Promise<{ dias: AccountDaySpend[]; ok: boolean }> {
   const porFecha = new Map<string, number>();
   let ok = true;
+  // Ventanas que fallaron en alguna cuenta. Sus días se descartan al final: con
+  // varias cuentas, un día con solo parte de ellas parecería una divergencia
+  // real y `heal` lo re-descargaría para nada.
+  const fallidas: Array<{ start: string; end: string }> = [];
+  // La misma cuenta repetida en la config sumaría su gasto dos veces.
+  const vistas = new Set<string>();
 
   for (const { advertiser_id, token } of accounts) {
-    const url = new URL('https://business-api.tiktok.com/open_api/v1.3/report/integrated/get/');
-    url.searchParams.append('advertiser_id', advertiser_id);
-    url.searchParams.append('report_type', 'BASIC');
-    url.searchParams.append('data_level', 'AUCTION_ADVERTISER');
-    url.searchParams.append('dimensions', JSON.stringify(['stat_time_day']));
-    url.searchParams.append('metrics', JSON.stringify(['spend']));
-    url.searchParams.append('start_date', start);
-    url.searchParams.append('end_date', end);
+    if (vistas.has(advertiser_id)) continue;
+    vistas.add(advertiser_id);
+    // TikTok rechaza rangos diarios de más de 30 días: los 120 por defecto se
+    // piden en ventanas (ver `trocearRangoDias`).
+    for (const ventana of trocearRangoDias(start, end)) {
+      const url = new URL('https://business-api.tiktok.com/open_api/v1.3/report/integrated/get/');
+      url.searchParams.append('advertiser_id', advertiser_id);
+      url.searchParams.append('report_type', 'BASIC');
+      url.searchParams.append('data_level', 'AUCTION_ADVERTISER');
+      url.searchParams.append('dimensions', JSON.stringify(['stat_time_day']));
+      url.searchParams.append('metrics', JSON.stringify(['spend']));
+      url.searchParams.append('start_date', ventana.start);
+      url.searchParams.append('end_date', ventana.end);
 
-    let page = 1;
-    let totalPage = 1;
-    try {
-      do {
-        const u = new URL(url.toString());
-        u.searchParams.set('page', String(page));
-        u.searchParams.set('page_size', String(1000));
-        const res = await tiktokFetch(u.toString(), { headers: { 'Access-Token': token } });
-        const json = await res.json();
-        // TikTok responde 200 con `code` distinto de 0 en los errores.
-        if (json?.code !== 0 || !json?.data) {
-          log(
-            `[reconcile] TikTok ${advertiser_id} error: ${json?.message ?? JSON.stringify(json)}`
-          );
-          ok = false;
-          break;
-        }
-        for (const row of json.data.list ?? []) {
-          const day = String(row?.dimensions?.stat_time_day ?? '').slice(0, 10);
-          if (!day) continue;
-          porFecha.set(
-            day,
-            (porFecha.get(day) ?? 0) + (parseFloat(row?.metrics?.spend || '0') || 0)
-          );
-        }
-        totalPage = json.data.page_info?.total_page || 1;
-        page++;
-      } while (page <= totalPage && page <= MAX_PAGES);
-    } catch (e: any) {
-      log(`[reconcile] TikTok ${advertiser_id} excepción: ${e?.message ?? e}`);
-      ok = false;
+      let page = 1;
+      let totalPage = 1;
+      try {
+        do {
+          const u = new URL(url.toString());
+          u.searchParams.set('page', String(page));
+          u.searchParams.set('page_size', String(1000));
+          const res = await tiktokFetch(u.toString(), { headers: { 'Access-Token': token } });
+          const json = await res.json();
+          // TikTok responde 200 con `code` distinto de 0 en los errores.
+          if (json?.code !== 0 || !json?.data) {
+            log(
+              `[reconcile] TikTok ${advertiser_id} ${ventana.start}..${ventana.end} error: ${json?.message ?? JSON.stringify(json)}`
+            );
+            ok = false;
+            fallidas.push(ventana);
+            break;
+          }
+          for (const row of json.data.list ?? []) {
+            const day = String(row?.dimensions?.stat_time_day ?? '').slice(0, 10);
+            if (!day) continue;
+            porFecha.set(
+              day,
+              (porFecha.get(day) ?? 0) + (parseFloat(row?.metrics?.spend || '0') || 0)
+            );
+          }
+          totalPage = json.data.page_info?.total_page || 1;
+          page++;
+        } while (page <= totalPage && page <= MAX_PAGES);
+      } catch (e: any) {
+        log(
+          `[reconcile] TikTok ${advertiser_id} ${ventana.start}..${ventana.end} excepción: ${e?.message ?? e}`
+        );
+        ok = false;
+        fallidas.push(ventana);
+      }
     }
+  }
+
+  for (const dia of Array.from(porFecha.keys())) {
+    if (fallidas.some((v) => dia >= v.start && dia <= v.end)) porFecha.delete(dia);
   }
 
   const dias = Array.from(porFecha.entries())
@@ -338,9 +360,12 @@ async function run(request: Request) {
   });
 }
 
+// Cada petición lleva su propio plazo de reintentos: el `setRetryDeadline` de
+// `run` solo afecta a ESTE contexto y no deja un plazo caducado en el proceso
+// para el siguiente job (el sync-worker del VPS reutiliza el mismo servidor).
 export async function GET(request: Request) {
-  return run(request);
+  return conDeadline(Date.now() + 45_000, () => run(request));
 }
 export async function POST(request: Request) {
-  return run(request);
+  return conDeadline(Date.now() + 45_000, () => run(request));
 }

@@ -41,6 +41,8 @@ WHERE layout::text LIKE '%leads_count,leads_count%';
 --    ahora sale de `metricas_diarias.metricas_manuales->>'VENTAS_CERRADAS'`, donde
 --    el equipo la carga desde el dashboard. Es un cambio de código (bi-query.ts),
 --    sin DDL. La columna se deja en su sitio: la leen /api/v1/metrics y el MCP.
+--    (Nota 2026-09-25: ya no es así. /api/v1/metrics y el MCP también leen
+--    `metricas_manuales->>'VENTAS_CERRADAS'`, no la columna.)
 
 COMMENT ON COLUMN public.metricas_diarias.ventas_cerradas IS
     'OBSOLETA para el BI: el worker no la escribe. El valor real de ventas cerradas se carga a mano en metricas_manuales->>''VENTAS_CERRADAS'', que es de donde lo lee el módulo de informes.';

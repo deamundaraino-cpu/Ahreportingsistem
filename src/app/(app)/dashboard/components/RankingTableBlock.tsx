@@ -3,13 +3,16 @@
 import React, { useMemo, useEffect, useState, useRef } from 'react';
 import { ExternalLink, ChevronUp, ChevronDown, ChevronsUpDown, Layers, X } from 'lucide-react';
 import type { RankingTableDef, TabCampaignFilter } from '@/lib/layout-types';
-import { evaluateFormula, formatValue } from '@/lib/formula-engine';
+import { evaluateFormula, formatValue, reagregarTasasDeFila } from '@/lib/formula-engine';
 import {
   aggregateRankingRows,
   dimensionSoportaRespuestas,
+  cuboDeFilas,
+  dimensionSoportaHotmart,
   leadsFueraDeRanking,
 } from '@/lib/ranking-aggregation';
 import { formulaUsaRespuestas } from '@/lib/dashboard/lead-answer-aggregation';
+import { formulaUsaHotmart } from '@/lib/dashboard/hotmart-cubo';
 import { useMonedaReporte } from './MonedaReporteContext';
 
 interface Props {
@@ -121,16 +124,26 @@ export function RankingTableBlock({
    * «n/a» — un 0 afirmaría que no hubo leads, que es falso.
    */
   const columnasNoAplican = useMemo(() => {
-    if (dimensionSoportaRespuestas(def.dimension)) return new Set<number>();
+    // Las ventas de Hotmart por campaña (`hm_*`) siguen la misma regla, pero
+    // también se sirven en campañas de TikTok (ver `dimensionSoportaHotmart`).
+    const respuestas = !dimensionSoportaRespuestas(def.dimension, cuboDeFilas(metrics));
+    const hotmart = !dimensionSoportaHotmart(def.dimension);
     return new Set(
-      def.columns.map((c, i) => (formulaUsaRespuestas(c.formula) ? i : -1)).filter((i) => i >= 0)
+      def.columns
+        .map((c, i) =>
+          (respuestas && formulaUsaRespuestas(c.formula)) ||
+          (hotmart && formulaUsaHotmart(c.formula))
+            ? i
+            : -1
+        )
+        .filter((i) => i >= 0)
     );
-  }, [def.dimension, def.columns]);
+  }, [def.dimension, def.columns, metrics]);
 
   const MOTIVO_NO_APLICA =
-    'Los contactos de Report-UTM se resuelven a CAMPAÑA, no a anuncio ni a conjunto: ' +
-    'un formulario no sabe qué anuncio trajo al visitante. Cambia la dimensión de la ' +
-    'tabla a «Campañas» para ver esta columna.';
+    'Las ventas de Hotmart por campaña se resuelven a CAMPAÑA, no a anuncio ni a ' +
+    'conjunto. Los contactos y respuestas de Report-UTM sí llegan a anuncio y conjunto ' +
+    '(recarga la página si acabas de añadir la columna); en TikTok solo a campaña.';
 
   /** Contactos que no cuelgan de ninguna fila de la tabla. Se declaran al pie. */
   const fueraDeTabla = useMemo(
@@ -189,6 +202,9 @@ export function RankingTableBlock({
         }
       }
     }
+
+    // La suma de arriba vale para conteos, no para la frecuencia (un cociente).
+    reagregarTasasDeFila(merged, matching);
 
     const platforms = isTikTok ? new Set(['tiktok']) : new Set(['meta']);
     const colValues = def.columns.map((col) =>

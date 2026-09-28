@@ -57,7 +57,7 @@ La aplicación usa **distintos mecanismos según el consumidor**:
 | **Sesión Supabase** | UI, server actions, algunos endpoints | Cookie de sesión                                                                               |
 | **Token de API**    | `/api/v1/*`, `/api/mcp`               | `Authorization: Bearer ads_…` (solo cabecera; ver `src/lib/api-token-auth.ts`)                 |
 | **Secreto de cron** | `/api/worker*`, `/api/cron/*`         | `Authorization: Bearer $CRON_SECRET` (comparación de tiempo constante, `src/lib/cron-auth.ts`) |
-| **Firma HMAC**      | Webhook Hotmart                       | `x-hotmart-signature` / `x-hotmart-hottok` (`src/lib/report-utm/webhook-auth.ts`)              |
+| **Hottok Hotmart**  | Webhook Hotmart                       | `x-hotmart-hottok` vs. el hottok pegado en la tarjeta (`src/lib/report-utm/webhook-auth.ts`)   |
 | **Token público**   | `/p/[token]`, `/report/...`           | `public_token` de cliente/tab; sin login                                                       |
 
 ### Tokens de API

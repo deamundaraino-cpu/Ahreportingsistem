@@ -116,7 +116,12 @@ export function BiCrossBanner({ clienteId, dateFrom, dateTo, readonly }: Props) 
         <Info className="h-3.5 w-3.5 mt-0.5 shrink-0" />
         <div className="min-w-0 flex-1">
           <span>
-            <strong>Cruce de campañas:</strong>{' '}
+            {/* El cruce se calcula sobre TODO el cliente: los filtros del informe
+                no le llegan. Sin decirlo, su «153 de 154» se leía como el total
+                filtrado del KPI de al lado. */}
+            <strong>Cruce de campañas</strong>{' '}
+            <span className="opacity-80">(todo el cliente, sin filtros del informe)</span>
+            <strong>:</strong>{' '}
             {leadsPct !== null && (
               <>
                 {leadsPct}% de los leads ({sum.leads.matched.toLocaleString('es-AR')} de{' '}
