@@ -109,6 +109,7 @@ export default async function ClientDetailPage(props: { params: Promise<{ id: st
                 clienteId={rtmId}
                 inicial={datos.reglaExclusion}
                 migracionAplicada={datos.migracionExclusion}
+                migracionDuplicados={datos.migracionDuplicados}
               />
             </>
           ),

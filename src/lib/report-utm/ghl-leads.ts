@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { aplicarExclusion, cargarReglaExclusion, type ReglaExclusion } from './lead-exclusion';
+import { excluirDuplicadosLote } from './lead-duplicados';
 import {
   adaptarIds,
   columnasIdDisponibles,
@@ -433,9 +434,16 @@ export async function ingestGhlContact(
   regla?: ReglaExclusion
 ): Promise<{ inserted: boolean; error?: string }> {
   const r = regla ?? (await cargarReglaExclusion(db, clienteId));
-  const row = adaptarIds(
-    aplicarExclusion(buildLeadRow(clienteId, contact, defs, formNameFallback), r),
-    await columnasIdDisponibles(db)
+  const [row] = await excluirDuplicadosLote(
+    db,
+    clienteId,
+    [
+      adaptarIds(
+        aplicarExclusion(buildLeadRow(clienteId, contact, defs, formNameFallback), r),
+        await columnasIdDisponibles(db)
+      ),
+    ],
+    r
   );
   const { error } = await db.from('lead_events').insert(row);
   if (error) {
@@ -484,7 +492,15 @@ export async function ingestGhlContactsBatch(
     .eq('cliente_id', clienteId)
     .in('external_id', ids);
   const existentes = new Set((existing ?? []).map((e: { external_id: string }) => e.external_id));
-  const aInsertar = rows.filter((r) => !existentes.has(r.external_id as string));
+  // Duplicados después de quitar los ya guardados: un contacto que el polling
+  // vuelve a traer no es un duplicado, es el mismo lead.
+  const aInsertar = await excluirDuplicadosLote(
+    db,
+    clienteId,
+    rows.filter((r) => !existentes.has(r.external_id as string)),
+    r,
+    ahora
+  );
   if (aInsertar.length === 0) return 0;
 
   const { error } = await db.from('lead_events').insert(aInsertar);

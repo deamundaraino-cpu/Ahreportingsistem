@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { aplicarExclusion, cargarReglaExclusion } from './lead-exclusion';
+import { excluirDuplicadosLote } from './lead-duplicados';
 import { adaptarIds, columnasIdDisponibles, idsPublicitarios } from './lead-ids';
 import { guardarPreguntas, sincronizarOpcionesEnCampos } from '@/lib/leads/respuestas/preguntas-db';
 import type { PreguntaPlataforma, TipoPlataforma } from '@/lib/leads/respuestas/preguntas-db';
@@ -638,9 +639,16 @@ export async function ingestMetaLead(
   // Un lead de Meta casi siempre trae `utm_id`, pero la regla del cliente puede
   // excluir por fuente o formulario: se evalúa igual que en GHL y S2S.
   const regla = await cargarReglaExclusion(db, clienteId);
-  const row = adaptarIds(
-    aplicarExclusion(buildLeadRow(clienteId, lead, formName), regla),
-    await columnasIdDisponibles(db)
+  const [row] = await excluirDuplicadosLote(
+    db,
+    clienteId,
+    [
+      adaptarIds(
+        aplicarExclusion(buildLeadRow(clienteId, lead, formName), regla),
+        await columnasIdDisponibles(db)
+      ),
+    ],
+    regla
   );
   const { error } = await db.from('lead_events').insert(row);
   if (error) {
@@ -691,7 +699,15 @@ export async function ingestMetaLeadsBatch(
     .eq('cliente_id', clienteId)
     .in('external_id', ids);
   const existingSet = new Set((existing ?? []).map((e: { external_id: string }) => e.external_id));
-  const toInsert = rows.filter((r) => !existingSet.has(r.external_id as string));
+  // Duplicados después de quitar los ya guardados: un lead que el polling
+  // vuelve a traer no es un duplicado, es el mismo lead.
+  const toInsert = await excluirDuplicadosLote(
+    db,
+    clienteId,
+    rows.filter((r) => !existingSet.has(r.external_id as string)),
+    regla,
+    ahora
+  );
   if (toInsert.length === 0) return 0;
 
   const { error } = await db.from('lead_events').insert(toInsert);

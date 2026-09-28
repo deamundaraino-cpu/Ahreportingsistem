@@ -7,6 +7,8 @@ import { checkWriteRole } from '@/lib/report-utm/auth';
 import {
   columnaExcluidoDisponible,
   leerRegla,
+  mismaRegla,
+  serializarRegla,
   type ReglaExclusion,
 } from '@/lib/report-utm/lead-exclusion';
 import {
@@ -188,9 +190,8 @@ export async function guardarReglaExclusionAction(
 
   // Se normaliza con el mismo lector que usa la ingesta: lo que se guarda es
   // exactamente lo que se aplicará, sin claves sueltas.
-  const normalizada = leerRegla({ filtro_atribucion: regla });
   const config = { ...((actual?.config ?? {}) as Record<string, unknown>) };
-  config.filtro_atribucion = normalizada;
+  config.filtro_atribucion = serializarRegla(regla);
 
   const { error } = await db.from('clientes').update({ config }).eq('id', clienteId);
   if (error) return { ok: false, error: error.message };
@@ -202,10 +203,16 @@ export async function guardarReglaExclusionAction(
 /**
  * Pasa la regla guardada por todo el histórico del cliente.
  * `aplicar = false` solo cuenta: es la previsualización del botón.
+ *
+ * Para aplicar hay que mandar la regla que se previsualizó
+ * (`reglaPrevisualizada`). Si la guardada ya no es esa —alguien la cambió en
+ * otra pestaña, o se editó el formulario después de previsualizar—, no se
+ * aplica: se escribiría sobre el histórico algo que nadie ha visto.
  */
 export async function reclasificarLeadsAction(
   clienteId: string,
-  aplicar: boolean
+  aplicar: boolean,
+  reglaPrevisualizada?: ReglaExclusion
 ): Promise<{ ok: boolean; resultado?: ResultadoReclasificacion; error?: string }> {
   const { ok } = await checkWriteRole();
   if (!ok) return { ok: false, error: 'No tienes permisos para reclasificar leads.' };
@@ -220,10 +227,16 @@ export async function reclasificarLeadsAction(
     .maybeSingle();
   if (e1) return { ok: false, error: e1.message };
 
+  const guardada = leerRegla(cliente?.config);
+  if (aplicar && (!reglaPrevisualizada || !mismaRegla(guardada, reglaPrevisualizada))) {
+    return {
+      ok: false,
+      error: 'La regla cambió desde la previsualización. Vuelve a previsualizar antes de aplicar.',
+    };
+  }
+
   try {
-    const resultado = await reclasificarLeadsCliente(db, clienteId, leerRegla(cliente?.config), {
-      aplicar,
-    });
+    const resultado = await reclasificarLeadsCliente(db, clienteId, guardada, { aplicar });
     if (aplicar) {
       revalidatePath('/leads');
       revalidatePath('/admin/settings/[id]', 'page');

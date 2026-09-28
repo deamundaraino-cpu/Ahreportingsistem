@@ -42,16 +42,19 @@ export function LeadsMotivosBar({
 
         <Chip href={hrefDe(null)} activo={activo === null} etiqueta="Todos" n={total} />
 
-        {motivos.map((m) => (
-          <Chip
-            key={m}
-            href={hrefDe(m)}
-            activo={activo === m}
-            etiqueta={ETIQUETAS[m]}
-            n={conteos[m] ?? 0}
-            title={MOTIVOS_EXCLUSION[m]}
-          />
-        ))}
+        {/* Con once motivos, los que no tienen leads solo estorban. */}
+        {motivos
+          .filter((m) => (conteos[m] ?? 0) > 0 || activo === m)
+          .map((m) => (
+            <Chip
+              key={m}
+              href={hrefDe(m)}
+              activo={activo === m}
+              etiqueta={ETIQUETAS[m]}
+              n={conteos[m] ?? 0}
+              title={MOTIVOS_EXCLUSION[m]}
+            />
+          ))}
 
         {hrefRegla && (
           <Link
@@ -76,6 +79,13 @@ const ETIQUETAS: Record<MotivoExclusion, string> = {
   sin_atribucion: 'Sin atribución',
   source_excluida: 'Fuente excluida',
   formulario_excluido: 'Formulario excluido',
+  campana_excluida: 'Campaña excluida',
+  medio_excluido: 'Medio excluido',
+  pais_excluido: 'País excluido',
+  respuesta_excluida: 'Respuesta excluida',
+  etiqueta_excluida: 'Etiqueta excluida',
+  contacto_excluido: 'Lead de prueba',
+  duplicado: 'Duplicado',
   manual: 'A mano',
 };
 

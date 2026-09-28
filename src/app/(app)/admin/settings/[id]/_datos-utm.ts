@@ -7,6 +7,7 @@ import type { ReportUtmHotmartIntegracion, ReportUtmIntegration } from '@/lib/re
 import type { ClienteGoals } from '@/lib/report-utm/bi-metadata';
 import { resolverMonedaDeClienteUtm, ultimasTasasGuardadas } from '@/lib/moneda-reporte';
 import type { MonedaReporte, MonedaResuelta, TasaGuardada } from '@/lib/moneda-reporte';
+import { rpcDuplicadosDisponible } from '@/lib/report-utm/lead-duplicados';
 import {
   columnaExcluidoDisponible,
   leerRegla,
@@ -57,6 +58,8 @@ export interface DatosUtm {
   ultimasTasas: Partial<Record<MonedaReporte, TasaGuardada>>;
   reglaExclusion: ReglaExclusion;
   migracionExclusion: boolean;
+  /** ¿Está la migración 093 (duplicados al ingresar)? */
+  migracionDuplicados: boolean;
   goals: ClienteGoals;
   logoUrl?: string;
   accent?: string;
@@ -100,6 +103,7 @@ export const cargarDatosUtm = cache(
       moneda,
       ultimasTasas,
       migracionExclusion,
+      migracionDuplicados,
     ] = await Promise.all([
       supabase.from('clientes').select('slug, config').eq('id', rtmClienteId).maybeSingle(),
       // Nada de `select('*')`: iba entero a un componente de cliente, con
@@ -122,6 +126,7 @@ export const cargarDatosUtm = cache(
       // `fx_rates` vive en `public`: el cliente de arriba es el de report_utm.
       ultimasTasasGuardadas(admin),
       columnaExcluidoDisponible(supabase),
+      rpcDuplicadosDisponible(supabase),
     ]);
 
     // ¿Meta conectado? Token + cuenta en `public.clientes.config_api`: es la
@@ -166,6 +171,7 @@ export const cargarDatosUtm = cache(
       ultimasTasas,
       reglaExclusion: leerRegla(config),
       migracionExclusion,
+      migracionDuplicados,
       goals: (config.goals ?? {}) as ClienteGoals,
       logoUrl: typeof config.logo_url === 'string' ? config.logo_url : undefined,
       accent: typeof config.accent === 'string' ? config.accent : undefined,
