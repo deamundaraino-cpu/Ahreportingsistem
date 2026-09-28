@@ -2616,7 +2616,7 @@
         {
           "stage": "leads_count",
           "value": 495,
-          "label": "Leads (contactos)"
+          "label": "Leads recibidos (contactos)"
         },
         {
           "stage": "sales_count",
@@ -2678,7 +2678,7 @@
         {
           "stage": "leads_count",
           "value": 26691,
-          "label": "Leads (contactos)"
+          "label": "Leads recibidos (contactos)"
         },
         {
           "stage": "sales_count",
@@ -2762,7 +2762,7 @@
         {
           "stage": "leads_count",
           "value": 0,
-          "label": "Leads (contactos)"
+          "label": "Leads recibidos (contactos)"
         },
         {
           "stage": "sales_count",

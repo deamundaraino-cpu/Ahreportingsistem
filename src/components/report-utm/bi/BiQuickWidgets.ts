@@ -10,6 +10,7 @@
 import type { BiWidget, CalculatedField } from './BiTypes';
 import type { BiMetric } from '@/lib/report-utm/bi-metadata';
 import { leadAnsAlias, makeLeadAnsMetric, makeLeadFieldDim } from '@/lib/report-utm/bi-metadata';
+import { ROTULO_LEADS_RECIBIDOS } from '@/lib/leads/fuentes-de-lead';
 
 export interface QuickWidgetPreset {
   /** Etiqueta del menú. */
@@ -21,7 +22,7 @@ export interface QuickWidgetPreset {
 
 export const QUICK_WIDGETS: QuickWidgetPreset[] = [
   { label: 'Gasto', metric: 'spend', title: 'Inversión publicitaria' },
-  { label: 'Leads', metric: 'leads_count', title: 'Contactos generados' },
+  { label: 'Leads recibidos', metric: 'leads_count', title: ROTULO_LEADS_RECIBIDOS },
   { label: 'CPL', metric: 'cpl', title: 'Costo por contacto' },
   { label: 'ROAS (Hotmart)', metric: 'hotmart_roas', title: 'Retorno (ROAS)' },
   { label: 'CPA (Hotmart)', metric: 'hotmart_cpa', title: 'Costo por venta' },

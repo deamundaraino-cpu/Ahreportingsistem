@@ -15,6 +15,12 @@ import {
   SIN_RESPUESTA,
 } from '@/lib/leads/respuestas/claves';
 import type { RespuestaClave } from '@/lib/leads/respuestas/claves';
+import {
+  ROTULO_LEADS_META,
+  ROTULO_LEADS_RECIBIDOS,
+  DESCRIPCION_LEADS_META,
+  DESCRIPCION_LEADS_RECIBIDOS,
+} from '@/lib/leads/fuentes-de-lead';
 // `bi-valores` no importa nada, así que la dependencia va en un solo sentido y
 // no hay ciclo. Es la ÚNICA forma de partir una selección guardada: tenerla
 // escrita cuatro veces fue lo que dejó que un valor con coma se rompiera en
@@ -574,9 +580,15 @@ export const METRIC_META: Record<BiMetric, MetricMetaEntry> = {
   // Conteo de-duplicado de lead_events, que ya abarca TODOS los canales
   // (formularios web + Meta Lead Ads). La antigua 'leads_total' era un duplicado
   // exacto de esta métrica y se eliminó del catálogo (ver migración 045).
-  // Se llama "(contactos)" para no confundirla con `leads_form` (píxel de Meta)
-  // ni con `offline_leads` (Sheet): son tres cosas distintas que se solapan.
-  leads_count: { label: 'Leads (contactos)', format: 'number', group: 'leads', breakdown: 'any' },
+  // Se llama "recibidos (contactos)" para no confundirla con `leads_form` (lo que
+  // Meta atribuye) ni con `offline_leads` (Sheet): son tres cosas distintas que se
+  // solapan. El rótulo es el mismo que usa el dashboard (`fuentes-de-lead.ts`).
+  leads_count: {
+    label: ROTULO_LEADS_RECIBIDOS,
+    format: 'number',
+    group: 'leads',
+    breakdown: 'any',
+  },
   cpl: { label: 'CPL', format: 'currency', group: 'leads', breakdown: 'campaign' },
   conversion_rate: { label: 'Conv. Rate', format: 'percent', group: 'leads', breakdown: 'any' },
   // ── Ventas ──
@@ -618,10 +630,11 @@ export const METRIC_META: Record<BiMetric, MetricMetaEntry> = {
     breakdown: 'campaign',
   },
   // ── Eventos de campaña (JSONB meta_campaigns / tiktok_*) ──
-  // `leads_form` es lo que reporta el PÍXEL de Meta, no la tabla de leads:
-  // puede diferir de leads_count y no son sumables entre sí.
+  // `leads_form` es la acción `lead` que Meta ATRIBUYE a sus anuncios (formularios
+  // nativos incluidos), no la tabla de leads: puede diferir de leads_count y no son
+  // sumables entre sí. Llamarlo «del píxel» era falso para los formularios nativos.
   leads_form: {
-    label: 'Leads del píxel de Meta',
+    label: ROTULO_LEADS_META,
     format: 'number',
     group: 'campana',
     breakdown: 'campaign',
@@ -2545,8 +2558,7 @@ export function hasNonAttributableFilter(
  * (no para el trafficker). Se muestra como tooltip junto al título del widget.
  */
 export const METRIC_GLOSSARY: Record<string, string> = {
-  leads_count:
-    'Personas que dejaron sus datos durante el período, sumando formularios web y formularios de Meta. Es el conteo real de contactos: no se suma con “Leads del píxel de Meta” ni con “Leads offline”, que miden lo mismo desde otra fuente y se solapan.',
+  leads_count: DESCRIPCION_LEADS_RECIBIDOS,
   sales_count: 'Cantidad de ventas registradas en el período.',
   revenue: 'Dinero total facturado por las ventas del período.',
   spend: 'Dinero invertido en publicidad (Meta + TikTok) durante el período.',
@@ -2617,10 +2629,9 @@ export const METRIC_GLOSSARY: Record<string, string> = {
   hm_tasa_cambio:
     'Cuántas unidades de la moneda del cliente vale 1 USD. Por día es la tasa guardada de ese día; en un período, el promedio de las tasas diarias. Es la tasa con la que se convierte la facturación de Hotmart. Con el cliente en dólares vale 1.',
   // ── Las tres métricas que se llaman "leads" y NO son comparables ──
-  leads_form:
-    'Leads que reporta el píxel de Meta desde sus propios formularios. Puede no coincidir con “Leads (contactos)”: mide otra cosa, en otro sistema, y los mismos contactos pueden estar en ambas. No las sumes.',
+  leads_form: DESCRIPCION_LEADS_META,
   offline_leads:
-    'Leads que el equipo carga a mano en el Google Sheet del cliente. Se solapan con “Leads (contactos)” si el mismo contacto está en los dos sitios.',
+    'Leads que el equipo carga a mano en el Google Sheet del cliente. Se solapan con los «Leads recibidos (contactos)» si el mismo contacto está en los dos sitios.',
   // ── Eventos del píxel ──
   initiates_checkout: 'Veces que alguien empezó un pago en la web, según el píxel de Meta.',
   purchases:

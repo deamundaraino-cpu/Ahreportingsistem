@@ -97,6 +97,7 @@ import type { LeadAnswerDatasetLite } from '@/lib/dashboard/lead-answer-aggregat
 import { refDeCubo, clavesYRefDelDia } from '@/lib/dashboard/lead-answer-row';
 import { refDeCuboHotmart, clavesHotmartYRefDelDia } from '@/lib/dashboard/hotmart-cubo-row';
 import type { HotmartCuboLite } from '@/lib/dashboard/hotmart-cubo';
+import { diasFueraDeCaptacion } from '@/lib/dashboard/rango-captacion';
 import { TabArchiveView } from './TabArchiveView';
 import { MonedaReporteProvider, useMonedaReporte } from './MonedaReporteContext';
 import { precioUsdEnFila, textoAvisoTasas, type AvisoTasas } from '@/lib/moneda-reporte';
@@ -1045,17 +1046,23 @@ function DynamicDashboard({
     }));
   }
 
-  // Step 1: date-filter only (no campaign enrichment)
-  const baseRows = useMemo(() => {
-    let rows = metrics;
-    if (activeTabObj?.fecha_inicio) {
-      rows = rows.filter((m: any) => m.fecha >= activeTabObj.fecha_inicio);
-    }
-    if (activeTabObj?.fecha_finalizacion) {
-      rows = rows.filter((m: any) => m.fecha <= activeTabObj.fecha_finalizacion);
-    }
-    return rows;
-  }, [metrics, activeTabObj]);
+  // Step 1: las filas del calendario, SIN recortar a la ventana de captación de la
+  // pestaña. `fecha_inicio`/`fecha_finalizacion` son del presupuesto y el ritmo
+  // (`varContext`, `getTabTotalSpend`), no un filtro de datos: recortar aquí hacía
+  // que la pestaña dijera «1–28 sep» y pintara 1–23 sep, y que el período anterior
+  // (que nunca se recortó) comparara 28 días contra 23. Ver `rango-captacion.ts`.
+  const baseRows = metrics;
+
+  // Días del calendario fuera de la captación: solo para avisarlo en su tarjeta.
+  const diasFueraCaptacion = useMemo(
+    () =>
+      diasFueraDeCaptacion(
+        metrics.map((m: any) => m.fecha),
+        activeTabObj?.fecha_inicio,
+        activeTabObj?.fecha_finalizacion
+      ),
+    [metrics, activeTabObj]
+  );
 
   const allCampaignNames = useMemo(() => {
     const names = new Set<string>();
@@ -1509,6 +1516,15 @@ function DynamicDashboard({
               <p className="text-sm text-foreground font-semibold">
                 {fechaInicioStr} - {fechaFinStr}
               </p>
+              {diasFueraCaptacion > 0 && (
+                <p
+                  className="text-[11px] text-muted-foreground mt-1"
+                  title="Las cifras siguen al calendario. El rango de captación solo se usa para el presupuesto y los días faltantes."
+                >
+                  El calendario incluye {diasFueraCaptacion}{' '}
+                  {diasFueraCaptacion === 1 ? 'día' : 'días'} fuera de la captación
+                </p>
+              )}
             </div>
             <CalendarDays className="w-7 h-7 text-blue-500/50" />
           </CardContent>

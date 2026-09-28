@@ -12,6 +12,11 @@ import type { SheetCampoResumen, SheetVistaResumen } from '@/app/(app)/dashboard
 import { clavesDeCampo, claveSinRespuesta, claveSegmento } from './lead-answer-aggregation';
 import { SUFIJO_NUM, SUFIJO_DEN, SUFIJO_MIN, SUFIJO_MAX } from '@/lib/sheets/campos';
 import { METRICAS_EN_USD } from '@/lib/moneda-reporte';
+import {
+  ROTULO_LEADS_META,
+  ROTULO_LEADS_META_TODAS,
+  ROTULO_LEADS_RECIBIDOS,
+} from '@/lib/leads/fuentes-de-lead';
 
 const SUMANDOS_DE_SHEET = [SUFIJO_NUM, SUFIJO_DEN, SUFIJO_MIN, SUFIJO_MAX];
 
@@ -89,10 +94,12 @@ export const AVAILABLE_METRICS: MetricOption[] = [
   { id: 'meta_ctr_link', label: 'Meta: CTR (Enlace)' },
 
   // ── Meta · Leads y Registro ───────────────────────────────────────────────
-  { id: 'meta_leads', label: 'Meta: Leads (Pixel)' },
-  { id: 'meta_cpl', label: 'Meta: Costo por Lead Pixel (CPL)' },
-  { id: 'meta_leads_form', label: 'Meta: Clientes potenciales (Formulario)' },
-  { id: 'meta_cpl_form', label: 'Meta: Costo por Lead Formulario' },
+  // Rótulos compartidos con el BI (ver `fuentes-de-lead.ts`): «Leads» a secas
+  // en las dos vistas hacía comparar dos fuentes distintas como si fueran una.
+  { id: 'meta_leads', label: ROTULO_LEADS_META_TODAS },
+  { id: 'meta_cpl', label: `CPL de ${ROTULO_LEADS_META_TODAS}` },
+  { id: 'meta_leads_form', label: ROTULO_LEADS_META },
+  { id: 'meta_cpl_form', label: `CPL de ${ROTULO_LEADS_META}` },
   { id: 'meta_complete_registration', label: 'Meta: Registros completados' },
   { id: 'meta_cost_per_complete_registration', label: 'Meta: Costo por Registro' },
   { id: 'meta_submit_application', label: 'Meta: Solicitudes enviadas' },
@@ -322,7 +329,7 @@ export const AVAILABLE_METRICS: MetricOption[] = [
   // Contactos reales del formulario (web + Meta Lead Ads unificados), no lo
   // que reporta el píxel. NO se suma con `meta_leads`: miden lo mismo desde
   // fuentes distintas y un lead puede estar en las dos.
-  { id: 'utm_leads', label: 'Report-UTM: Leads (contactos)' },
+  { id: 'utm_leads', label: ROTULO_LEADS_RECIBIDOS },
 
   // ── CRM (GoHighLevel) ─────────────────────────────────────────────────────
   // Ventas que el cliente cierra en su embudo de GHL, recibidas por el webhook

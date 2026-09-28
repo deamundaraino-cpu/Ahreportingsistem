@@ -30,7 +30,7 @@ export const OFFLINE_SOURCE: DataSource = {
       S,
       'leads',
       'Leads offline (Sheet)',
-      'Leads que el equipo carga a mano en el Google Sheet del cliente. Se solapan con “Leads (contactos)” si el mismo contacto está en los dos sitios.',
+      'Leads que el equipo carga a mano en el Google Sheet del cliente. Se solapan con los «Leads recibidos (contactos)» si el mismo contacto está en los dos sitios.',
       'offline',
       { column: 'total_cantidad', conflictsWith: ['leads.count', 'ads.leads_form'] }
     ),

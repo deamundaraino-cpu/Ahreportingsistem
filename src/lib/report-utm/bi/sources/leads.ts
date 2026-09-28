@@ -13,12 +13,13 @@
 
 import type { DataSource } from '../registry-types';
 import { measure, derived, dimension } from '../field-builders';
+import { ROTULO_LEADS_RECIBIDOS, DESCRIPCION_LEADS_RECIBIDOS } from '@/lib/leads/fuentes-de-lead';
 
 const S = 'leads';
 
 export const LEADS_SOURCE: DataSource = {
   id: S,
-  label: 'Leads (contactos)',
+  label: ROTULO_LEADS_RECIBIDOS,
   location: { kind: 'table', schema: 'report_utm', table: 'lead_events' },
   clientKey: { scope: 'report_utm' },
   grainKind: 'row',
@@ -41,21 +42,14 @@ export const LEADS_SOURCE: DataSource = {
   dynamicLoader: ['raw_field', 'lead_campo', 'lead_segmento'],
   fields: [
     // ── Medidas ──────────────────────────────────────────────────────
-    measure(
-      S,
-      'count',
-      'Leads (contactos)',
-      'Personas que dejaron sus datos durante el período, sumando formularios web y formularios de Meta. Es el conteo real de contactos: no se suma con “Leads del píxel de Meta” ni con “Leads offline”, que miden lo mismo desde otra fuente y se solapan.',
-      'leads',
-      {
-        agg: 'count',
-        column: 'id',
-        recommended: true,
-        funnelStage: 70,
-        goal: 'leads_target',
-        conflictsWith: ['ads.leads_form', 'offline.leads'],
-      }
-    ),
+    measure(S, 'count', ROTULO_LEADS_RECIBIDOS, DESCRIPCION_LEADS_RECIBIDOS, 'leads', {
+      agg: 'count',
+      column: 'id',
+      recommended: true,
+      funnelStage: 70,
+      goal: 'leads_target',
+      conflictsWith: ['ads.leads_form', 'offline.leads'],
+    }),
 
     // CPL cruza DOS fuentes. Antes esa relación estaba codificada por
     // repetición: `cpl` aparecía a la vez en la lista `needsLeads` y en la
