@@ -18,6 +18,7 @@
 import { createAdminClient } from '@/utils/supabase/server';
 import { AD_JSONB_METRICS, normLabel } from './bi-metadata';
 import { esIdPublicitario, idPublicitario } from './lead-ids';
+import { campanaEnAlcance, cargarAlcanceCampanas, type AlcanceCampanas } from './alcance-campanas';
 
 // ============================================================
 // Cruce leads/ventas ↔ campañas (gasto).
@@ -64,7 +65,45 @@ export interface MatchResult {
   /** Solo con `ambiguous`: claves de las campañas entre las que no se pudo elegir. */
   candidates?: string[];
   /** Solo con `ambiguous`: el campo cuyo nombre se repite. */
-  campo?: 'utm_content' | 'utm_term';
+  campo?: 'utm_campaign' | 'utm_content' | 'utm_term';
+}
+
+/** Plataforma de la que el índice tiene gasto. */
+export type PlataformaGasto = 'meta' | 'tiktok';
+
+/**
+ * Plataforma a la que apunta `utm_source`, o `null` si no se sabe.
+ *
+ * El cruce por NOMBRE miraba todas las plataformas a la vez: un lead de TikTok
+ * cuyo nombre de campaña coincidía con uno de Meta (Sur Profundo usa las dos)
+ * caía en la campaña que se hubiera indexado la última, y un lead de Google caía
+ * en el gasto de Meta. Con la plataforma, el nombre solo se busca en la suya.
+ *
+ * Los valores son los que llegan de verdad (auditoría del 2026-09-28): Meta manda
+ * la ubicación (`facebook_mobile_feed`, `instagram_reels`, `ig`, `fb`, `th`…) y
+ * TikTok `tiktok` o su red `pangle`. `'otra'` es una plataforma conocida SIN gasto
+ * en el reporting (Google, email…): sus leads no pueden cruzar por nombre. Un
+ * valor desconocido o una macro sin rellenar devuelven `null` y se busca en todas,
+ * que es lo de siempre.
+ */
+export function plataformaDeFuente(source: unknown): PlataformaGasto | 'otra' | null {
+  if (typeof source !== 'string') return null;
+  const s = normLabel(source);
+  if (!s || s.includes('{') || s.startsWith('%7b')) return null;
+  if (/^(tiktok|tt|pangle)\b/.test(s)) return 'tiktok';
+  if (
+    /^(facebook|fb|instagram|ig|meta|threads|th|messenger|msg|an|audience network|whatsapp)\b/.test(
+      s
+    )
+  )
+    return 'meta';
+  if (
+    /^(google|gads|adwords|youtube|yt|bing|microsoft|linkedin|email|e mail|newsletter|mailchimp|twitter|x com)\b/.test(
+      s
+    )
+  )
+    return 'otra';
+  return null;
 }
 
 /** Nivel de una entidad publicitaria. Es también el `nivel` de un override. */
@@ -89,6 +128,10 @@ export function esIdMeta(v: unknown): boolean {
 // registra campañas cuyo gasto cayó justo fuera del rango exacto, sin sumar su
 // gasto al periodo (el gasto solo se acumula dentro de [dateFrom, dateTo]).
 const INDEX_MARGIN_DAYS = 30;
+
+// Hasta dónde se busca la IDENTIDAD (no el gasto) de las entidades: lo que una
+// venta de Hotmart puede heredar de un lead (`LOOKBACK_DIAS` de atribucion.ts).
+const INDEX_IDENTIDAD_DIAS = 180;
 
 function shiftDate(isoDate: string, deltaDays: number): string {
   const d = new Date(isoDate + 'T00:00:00Z');
@@ -124,7 +167,10 @@ export interface CampaignIndex {
   campaigns: Map<string, CampaignAgg>; // key → agg
   byCampaignId: Map<string, string>; // campaign_id → key
   byAdId: Map<string, string>; // ad_id → key (de la campaña)
-  byName: Map<string, string>; // nombre de campaña normalizado (actual o anterior) → key
+  // Nombre de campaña normalizado (actual o anterior) → TODAS las campañas que lo
+  // usaron. Un Set por lo mismo que los anuncios: dos campañas con el mismo nombre
+  // (una duplicada sin renombrar) no dicen cuál; antes ganaba la última escrita.
+  byName: Map<string, Set<string>>;
   // Nombre de anuncio/conjunto → TODAS las campañas donde existe. Un Set y no una
   // clave: el mismo creativo se duplica entre campañas (en Eduversio 83 de 91
   // nombres de anuncio), y quedarse con la última escrita atribuía al azar.
@@ -213,12 +259,14 @@ function emptyIndex(): CampaignIndex {
 export async function loadCampaignIndex(
   publicClienteId: string,
   dateFrom: string,
-  dateTo: string
+  dateTo: string,
+  opciones: { margenDias?: number } = {}
 ): Promise<CampaignIndex | null> {
   const supabase = await createAdminClient();
+  const alcance = await cargarAlcanceCampanas(publicClienteId);
   // Ventana ampliada para registrar claves de campañas/ads/adsets que pudieron
   // gastar justo fuera del rango. El gasto solo se acumula dentro del rango exacto.
-  const keyFrom = shiftDate(dateFrom, -INDEX_MARGIN_DAYS);
+  const keyFrom = shiftDate(dateFrom, -(opciones.margenDias ?? INDEX_MARGIN_DAYS));
 
   // ── Lectura por tramos de fechas ───────────────────────────────────
   // Cada fila lleva el desglose por anuncio del día entero: para un cliente con
@@ -255,10 +303,94 @@ export async function loadCampaignIndex(
   // parte de los leads cruzaría y parte no, sin forma de notarlo. Se aborta para
   // degradar de forma consistente (el motor cae a los UTM crudos).
   if (respuestas.some((r) => r.error)) return null;
-  return construirIndice(
+  const idx = construirIndice(
     respuestas.flatMap((r) => r.data ?? []) as Record<string, unknown>[],
-    dateFrom
+    dateFrom,
+    { alcance }
   );
+
+  // Identidad de lo que gastó ANTES de la ventana (hasta 180 días): una venta de
+  // Hotmart hereda leads de hasta 180 días, y su ID no estaba en el índice. Solo
+  // identidad, sin gasto, y leída de `ads_entidades_ids` (migración 094), que la
+  // agrupa en la base: el JSONB de esos meses serían decenas de MB. Sin la
+  // migración, o si falla, el índice se queda como siempre.
+  const { data: previas, error: ePrevias } = await supabase.rpc('ads_entidades_ids', {
+    p_cliente_id: publicClienteId,
+    p_desde: shiftDate(dateFrom, -INDEX_IDENTIDAD_DIAS),
+    p_hasta: shiftDate(keyFrom, -1),
+  });
+  if (!ePrevias && Array.isArray(previas)) {
+    ampliarConEntidades(idx, previas as EntidadPrevia[], alcance);
+  }
+  return idx;
+}
+
+/** Fila de `ads_entidades_ids` (migración 094). */
+export interface EntidadPrevia {
+  plataforma: string;
+  nivel: string;
+  entidad_id: string;
+  entidad_nombre: string | null;
+  campana_id: string | null;
+  campana_nombre: string | null;
+  adset_id: string | null;
+  adset_nombre: string | null;
+}
+
+/**
+ * (Puro) Añade al índice la identidad de entidades que gastaron antes de su
+ * ventana. Nunca pisa lo que ya estaba (lo de dentro de la ventana es más
+ * reciente) ni suma gasto: sirve para atar un ID a su campaña y titularlo.
+ */
+export function ampliarConEntidades(
+  idx: CampaignIndex,
+  filas: EntidadPrevia[],
+  alcance: AlcanceCampanas | null = null
+): void {
+  // Primero las campañas: los conjuntos y anuncios se cuelgan de ellas.
+  const orden = { campaign: 0, adset: 1, ad: 2 } as Record<string, number>;
+  const ordenadas = [...filas].sort((a, b) => (orden[a.nivel] ?? 9) - (orden[b.nivel] ?? 9));
+  for (const f of ordenadas) {
+    const plat = f.plataforma === 'tiktok' ? 'tiktok' : 'meta';
+    const campId = f.nivel === 'campaign' ? f.entidad_id : f.campana_id;
+    const campNombre = f.nivel === 'campaign' ? f.entidad_nombre : f.campana_nombre;
+    if (!campId) continue;
+    if (alcance && campNombre && !campanaEnAlcance(campNombre, alcance)) continue;
+    let campKey = idx.byCampaignId.get(campId);
+    if (!campKey) {
+      campKey = `${plat}:${campId}`;
+      idx.campaigns.set(campKey, {
+        key: campKey,
+        campaign_id: campId,
+        name: campNombre || '(sin nombre)',
+        platform: plat,
+        spend: 0,
+        impressions: 0,
+        clicks: 0,
+        platform_leads: 0,
+        extra: zeroAdMetrics(),
+      });
+      // Solo por ID, NO por nombre: una campaña vieja que se llamara como una
+      // actual volvería «ambiguos» leads que hoy cruzan bien por nombre.
+      idx.byCampaignId.set(campId, campKey);
+    }
+    if (f.nivel === 'adset') {
+      if (!idx.byAdsetId.has(f.entidad_id)) idx.byAdsetId.set(f.entidad_id, campKey);
+      if (f.entidad_nombre && !idx.adsetByAdsetId.has(f.entidad_id)) {
+        idx.adsetByAdsetId.set(f.entidad_id, f.entidad_nombre);
+      }
+    }
+    if (f.nivel === 'ad') {
+      if (!idx.byAdId.has(f.entidad_id)) idx.byAdId.set(f.entidad_id, campKey);
+      if (f.entidad_nombre && !idx.adByAdId.has(f.entidad_id)) {
+        idx.adByAdId.set(f.entidad_id, f.entidad_nombre);
+      }
+      if (f.adset_nombre && !idx.adsetByAdId.has(f.entidad_id)) {
+        idx.adsetByAdId.set(f.entidad_id, f.adset_nombre);
+      }
+      if (f.adset_id && !idx.byAdsetId.has(f.adset_id)) idx.byAdsetId.set(f.adset_id, campKey);
+    }
+  }
 }
 
 /**
@@ -270,11 +402,30 @@ export async function loadCampaignIndex(
  * Las filas se recorren por fecha: la última escritura de cada nombre es la
  * vigente.
  */
-export function construirIndice(filas: Record<string, unknown>[], dateFrom: string): CampaignIndex {
+export function construirIndice(
+  filas: Record<string, unknown>[],
+  dateFrom: string,
+  opciones: { alcance?: AlcanceCampanas | null } = {}
+): CampaignIndex {
   const idx = emptyIndex();
   const data = [...filas].sort((a, b) =>
     String(a.fecha ?? '').localeCompare(String(b.fecha ?? ''))
   );
+  // Alcance del cliente (cuenta compartida, ver alcance-campanas.ts): las
+  // campañas de fuera no entran en el índice, ni sus anuncios ni sus conjuntos.
+  // Se recuerda su ID para descartar también los anuncios que solo traen el ID.
+  const alcance = opciones.alcance ?? null;
+  const fueraDeAlcance = new Set<string>();
+  const enAlcance = (campId: unknown, nombre: unknown): boolean => {
+    if (!alcance) return true;
+    if (campId != null && fueraDeAlcance.has(String(campId))) return false;
+    if (typeof nombre === 'string' && nombre.trim()) {
+      const dentro = campanaEnAlcance(nombre, alcance);
+      if (!dentro && campId != null) fueraDeAlcance.add(String(campId));
+      return dentro;
+    }
+    return true;
+  };
 
   function upsert(
     platform: 'meta' | 'tiktok',
@@ -306,7 +457,7 @@ export function construirIndice(filas: Record<string, unknown>[], dateFrom: stri
       // y los leads con el nombre nuevo se quedaban sin cruzar (Eduversio,
       // `V5[D][2|08]…` → `V5[D][2|09]…`). La fila se titula con el último,
       // porque las filas llegan en orden de fecha.
-      idx.byName.set(normLabel(name), key);
+      agregarCandidato(idx.byName, normLabel(name), key);
       agg.name = name;
     }
     if (addSpend) {
@@ -322,6 +473,7 @@ export function construirIndice(filas: Record<string, unknown>[], dateFrom: stri
     const inRange = typeof row.fecha === 'string' ? row.fecha >= dateFrom : true;
     const metaCamps = (row.meta_campaigns as Record<string, unknown>[] | null) ?? [];
     for (const c of metaCamps) {
+      if (!enAlcance(c.campaign_id, c.name)) continue;
       const key = upsert(
         'meta',
         (c.campaign_id as string) ?? null,
@@ -343,6 +495,7 @@ export function construirIndice(filas: Record<string, unknown>[], dateFrom: stri
     // utm_content=ad_name, utm_term=adset_name).
     const metaAds = (row.meta_ads as Record<string, unknown>[] | null) ?? [];
     for (const a of metaAds) {
+      if (!enAlcance(a.campaign_id, a.campaign_name)) continue;
       const adId = a.ad_id as string | null;
       const adName = a.ad_name as string | null;
       const adsetName = a.adset_name as string | null;
@@ -381,6 +534,7 @@ export function construirIndice(filas: Record<string, unknown>[], dateFrom: stri
     }
     const metaAdsets = (row.meta_adsets as Record<string, unknown>[] | null) ?? [];
     for (const a of metaAdsets) {
+      if (!enAlcance(a.campaign_id, a.campaign_name)) continue;
       const adsetName = a.adset_name as string | null;
       const adsetId = a.adset_id ? String(a.adset_id) : null;
       const activo = inRange && num(a.spend) > 0;
@@ -408,6 +562,7 @@ export function construirIndice(filas: Record<string, unknown>[], dateFrom: stri
     }
     const ttCamps = (row.tiktok_campaigns as Record<string, unknown>[] | null) ?? [];
     for (const c of ttCamps) {
+      if (!enAlcance(c.campaign_id, c.name)) continue;
       upsert('tiktok', (c.campaign_id as string) ?? null, (c.name as string) ?? '', inRange, {
         spend: num(c.spend),
         impressions: num(c.impressions),
@@ -415,23 +570,76 @@ export function construirIndice(filas: Record<string, unknown>[], dateFrom: stri
         leads: num(c.conversions),
       });
     }
-    // TikTok solo aporta canónicos de nombre: sus objetos de anuncio/adgroup no
-    // llevan campaign_id, así que no se pueden colgar de una campaña.
+    // Anuncios y adgroups de TikTok. Desde que el worker los enriquece con sus
+    // catálogos traen `campaign_id` y `adset_id`/`adgroup_id`, así que se
+    // indexan igual que los de Meta: sin esto, un enlace con `ad_id=__CID__`
+    // (la plantilla del doc 22) no cruzaba nunca. Los objetos antiguos, sin
+    // campaña, solo aportan el nombre canónico, como antes.
     for (const a of (row.tiktok_ads as Record<string, unknown>[] | null) ?? []) {
+      if (!enAlcance(a.campaign_id, a.campaign_name)) continue;
       const adName = a.ad_name as string | null;
-      if (!adName) continue;
-      if (!idx.adCanonicalByName.has(normLabel(adName))) {
-        idx.adCanonicalByName.set(normLabel(adName), adName);
+      const adId = a.ad_id ? String(a.ad_id) : null;
+      const adsetId = a.adset_id ? String(a.adset_id) : null;
+      const adsetName = (a.adset_name as string | null) ?? null;
+      const activo = inRange && num(a.spend) > 0;
+      if (adName) {
+        if (!idx.adCanonicalByName.has(normLabel(adName))) {
+          idx.adCanonicalByName.set(normLabel(adName), adName);
+        }
+        if (adId) idx.adByAdId.set(adId, adName);
+        if (activo) idx.adsActivos.add(adName);
       }
-      if (inRange && num(a.spend) > 0) idx.adsActivos.add(adName);
+      if (adsetName) {
+        if (adId) idx.adsetByAdId.set(adId, adsetName);
+        if (adsetId) idx.adsetByAdsetId.set(adsetId, adsetName);
+      }
+      const campId = a.campaign_id != null ? String(a.campaign_id) : null;
+      const campKey = campId ? idx.byCampaignId.get(campId) : undefined;
+      if (adId && adName) {
+        const previo = idx.adCatalog.get(adId);
+        idx.adCatalog.set(adId, {
+          id: adId,
+          name: adName,
+          campaignKey: campKey ?? previo?.campaignKey ?? null,
+          adsetId: adsetId ?? previo?.adsetId ?? null,
+          adsetName: adsetName ?? previo?.adsetName ?? null,
+          activo: activo || previo?.activo === true,
+        });
+      }
+      if (!campKey) continue;
+      if (adId) idx.byAdId.set(adId, campKey);
+      if (adName) agregarCandidato(idx.byAdName, normLabel(adName), campKey);
+      if (adsetName) agregarCandidato(idx.byAdsetName, normLabel(adsetName), campKey);
+      if (adsetId) idx.byAdsetId.set(adsetId, campKey);
     }
     for (const a of (row.tiktok_adgroups as Record<string, unknown>[] | null) ?? []) {
+      if (!enAlcance(a.campaign_id, a.campaign_name)) continue;
       const gName = a.adgroup_name as string | null;
-      if (!gName) continue;
-      if (!idx.adsetCanonicalByName.has(normLabel(gName))) {
-        idx.adsetCanonicalByName.set(normLabel(gName), gName);
+      const gId = a.adgroup_id ? String(a.adgroup_id) : null;
+      const activo = inRange && num(a.spend) > 0;
+      if (gName) {
+        if (!idx.adsetCanonicalByName.has(normLabel(gName))) {
+          idx.adsetCanonicalByName.set(normLabel(gName), gName);
+        }
+        if (activo) idx.adsetsActivos.add(gName);
+        if (gId) idx.adsetByAdsetId.set(gId, gName);
       }
-      if (inRange && num(a.spend) > 0) idx.adsetsActivos.add(gName);
+      const campId = a.campaign_id != null ? String(a.campaign_id) : null;
+      const campKey = campId ? idx.byCampaignId.get(campId) : undefined;
+      if (gId && gName) {
+        const previo = idx.adsetCatalog.get(gId);
+        idx.adsetCatalog.set(gId, {
+          id: gId,
+          name: gName,
+          campaignKey: campKey ?? previo?.campaignKey ?? null,
+          adsetId: null,
+          adsetName: null,
+          activo: activo || previo?.activo === true,
+        });
+      }
+      if (!campKey) continue;
+      if (gName) agregarCandidato(idx.byAdsetName, normLabel(gName), campKey);
+      if (gId) idx.byAdsetId.set(gId, campKey);
     }
   }
 
@@ -470,6 +678,26 @@ function campanaUnica(
   return unica;
 }
 
+/**
+ * Candidatos de un nombre, restringidos a la plataforma del registro (si se
+ * sabe) y sin duplicados «sin ID» cuando la misma campaña ya está por ID.
+ *
+ * Lo segundo importa porque las filas viejas de `meta_campaigns` no traían
+ * `campaign_id`: la misma campaña queda indexada una vez por nombre y otra por
+ * ID, y sin este filtro todo nombre de esa época saldría «ambiguo».
+ */
+function filtrarCandidatos(
+  cands: Set<string> | null | undefined,
+  plataforma: PlataformaGasto | null
+): Set<string> | null {
+  if (!cands || cands.size === 0) return null;
+  let lista = [...cands];
+  if (plataforma) lista = lista.filter((k) => k.startsWith(`${plataforma}:`));
+  const conId = lista.filter((k) => /^[a-z]+:\d{10,}$/.test(k));
+  if (conId.length > 0) lista = conId;
+  return lista.length > 0 ? new Set(lista) : null;
+}
+
 /** Cascada de matching de un registro (lead/venta) a una campaña. */
 export function matchToCampaign(
   rec: UtmRecord,
@@ -479,7 +707,19 @@ export function matchToCampaign(
   // 1. overrides manuales → máxima prioridad (el trafficker corrige el motor).
   //    Todos los niveles cuentan aquí: una corrección de anuncio o de conjunto
   //    también dice a qué campaña pertenece el lead, que es lo que ata el gasto.
+  //
+  //    Salvo contra un ID exacto del lead: una corrección de campaña o de
+  //    conjunto se escribe por un NOMBRE, y «Confirmar todas» las creaba por
+  //    similitud; no debe desviar un lead cuyo `ad_id` dice dónde está. Solo una
+  //    corrección de nivel anuncio, que el trafficker hizo sobre ese anuncio,
+  //    manda también sobre el ID.
+  const conIdExacto = Boolean(
+    (idPublicitario(rec.ad_id) && idx.byAdId.has(idPublicitario(rec.ad_id)!)) ||
+    (idPublicitario(rec.adset_id) && idx.byAdsetId.has(idPublicitario(rec.adset_id)!)) ||
+    (idPublicitario(rec.campaign_id) && idx.byCampaignId.has(idPublicitario(rec.campaign_id)!))
+  );
   for (const ov of overrides) {
+    if (conIdExacto && (ov.nivel ?? 'campaign') !== 'ad') continue;
     if (!coincideOverride(rec as Record<string, unknown>, ov)) continue;
     const key = claveCampanaDeOverride(ov, idx);
     if (key) return { key, method: 'override' };
@@ -530,31 +770,52 @@ export function matchToCampaign(
     const k = idx.byAdsetId.get(String(rec.utm_term).trim());
     if (k) return { key: k, method: 'term_adset_id' };
   }
-  // 4. utm_campaign === nombre de campaña (normalizado)
-  if (rec.utm_campaign) {
-    const k = idx.byName.get(normLabel(rec.utm_campaign));
-    if (k) return { key: k, method: 'name' };
+  // A partir de aquí se cruza por NOMBRE, y un nombre solo vale dentro de su
+  // plataforma. Una fuente conocida sin gasto en el reporting (Google, email…)
+  // no cruza por nombre: caía en una campaña de Meta que se llamara igual.
+  const fuente = plataformaDeFuente(rec.utm_source);
+  if (fuente === 'otra') return { key: null, method: 'none' };
+  const plataforma = fuente;
+
+  // 4. utm_campaign === nombre de campaña (normalizado), si lleva a UNA.
+  const porCampana = rec.utm_campaign
+    ? filtrarCandidatos(idx.byName.get(normLabel(rec.utm_campaign)), plataforma)
+    : null;
+  if (porCampana?.size === 1) {
+    return { key: porCampana.values().next().value!, method: 'name' };
   }
   // 5-6. utm_content === nombre de ad (o de campaña) / utm_term === nombre de
   //      adset → su campaña, pero solo si el nombre lleva a UNA. Cada campo
-  //      desambigua al otro (ver `campanaUnica`).
+  //      desambigua al otro (ver `campanaUnica`), y también a la campaña.
   let porAnuncio: Set<string> | null = null;
   if (rec.utm_content) {
     const n = normLabel(rec.utm_content);
-    porAnuncio = idx.byAdName.get(n) ?? null;
-    if (!porAnuncio) {
-      const k = idx.byName.get(n);
-      if (k) porAnuncio = new Set([k]);
-    }
+    porAnuncio = filtrarCandidatos(idx.byAdName.get(n), plataforma);
+    if (!porAnuncio) porAnuncio = filtrarCandidatos(idx.byName.get(n), plataforma);
   }
-  const porConjunto = rec.utm_term ? (idx.byAdsetName.get(normLabel(rec.utm_term)) ?? null) : null;
+  const porConjunto = rec.utm_term
+    ? filtrarCandidatos(idx.byAdsetName.get(normLabel(rec.utm_term)), plataforma)
+    : null;
+  if (porCampana && porCampana.size > 1) {
+    // Nombre de campaña repetido: el anuncio o el conjunto pueden decir cuál.
+    const k = campanaUnica(porCampana, porAnuncio) ?? campanaUnica(porCampana, porConjunto);
+    if (k) return { key: k, method: 'name' };
+  }
   if (porAnuncio && porAnuncio.size > 0) {
-    const k = campanaUnica(porAnuncio, porConjunto);
+    const k = campanaUnica(porAnuncio, porConjunto ?? porCampana);
     if (k) return { key: k, method: 'content_ad' };
   }
   if (porConjunto && porConjunto.size > 0) {
-    const k = campanaUnica(porConjunto, porAnuncio);
+    const k = campanaUnica(porConjunto, porAnuncio ?? porCampana);
     if (k) return { key: k, method: 'term_adset' };
+  }
+  if (porCampana && porCampana.size > 1) {
+    return {
+      key: null,
+      method: 'ambiguous',
+      candidates: [...porCampana],
+      campo: 'utm_campaign',
+    };
   }
   if (porAnuncio?.size) {
     return {
@@ -622,7 +883,12 @@ export async function loadOverrides(clienteId: string): Promise<Override[]> {
     .from('utm_campaign_map')
     .select('*')
     .eq('cliente_id', clienteId)
-    .limit(2000);
+    // La más reciente primero, y con desempate por id: gana la primera que
+    // coincide, y sin orden el ganador entre dos correcciones equivalentes
+    // dependía de cómo devolviera las filas Postgres.
+    .order('created_at', { ascending: false })
+    .order('id', { ascending: true })
+    .limit(5000);
   return (data as Override[] | null) ?? [];
 }
 
@@ -860,8 +1126,10 @@ export function buildResolver(idx: CampaignIndex, overrides: Override[]): Campai
       return Array.from(idx.adsetsActivos);
     },
     canonicalCampaign(name) {
-      const key = idx.byName.get(normLabel(name));
-      return key ? (idx.campaigns.get(key)?.name ?? null) : null;
+      // Solo si el nombre lleva a UNA campaña: con varias, cualquiera sería inventada.
+      const keys = filtrarCandidatos(idx.byName.get(normLabel(name)), null);
+      if (!keys || keys.size !== 1) return null;
+      return idx.campaigns.get(keys.values().next().value!)?.name ?? null;
     },
     index: idx,
   };

@@ -24,7 +24,13 @@ import type { FilaVentaCubo, HotmartCuboLite } from '@/lib/dashboard/hotmart-cub
 import type { ConversorMoneda } from '@/lib/moneda-reporte';
 
 /** Columnas UTM con las que el resolver cruza una venta con su campaña. */
-export const COLUMNAS_UTM_CUBO = ['utm_id', 'utm_campaign', 'utm_content', 'utm_term'] as const;
+export const COLUMNAS_UTM_CUBO = [
+  'utm_source',
+  'utm_id',
+  'utm_campaign',
+  'utm_content',
+  'utm_term',
+] as const;
 
 /** `id` va siempre: `fetchAllRows` pagina por keyset sobre él. */
 const SELECT_CUBO = ['id', ...COLUMNAS_APORTE, ...COLUMNAS_UTM_CUBO].join(',');

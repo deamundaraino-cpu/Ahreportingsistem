@@ -15,10 +15,7 @@ import {
   fieldDimLabel,
   leadFieldLabel,
   isFieldMetric,
-  parseFieldMetric,
-  isAdditiveMetric,
   isOfflineFieldMetric,
-  parseOfflineFieldMetric,
   offlineFieldLabel,
   offlineFieldFormat,
   isSheetToken,
@@ -27,12 +24,23 @@ import {
   isLeadSegMetric,
   leadSegLabel,
   isLeadAnsMetric,
-  evaluateExpression,
   basesAditivasDeFormula,
 } from '@/lib/report-utm/bi-metadata';
+import {
+  calcularTotalesTabla,
+  basesOcultasDeRatios,
+  rotuloFilaTotal,
+} from '@/lib/report-utm/bi-table-totals';
 import { useBiQueryBase, useBiEtiquetas } from '../BiQueryContext';
 import { appendWidgetFilters, widgetFilterSignature } from '../widgetQuery';
-import { readTasas, readUnavailable, TasasNote, UnavailableNote } from '../widgetDiagnostics';
+import {
+  AvisosConsultaNote,
+  readAvisosConsulta,
+  readTasas,
+  readUnavailable,
+  TasasNote,
+  UnavailableNote,
+} from '../widgetDiagnostics';
 import type { WidgetUnavailable } from '../widgetDiagnostics';
 import {
   decimalesDe,
@@ -103,6 +111,7 @@ export function TableWidget({ title, config, filters, calculatedFields = [], h =
   /** Motivo de la primera columna que no se pudo medir, si hay alguna. */
   const [naInfo, setNaInfo] = useState<WidgetUnavailable | null>(null);
   const [avisoTasas, setAvisoTasas] = useState<AvisoTasas | null>(null);
+  const [avisosConsulta, setAvisosConsulta] = useState<string[]>([]);
   /** Moneda de reporte del cliente (viaja en `meta` de la respuesta). */
   const [monedaCliente, setMonedaCliente] = useState<string | null>(null);
   /** Nombres de preguntas, respuestas y segmentos (viajan en `meta.etiquetas`). */
@@ -138,9 +147,14 @@ export function TableWidget({ title, config, filters, calculatedFields = [], h =
     const bases = basesAditivasDeFormula(c.expression);
     if (bases) basesDeCalc.set(c.name, bases);
   }
-  const ocultas = [...new Set([...basesDeCalc.values()].flatMap((m) => [...m.values()]))].filter(
-    (t) => !colKeys.includes(t)
-  );
+  // Lo mismo para los ratios del catálogo (CPL, ROAS, CTR…): una tabla de solo
+  // CPL necesita gasto y leads para su fila Total.
+  const ocultas = [
+    ...new Set([
+      ...[...basesDeCalc.values()].flatMap((m) => [...m.values()]),
+      ...basesOcultasDeRatios(colKeys),
+    ]),
+  ].filter((t) => !colKeys.includes(t));
 
   function colLabel(key: string): string {
     return (
@@ -214,6 +228,7 @@ export function TableWidget({ title, config, filters, calculatedFields = [], h =
         setEtiquetas(json.meta?.etiquetas ?? {});
         registrarEtiquetas(json.meta?.etiquetas);
         setAvisoTasas(readTasas(json.meta));
+        setAvisosConsulta(readAvisosConsulta(json.meta));
         // Una tabla mezcla columnas de varias fuentes, así que es donde
         // más se nota: se explica la primera columna que no se pudo
         // medir en vez de dejar una columna entera de ceros.
@@ -241,83 +256,17 @@ export function TableWidget({ title, config, filters, calculatedFields = [], h =
     }
   }
 
-  // Totales: suma aditivas; ratios se recalculan sobre los totales base.
-  function computeTotals(): Record<string, number> {
-    const t: Record<string, number> = {};
-    const sumOf = (key: string) => filteredRows.reduce((s, r) => s + Number(r[key] ?? 0), 0);
-    for (const m of baseMetrics) {
-      if (isAdditiveMetric(m)) t[m] = round2(sumOf(m));
-    }
-    // Bases de los ratios: puede que no sean columnas visibles de la tabla
-    // (una tabla de solo CPL igual necesita gasto y leads para el total).
-    const base = (key: string) => (key in t ? t[key] : sumOf(key));
-    const spend = base('spend');
-    const leads = base('leads_count');
-    const sales = base('sales_count');
-    const revenue = base('revenue');
-    const clicks = base('clicks');
-    const impressions = base('impressions');
-
-    // ratios derivados
-    if (colKeys.includes('cpl')) t.cpl = leads ? round2(spend / leads) : 0;
-    if (colKeys.includes('cpa')) t.cpa = sales ? round2(spend / sales) : 0;
-    if (colKeys.includes('roas')) t.roas = spend ? round2(revenue / spend) : 0;
-    if (colKeys.includes('conversion_rate'))
-      t.conversion_rate = leads ? round2((sales / leads) * 100) : 0;
-    if (colKeys.includes('cpc')) t.cpc = clicks ? round2(spend / clicks) : 0;
-    if (colKeys.includes('cpm')) t.cpm = impressions ? round2((spend / impressions) * 1000) : 0;
-    if (colKeys.includes('ctr')) t.ctr = impressions ? round2((clicks / impressions) * 100) : 0;
-    // Variantes Hotmart: mismos ratios sobre la facturación agregada.
-    if (
-      colKeys.includes('hotmart_roas') ||
-      colKeys.includes('hotmart_cpa') ||
-      colKeys.includes('hotmart_roi')
-    ) {
-      const hRevenue = base('hotmart_revenue');
-      const hSales = base('hotmart_sales');
-      if (colKeys.includes('hotmart_roas')) t.hotmart_roas = spend ? round2(hRevenue / spend) : 0;
-      if (colKeys.includes('hotmart_cpa')) t.hotmart_cpa = hSales ? round2(spend / hSales) : 0;
-      if (colKeys.includes('hotmart_roi'))
-        t.hotmart_roi = spend ? round2(((hRevenue - spend) / spend) * 100) : 0;
-    }
-    // La frecuencia necesita alcance, que NO es sumable entre filas (personas
-    // únicas se contarían dos veces) → se deja sin total en la fila Total.
-    // Métricas de campo: solo suma y respuestas (count) son aditivas por fila.
-    for (const key of fieldMetricCols) {
-      const agg = parseFieldMetric(key)?.agg;
-      if (agg === 'sum' || agg === 'count') {
-        t[key] = round2(filteredRows.reduce((s, r) => s + Number(r[key] ?? 0), 0));
-      }
-    }
-    // Columnas de Sheet: conteos e importes suman; los porcentajes no.
-    for (const key of offlineFieldCols) {
-      if (parseOfflineFieldMetric(key)?.type !== 'percentage') {
-        t[key] = round2(filteredRows.reduce((s, r) => s + Number(r[key] ?? 0), 0));
-      }
-    }
-    // Campos de Sheet: solo los conteos y las sumas se pueden totalizar; un
-    // promedio o un extremo sumados fila a fila darían un número inventado.
-    for (const key of sheetCols) {
-      if (isAdditiveMetric(key)) {
-        t[key] = round2(filteredRows.reduce((s, r) => s + Number(r[key] ?? 0), 0));
-      }
-    }
-    // Segmentos y respuestas: conteos de contactos, siempre suman. Faltaban y la
-    // fila Total salía «—» (auditoría del 2026-09-26).
-    for (const key of leadSegCols) t[key] = round2(sumOf(key));
-    // Campos calculados sobre bases aditivas: la fórmula aplicada a los totales
-    // (el CPL total es gasto total ÷ leads totales, no la suma de los CPL).
-    for (const c of usedCalc) {
-      const bases = basesDeCalc.get(c.name);
-      if (!bases) continue;
-      const valores: Record<string, number> = {};
-      for (const [id, token] of bases) valores[id] = sumOf(token);
-      const v = evaluateExpression(c.expression, valores);
-      if (v !== null && Number.isFinite(v)) t[c.name] = v;
-    }
-    return t;
-  }
-  const totals = showTotals ? computeTotals() : null;
+  // Totales: suma las aditivas y recalcula los ratios sobre sus bases sumadas
+  // (ver `bi-table-totals.ts`: por qué se piden las bases ocultas y cuándo el
+  // total es «—»).
+  const totals = showTotals
+    ? calcularTotalesTabla({ rows: filteredRows, colKeys, calculados: usedCalc })
+    : null;
+  const rotuloTotal = rotuloFilaTotal({
+    filasRecibidas: rows.length,
+    filasVisibles: filteredRows.length,
+    limite: rowLimit,
+  });
 
   function cellColor(key: string, value: number | null | undefined): string {
     if (value === null || value === undefined) return '';
@@ -351,6 +300,7 @@ export function TableWidget({ title, config, filters, calculatedFields = [], h =
             <div className="mt-1">
               <UnavailableNote info={naInfo} />
               <TasasNote aviso={avisoTasas} />
+              <AvisosConsultaNote avisos={avisosConsulta} />
             </div>
           )}
         </div>
@@ -438,7 +388,7 @@ export function TableWidget({ title, config, filters, calculatedFields = [], h =
             {totals && (
               <tfoot className="bg-muted/40 sticky bottom-0 border-t-2 border-border">
                 <tr className="text-xs font-semibold">
-                  <td className="px-5 py-2.5 text-foreground">Total</td>
+                  <td className="px-5 py-2.5 text-foreground">{rotuloTotal}</td>
                   {colKeys.map((key) => (
                     <td
                       key={key}
@@ -463,8 +413,4 @@ export function TableWidget({ title, config, filters, calculatedFields = [], h =
       )}
     </div>
   );
-}
-
-function round2(n: number): number {
-  return Math.round(n * 100) / 100;
 }

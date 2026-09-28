@@ -8,6 +8,7 @@ import { createAdminClient } from '@/utils/supabase/server';
 import { BiReportCanvas } from '@/components/report-utm/bi/BiReportCanvas';
 import { BiPublicHeader } from '@/components/report-utm/bi/BiPublicHeader';
 import type { BiReport } from '@/components/report-utm/bi/BiTypes';
+import { frescuraPublicaDeInforme } from '@/lib/report-utm/bi/frescura';
 
 export const dynamic = 'force-dynamic';
 
@@ -62,7 +63,7 @@ export default async function PublicBiDeliveryPage({ params }: Params) {
   };
 
   // Branding de agencia (system_settings) + identidad del cliente + entregas hermanas.
-  const [{ data: brandingRow }, clienteRes, { data: siblings }] = await Promise.all([
+  const [{ data: brandingRow }, clienteRes, { data: siblings }, frescura] = await Promise.all([
     db.from('system_settings').select('value').eq('key', 'branding').maybeSingle(),
     report.cliente_id
       ? db
@@ -78,6 +79,8 @@ export default async function PublicBiDeliveryPage({ params }: Params) {
       .eq('report_id', delivery.report_id)
       .order('sent_at', { ascending: false })
       .limit(12),
+    // Semáforo de última sincronización del cliente (sin el texto del error).
+    frescuraPublicaDeInforme(report.cliente_id),
   ]);
 
   const branding = (brandingRow?.value ?? {}) as {
@@ -108,6 +111,7 @@ export default async function PublicBiDeliveryPage({ params }: Params) {
           clienteLogo={clienteConfig.logo_url}
           reportName={`${report.nombre} — ${delivery.period_label}`}
           periodLabel={delivery.period_label}
+          frescura={frescura}
         />
 
         {/* Navegador de entregas anteriores */}

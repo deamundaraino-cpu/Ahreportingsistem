@@ -3,7 +3,8 @@ import { fetchAllRows } from '@/lib/supabase-paginate';
 import { columnaExcluidoDisponible } from './lead-exclusion';
 import { escLike, patronLike } from './leads-filtros';
 import { COLUMNAS_ID, SELECT_IDS_VENTA, columnasIdDisponibles } from './lead-ids';
-import { registrarConversor } from './bi/avisos-tasas';
+import { cargarAlcanceCampanas, predicadoAlcance } from './alcance-campanas';
+import { registrarAvisoConsulta, registrarConversor } from './bi/avisos-tasas';
 import {
   cargarConversor,
   clavesDeRango,
@@ -191,6 +192,18 @@ const ENTITY_FILTER_FIELD = {
 
 /** Valor de dimensión para un registro sin cruce, por entidad. */
 const SIN_ENTIDAD = { campaign: SIN_CAMPANA, ad: SIN_ANUNCIO, adset: SIN_CONJUNTO } as const;
+
+/**
+ * Fila del GASTO sin entidad. Distinta de la de los leads sin UTM a propósito:
+ * con la misma etiqueta, `mergeResults` fundía en una fila el gasto sin nombre
+ * (objetos de TikTok antiguos) con los leads que no traían campaña, y su CPL no
+ * significaba nada.
+ */
+const SIN_ENTIDAD_GASTO = {
+  campaign: '(gasto sin campaña)',
+  ad: '(gasto sin anuncio)',
+  adset: '(gasto sin conjunto)',
+} as const;
 
 /**
  * Recorta una consulta sobre `created_at` al rango de días de COLOMBIA.
@@ -468,6 +481,11 @@ export async function runBiQuery(params: BiQueryParams): Promise<BiQueryRow[]> {
     params.cliente_id != null &&
     (unified !== null || hasAnyEntityFilter(params.filters, params.advancedFilter));
   const resolver = needsResolver ? await loadResolver(params.cliente_id!, dateFrom, dateTo) : null;
+  if (needsResolver && !resolver) {
+    registrarAvisoConsulta(
+      'No se pudo cargar el cruce con las campañas: las filas van por el UTM tal cual llegó y sin gasto. Vuelve a cargar en unos segundos.'
+    );
+  }
 
   // ── LEADS query ───────────────────────────────────────────────────
   // Conteo EXACTO (count para el total, paginación completa para agrupados).
@@ -1028,7 +1046,15 @@ function resolveEntityLabel(
 }
 
 /** Claves UTM que hay que traer para poder resolver una entidad en memoria. */
-const UTM_RESOLVE_COLS = ['utm_id', 'utm_campaign', 'utm_content', 'utm_term'] as const;
+// `utm_source` también: el resolver restringe el cruce por nombre a la plataforma
+// de la fuente, y sin ella el motor y el diagnóstico titularían distinto.
+const UTM_RESOLVE_COLS = [
+  'utm_id',
+  'utm_campaign',
+  'utm_content',
+  'utm_term',
+  'utm_source',
+] as const;
 
 async function queryLeadsDirect(
   supabase: any,
@@ -1114,7 +1140,14 @@ async function queryLeadsDirect(
         ? contar(cabecera()).eq('excluido', true)
         : Promise.resolve({ count: 0, error: null }),
     ]);
-    if (todos.error || excluidos.error) return [];
+    if (todos.error || excluidos.error) {
+      // Un conteo fallido (casi siempre el timeout de 8 s) salía como «0 leads» y
+      // un CPL en «—» sin ninguna explicación.
+      registrarAvisoConsulta(
+        'No se pudieron contar los leads (la base tardó demasiado): el total sale vacío. Vuelve a cargar.'
+      );
+      return [];
+    }
     const count = (todos.count ?? 0) - (excluidos.count ?? 0);
     return [{ dim: 'total', count, fields: {}, segs: {} }];
   }
@@ -1606,15 +1639,25 @@ const ENTITY_LEVEL: Record<
     metaCol: 'meta_adsets',
     tiktokCol: 'tiktok_adgroups',
     metaNameOf: { campaign: 'campaign_name', adset: 'adset_name' },
-    tiktokNameOf: { adset: 'adgroup_name' },
+    // Desde el enriquecimiento con los catálogos de TikTok (worker/route.ts),
+    // sus adgroups y anuncios traen campaña; los objetos anteriores no, y siguen
+    // sin poder pasar un filtro de campaña.
+    tiktokNameOf: { campaign: 'campaign_name', adset: 'adgroup_name' },
   },
   ad: {
     rank: 3,
     metaCol: 'meta_ads',
     tiktokCol: 'tiktok_ads',
     metaNameOf: { campaign: 'campaign_name', adset: 'adset_name', ad: 'ad_name' },
-    tiktokNameOf: { ad: 'ad_name' },
+    tiktokNameOf: { campaign: 'campaign_name', adset: 'adset_name', ad: 'ad_name' },
   },
+};
+
+/** Campo del ID de cada entidad en un elemento del JSONB, por plataforma. */
+const ID_DE_ENTIDAD: Record<EntityKind, { meta: string; tiktok: string[] }> = {
+  campaign: { meta: 'campaign_id', tiktok: ['campaign_id'] },
+  adset: { meta: 'adset_id', tiktok: ['adgroup_id', 'adset_id'] },
+  ad: { meta: 'ad_id', tiktok: ['ad_id'] },
 };
 
 /**
@@ -1655,9 +1698,6 @@ async function queryAdsDirect(
 
   // Nivel del JSONB: el más específico entre lo que se agrupa y lo que se filtra.
   const needed: EntityKind[] = [...matchers.keys(), ...(breakdown ? [breakdown] : [])];
-  const level = needed.length
-    ? needed.reduce((a, b) => (ENTITY_LEVEL[a].rank >= ENTITY_LEVEL[b].rank ? a : b))
-    : null;
 
   let publicId: string | null = null;
   if (params.cliente_id) {
@@ -1665,6 +1705,20 @@ async function queryAdsDirect(
     // Sin enlace al cliente del reporting no hay gasto que cruzar.
     if (!publicId) return [];
   }
+
+  // Alcance del cliente (cuenta compartida con otro cliente): es un filtro de
+  // campaña implícito, que se suma al que pida el widget. Por eso fuerza el
+  // camino con desglose aunque se pida el total: la columna escalar
+  // `meta_spend` es la de la cuenta entera y no se puede recortar.
+  const alcance = publicId ? predicadoAlcance(await cargarAlcanceCampanas(publicId)) : null;
+  if (alcance) {
+    const previo = matchers.get('campaign');
+    matchers.set('campaign', previo ? (n) => alcance(n) && previo(n) : alcance);
+    if (!needed.includes('campaign')) needed.push('campaign');
+  }
+  const level = needed.length
+    ? needed.reduce((a, b) => (ENTITY_LEVEL[a].rank >= ENTITY_LEVEL[b].rank ? a : b))
+    : null;
 
   if (!level) return queryAdsScalar(params, dateFrom, dateTo, publicId, platform);
 
@@ -1929,7 +1983,7 @@ async function queryAdsFromDaily(
     if (!pasa) continue;
 
     const key = breakdown
-      ? (nameOf(r, breakdown) ?? SIN_ENTIDAD[breakdown])
+      ? (nameOf(r, breakdown) ?? SIN_ENTIDAD_GASTO[breakdown])
       : porFecha
         ? truncateDate(String(r.fecha ?? ''), grouping)
         : 'total';
@@ -2105,6 +2159,9 @@ async function queryAdsFromJsonb(
     .select(cols.join(','))
     .gte('fecha', dateFrom)
     .lte('fecha', dateTo)
+    // Orden explícito: sin él, el `limit` podía quedarse con días cualquiera, y
+    // el nombre vigente de cada entidad (abajo) depende de recorrer por fecha.
+    .order('fecha', { ascending: true })
     .limit(MAX_AD_DAY_ROWS);
   if (publicId) q = q.eq('cliente_id', publicId);
 
@@ -2113,6 +2170,38 @@ async function queryAdsFromJsonb(
 
   const grouping = params.date_grouping ?? 'day';
   const map = new Map<string, Record<string, number>>();
+
+  // Nombre VIGENTE de cada entidad: el del día más reciente de su ID dentro del
+  // rango. Es lo que hace `ads_daily_resumen` desde la migración 082, y este
+  // camino tiene que dar el mismo número: antes titulaba cada día con el nombre
+  // de ese día, así que una campaña renombrada salía partida en dos filas y sus
+  // leads (que el resolver titula con el nombre nuevo) solo caían en una.
+  const vigente = new Map<string, string>();
+  const idDe = (el: Record<string, unknown>, kind: EntityKind, isMeta: boolean): string | null => {
+    const campos = isMeta ? [ID_DE_ENTIDAD[kind].meta] : ID_DE_ENTIDAD[kind].tiktok;
+    for (const c of campos) {
+      const v = el[c];
+      if (v !== null && v !== undefined && String(v).trim() !== '') return String(v).trim();
+    }
+    return null;
+  };
+  for (const r of data as unknown as Record<string, unknown>[]) {
+    for (const isMeta of [true, false]) {
+      const elems = (r[isMeta ? spec.metaCol : spec.tiktokCol] as Record<string, unknown>[]) ?? [];
+      for (const el of elems) {
+        for (const kind of ENTITY_KINDS) {
+          const field = (isMeta ? spec.metaNameOf : spec.tiktokNameOf)[kind];
+          const id = idDe(el, kind, isMeta);
+          const nombre = field ? String(el[field] ?? '').trim() : '';
+          if (id && nombre) vigente.set(`${isMeta ? 'meta' : 'tiktok'}|${kind}|${id}`, nombre);
+        }
+      }
+    }
+    for (const c of (r.meta_campaigns as Record<string, unknown>[] | null) ?? []) {
+      const nombre = String(c.name ?? '').trim();
+      if (c.campaign_id != null && nombre) vigente.set(`meta|campaign|${c.campaign_id}`, nombre);
+    }
+  }
 
   for (const r of data as unknown as Record<string, unknown>[]) {
     const dateKey =
@@ -2130,6 +2219,9 @@ async function queryAdsFromJsonb(
       kind: EntityKind,
       isMeta: boolean
     ): string | null => {
+      const id = idDe(el, kind, isMeta);
+      const actual = id ? vigente.get(`${isMeta ? 'meta' : 'tiktok'}|${kind}|${id}`) : undefined;
+      if (actual) return actual;
       const field = (isMeta ? spec.metaNameOf : spec.tiktokNameOf)[kind];
       if (field) {
         const v = String(el[field] ?? '').trim();
@@ -2163,7 +2255,9 @@ async function queryAdsFromJsonb(
     ) => {
       for (const el of elems) {
         if (!passes(el, isMeta)) continue;
-        const key = breakdown ? (nameOf(el, breakdown, isMeta) ?? SIN_ENTIDAD[breakdown]) : dateKey;
+        const key = breakdown
+          ? (nameOf(el, breakdown, isMeta) ?? SIN_ENTIDAD_GASTO[breakdown])
+          : dateKey;
         let entry = map.get(key);
         if (!entry) {
           entry = newAdEntry();
@@ -3835,13 +3929,47 @@ async function calcularValores(params: ParamsValores): Promise<ResultadoValores>
         ? await loadResolver(params.cliente_id, dateFrom, dateTo)
         : null;
 
-      const { data, error } = await supabase.schema('report_utm').rpc('bi_valores_utm', {
+      // La v2 (094) trae también la fuente y los IDs de la 082: sin ellos el
+      // desplegable titulaba por nombre lo que el motor titula por `ad_id`, y no
+      // sabía la plataforma con la que el resolver restringe el cruce. Sin la
+      // migración (PGRST202), la v1 de siempre.
+      const argsValores = {
         p_cliente_id: params.cliente_id ?? null,
         p_tabla: tabla,
         p_desde: bounds.gte,
         p_hasta: bounds.lt,
         p_limite: 5000,
-      });
+      };
+      // Paginado: PostgREST corta cada respuesta en ~1.000 filas aunque la
+      // función devuelva hasta 5.000 tuplas. Con la v1 (4 columnas) casi nunca
+      // se llegaba; con la v2, que agrupa también por fuente e IDs, Eduversio
+      // pasa de 400 a 1.500 tuplas en un mes y el desplegable perdía 509 leads.
+      const leerTuplas = async (fn: string) => {
+        const filas: Record<string, unknown>[] = [];
+        // Orden TOTAL: la función ordena solo por `n`, y con empates cada página
+        // podría repartirlos distinto (tuplas repetidas o perdidas).
+        const columnas =
+          fn === 'bi_valores_utm_v2'
+            ? ['utm_source', 'utm_id', 'utm_campaign', 'utm_content', 'utm_term', 'ad_id']
+            : ['utm_id', 'utm_campaign', 'utm_content', 'utm_term'];
+        for (let desde = 0; desde < argsValores.p_limite; desde += 1000) {
+          let q = supabase
+            .schema('report_utm')
+            .rpc(fn, argsValores)
+            .order('n', { ascending: false });
+          for (const c of columnas) q = q.order(c, { ascending: true, nullsFirst: true });
+          const { data: pagina, error: e } = await q.range(desde, desde + 999);
+          if (e) return { data: null, error: e };
+          const lote = (pagina ?? []) as Record<string, unknown>[];
+          filas.push(...lote);
+          if (lote.length < 1000) break;
+        }
+        return { data: filas, error: null };
+      };
+      let { data, error } = await leerTuplas('bi_valores_utm_v2');
+      if (error && (error as { code?: string }).code === 'PGRST202') {
+        ({ data, error } = await leerTuplas('bi_valores_utm'));
+      }
       if (error) return errorDeConsulta('bi_valores_utm (dimensión unificada)', error);
 
       const porEtiqueta = new Map<string, number>();

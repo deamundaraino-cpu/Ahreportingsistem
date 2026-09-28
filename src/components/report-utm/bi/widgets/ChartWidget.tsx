@@ -51,7 +51,14 @@ import {
 import { useBiQueryBase, useBiEtiquetas } from '../BiQueryContext';
 import { appendWidgetFilters, widgetFilterSignature } from '../widgetQuery';
 import { HelpTip } from '../HelpTip';
-import { readTasas, readUnavailable, TasasNote, UnavailableNote } from '../widgetDiagnostics';
+import {
+  AvisosConsultaNote,
+  readAvisosConsulta,
+  readTasas,
+  readUnavailable,
+  TasasNote,
+  UnavailableNote,
+} from '../widgetDiagnostics';
 import type { WidgetUnavailable } from '../widgetDiagnostics';
 import {
   monedaDeMetrica,
@@ -169,6 +176,7 @@ export function ChartWidget({
   /** Motivo por el que la métrica de la gráfica no se pudo medir, si es el caso. */
   const [naInfo, setNaInfo] = useState<WidgetUnavailable | null>(null);
   const [avisoTasas, setAvisoTasas] = useState<AvisoTasas | null>(null);
+  const [avisosConsulta, setAvisosConsulta] = useState<string[]>([]);
   /** Moneda de reporte del cliente (viaja en `meta` de la respuesta). */
   const [monedaCliente, setMonedaCliente] = useState<string | null>(null);
   /** Nombres de preguntas, respuestas y segmentos (viajan en `meta.etiquetas`). */
@@ -250,6 +258,7 @@ export function ChartWidget({
         setEtiquetas(json.meta?.etiquetas ?? {});
         registrarEtiquetas(json.meta?.etiquetas);
         setAvisoTasas(readTasas(json.meta));
+        setAvisosConsulta(readAvisosConsulta(json.meta));
         if (usePivot) {
           setPivot(json.data ?? { rows: [], seriesKeys: [] });
           setRows([]);
@@ -339,6 +348,7 @@ export function ChartWidget({
                 se pudo medir, se dice antes de dibujarla. */}
         {!loading && !error && <UnavailableNote info={naInfo} />}
         {!loading && !error && <TasasNote aviso={avisoTasas} />}
+        {!loading && !error && <AvisosConsultaNote avisos={avisosConsulta} />}
 
         {loading ? (
           <Skeleton className="flex-1 min-h-[180px] rounded-xl" />

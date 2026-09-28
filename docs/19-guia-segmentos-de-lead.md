@@ -395,7 +395,7 @@ Renombrar es libre; la clave es inmutable desde el alta.
 | Lógica pura         | [`lead-campos.ts`](../src/lib/report-utm/lead-campos.ts): `segmentoIncluyeBucket`, `cuentaEnSegmento`, `bucketsAcumulados` |
 | Motor del BI        | [`bi-query.ts`](../src/lib/report-utm/bi-query.ts): `collectLeadSegClaves`, `aggregateLeads`, `mergeResults`               |
 | Cubo del dashboard  | [`lead-answer-aggregation.ts`](../src/lib/dashboard/lead-answer-aggregation.ts): `claveSegmento`, `clavesDelDia`           |
-| UI                  | [`LeadsConfigCard`](../src/components/report-utm/leads/LeadsConfigCard.tsx) (pestaña «Leads»)                               |
+| UI                  | [`LeadsConfigCard`](../src/components/report-utm/leads/LeadsConfigCard.tsx) (pestaña «Leads»)                              |
 | API                 | `/api/report-utm/lead-campos/segmentos` · `/api/report-utm/bi/lead-fields`                                                 |
 | Comprobaciones      | `verify-lead-segmentos.ts` (puro) · `verify-lead-segmentos-db.ts` (datos reales)                                           |
 | Migración de datos  | `npx tsx scripts/migrar-segmentos-lead.ts` — informe · `--aplicar` · `--revertir <copia>`                                  |

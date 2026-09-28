@@ -1,7 +1,7 @@
 import { getDashboardData } from '@/app/(app)/dashboard/_actions';
 import { DateRangeSelector } from '@/app/(app)/dashboard/components/DateRangeSelector';
 import { DashboardClient } from '@/app/(app)/dashboard/components/DashboardClient';
-import { format, subDays } from 'date-fns';
+import { rangoPorDefectoCliente } from '@/lib/colombia-date';
 import { createAdminClient } from '@/utils/supabase/server';
 import { getSesionActual } from '@/lib/auth-session';
 import { redirect } from 'next/navigation';
@@ -22,9 +22,10 @@ export default async function PublicReportPage(props: {
   // salen de `getSesionActual()` (una sola vez por petición) y los datos del
   // dashboard se lanzan a la vez que la comprobación de asignación.
   const searchParams = await props.searchParams;
-  const now = new Date();
-  const fallbackFrom = format(subDays(now, 30), 'yyyy-MM-dd');
-  const fallbackTo = format(now, 'yyyy-MM-dd');
+  // Día del CLIENTE (hoy, Colombia), no el del servidor: en Vercel `new Date()`
+  // es UTC, así que desde las 19:00 el rango terminaba en mañana. Y 30 días
+  // inclusive (no 31), como el dashboard interno y el espejo público.
+  const { from: fallbackFrom, to: fallbackTo } = rangoPorDefectoCliente(30);
 
   const fromStr = typeof searchParams.from === 'string' ? searchParams.from : fallbackFrom;
   const toStr = typeof searchParams.to === 'string' ? searchParams.to : fallbackTo;

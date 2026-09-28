@@ -1631,6 +1631,39 @@ export function ClientConfigForm({
                   embudo de Meta Ads.
                 </p>
               </div>
+              <div className="space-y-2">
+                <Label htmlFor="alcance_campanas" className="text-foreground/90">
+                  Campañas de este cliente (cuenta compartida)
+                </Label>
+                <Input
+                  id="alcance_campanas"
+                  placeholder="Somos, SR, -Sur Profundo"
+                  value={config.alcance_campanas || ''}
+                  onChange={(e) => setConfig({ ...config, alcance_campanas: e.target.value })}
+                  className="bg-background border-input"
+                />
+                <p className="text-xs text-muted-foreground/70">
+                  Solo si la cuenta publicitaria la comparte con otro cliente. Una campaña es suya
+                  si su nombre contiene alguno de estos textos; un texto con «-» delante la excluye.
+                  Recorta el gasto y el cruce de leads de los informes. Vacío = toda la cuenta.
+                </p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="zona_horaria" className="text-foreground/90">
+                  Zona horaria de los informes
+                </Label>
+                <Input
+                  id="zona_horaria"
+                  placeholder="Vacío = la de la cuenta de Meta (p. ej. America/Santiago)"
+                  value={config.zona_horaria || ''}
+                  onChange={(e) => setConfig({ ...config, zona_horaria: e.target.value.trim() })}
+                  className="bg-background border-input"
+                />
+                <p className="text-xs text-muted-foreground/70">
+                  Define dónde empieza y termina cada día para leads y ventas. Por defecto se usa la
+                  zona de la cuenta de Meta, que es la del gasto; escríbela solo para forzar otra.
+                </p>
+              </div>
             </CardContent>
           </Card>
 

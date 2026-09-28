@@ -64,13 +64,21 @@ export async function cargarCandidatos(
 ): Promise<{ candidatos: LeadCandidato[]; via: 'rpc' | 'directo' }> {
   if (emails.length === 0 && tels.length === 0) return { candidatos: [], via: 'rpc' };
 
-  const { data, error } = await db.rpc('hotmart_leads_para_atribucion', {
+  const args = {
     p_cliente_rtm: rtmId,
     p_emails: emails,
     p_tel9: tels,
     p_desde: desde.toISOString(),
     p_hasta: hasta.toISOString(),
-  });
+  };
+  // La v2 (094) devuelve también los IDs del lead y admite leads que solo traen
+  // IDs. Sin ella, la v1 (089); sin ninguna, la lectura directa de abajo.
+  const v2 = await db.rpc('hotmart_leads_para_atribucion_v2', args);
+  if (!v2.error) return { candidatos: (v2.data ?? []) as LeadCandidato[], via: 'rpc' };
+  if (!funcionNoExiste(v2.error)) {
+    throw new Error(`hotmart_leads_para_atribucion_v2: ${v2.error.message}`);
+  }
+  const { data, error } = await db.rpc('hotmart_leads_para_atribucion', args);
   if (!error) return { candidatos: (data ?? []) as LeadCandidato[], via: 'rpc' };
   if (!funcionNoExiste(error)) {
     throw new Error(`hotmart_leads_para_atribucion: ${error.message}`);

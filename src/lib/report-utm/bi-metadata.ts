@@ -889,7 +889,9 @@ export const METRIC_META: Record<BiMetric, MetricMetaEntry> = {
   // campaña. Es lo que las `hotmart_*` agregadas nunca pudieron hacer.
   hm_ventas: { label: 'Ventas Hotmart (#)', format: 'number', group: 'hotmart', breakdown: 'any' },
   hm_neto: {
-    label: 'Facturación Hotmart (neto)',
+    // Distinta de `hotmart_revenue` (fuente Cuenta, sin campaña): con la misma
+    // etiqueta, el selector mostraba dos métricas iguales que no dan lo mismo.
+    label: 'Facturación Hotmart neta (por venta)',
     format: 'currency',
     group: 'hotmart',
     breakdown: 'any',
@@ -921,7 +923,12 @@ export const METRIC_META: Record<BiMetric, MetricMetaEntry> = {
     group: 'hotmart',
     breakdown: 'any',
   },
-  hm_reembolsos: { label: 'Reembolsos (#)', format: 'number', group: 'hotmart', breakdown: 'any' },
+  hm_reembolsos: {
+    label: 'Reembolsos Hotmart (# por venta)',
+    format: 'number',
+    group: 'hotmart',
+    breakdown: 'any',
+  },
   hm_neto_reembolsado: {
     label: 'Facturación reembolsada',
     format: 'currency',

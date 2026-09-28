@@ -1600,6 +1600,7 @@ function DynamicDashboard({
         onClose={() => setShowArchive(false)}
         onToggleArchived={handleToggleArchived}
         isTeam={isTeam}
+        availablePlatforms={platformSet}
       />
     );
   }

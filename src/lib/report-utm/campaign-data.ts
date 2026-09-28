@@ -15,6 +15,7 @@
 // con todas las métricas.
 
 import { createAdminClient } from '@/utils/supabase/server';
+import { conZonaDeCliente } from '@/lib/zona-activa';
 import type { AdvancedFilter } from './bi-metadata';
 import { normLabel, round2 } from './bi-metadata';
 import { fetchAllRows } from './bi-query';
@@ -261,7 +262,10 @@ function computeUnmatched(ctx: CrossContext): {
   const counts = new Map<string, number>();
   for (const l of leads) {
     const m = matchToCampaign(l, idx, overrides);
-    if (m.key) continue;
+    // Los ambiguos tienen su propia sección («Nombres repetidos»). Contarlos
+    // aquí los clasificaba como «sin UTM» (su nombre de anuncio no es
+    // `utm_campaign`) y el desglose de «sin cruzar» salía en negativo.
+    if (m.key || m.method === 'ambiguous') continue;
     const v =
       (l.utm_campaign as string) || (l.utm_id as string) || (l.utm_source as string) || '(vacío)';
     const field = l.utm_campaign ? 'utm_campaign' : l.utm_id ? 'utm_id' : 'utm_source';
@@ -601,7 +605,7 @@ function computeNivel(
 // —mejor— añadiendo `ad_id={{ad.id}}` a los enlaces para que no vuelva a pasar.
 
 export interface AmbiguoRow {
-  field: 'utm_content' | 'utm_term';
+  field: 'utm_campaign' | 'utm_content' | 'utm_term';
   value: string;
   count: number;
   /** Campañas donde existe ese nombre, de más a menos gasto. */
@@ -708,7 +712,12 @@ const NIVEL_VACIO = (): { cobertura: NivelCobertura; rows: NivelRow[] } => ({
  * inválidas (macros/vacíos) y cobertura por método. Carga los leads y el índice
  * UNA sola vez.
  */
+/** Diagnóstico del cruce, en la zona horaria del cliente (zona-activa.ts). */
 export async function getCrossDiagnostics(params: CampaignCrossParams): Promise<CrossDiagnostics> {
+  return conZonaDeCliente({ rtm: params.cliente_id }, () => diagnosticarEnZona(params));
+}
+
+async function diagnosticarEnZona(params: CampaignCrossParams): Promise<CrossDiagnostics> {
   const ctx = await loadCrossContext(params);
   // `spend: null` y no un 0%: sin índice (cliente sin enlace, o lectura
   // incompleta) no se sabe la cobertura. Decir «0% cruzado» sería inventar.

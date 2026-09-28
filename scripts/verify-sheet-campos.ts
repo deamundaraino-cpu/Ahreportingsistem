@@ -814,24 +814,46 @@ sec('aggregateFormula — reagregación al agrupar por semana o mes');
 }
 
 {
-  // REQUISITO DURO de esta fase: las métricas existentes NO cambian de
-  // comportamiento. `meta_frequency`, `ga_bounce_rate` y
-  // `ga_avg_session_duration` hoy se suman al agrupar (es un bug conocido),
-  // pero corregirlo alteraría cifras que los clientes ya validaron. Si alguien
-  // lo "arregla" de paso, esta comprobación falla.
+  // Antes esto era un REQUISITO DURO al revés: `meta_frequency`,
+  // `ga_bounce_rate` y `ga_avg_session_duration` se SUMABAN al agrupar (bug
+  // conocido, dejado para no mover cifras publicadas). El 2026-09-28 el usuario
+  // decidió corregirlas y avisar a los clientes: ahora se recalculan como el BI
+  // (frecuencia = impresiones ÷ alcance; tasas de GA4 ponderadas por sesiones).
+  // El detalle vive en scripts/verify-agregacion-no-aditivas.ts.
   const filas = [
-    { fecha: '2026-07-01', meta_frequency: 1.5, ga_bounce_rate: 40, ga_avg_session_duration: 60 },
-    { fecha: '2026-07-02', meta_frequency: 2.5, ga_bounce_rate: 20, ga_avg_session_duration: 40 },
+    {
+      fecha: '2026-07-01',
+      meta_impressions: 300,
+      meta_reach: 200,
+      meta_frequency: 1.5,
+      ga_sessions: 100,
+      ga_bounce_rate: 40,
+      ga_avg_session_duration: 60,
+    },
+    {
+      fecha: '2026-07-02',
+      meta_impressions: 500,
+      meta_reach: 200,
+      meta_frequency: 2.5,
+      ga_sessions: 300,
+      ga_bounce_rate: 20,
+      ga_avg_session_duration: 40,
+    },
   ];
   check(
-    'meta_frequency sigue sumándose (comportamiento intacto)',
-    aggregateFormula('meta_frequency', filas) === 4,
+    'meta_frequency = Σimpresiones ÷ Σalcance (800/400 = 2), no la suma',
+    aggregateFormula('meta_frequency', filas) === 2,
     String(aggregateFormula('meta_frequency', filas))
   );
-  check('ga_bounce_rate sigue sumándose', aggregateFormula('ga_bounce_rate', filas) === 60);
   check(
-    'ga_avg_session_duration sigue sumándose',
-    aggregateFormula('ga_avg_session_duration', filas) === 100
+    'ga_bounce_rate ponderada por sesiones ((40·100 + 20·300)/400 = 25)',
+    aggregateFormula('ga_bounce_rate', filas) === 25,
+    String(aggregateFormula('ga_bounce_rate', filas))
+  );
+  check(
+    'ga_avg_session_duration ponderada por sesiones ((60·100 + 40·300)/400 = 45)',
+    aggregateFormula('ga_avg_session_duration', filas) === 45,
+    String(aggregateFormula('ga_avg_session_duration', filas))
   );
 
   // Y la reagregación no toca claves ajenas aunque lleven los sufijos.

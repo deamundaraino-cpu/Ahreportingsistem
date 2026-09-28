@@ -18,8 +18,22 @@ import {
   type AvisoTasas,
   type ConversorMoneda,
 } from '@/lib/moneda-reporte';
+import { alResultadoIncompleto } from '@/lib/supabase-paginate';
 
 const conversoresDeLaPeticion = new AsyncLocalStorage<ConversorMoneda[]>();
+
+// ── Avisos de la consulta ─────────────────────────────────────────────
+// Lo mismo para lo que no es moneda: un cruce de campañas que no se pudo
+// cargar, una lectura que quedó incompleta. Antes el motor degradaba en
+// silencio (agrupaba por UTM crudo, devolvía lo ya leído) y el mismo widget
+// podía dar cifras distintas de una carga a otra sin que nada lo dijera.
+const avisosDeLaPeticion = new AsyncLocalStorage<Set<string>>();
+
+/** Apunta un aviso en la consulta en curso, si alguien está recogiendo. */
+export function registrarAvisoConsulta(texto: string): void {
+  avisosDeLaPeticion.getStore()?.add(texto);
+}
+alResultadoIncompleto(registrarAvisoConsulta);
 
 /** Apunta el conversor en la consulta en curso, si alguien está recogiendo. */
 export function registrarConversor<T extends ConversorMoneda>(conv: T): T {
@@ -33,8 +47,15 @@ export function registrarConversor<T extends ConversorMoneda>(conv: T): T {
  */
 export async function conAvisosDeTasas<T>(
   fn: () => Promise<T>
-): Promise<{ resultado: T; tasas: AvisoTasas | null }> {
+): Promise<{ resultado: T; tasas: AvisoTasas | null; avisos: string[] }> {
   const conversores: ConversorMoneda[] = [];
-  const resultado = await conversoresDeLaPeticion.run(conversores, fn);
-  return { resultado, tasas: unirAvisosTasas(conversores.map((c) => avisoDeTasas(c))) };
+  const avisos = new Set<string>();
+  const resultado = await avisosDeLaPeticion.run(avisos, () =>
+    conversoresDeLaPeticion.run(conversores, fn)
+  );
+  return {
+    resultado,
+    tasas: unirAvisosTasas(conversores.map((c) => avisoDeTasas(c))),
+    avisos: [...avisos],
+  };
 }

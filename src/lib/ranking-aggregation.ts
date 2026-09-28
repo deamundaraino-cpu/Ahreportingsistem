@@ -259,6 +259,12 @@ export function aggregateRankingRows(
     }
   }
 
+  // La frecuencia no se suma entre días: 30 días a frecuencia 2 no son 60. Se
+  // recalcula sobre las bases acumuladas (impresiones ÷ alcance), como el BI.
+  for (const acc of groupMap.values()) {
+    acc.meta_frequency = acc.meta_reach > 0 ? acc.meta_impressions / acc.meta_reach : 0;
+  }
+
   // ── Respuestas de formulario ─────────────────────────────────────────────
   // Solo en dimensión campaña: es hasta donde resuelve el cubo. En anuncio y
   // conjunto NO se añade nada, y esa ausencia es deliberada — hace que la celda

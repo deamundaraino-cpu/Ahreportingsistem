@@ -1,4 +1,5 @@
 import 'server-only';
+import { conZonaDeCliente } from '@/lib/zona-activa';
 
 /**
  * Carga de métricas de un cliente — el ÚNICO camino que deben usar la API, el
@@ -38,6 +39,7 @@ import 'server-only';
 import { createAdminClient } from '@/utils/supabase/server';
 import { fetchAllRows } from '@/lib/supabase-paginate';
 import { mergeMetricasDelRango, agruparOfflinePorFecha } from '@/lib/dashboard/merge-metrics';
+import { columnasPorcentajeOffline } from '@/lib/report-utm/bi/campos-cliente';
 import {
   parseTabFilter,
   enrichMetaRow,
@@ -167,7 +169,11 @@ function calcularTotales(rows: FilaMetricas[]): Record<string, number> {
     }
   }
 
-  reagregarNoAditivas(totales, rows as Record<string, unknown>[]);
+  // Frecuencia, rebote, duración y tasas se recalculan (no se suman). Sin base
+  // quedan en null: se omiten del total en vez de publicar un 0 inventado.
+  const recalculados: Record<string, number | null> = totales;
+  reagregarNoAditivas(recalculados, rows as Record<string, unknown>[]);
+  for (const [k, v] of Object.entries(recalculados)) if (v === null) delete totales[k];
 
   // Las derivadas se piden al mismo motor de fórmulas que usa el dashboard, así
   // que salen idénticas a las que ve el usuario en pantalla.
@@ -200,7 +206,14 @@ function calcularTotales(rows: FilaMetricas[]): Record<string, number> {
  * Lanza `ApiError` si falta el cliente o si la base falla. No devuelve datos
  * vacíos para disimular un error.
  */
+/** Métricas de un cliente en SU zona horaria (ver zona-activa.ts). */
 export async function getMetricasCliente(params: ParamsMetricasCliente): Promise<MetricasCliente> {
+  return conZonaDeCliente({ publico: params.clienteId || null }, () =>
+    getMetricasClienteEnZona(params)
+  );
+}
+
+async function getMetricasClienteEnZona(params: ParamsMetricasCliente): Promise<MetricasCliente> {
   const { clienteId, tabId, maxDias = MAX_DIAS_RANGO } = params;
 
   if (!clienteId) {
@@ -322,7 +335,10 @@ export async function getMetricasCliente(params: ParamsMetricasCliente): Promise
   const base = mergeMetricasDelRango({
     metricas: metricasEnMoneda,
     leads,
-    offlinePorFecha: agruparOfflinePorFecha(offline),
+    offlinePorFecha: agruparOfflinePorFecha(
+      offline,
+      await columnasPorcentajeOffline(supabase, clienteId)
+    ),
     sheetPorFecha: new Map(),
     leadsLegacyPorFecha: new Map(),
   });

@@ -196,8 +196,11 @@ export function sanitizeForClient<
     moneda?: string;
     tasas?: unknown;
     etiquetas?: Record<string, string>;
+    avisos_consulta?: string[];
   },
->(d: T | undefined): (QueryDiagnostics & Pick<T, 'moneda' | 'tasas' | 'etiquetas'>) | undefined {
+>(
+  d: T | undefined
+): (QueryDiagnostics & Pick<T, 'moneda' | 'tasas' | 'etiquetas' | 'avisos_consulta'>) | undefined {
   if (!d) return undefined;
   const neutralizar = (r: SkipReason): SkipReason =>
     r.kind === 'no_public_link' ? { kind: 'not_configured' } : r;
@@ -215,5 +218,7 @@ export function sanitizeForClient<
     ...(d.tasas ? { tasas: d.tasas } : {}),
     // Los nombres de las preguntas y respuestas son del propio informe.
     ...(d.etiquetas ? { etiquetas: d.etiquetas } : {}),
+    // Que una cifra puede estar incompleta también es del cliente.
+    ...(d.avisos_consulta?.length ? { avisos_consulta: d.avisos_consulta } : {}),
   };
 }

@@ -78,7 +78,7 @@ export const HOTMART_SOURCE: DataSource = {
     money(
       S,
       'revenue_neto',
-      'Facturación Hotmart (neto)',
+      'Facturación Hotmart neta (por venta)',
       'Dinero que realmente llega a la cuenta: la comisión del productor, ya descontada la tarifa de Hotmart. Convertido a la moneda del cliente.',
       'hotmart',
       { column: 'neto_productor_usd', recommended: true }
@@ -112,7 +112,7 @@ export const HOTMART_SOURCE: DataSource = {
     measure(
       S,
       'reembolsos',
-      'Reembolsos (#)',
+      'Reembolsos Hotmart (# por venta)',
       'Cantidad de ventas del período que acabaron reembolsadas o en contracargo. Se cuentan en la fecha de la VENTA, no en la del reembolso.',
       'hotmart',
       { agg: 'sum', column: 'reembolsos', direction: 'down' }

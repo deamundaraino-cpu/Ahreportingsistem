@@ -1,7 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { aplicarExclusion, cargarReglaExclusion } from './lead-exclusion';
 import { excluirDuplicadosLote } from './lead-duplicados';
-import { adaptarIds, columnasIdDisponibles, idsPublicitarios } from './lead-ids';
+import { adaptarIds, columnasIdDisponibles, idsPublicitarios, insertarLeads } from './lead-ids';
 import { guardarPreguntas, sincronizarOpcionesEnCampos } from '@/lib/leads/respuestas/preguntas-db';
 import type { PreguntaPlataforma, TipoPlataforma } from '@/lib/leads/respuestas/preguntas-db';
 
@@ -650,7 +650,7 @@ export async function ingestMetaLead(
     ],
     regla
   );
-  const { error } = await db.from('lead_events').insert(row);
+  const { error } = await insertarLeads(db, row);
   if (error) {
     // 23505 = unique_violation → ya existía (webhook/poll lo metió antes). No es error.
     if ((error as { code?: string }).code === '23505') return { inserted: false };
@@ -710,13 +710,13 @@ export async function ingestMetaLeadsBatch(
   );
   if (toInsert.length === 0) return 0;
 
-  const { error } = await db.from('lead_events').insert(toInsert);
+  const { error } = await insertarLeads(db, toInsert);
   if (!error) return toInsert.length;
 
   // Fallback fila por fila (tolera 23505 por carrera con el webhook).
   let n = 0;
   for (const r of toInsert) {
-    const { error: e } = await db.from('lead_events').insert(r);
+    const { error: e } = await insertarLeads(db, r);
     if (!e) n++;
     else if ((e as { code?: string }).code !== '23505') {
       console.error('[meta-leads] batch fallback insert error', e.message);
@@ -726,6 +726,8 @@ export async function ingestMetaLeadsBatch(
 }
 
 const NINETY_DAYS_SECONDS = 90 * 24 * 60 * 60;
+/** Cada cuánto se vuelve a descubrir la lista de formularios de un cliente. */
+const REDESCUBRIR_FORMULARIOS_MS = 24 * 3600_000;
 
 export type MetaLeadsSyncSummary = {
   imported: number;
@@ -776,34 +778,70 @@ export async function syncMetaLeadsForCliente(
     const cached = Array.isArray(config.scoped_forms)
       ? (config.scoped_forms as ScopedForm[])
       : null;
-    if (!isBackfill && cached && cached.length > 0) {
+    // La caché se renueva una vez al día. Antes solo se redescubría tras un
+    // error, así que un formulario creado después del primer backfill no se
+    // sondeaba nunca: sus leads dependían del webhook y nada más.
+    const cacheAt = Number(config.scoped_forms_at ?? 0);
+    const cacheVigente = Date.now() - cacheAt < REDESCUBRIR_FORMULARIOS_MS;
+    let formsAt = cacheAt;
+    if (!isBackfill && cached && cached.length > 0 && cacheVigente) {
       scopedForms = cached;
       scopedPages = Array.isArray(config.pages) ? (config.pages as MetaPage[]) : [];
     } else {
       const targets = await getClienteScopedTargets(supabase, clienteId);
-      if (targets.matchedForms.length === 0) {
+      if (targets.matchedForms.length === 0 && !isBackfill && cached && cached.length > 0) {
+        // La renovación diaria falló (Graph caído, un límite): se sigue con la
+        // caché y se reintenta en la próxima corrida, en vez de parar la ingesta.
+        console.warn('[meta-leads] no se pudo renovar la lista de formularios:', targets.error);
+        scopedForms = cached;
+        scopedPages = Array.isArray(config.pages) ? (config.pages as MetaPage[]) : [];
+      } else if (targets.matchedForms.length === 0) {
         const msg = targets.error ?? 'Sin formularios para este cliente';
         await db
           .from('integrations')
           .update({ status: 'error', last_error: msg, last_sync_at: new Date().toISOString() })
           .eq('id', integration.id);
         return { imported, scanned, forms: 0, backfill: isBackfill, error: msg };
+      } else {
+        scopedForms = targets.matchedForms.map(({ form, page }) => ({
+          form_id: form.id,
+          form_name: form.name,
+          page_id: page.page_id,
+          page_token: page.page_token,
+        }));
+        scopedPages = targets.scopedPages;
+        formsAt = Date.now();
       }
-      scopedForms = targets.matchedForms.map(({ form, page }) => ({
-        form_id: form.id,
-        form_name: form.name,
-        page_id: page.page_id,
-        page_token: page.page_token,
-      }));
-      scopedPages = targets.scopedPages;
     }
     formCount = scopedForms.length;
+    // Formularios aún no leídos completos (los aparecidos tras el backfill): el
+    // cursor del cliente ya pasó por delante de sus primeros leads, así que se
+    // leen desde el máximo que Meta conserva, y solo se dan por leídos cuando la
+    // lectura termina (si la pasada corta antes, se repite). La dedup por
+    // external_id hace inocua la relectura. Sin la lista (integraciones de antes
+    // de este cambio), los formularios de la caché cuentan como leídos.
+    const leidos = new Set<string>(
+      Array.isArray(config.forms_leidos)
+        ? (config.forms_leidos as string[])
+        : (cached ?? []).map((f) => f.form_id)
+    );
+    const esNuevo = (f: ScopedForm) => !isBackfill && !leidos.has(f.form_id);
 
     // Recorrer formularios en streaming + insertar por lotes. Checkpoint de
     // tiempo entre formularios para no exceder el límite del runtime.
+    //
+    // Se empieza donde cortó la pasada anterior: con un orden fijo, un cliente
+    // con muchos formularios agotaba el presupuesto siempre en los mismos y los
+    // últimos no se leían nunca.
+    const offsetPrevio = Number(config.form_offset ?? 0);
+    const inicio = offsetPrevio > 0 && offsetPrevio < scopedForms.length ? offsetPrevio : 0;
+    const ordenados = [...scopedForms.slice(inicio), ...scopedForms.slice(0, inicio)];
     let partial = false;
-    for (const sf of scopedForms) {
-      await fetchFormLeadsPaged(sf.form_id, sf.page_token, sinceUnix, async (batch) => {
+    let siguienteOffset = 0;
+    for (let i = 0; i < ordenados.length; i++) {
+      const sf = ordenados[i];
+      const desde = esNuevo(sf) ? nowUnix - NINETY_DAYS_SECONDS : sinceUnix;
+      await fetchFormLeadsPaged(sf.form_id, sf.page_token, desde, async (batch) => {
         scanned += batch.length;
         imported += await ingestMetaLeadsBatch(db, clienteId, batch, sf.form_name);
         for (const lead of batch) {
@@ -811,8 +849,10 @@ export async function syncMetaLeadsForCliente(
           if (u && u > maxSeen) maxSeen = u;
         }
       });
+      leidos.add(sf.form_id);
       if (Date.now() - startedAt > BUDGET_MS) {
-        partial = true;
+        partial = i < ordenados.length - 1;
+        siguienteOffset = partial ? (inicio + i + 1) % scopedForms.length : 0;
         break;
       }
     }
@@ -859,6 +899,9 @@ export async function syncMetaLeadsForCliente(
           last_forms_detected: formCount,
           pages: scopedPages,
           scoped_forms: scopedForms,
+          scoped_forms_at: formsAt,
+          form_offset: siguienteOffset,
+          forms_leidos: [...leidos],
           preguntas_sync_at: preguntasSyncAt,
         },
       })

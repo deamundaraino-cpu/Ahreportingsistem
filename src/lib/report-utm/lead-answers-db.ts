@@ -26,6 +26,7 @@
  */
 
 import { colombiaRangeBounds } from '@/lib/colombia-date';
+import { argsZona } from '@/lib/zona-activa';
 import type { LeadCampoDef, LeadSegmentoLite } from './lead-campos';
 import { loadResolver, SIN_CAMPANA } from './campaign-resolver';
 import type { CampaignResolver } from './campaign-resolver';
@@ -408,6 +409,7 @@ async function cargarCuboAnterior(
       null,
       null,
       null,
+      r.utm_source ?? null,
     ];
     const k = JSON.stringify(t);
     let i = idx.get(k);
@@ -433,6 +435,7 @@ async function cargarCuboAnterior(
               p_desde: bounds.gte,
               p_hasta: bounds.lt,
               p_limite: LIMITE_FILAS_RPC,
+              ...argsZona(),
             })
             .range(desde, hasta)
         )
@@ -449,6 +452,7 @@ async function cargarCuboAnterior(
               p_hasta: bounds.lt,
               p_claves_json: campo.claves_origen,
               p_limite: LIMITE_FILAS_RPC,
+              ...argsZona(),
             })
             .range(desde, hasta)
         );
@@ -502,6 +506,7 @@ function registroDeTupla(t: TuplaCubo) {
     campaign_id: t[4],
     adset_id: t[5],
     ad_id: t[6],
+    utm_source: t[7] ?? null,
   };
 }
 
@@ -605,6 +610,7 @@ export async function cargarRespuestasLead(
               campaign_id: t[4],
               adset_id: t[5],
               ad_id: t[6],
+              utm_source: t[7] ?? null,
             }).label
         : null,
       idsCampana,

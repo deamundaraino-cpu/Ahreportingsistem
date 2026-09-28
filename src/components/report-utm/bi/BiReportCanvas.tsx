@@ -64,6 +64,7 @@ import { QUICK_WIDGETS, buildQuickWidget, buildRespuestasPreset } from './BiQuic
 import { useBiClientFields } from './useBiClientFields';
 import { respuestasDeCampo } from './fuentesDelCliente';
 import { exportReportPdf } from './exportPdf';
+import { SyncFreshnessBadge } from '@/app/(app)/dashboard/components/SyncFreshnessBadge';
 
 // ── Helpers de árbol de 2 niveles (raíz + secciones) ──────────────────
 // El layout es un array plano de bloques; un bloque 'section' contiene
@@ -138,6 +139,12 @@ interface Props {
    * autenticado, que devolvería 401 a un cliente sin sesión.
    */
   publicToken?: string;
+  /**
+   * Cliente del dashboard (`public.clientes.id`) cuyo semáforo de última
+   * sincronización se muestra en la cabecera. Solo el visor interno: los
+   * enlaces públicos lo pintan en su propia cabecera, leído en el servidor.
+   */
+  frescuraClienteId?: string | null;
 }
 
 // Fecha de calendario LOCAL (mismo criterio que el preset "Este mes" de los filtros)
@@ -162,6 +169,7 @@ export function BiReportCanvas({
   readonly,
   lockedDates,
   publicToken,
+  frescuraClienteId,
 }: Props) {
   const [report, setReport] = useState<BiReport>(initialReport);
   const [filters, setFilters] = useState<BiFilters>(() => {
@@ -693,6 +701,11 @@ export function BiReportCanvas({
             </h1>
             {report.descripcion && (
               <p className="mt-0.5 text-sm text-muted-foreground">{report.descripcion}</p>
+            )}
+            {frescuraClienteId && (
+              <div className="mt-1">
+                <SyncFreshnessBadge clienteId={frescuraClienteId} />
+              </div>
             )}
           </div>
           {!readonly && (

@@ -103,6 +103,34 @@ export function columnasOfflineDeConfig(configApi: unknown): OfflineFieldMeta[] 
   return Array.from(byKey.values()).sort((a, b) => a.label.localeCompare(b.label));
 }
 
+/**
+ * Claves de las columnas offline de tipo `percentage` de un cliente.
+ *
+ * El dashboard las necesita para PROMEDIAR esas columnas (ponderadas por la
+ * cantidad de la fila) en vez de sumarlas, igual que el BI. Solo se lee la rama
+ * `google_sheets_conversiones` de `config_api`: el resto guarda credenciales y
+ * no tiene por qué viajar. Un fallo de lectura devuelve el conjunto vacío (se
+ * suman como antes) en vez de tumbar el dashboard entero.
+ */
+export async function columnasPorcentajeOffline(db: Db, clienteId: string): Promise<Set<string>> {
+  try {
+    const { data } = await db
+      .from('clientes')
+      .select('sheets:config_api->google_sheets_conversiones')
+      .eq('id', clienteId)
+      .maybeSingle();
+    const sheets = (data as { sheets?: unknown } | null)?.sheets;
+    if (!sheets) return new Set();
+    return new Set(
+      columnasOfflineDeConfig({ google_sheets_conversiones: sheets })
+        .filter((c) => c.type === 'percentage')
+        .map((c) => c.key)
+    );
+  } catch {
+    return new Set();
+  }
+}
+
 // ── Catálogo dinámico, con los tokens ya construidos ─────────────────────
 
 export type RespuestaDeCampo = {

@@ -51,6 +51,11 @@ export type EstadoCuentaMeta = {
   status: number | null;
   motivo: number | null;
   moneda: string | null;
+  /**
+   * Zona IANA de la cuenta (`timezone_name`). Es la zona en la que Meta corta el
+   * gasto por día; `zona-horaria.ts` la usa para cortar igual leads y ventas.
+   */
+  zona: string | null;
   /** No puede publicar: la alerta tiene que saltar. */
   bloqueada: boolean;
   /** El problema es de pago (tarjeta rechazada, saldo pendiente). */
@@ -66,6 +71,7 @@ export function interpretarEstadoCuenta(raw: {
   account_status?: number | string;
   disable_reason?: number | string;
   currency?: string;
+  timezone_name?: string;
 }): EstadoCuentaMeta {
   const status = raw.account_status == null ? null : Number(raw.account_status);
   const motivo = raw.disable_reason == null ? null : Number(raw.disable_reason);
@@ -80,6 +86,7 @@ export function interpretarEstadoCuenta(raw: {
     status,
     motivo,
     moneda: raw.currency ?? null,
+    zona: raw.timezone_name ?? null,
     bloqueada,
     porPago,
     texto: `${estado}${causa}`,
@@ -99,7 +106,10 @@ export async function consultarEstadoCuenta(
   const actId = accountId.startsWith('act_') ? accountId : `act_${accountId}`;
   const version = process.env.META_GRAPH_API_VERSION || 'v19.0';
   const url = new URL(`https://graph.facebook.com/${version}/${actId}`);
-  url.searchParams.set('fields', 'account_id,name,account_status,disable_reason,currency');
+  url.searchParams.set(
+    'fields',
+    'account_id,name,account_status,disable_reason,currency,timezone_name'
+  );
   url.searchParams.set('access_token', token);
   try {
     const res = await fetchImpl(url.toString(), { signal: AbortSignal.timeout(10_000) });

@@ -28,15 +28,15 @@
 
 ### Piezas desplegadas
 
-| Pieza | Código | Dónde corre | Qué hace |
-| --- | --- | --- | --- |
-| App web | raíz del repo, `Dockerfile` | Dokploy (VPS), puerto 3000, dominio `reportes.adshouse.cloud` | UI, API REST, webhooks, MCP, endpoints de worker |
-| `sync-worker` | `sync-worker/` (`sync-worker/Dockerfile`) | Dokploy, mismo VPS, puerto 8080, **sin dominio** | Scheduler + drena la cola `sync_jobs` cada 15 s. **Es obligatorio**: es el único que refresca los tokens de Meta |
-| Respaldo de la cola | `.github/workflows/sync-fallback.yml` | GitHub Actions, minutos :07 y :37 | Drena la cola si el worker cae, refresca tokens de Hotmart y abre una issue si el pipeline está parado |
-| Gateway de WhatsApp | `whatsapp-gateway/` (Baileys) | Opcional; la alternativa es Evolution API (`WHATSAPP_PROVIDER`) | Envía alertas y recibe los mensajes que atiende el agente |
-| Plugin de WordPress | `wordpress-plugin/report-utm/` | En los sitios de los clientes | Envía leads por S2S a `/api/report-utm/pixel/s2s` |
-| Píxel JS | `public/report-utm-pixel.js` | En las landings | Envía eventos a `/api/report-utm/pixel/event` |
-| Base de datos | `migrations/` | Supabase, proyecto `dfdeizrbkpdocgckqlel` («REPORTING APP»), plan Pro, cómputo Micro | Postgres + Auth + Storage |
+| Pieza               | Código                                    | Dónde corre                                                                          | Qué hace                                                                                                         |
+| ------------------- | ----------------------------------------- | ------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------- |
+| App web             | raíz del repo, `Dockerfile`               | Dokploy (VPS), puerto 3000, dominio `reportes.adshouse.cloud`                        | UI, API REST, webhooks, MCP, endpoints de worker                                                                 |
+| `sync-worker`       | `sync-worker/` (`sync-worker/Dockerfile`) | Dokploy, mismo VPS, puerto 8080, **sin dominio**                                     | Scheduler + drena la cola `sync_jobs` cada 15 s. **Es obligatorio**: es el único que refresca los tokens de Meta |
+| Respaldo de la cola | `.github/workflows/sync-fallback.yml`     | GitHub Actions, minutos :07 y :37                                                    | Drena la cola si el worker cae, refresca tokens de Hotmart y abre una issue si el pipeline está parado           |
+| Gateway de WhatsApp | `whatsapp-gateway/` (Baileys)             | Opcional; la alternativa es Evolution API (`WHATSAPP_PROVIDER`)                      | Envía alertas y recibe los mensajes que atiende el agente                                                        |
+| Plugin de WordPress | `wordpress-plugin/report-utm/`            | En los sitios de los clientes                                                        | Envía leads por S2S a `/api/report-utm/pixel/s2s`                                                                |
+| Píxel JS            | `public/report-utm-pixel.js`              | En las landings                                                                      | Envía eventos a `/api/report-utm/pixel/event`                                                                    |
+| Base de datos       | `migrations/`                             | Supabase, proyecto `dfdeizrbkpdocgckqlel` («REPORTING APP»), plan Pro, cómputo Micro | Postgres + Auth + Storage                                                                                        |
 
 > **Vercel ya no se usa.** Mucha documentación y muchos comentarios todavía lo mencionan (límite de 60 s, `maxDuration`, `vercel.json`). Todo eso es histórico. Ver el apartado 10.
 
@@ -61,31 +61,31 @@ Es la mayor fuente de confusión del proyecto:
 
 ### Mapa de carpetas que importa
 
-| Carpeta | Contenido |
-| --- | --- |
-| `src/app/(app)/` | UI autenticada: `dashboard`, `informes`, `leads`, `ventas`, `cruce-campanas`, `notificaciones`, `soporte`, `admin/{settings,sync,salud,agente,configuracion,layouts}` |
-| `src/app/api/` | ~80 endpoints: `worker/*`, `cron/*`, `report-utm/*` (BI, webhooks, píxel, leads), `agent/*`, `mcp`, `v1/*` (API pública con token), `auth/*` (OAuth) |
-| `src/app/p/`, `src/app/report/` | Enlaces públicos (dashboard espejo, informes BI) |
-| `src/lib/sync/` | Cola, planner, runner, reconciliación |
-| `src/lib/hotmart/` | Cliente API, parser, clasificador, guarda anti-ceros, reagregado, atribución |
-| `src/lib/report-utm/` | Leads, atribución, BI, campos de lead, exclusión, GHL, Meta Leads, CAPI |
-| `src/lib/leads/` | Vocabulario de respuestas de formulario (`respuestas/claves.ts`), fuentes de lead |
-| `src/lib/agent/` | Agente: registro de herramientas, LLM (OpenRouter), aprobaciones, WhatsApp |
-| `src/lib/clientes/ciclo-de-vida.ts` | Crear, archivar y borrar clientes. Es el único camino permitido |
-| `scripts/` | ~106 scripts: tests `verify-*`, backfills, diagnósticos y `sql-remoto.ts` |
-| `migrations/` | 095 archivos SQL, del 001 al 093 |
-| `docs/` | Documentación temática (índice en `docs/README.md`) |
-| `skills/`, `.claude/skills/` | Skill «informes-bi» para usar el MCP desde Claude |
+| Carpeta                             | Contenido                                                                                                                                                             |
+| ----------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/app/(app)/`                    | UI autenticada: `dashboard`, `informes`, `leads`, `ventas`, `cruce-campanas`, `notificaciones`, `soporte`, `admin/{settings,sync,salud,agente,configuracion,layouts}` |
+| `src/app/api/`                      | ~80 endpoints: `worker/*`, `cron/*`, `report-utm/*` (BI, webhooks, píxel, leads), `agent/*`, `mcp`, `v1/*` (API pública con token), `auth/*` (OAuth)                  |
+| `src/app/p/`, `src/app/report/`     | Enlaces públicos (dashboard espejo, informes BI)                                                                                                                      |
+| `src/lib/sync/`                     | Cola, planner, runner, reconciliación                                                                                                                                 |
+| `src/lib/hotmart/`                  | Cliente API, parser, clasificador, guarda anti-ceros, reagregado, atribución                                                                                          |
+| `src/lib/report-utm/`               | Leads, atribución, BI, campos de lead, exclusión, GHL, Meta Leads, CAPI                                                                                               |
+| `src/lib/leads/`                    | Vocabulario de respuestas de formulario (`respuestas/claves.ts`), fuentes de lead                                                                                     |
+| `src/lib/agent/`                    | Agente: registro de herramientas, LLM (OpenRouter), aprobaciones, WhatsApp                                                                                            |
+| `src/lib/clientes/ciclo-de-vida.ts` | Crear, archivar y borrar clientes. Es el único camino permitido                                                                                                       |
+| `scripts/`                          | ~106 scripts: tests `verify-*`, backfills, diagnósticos y `sql-remoto.ts`                                                                                             |
+| `migrations/`                       | 095 archivos SQL, del 001 al 093                                                                                                                                      |
+| `docs/`                             | Documentación temática (índice en `docs/README.md`)                                                                                                                   |
+| `skills/`, `.claude/skills/`        | Skill «informes-bi» para usar el MCP desde Claude                                                                                                                     |
 
 ---
 
 ## 3 · Estado de Git y despliegue (crítico)
 
-| Ref | Commit | Qué significa |
-| --- | --- | --- |
-| `main` / `origin/main` | `bbf0005` («sheets», ~2026-09-16) | Lo que despliega Dokploy (rama configurada: `main`; **confírmalo en el panel**) |
-| `origin/unificacion-reporting-utm` | `cae1657` | Lo último subido a GitHub |
-| `unificacion-reporting-utm` (local) | `79dc694` («discrepancia de leads», 2026-09-28) | **8 commits sin subir** |
+| Ref                                 | Commit                                          | Qué significa                                                                   |
+| ----------------------------------- | ----------------------------------------------- | ------------------------------------------------------------------------------- |
+| `main` / `origin/main`              | `bbf0005` («sheets», ~2026-09-16)               | Lo que despliega Dokploy (rama configurada: `main`; **confírmalo en el panel**) |
+| `origin/unificacion-reporting-utm`  | `cae1657`                                       | Lo último subido a GitHub                                                       |
+| `unificacion-reporting-utm` (local) | `79dc694` («discrepancia de leads», 2026-09-28) | **8 commits sin subir**                                                         |
 
 **Qué hay en la rama y no en producción** (14 commits):
 
@@ -124,7 +124,7 @@ Todo está en [doc 15](./15-despliegue.md). Lo que más se olvida:
 ### 4.1 La instancia está al límite
 
 - Plan Pro, pero **sin add-on de cómputo**: Micro, con 1 GB de RAM, 2 núcleos compartidos y 60 conexiones.
-- La base pesa **574 MB** y `shared_buffers` es de 224 MB, así que el conjunto de trabajo no cabe en memoria. El *hit ratio* medido es del 45–54 %.
+- La base pesa **574 MB** y `shared_buffers` es de 224 MB, así que el conjunto de trabajo no cabe en memoria. El _hit ratio_ medido es del 45–54 %.
 - **Caída del 2026-09-20/21.** La instancia se quedó sin memoria, PostgREST devolvió 503 en toda la Data API y cayeron también Auth y Storage. Se recuperó con un reinicio.
 - **La causa es la RAM, no las consultas.** Una consulta que tarda 1 s en frío tarda 4 ms en caliente, con el mismo plan. Antes de optimizar una consulta «lenta», ejecútala 3–4 veces y quédate con la última medición.
 
@@ -132,14 +132,14 @@ Todo está en [doc 15](./15-despliegue.md). Lo que más se olvida:
 
 Tablas más pesadas:
 
-| Tabla | Tamaño | Nota |
-| --- | --- | --- |
-| `report_utm.lead_events` | 250 MB | 99.129 filas, ~1.000 leads/día |
-| `report_utm.pixel_events` | 123 MB | Crecerá mucho: el píxel v0.3.2 ya envía pageviews. Se purga a 90 días |
-| `public.ads_daily` | 79 MB | Desde 2026-01-01. Tiene **huecos**, ver 4.5 |
-| `public.conversiones_offline` | 31 MB | Filas de Google Sheets |
-| `public.sheet_filas` | 30 MB | |
-| `public.metricas_diarias` | 24 MB | Poco heap, mucho TOAST (JSONB). Leerla con los JSONB es lo caro |
+| Tabla                         | Tamaño | Nota                                                                  |
+| ----------------------------- | ------ | --------------------------------------------------------------------- |
+| `report_utm.lead_events`      | 250 MB | 99.129 filas, ~1.000 leads/día                                        |
+| `report_utm.pixel_events`     | 123 MB | Crecerá mucho: el píxel v0.3.2 ya envía pageviews. Se purga a 90 días |
+| `public.ads_daily`            | 79 MB  | Desde 2026-01-01. Tiene **huecos**, ver 4.5                           |
+| `public.conversiones_offline` | 31 MB  | Filas de Google Sheets                                                |
+| `public.sheet_filas`          | 30 MB  |                                                                       |
+| `public.metricas_diarias`     | 24 MB  | Poco heap, mucho TOAST (JSONB). Leerla con los JSONB es lo caro       |
 
 ### 4.2 Estado de las migraciones
 
@@ -149,13 +149,13 @@ Tablas más pesadas:
 
 Estado verificado en producción a 2026-09-28:
 
-| Migración | Estado | Qué hacer |
-| --- | --- | --- |
-| 001–081, 083, 084, 086–093 | Aplicadas | — |
-| **085** `autovacuum_tablas_de_evento` | **SIN aplicar** (`reloptions` de `lead_events` vacío) | Aplicarla. Es segura (solo parámetros de almacenamiento, sin bloqueos) y evita que las consultas de leads vuelvan a degradarse |
-| **082** `ids_publicitarios_en_leads` | **SIN aplicar** (no existen `campaign_id`/`adset_id`/`ad_id` en `lead_events`) | Aplicarla y luego ejecutar `npx tsx --conditions=react-server scripts/backfill-ids-leads.ts` (primero en seco, después con `--aplicar`). El código ya sondea si las columnas existen |
-| Backfill de la **084** | **Nunca ejecutado**: 87.332 de 99.129 filas conservan las UTM dentro de `page_url` | `npx tsx scripts/backfill-page-url.ts`. Va por lotes de 2.000 **a propósito**: un UPDATE masivo es justo lo que tumbó la base. Libera ~40 MB |
-| Claves de respuestas (090) | 7 de 10 `lead_campos` tienen `respuestas` | `npx tsx scripts/migrar-respuestas-lead.ts` en seco y luego `--aplicar` para congelar las que faltan |
+| Migración                             | Estado                                                                             | Qué hacer                                                                                                                                                                            |
+| ------------------------------------- | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 001–081, 083, 084, 086–093            | Aplicadas                                                                          | —                                                                                                                                                                                    |
+| **085** `autovacuum_tablas_de_evento` | **SIN aplicar** (`reloptions` de `lead_events` vacío)                              | Aplicarla. Es segura (solo parámetros de almacenamiento, sin bloqueos) y evita que las consultas de leads vuelvan a degradarse                                                       |
+| **082** `ids_publicitarios_en_leads`  | **SIN aplicar** (no existen `campaign_id`/`adset_id`/`ad_id` en `lead_events`)     | Aplicarla y luego ejecutar `npx tsx --conditions=react-server scripts/backfill-ids-leads.ts` (primero en seco, después con `--aplicar`). El código ya sondea si las columnas existen |
+| Backfill de la **084**                | **Nunca ejecutado**: 87.332 de 99.129 filas conservan las UTM dentro de `page_url` | `npx tsx scripts/backfill-page-url.ts`. Va por lotes de 2.000 **a propósito**: un UPDATE masivo es justo lo que tumbó la base. Libera ~40 MB                                         |
+| Claves de respuestas (090)            | 7 de 10 `lead_campos` tienen `respuestas`                                          | `npx tsx scripts/migrar-respuestas-lead.ts` en seco y luego `--aplicar` para congelar las que faltan                                                                                 |
 
 ### 4.3 Reglas al escribir migraciones
 
@@ -192,20 +192,20 @@ Borrar un cliente borra **todo lo suyo** en los dos esquemas. Es una decisión e
 
 ## 5 · Integraciones
 
-| Integración | Autenticación | Frecuencia | Código | Nota |
-| --- | --- | --- | --- | --- |
-| Meta Ads | OAuth (`META_APP_ID/SECRET`) | 05:00 y 14:00; reconciliación los domingos | `/api/worker`, `src/lib/sync/reconcile.ts` | Tokens de ~60 días que refresca el worker. Atribución fija `7d_click + 1d_view` |
-| Meta Lead Ads | Webhook (`META_WEBHOOK_VERIFY_TOKEN`) + sync de respaldo | Tiempo real | `/api/report-utm/webhooks/meta`, `src/lib/report-utm/meta-leads.ts` | Las Páginas se suscriben por cliente |
-| TikTok Ads | OAuth | Diaria | `/api/worker` | |
-| GA4 / Google Sheets | Service account (`GOOGLE_SERVICE_ACCOUNT_*`) | Diaria, un job por cliente | `src/lib/integrations/` | La clave PEM va con `\n` escapados; si no, da `invalid_grant` |
-| Google Ads | OAuth + developer token | — | `src/lib/report-utm/google-conversions.ts` | Conversiones offline |
-| Hotmart | OAuth HotConnect (tokens de vida corta, refresco cada 2 h) + webhook con hottok | Diaria + reconciliación diaria | `src/lib/hotmart/`, `/api/worker/hotmart` | Ver abajo |
-| GoHighLevel | Token por location | Webhook + sync de respaldo | `src/lib/report-utm/ghl-*.ts`, [doc 20](./20-integracion-gohighlevel.md) | Ventas por Workflow «Opportunity Won» |
-| WhatsApp | Evolution API o `whatsapp-gateway` | Alertas y agente | `src/lib/whatsapp/` | Mensajes entrantes firmados con HMAC (`AGENT_INBOUND_SECRET`) |
-| LLM del agente | **OpenRouter** (`OPENROUTER_API_KEY`) | Bajo demanda | `src/lib/agent/llm/client.ts` | 3 niveles de modelo con cadena de reserva, configurables desde la base sin desplegar |
-| MCP | Token de API | Bajo demanda | `/api/mcp` | El staff lo usa desde Claude sin coste de API |
-| FX | API pública (fawazahmed0) | Captura diaria | `src/lib/fx.ts` | Tabla `fx_rates` |
-| Correo | Gmail con contraseña de aplicación | — | `src/lib/email.ts` | |
+| Integración         | Autenticación                                                                   | Frecuencia                                 | Código                                                                   | Nota                                                                                 |
+| ------------------- | ------------------------------------------------------------------------------- | ------------------------------------------ | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------ |
+| Meta Ads            | OAuth (`META_APP_ID/SECRET`)                                                    | 05:00 y 14:00; reconciliación los domingos | `/api/worker`, `src/lib/sync/reconcile.ts`                               | Tokens de ~60 días que refresca el worker. Atribución fija `7d_click + 1d_view`      |
+| Meta Lead Ads       | Webhook (`META_WEBHOOK_VERIFY_TOKEN`) + sync de respaldo                        | Tiempo real                                | `/api/report-utm/webhooks/meta`, `src/lib/report-utm/meta-leads.ts`      | Las Páginas se suscriben por cliente                                                 |
+| TikTok Ads          | OAuth                                                                           | Diaria                                     | `/api/worker`                                                            |                                                                                      |
+| GA4 / Google Sheets | Service account (`GOOGLE_SERVICE_ACCOUNT_*`)                                    | Diaria, un job por cliente                 | `src/lib/integrations/`                                                  | La clave PEM va con `\n` escapados; si no, da `invalid_grant`                        |
+| Google Ads          | OAuth + developer token                                                         | —                                          | `src/lib/report-utm/google-conversions.ts`                               | Conversiones offline                                                                 |
+| Hotmart             | OAuth HotConnect (tokens de vida corta, refresco cada 2 h) + webhook con hottok | Diaria + reconciliación diaria             | `src/lib/hotmart/`, `/api/worker/hotmart`                                | Ver abajo                                                                            |
+| GoHighLevel         | Token por location                                                              | Webhook + sync de respaldo                 | `src/lib/report-utm/ghl-*.ts`, [doc 20](./20-integracion-gohighlevel.md) | Ventas por Workflow «Opportunity Won»                                                |
+| WhatsApp            | Evolution API o `whatsapp-gateway`                                              | Alertas y agente                           | `src/lib/whatsapp/`                                                      | Mensajes entrantes firmados con HMAC (`AGENT_INBOUND_SECRET`)                        |
+| LLM del agente      | **OpenRouter** (`OPENROUTER_API_KEY`)                                           | Bajo demanda                               | `src/lib/agent/llm/client.ts`                                            | 3 niveles de modelo con cadena de reserva, configurables desde la base sin desplegar |
+| MCP                 | Token de API                                                                    | Bajo demanda                               | `/api/mcp`                                                               | El staff lo usa desde Claude sin coste de API                                        |
+| FX                  | API pública (fawazahmed0)                                                       | Captura diaria                             | `src/lib/fx.ts`                                                          | Tabla `fx_rates`                                                                     |
+| Correo              | Gmail con contraseña de aplicación                                              | —                                          | `src/lib/email.ts`                                                       |                                                                                      |
 
 **Hotmart. Hechos verificados que no se deducen del código:**
 
@@ -246,33 +246,33 @@ Borrar un cliente borra **todo lo suyo** en los dos esquemas. Es una decisión e
 
 ## 8 · Decisiones de producto que NO hay que «arreglar»
 
-| Parece un bug | Por qué es así |
-| --- | --- |
-| «Somos rentable» y «Sur Profundo» tienen cifras de Meta idénticas | Comparten Sheet y cuenta de Meta a propósito |
-| Los leads de Meta ≠ los contactos recibidos | Son dos métricas distintas (atribuidos por Meta frente a `lead_events`) con rótulos propios (`src/lib/leads/fuentes-de-lead.ts`). No cuadran día a día |
-| La pestaña del dashboard ya no se recorta a su «rango de captación» | Decisión del 2026-09-28: manda el calendario. La ventana solo alimenta presupuesto y ritmo (`scripts/verify-rango-captacion.ts`) |
+| Parece un bug                                                          | Por qué es así                                                                                                                                                   |
+| ---------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| «Somos rentable» y «Sur Profundo» tienen cifras de Meta idénticas      | Comparten Sheet y cuenta de Meta a propósito                                                                                                                     |
+| Los leads de Meta ≠ los contactos recibidos                            | Son dos métricas distintas (atribuidos por Meta frente a `lead_events`) con rótulos propios (`src/lib/leads/fuentes-de-lead.ts`). No cuadran día a día           |
+| La pestaña del dashboard ya no se recorta a su «rango de captación»    | Decisión del 2026-09-28: manda el calendario. La ventana solo alimenta presupuesto y ritmo (`scripts/verify-rango-captacion.ts`)                                 |
 | Filtrar o agrupar por una respuesta de formulario deja el gasto en «—» | Es correcto: el gasto no se reparte por respuestas. Medir con la respuesta como métrica (`lf__…`) sí permite CPL. Ver [doc 24](./24-respuestas-de-formulario.md) |
-| Hay menos leads de los recibidos | La regla «Qué leads cuentan» excluye los que no tienen atribución. Están en `/leads` → Excluidos |
-| `/p/<token>` no se puede embeber en un iframe | La regla catch-all de `next.config.ts` gana a las de `/p/` y `/report/`. Se dejó así por seguridad (clickjacking); cambiarlo es decisión de producto |
-| Los grupos de campaña siempre salen vacíos | Las tablas existen (077), pero **no hay ni UI ni código de escritura**. Si se piden grupos, hay que construir la escritura entera |
-| Goodprop desconectado, Eduversio sin campos de lead | Intencional (sus formularios solo piden nombre y correo) |
+| Hay menos leads de los recibidos                                       | La regla «Qué leads cuentan» excluye los que no tienen atribución. Están en `/leads` → Excluidos                                                                 |
+| `/p/<token>` no se puede embeber en un iframe                          | La regla catch-all de `next.config.ts` gana a las de `/p/` y `/report/`. Se dejó así por seguridad (clickjacking); cambiarlo es decisión de producto             |
+| Los grupos de campaña siempre salen vacíos                             | Las tablas existen (077), pero **no hay ni UI ni código de escritura**. Si se piden grupos, hay que construir la escritura entera                                |
+| Goodprop desconectado, Eduversio sin campos de lead                    | Intencional (sus formularios solo piden nombre y correo)                                                                                                         |
 
 ---
 
 ## 9 · Deuda técnica
 
-| Área | Problema | Sugerencia |
-| --- | --- | --- |
-| Componentes gigantes | `LayoutConfigModal.tsx` (3.145 líneas), `DashboardClient.tsx` (2.920), `MetricCharts.tsx` (1.214), `QuickEditModal.tsx` (966), `TabConfigModal.tsx` (945). En `src/lib`: `bi-metadata.ts` (>2.100), `google-sheets-conversiones.ts` (>2.000), `bi-query.ts` (>1.700) | Trocear al tocar cada zona, sin gran refactor de golpe |
-| Dos motores de métricas | El dashboard (`formula-engine` + `metric-catalog`) y el BI (`bi-metadata` + `bi/sources`) calculan lo mismo por caminos distintos. Los tests de paridad (`verify-lead-segmentos-db`, `verify-mcp-paridad`) los mantienen alineados | A medio plazo, un único catálogo de métricas |
-| Fallos silenciosos | El patrón `res.data \|\| []` convierte errores y timeouts en vacíos | Registrar el error y mostrar «no se pudo cargar» |
-| Pruebas | Scripts ad hoc; `test:datos` depende de producción | Base de staging o rama de Supabase con datos anonimizados; runner estándar |
-| Migraciones | Sin registro de aplicadas y con números duplicados | Adoptar `supabase migration` o una tabla `schema_migrations` propia |
-| Observabilidad | Solo logs JSON y `sync_runs`; sin Sentry ni alertas de la base | Sentry + alerta de salud de Supabase + uptime de `/api/health` |
-| Atribución web | `visitor_id` vacío: la cascada multi-touch no funciona para leads | Poblar `visitor_id` desde el píxel antes de reenchufar `resolveAttribution` |
-| Zona horaria por cliente | Preparada, sin activar | Solo con un plan de recálculo completo |
-| Dependencias | 5 PR de Dependabot abiertas (recharts 3, react-day-picker 10, lucide 1.x: son versiones mayores) | Revisar una por una. **Next 16.3 cambia APIs**: lee `node_modules/next/dist/docs/` antes de tocar código de Next (ver `AGENTS.md`) |
-| Tipos | `@types/node` 20 con motor 22 | Subir a `@types/node` 22 |
+| Área                     | Problema                                                                                                                                                                                                                                                             | Sugerencia                                                                                                                         |
+| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| Componentes gigantes     | `LayoutConfigModal.tsx` (3.145 líneas), `DashboardClient.tsx` (2.920), `MetricCharts.tsx` (1.214), `QuickEditModal.tsx` (966), `TabConfigModal.tsx` (945). En `src/lib`: `bi-metadata.ts` (>2.100), `google-sheets-conversiones.ts` (>2.000), `bi-query.ts` (>1.700) | Trocear al tocar cada zona, sin gran refactor de golpe                                                                             |
+| Dos motores de métricas  | El dashboard (`formula-engine` + `metric-catalog`) y el BI (`bi-metadata` + `bi/sources`) calculan lo mismo por caminos distintos. Los tests de paridad (`verify-lead-segmentos-db`, `verify-mcp-paridad`) los mantienen alineados                                   | A medio plazo, un único catálogo de métricas                                                                                       |
+| Fallos silenciosos       | El patrón `res.data \|\| []` convierte errores y timeouts en vacíos                                                                                                                                                                                                  | Registrar el error y mostrar «no se pudo cargar»                                                                                   |
+| Pruebas                  | Scripts ad hoc; `test:datos` depende de producción                                                                                                                                                                                                                   | Base de staging o rama de Supabase con datos anonimizados; runner estándar                                                         |
+| Migraciones              | Sin registro de aplicadas y con números duplicados                                                                                                                                                                                                                   | Adoptar `supabase migration` o una tabla `schema_migrations` propia                                                                |
+| Observabilidad           | Solo logs JSON y `sync_runs`; sin Sentry ni alertas de la base                                                                                                                                                                                                       | Sentry + alerta de salud de Supabase + uptime de `/api/health`                                                                     |
+| Atribución web           | `visitor_id` vacío: la cascada multi-touch no funciona para leads                                                                                                                                                                                                    | Poblar `visitor_id` desde el píxel antes de reenchufar `resolveAttribution`                                                        |
+| Zona horaria por cliente | Preparada, sin activar                                                                                                                                                                                                                                               | Solo con un plan de recálculo completo                                                                                             |
+| Dependencias             | 5 PR de Dependabot abiertas (recharts 3, react-day-picker 10, lucide 1.x: son versiones mayores)                                                                                                                                                                     | Revisar una por una. **Next 16.3 cambia APIs**: lee `node_modules/next/dist/docs/` antes de tocar código de Next (ver `AGENTS.md`) |
+| Tipos                    | `@types/node` 20 con motor 22                                                                                                                                                                                                                                        | Subir a `@types/node` 22                                                                                                           |
 
 ---
 
@@ -336,18 +336,18 @@ Checklist. Pasadlos por un gestor de contraseñas, **nunca** por chat ni por el 
 
 ## 13 · Dónde está cada tema
 
-| Tema | Documento |
-| --- | --- |
-| Visión general y glosario | [01](./01-introduccion.md), [02](./02-arquitectura.md) |
-| Instalación y variables | [03](./03-instalacion-y-configuracion.md), `.env.example`, `sync-worker/.env.example` |
-| Modelo de datos | [04](./04-modelo-de-datos.md) + las cabeceras de cada migración (muy explicativas) |
-| Auth y roles | [05](./05-autenticacion-y-roles.md) |
-| Rutas y API | [06](./06-rutas-y-paginas.md), [07](./07-api-rest.md) |
-| Integraciones | [08](./08-integraciones.md), [20](./20-integracion-gohighlevel.md), [21](./21-auditoria-utms-ghl.md) |
-| Fórmulas y layouts | [09](./09-motor-de-formulas.md), [10](./10-sistema-de-layouts.md) |
-| Leads, UTM, BI | [12](./12-modulo-report-utm.md), [16](./16-campos-de-sheet.md), [17](./17-campos-de-lead.md), [18](./18-fuentes-y-cruces.md), [19](./19-guia-segmentos-de-lead.md), [24](./24-respuestas-de-formulario.md) |
-| MCP y agente | [13](./13-mcp-y-tokens-api.md), [22](./22-plantilla-agente-interno.md) |
-| Workers y despliegue | [14](./14-cron-y-workers.md), [15](./15-despliegue.md) |
-| Incidencias | [23](./23-runbook-empalme.md) |
+| Tema                      | Documento                                                                                                                                                                                                  |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Visión general y glosario | [01](./01-introduccion.md), [02](./02-arquitectura.md)                                                                                                                                                     |
+| Instalación y variables   | [03](./03-instalacion-y-configuracion.md), `.env.example`, `sync-worker/.env.example`                                                                                                                      |
+| Modelo de datos           | [04](./04-modelo-de-datos.md) + las cabeceras de cada migración (muy explicativas)                                                                                                                         |
+| Auth y roles              | [05](./05-autenticacion-y-roles.md)                                                                                                                                                                        |
+| Rutas y API               | [06](./06-rutas-y-paginas.md), [07](./07-api-rest.md)                                                                                                                                                      |
+| Integraciones             | [08](./08-integraciones.md), [20](./20-integracion-gohighlevel.md), [21](./21-auditoria-utms-ghl.md)                                                                                                       |
+| Fórmulas y layouts        | [09](./09-motor-de-formulas.md), [10](./10-sistema-de-layouts.md)                                                                                                                                          |
+| Leads, UTM, BI            | [12](./12-modulo-report-utm.md), [16](./16-campos-de-sheet.md), [17](./17-campos-de-lead.md), [18](./18-fuentes-y-cruces.md), [19](./19-guia-segmentos-de-lead.md), [24](./24-respuestas-de-formulario.md) |
+| MCP y agente              | [13](./13-mcp-y-tokens-api.md), [22](./22-plantilla-agente-interno.md)                                                                                                                                     |
+| Workers y despliegue      | [14](./14-cron-y-workers.md), [15](./15-despliegue.md)                                                                                                                                                     |
+| Incidencias               | [23](./23-runbook-empalme.md)                                                                                                                                                                              |
 
 > Consejo: muchos archivos tienen una cabecera que explica **por qué** el código es así, con el incidente que lo motivó. Antes de simplificar algo que parece raro, lee su cabecera y la migración relacionada. Casi todo lo raro tiene una historia detrás.

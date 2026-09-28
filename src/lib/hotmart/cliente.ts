@@ -17,6 +17,7 @@
 // worker existen para evitar.
 
 import { hotmartFetch } from '../rate-limit';
+import { colombiaRangeBounds } from '../colombia-date';
 import { cifrarSecreto, hayClaveDeCifrado, leerSecreto } from '../secretos';
 import { SECRETOS_HOTMART } from '../clientes/config-pestanas';
 import type { PaginaHotmart } from './tipos';
@@ -490,8 +491,8 @@ export async function paginarHotmart<T>(opts: {
  * fijo, así que el ancla `-05:00` es exacta todo el año.
  */
 export function ventanaDiaColombia(fecha: string): { inicio: number; fin: number } {
-  return {
-    inicio: new Date(`${fecha}T00:00:00.000-05:00`).getTime(),
-    fin: new Date(`${fecha}T23:59:59.999-05:00`).getTime(),
-  };
+  // `colombiaRangeBounds` corta en la zona de la consulta en curso: dentro de
+  // la sincronización de un cliente, SU día (zona-activa.ts); fuera, Colombia.
+  const b = colombiaRangeBounds(fecha, fecha);
+  return { inicio: Date.parse(b.gte), fin: Date.parse(b.lt) - 1 };
 }

@@ -18,8 +18,9 @@ import { resolvePublicClienteId } from './campaign-resolver';
 import { leadFieldLabel, leadAnsLabel, leadSegLabel } from './bi-metadata';
 import { loadLeadCampos, loadLeadSegmentos } from './lead-campos-db';
 import { createAdminClient } from '@/utils/supabase/server';
-import { monedaDeClienteUtm, type AvisoTasas } from '@/lib/moneda-reporte';
+import { avisoMonedaGasto, monedaDeClienteUtm, type AvisoTasas } from '@/lib/moneda-reporte';
 import { conAvisosDeTasas } from './bi/avisos-tasas';
+import { conZonaDeCliente } from '@/lib/zona-activa';
 import { computeDiagnostics } from './bi/diagnostics';
 import type { QueryDiagnostics } from './bi/diagnostics';
 import type { ParsedBiQuery } from './bi-query-params';
@@ -108,6 +109,28 @@ async function monedaSegura(q: ParsedBiQuery): Promise<string | undefined> {
   }
 }
 
+/** Aviso de gasto en otra moneda (moneda-reporte.ts), o null. Nunca lanza. */
+async function avisoMonedaSeguro(
+  q: ParsedBiQuery,
+  moneda: string | undefined
+): Promise<string | null> {
+  if (!q.cliente_id || !moneda) return null;
+  try {
+    const publicId = await resolvePublicClienteId(q.cliente_id);
+    if (!publicId) return null;
+    const { data } = await (
+      await createAdminClient()
+    )
+      .from('clientes')
+      .select('config_api')
+      .eq('id', publicId)
+      .maybeSingle();
+    return avisoMonedaGasto(moneda, data?.config_api ?? null);
+  } catch {
+    return null;
+  }
+}
+
 /** El diagnóstico de siempre más la moneda de reporte, en paralelo. */
 async function diagnosticarConMoneda(
   q: ParsedBiQuery
@@ -120,6 +143,8 @@ async function diagnosticarConMoneda(
 export type MetaConsulta = QueryDiagnostics & {
   moneda?: string;
   tasas?: AvisoTasas;
+  /** Degradaciones de la consulta que el widget debe decir (ver avisos-tasas.ts). */
+  avisos_consulta?: string[];
   /**
    * Nombre legible de cada token de lead que usa la consulta (pregunta,
    * respuesta, segmento): «Rango de ingresos: $2M a $3M» en vez de
@@ -191,19 +216,34 @@ async function etiquetasSeguras(p: ParsedBiQuery): Promise<Record<string, string
  * avisar, así que tampoco hace falta `meta`.
  */
 async function conMeta<T>(p: ParsedBiQuery, correr: () => Promise<T>): Promise<DispatchResult> {
-  const [{ resultado, tasas }, meta, etiquetas] = await Promise.all([
+  const [{ resultado, tasas, avisos }, meta, etiquetas] = await Promise.all([
     conAvisosDeTasas(correr),
     diagnosticarConMoneda(p),
     etiquetasSeguras(p),
   ]);
   if (!meta) return { data: resultado };
+  const avisoMoneda = await avisoMonedaSeguro(p, meta.moneda);
+  const todos = avisoMoneda ? [...avisos, avisoMoneda] : avisos;
   return {
     data: resultado,
-    meta: { ...meta, ...(tasas ? { tasas } : {}), ...(etiquetas ? { etiquetas } : {}) },
+    meta: {
+      ...meta,
+      ...(tasas ? { tasas } : {}),
+      ...(etiquetas ? { etiquetas } : {}),
+      ...(todos.length ? { avisos_consulta: todos } : {}),
+    },
   };
 }
 
+/**
+ * Toda consulta de un cliente corre en SU zona horaria (ver zona-activa.ts): los
+ * días de leads y ventas se cortan igual que Meta corta el gasto de su cuenta.
+ */
 export async function dispatchBiQuery(rawParams: ParsedBiQuery): Promise<DispatchResult> {
+  return conZonaDeCliente({ rtm: rawParams.cliente_id ?? null }, () => despacharEnZona(rawParams));
+}
+
+async function despacharEnZona(rawParams: ParsedBiQuery): Promise<DispatchResult> {
   // "Campaña (cruzada)" tuvo su propio motor (`runCampaignQuery`), que solo
   // emitía ~20 de las 72 métricas e ignoraba los campos calculados. Hoy la
   // dimensión `utm_campaign` del motor principal hace el mismo cruce con todo

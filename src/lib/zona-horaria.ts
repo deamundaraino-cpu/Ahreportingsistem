@@ -1,23 +1,22 @@
 // ════════════════════════════════════════════════════════════════
-// Zona horaria por cliente — infraestructura, DESACTIVADA por defecto
+// Zona horaria por cliente — ACTIVADA el 2026-09-28
 // ════════════════════════════════════════════════════════════════
 //
-// Todo el sistema agrupa los días en hora Colombia (UTC-5 fijo,
+// Todo el sistema agrupaba los días en hora Colombia (UTC-5 fijo,
 // `colombia-date.ts`). La auditoría de Hotmart (2026-09-25) encontró que para
 // Cris tributario eso no coincide con su cuenta de Meta, que está en
 // `America/Santiago` (UTC-4 en invierno, UTC-3 en verano): las ventas entre las
-// 22:00 y las 24:00 de Chile caen en el día siguiente respecto al gasto.
+// 22:00 y las 24:00 de Chile caían en el día siguiente respecto al gasto. Y no
+// era solo Cris: cinco de los seis clientes reportan en CLP.
 //
-// Por qué esto NO se activa todavía, y no solo para Hotmart:
-//   · Los leads se agrupan en SQL con `AT TIME ZONE 'America/Bogota'`
-//     (`bi_leads_por_dia`, `bi_respuestas_por_dia`…). Cambiar solo las ventas
-//     desalinearía ventas y leads del mismo día, que es peor que el desfase
-//     actual de 1-2 horas con Meta.
-//   · `hotmart_ventas.fecha_venta` se materializa al escribir: activarlo exige
-//     recalcular el histórico y reagregar `metricas_diarias`.
-// Activarlo es un cambio de TODO el módulo a la vez (leads, ventas, gasto), con
-// su migración de datos. Mientras tanto, estas funciones son puras, probadas
-// (`verify-hotmart-atribucion.ts`) y sin consumidores.
+// El gasto no se toca: Meta y TikTok ya lo devuelven en el día de la CUENTA. Lo
+// que cambia es cómo se cortan en días los LEADS y las VENTAS, que son instantes:
+//   · la zona del cliente sale de aquí (`zonaHorariaDeCliente`): la escrita a
+//     mano en la ficha, o la de su cuenta de Meta, o la de TikTok, o Colombia;
+//   · `zona-activa.ts` la pone en el contexto de cada consulta de un cliente, y
+//     los helpers de `colombia-date.ts` y las RPC por día (migración 095) la usan.
+// `hotmart_ventas.fecha_venta` se materializa al escribir: el histórico se
+// recalcula con `scripts/recalcular-fecha-venta-hotmart.ts`.
 
 export const ZONA_POR_DEFECTO = 'America/Bogota';
 
@@ -32,10 +31,39 @@ export function zonaValida(tz: unknown): tz is string {
   }
 }
 
-/** Zona del cliente (`config.zona_horaria`), o Colombia si no tiene o no es válida. */
+/**
+ * Zona del cliente, por orden:
+ *   1. `config_api.zona_horaria`: la escrita a mano en la ficha (manda);
+ *   2. la de su cuenta de Meta (`meta_estado_cuentas[*].zona`, que guarda el
+ *      vigilante de cuentas): es la zona en la que Meta corta el GASTO, así que
+ *      alinea leads y ventas con él. Con varias cuentas en zonas distintas, la
+ *      más frecuente (y la avisa `zonasDeCuentas`);
+ *   3. la de su cuenta de TikTok (`tiktok_cuentas_info[*].timezone`);
+ *   4. Colombia.
+ */
 export function zonaHorariaDeCliente(config: unknown): string {
-  const tz = (config as { zona_horaria?: unknown } | null)?.zona_horaria;
-  return zonaValida(tz) ? tz : ZONA_POR_DEFECTO;
+  const c = (config ?? {}) as Record<string, unknown>;
+  if (zonaValida(c.zona_horaria)) return c.zona_horaria;
+  const [primera] = zonasDeCuentas(c);
+  return primera ?? ZONA_POR_DEFECTO;
+}
+
+/** Zonas válidas de las cuentas del cliente, de la más a la menos frecuente. */
+export function zonasDeCuentas(config: unknown): string[] {
+  const c = (config ?? {}) as Record<string, unknown>;
+  const cuenta = new Map<string, number>();
+  const sumar = (z: unknown) => {
+    if (zonaValida(z)) cuenta.set(z, (cuenta.get(z) ?? 0) + 1);
+  };
+  for (const e of Object.values((c.meta_estado_cuentas ?? {}) as Record<string, unknown>)) {
+    sumar((e as { zona?: unknown } | null)?.zona);
+  }
+  if (cuenta.size === 0) {
+    for (const e of Object.values((c.tiktok_cuentas_info ?? {}) as Record<string, unknown>)) {
+      sumar((e as { timezone?: unknown } | null)?.timezone);
+    }
+  }
+  return [...cuenta.entries()].sort((a, b) => b[1] - a[1]).map(([z]) => z);
 }
 
 /** Desfase de la zona en ese instante, en minutos (UTC-3 → -180). */

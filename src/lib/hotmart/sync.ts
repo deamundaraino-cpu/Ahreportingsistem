@@ -34,6 +34,7 @@
 // seguridad omite los campos del upsert, preservando lo que ya había.
 
 import { addDaysISO, colombiaToday } from '../colombia-date';
+import { conZonaDeCliente } from '@/lib/zona-activa';
 import { fetchAllRows } from '../supabase-paginate';
 import { paginarHotmart, ventanaDiaColombia } from './cliente';
 import type { FamiliaErrorHotmart } from './cliente';
@@ -213,7 +214,30 @@ export function paramsDeEstados(estados: readonly string[]): Array<[string, stri
  * error de API, tope de páginas o `next_page_token` repetido, en cualquiera de
  * los dos endpoints.
  */
+/**
+ * La zona horaria del cliente decide la ventana del día que se pide a la API y
+ * el `fecha_venta` que se materializa (zona-activa.ts). Las tres funciones que
+ * reciben un cliente corren dentro de su zona; el cuerpo está en las `*EnZona`.
+ */
 export async function sincronizarDiaHotmart(
+  ...args: Parameters<typeof sincronizarDiaHotmartEnZona>
+): ReturnType<typeof sincronizarDiaHotmartEnZona> {
+  return conZonaDeCliente({ publico: args[1] }, () => sincronizarDiaHotmartEnZona(...args));
+}
+
+export async function reconciliarReembolsos(
+  ...args: Parameters<typeof reconciliarReembolsosEnZona>
+): ReturnType<typeof reconciliarReembolsosEnZona> {
+  return conZonaDeCliente({ publico: args[1] }, () => reconciliarReembolsosEnZona(...args));
+}
+
+export async function barrerAprobacionesTardias(
+  ...args: Parameters<typeof barrerAprobacionesTardiasEnZona>
+): ReturnType<typeof barrerAprobacionesTardiasEnZona> {
+  return conZonaDeCliente({ publico: args[1] }, () => barrerAprobacionesTardiasEnZona(...args));
+}
+
+async function sincronizarDiaHotmartEnZona(
   db: Db,
   clienteId: string,
   fecha: string,
@@ -568,7 +592,7 @@ export async function reclasificarRango(
  * Solo toca el estado. Los importes se conservan intactos, que es lo que
  * permite calcular la tasa de reembolso en vez de perder la venta.
  */
-export async function reconciliarReembolsos(
+async function reconciliarReembolsosEnZona(
   db: Db,
   clienteId: string,
   token: string,
@@ -696,7 +720,7 @@ export async function reconciliarReembolsos(
  *
  * Devuelve las fechas a reagregar; no reagrega él mismo.
  */
-export async function barrerAprobacionesTardias(
+async function barrerAprobacionesTardiasEnZona(
   db: Db,
   clienteId: string,
   token: string,

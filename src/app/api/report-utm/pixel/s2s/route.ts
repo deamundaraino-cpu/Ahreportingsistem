@@ -6,8 +6,15 @@ import { createAdminClient } from '@/utils/supabase/server';
 import { verifyS2SSignature } from '@/lib/report-utm/s2s-auth';
 import { aplicarExclusion, cargarReglaExclusion } from '@/lib/report-utm/lead-exclusion';
 import { excluirDuplicadosLote } from '@/lib/report-utm/lead-duplicados';
-import { adaptarIds, columnasIdDisponibles, idsPublicitarios } from '@/lib/report-utm/lead-ids';
+import { adaptarIds, columnasIdDisponibles, insertarLeads } from '@/lib/report-utm/lead-ids';
 import { normalizarPageUrl } from '@/lib/report-utm/page-url';
+import {
+  customDataConIds,
+  externalIdS2S,
+  ipPublica,
+  paisVisitante,
+  resolverCampos,
+} from '@/lib/report-utm/s2s-captura';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -30,6 +37,10 @@ export const dynamic = 'force-dynamic';
  * las leía —la atribución multi-touch— no resolvió nunca nada porque
  * `visitor_id` estaba a NULL en el 100 % de las filas y `sales_events` seguía
  * vacía. Eran 122 MB, el 22 % de la base.
+ *
+ * Idempotente para leads (2026-09-28): el plugin 0.5.0 reintenta desde WP-Cron
+ * si no recibe un 2xx, y un lead repetido (mismo `external_id`) responde
+ * `{ ok: true, duplicate: true }` en vez de guardarse dos veces.
  */
 
 type S2SPayload = {
@@ -63,35 +74,18 @@ type S2SPayload = {
   raw_fields?: Record<string, unknown>;
   /** Tipo y opciones de las preguntas de opción del formulario (plugin 0.4.0). */
   fields_meta?: Record<string, unknown>;
+  /**
+   * IP y país del VISITANTE (plugin 0.5.0; `ip` ya lo mandaba antes y se
+   * ignoraba). Las cabeceras de esta petición son las del servidor de WordPress.
+   */
+  ip?: string;
+  visitor_ip?: string;
+  visitor_country?: string;
+  /** Idempotencia del reintento (plugin 0.5.0). Ver `externalIdS2S`. */
+  external_id?: string;
+  // Las cookies de toque del pixel también llegan en el body (plugin 0.5.0),
+  // pero solo las lee `resolverCampos`: no se guardan en el lead.
 };
-
-/**
- * Extrae UTMs y click IDs de la query string de una URL.
- *
- * El plugin WordPress envía siempre `page_url` (el referer, que es la landing
- * con sus UTMs), pero no manda los UTMs como campos separados. Esta función los
- * recupera de la URL como fallback. URLSearchParams ya decodifica el percent-encoding.
- */
-function parseUtmsFromUrl(url: string | null | undefined) {
-  if (!url) return {};
-  try {
-    const qs = new URL(url).searchParams;
-    return {
-      utm_source: qs.get('utm_source'),
-      utm_medium: qs.get('utm_medium'),
-      utm_campaign: qs.get('utm_campaign'),
-      utm_content: qs.get('utm_content'),
-      utm_term: qs.get('utm_term'),
-      utm_id: qs.get('utm_id'),
-      campaign_id: qs.get('campaign_id'),
-      adset_id: qs.get('adset_id'),
-      ad_id: qs.get('ad_id'),
-      click_id: qs.get('fbclid') ?? qs.get('gclid') ?? qs.get('ttclid') ?? null,
-    };
-  } catch {
-    return {};
-  }
-}
 
 export async function POST(req: NextRequest) {
   const rawBody = await req.text();
@@ -153,30 +147,25 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid signature' }, { status: 401 });
   }
 
+  // IP y país: las cabeceras de esta petición son las del servidor de
+  // WordPress, no las del visitante. Si el plugin manda la IP del visitante y es
+  // pública, manda ella; si no, queda lo de antes. El país solo es del visitante
+  // si el sitio está detrás de Cloudflare (`CF-IPCountry`): sin él sigue siendo
+  // el del servidor, que es lo que la exportación rotula «País (IP servidor)».
   const ipHeader = req.headers.get('x-forwarded-for') ?? '';
-  const ip = ipHeader.split(',')[0]?.trim() || null;
-  const ipCountry = req.headers.get('x-vercel-ip-country') ?? null;
+  const ip =
+    ipPublica(body.visitor_ip) ?? ipPublica(body.ip) ?? (ipHeader.split(',')[0]?.trim() || null);
+  const ipCountry =
+    paisVisitante(body.visitor_country) ?? req.headers.get('x-vercel-ip-country') ?? null;
   const userAgent = req.headers.get('user-agent') ?? null;
 
-  // UTMs efectivos: lo que mande el body explícitamente tiene prioridad;
-  // si no, se recuperan de la query string de page_url (caso WordPress).
-  const urlUtms = parseUtmsFromUrl(body.page_url);
-  const utm = {
-    utm_source: body.utm_source ?? urlUtms.utm_source ?? null,
-    utm_medium: body.utm_medium ?? urlUtms.utm_medium ?? null,
-    utm_campaign: body.utm_campaign ?? urlUtms.utm_campaign ?? null,
-    utm_content: body.utm_content ?? urlUtms.utm_content ?? null,
-    utm_term: body.utm_term ?? urlUtms.utm_term ?? null,
-    utm_id: body.utm_id ?? urlUtms.utm_id ?? null,
-    click_id: body.click_id ?? urlUtms.click_id ?? null,
-  };
-  // Solo se guardan si son IDs de verdad: una macro sin rellenar (`{{ad.id}}`)
-  // no es un ID y cruzaría con nada.
-  const ids = idsPublicitarios(
-    body.campaign_id ?? urlUtms.campaign_id,
-    body.adset_id ?? urlUtms.adset_id,
-    body.ad_id ?? urlUtms.ad_id
-  );
+  // UTMs e IDs efectivos: el primer valor NO VACÍO entre el body y la query
+  // string de page_url (con `??` un `""` del body tapaba la URL); si el evento
+  // no trae ninguna señal, la cookie de último toque que reenvía el plugin. Los
+  // IDs de la entidad solo si son IDs de verdad: una macro sin rellenar
+  // (`{{ad.id}}`) cruzaría con nada. Todo antes de normalizar page_url.
+  const { campaign_id, adset_id, ad_id, ...utm } = resolverCampos(body);
+  const ids = { campaign_id, adset_id, ad_id };
 
   // Normalizar event_type: 'lead' se almacena como 'custom' con event_name
   const storedEventType = eventType === 'lead' ? 'custom' : eventType;
@@ -209,7 +198,8 @@ export async function POST(req: NextRequest) {
       user_agent: userAgent,
       ip_address: ip,
       ip_country: ipCountry,
-      custom_data: body.custom_data ?? null,
+      // `pixel_events` no tiene columnas de IDs: van dentro de custom_data.
+      custom_data: customDataConIds(body.custom_data, { utm_id: utm.utm_id, ...ids }),
       source: 's2s',
     });
 
@@ -239,6 +229,10 @@ export async function POST(req: NextRequest) {
       : utm.utm_source || utm.utm_campaign
         ? 'utm_only'
         : 'none';
+    // Idempotencia: el plugin 0.5.0 reintenta si no recibe un 2xx, con el mismo
+    // `external_id`. El índice único (cliente_id, external_id) de la 035 rechaza
+    // la segunda copia en vez de duplicar el lead. Ver s2s-captura.ts.
+    const externalId = externalIdS2S(body, new Date());
     const [filaLead] = await excluirDuplicadosLote(
       db,
       cliente.id,
@@ -269,6 +263,7 @@ export async function POST(req: NextRequest) {
               user_agent: userAgent,
               custom_data: body.custom_data ?? null,
               raw_fields: body.raw_fields ?? null,
+              external_id: externalId,
               source: 's2s',
               attribution_method: metodoAtribucion,
               attribution_resolved_at: new Date().toISOString(),
@@ -281,9 +276,15 @@ export async function POST(req: NextRequest) {
       ],
       regla
     );
-    const { error: leadError } = await db.from('lead_events').insert(filaLead);
+    const { error: leadError } = await insertarLeads(db, filaLead);
 
     if (leadError) {
+      // 23505 = unique_violation: ese `external_id` ya está guardado, así que es
+      // un reintento o un doble envío. Responder error haría reintentar otra vez
+      // al plugin por un lead que ya tenemos: es un éxito.
+      if (leadError.code === '23505') {
+        return NextResponse.json({ ok: true, duplicate: true });
+      }
       // Ahora SÍ es fatal: `lead_events` es la única escritura que queda, así que
       // tragarse el error aquí perdería el lead sin dejar rastro. Devolver 500
       // deja que quien envía lo reintente.

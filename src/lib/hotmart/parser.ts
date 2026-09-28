@@ -21,7 +21,7 @@
 // `hotmart_ventas` puede fusionarlos por transacción.
 
 import { colombiaDateOf } from '../colombia-date';
-import { idPublicitario } from '../report-utm/lead-ids';
+import { esSenalDeCampana, idPublicitario } from '../report-utm/lead-ids';
 import { clasificarEvento, estadoDeEvento, estadoDeStatusApi } from './eventos';
 import type {
   EstadoVenta,
@@ -249,8 +249,12 @@ function extraerOrigen(compra: HotmartCompra | undefined, datos: AnyObj) {
     xcod,
     // Con campaña o ID de anuncio, la tupla es atribución propia de Hotmart y
     // gana a la heredada de un lead (migración 089). Sin ellas queda
-    // `undefined`, y `aFilaJson` no envía la clave.
-    atribucion_metodo: utm_campaign || utm_id ? ('tracking' as const) : undefined,
+    // `undefined`, y `aFilaJson` no envía la clave. Una macro sin rellenar
+    // (`{{campaign.name}}`) no es atribución: bloqueaba la herencia del lead.
+    atribucion_metodo:
+      esSenalDeCampana(utm_campaign) || esSenalDeCampana(utm_id)
+        ? ('tracking' as const)
+        : undefined,
   };
 }
 

@@ -14,6 +14,7 @@
 import {
   atribuirLotePuro,
   elegirLead,
+  esTracking,
   normalizarEmail,
   tel9,
   type LeadCandidato,
@@ -230,6 +231,51 @@ seccion('Lote: tracking gana, padres primero, añadidos heredan');
     'un añadido encuentra a su padre fuera del lote',
     hijo.atribucion_metodo === 'padre' && hijo.utm_campaign === 'CAMP_TRACK_PADRE'
   );
+}
+
+// ════════════════════════════════════════════════════════════
+seccion('Macros e IDs del lead (auditoría del 2026-09-28)');
+// ════════════════════════════════════════════════════════════
+{
+  const conMacro = venta({
+    transaction_id: 'HP-MACRO',
+    utm_campaign: '{{campaign.name}}',
+    comprador_email: 'm@x.com',
+  });
+  check('una macro sin rellenar NO es tracking propio', !esTracking(conMacro));
+  const soloIds = lead({
+    id: 'L-IDS',
+    created_at: '2026-08-09T15:00:00.000Z',
+    email_norm: 'm@x.com',
+    utm_campaign: null,
+    utm_id: null,
+    utm_content: null,
+    utm_term: null,
+    ad_id: '120200000000000777',
+    adset_id: '120200000000000070',
+    campaign_id: '120200000000000007',
+  });
+  atribuirLotePuro([conMacro], [soloIds]);
+  check(
+    'un lead que solo trae IDs es candidato, y la macro ya no bloquea',
+    conMacro.atribucion_lead_id === 'L-IDS',
+    String(conMacro.atribucion_lead_id)
+  );
+  check(
+    'la venta hereda el ID más específico en utm_id (el anuncio)',
+    conMacro.utm_id === '120200000000000777',
+    String(conMacro.utm_id)
+  );
+  const soloMacro = lead({
+    id: 'L-MACRO',
+    created_at: '2026-08-09T15:00:00.000Z',
+    email_norm: 'n@x.com',
+    utm_campaign: '{{campaign.name}}',
+    utm_id: null,
+  });
+  const v2 = venta({ transaction_id: 'HP-N', comprador_email: 'n@x.com' });
+  atribuirLotePuro([v2], [soloMacro]);
+  check('un lead cuya única señal es una macro no se hereda', !v2.atribucion_metodo);
 }
 
 // ════════════════════════════════════════════════════════════

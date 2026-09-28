@@ -23,7 +23,7 @@ El sincronizador principal (`/api/worker`) consulta todas estas APIs a diario y 
 
 ### Datos sincronizados
 
-El worker consulta _insights_ a nivel **campaña**, **anuncio** y **conjunto de anuncios**, además de **formularios de leads** y **demografía** (edad/género). Calcula conversiones personalizadas y enriquece con regiones de targeting. Se guardan en:
+El worker consulta _insights_ a nivel **campaña**, **anuncio** y **conjunto de anuncios**, además de **formularios de leads**. (No se piden desgloses demográficos de edad o género: ningún `breakdown` los solicita.) Calcula conversiones personalizadas y enriquece con regiones de targeting. Se guardan en:
 
 - Totales: `meta_spend`, `meta_impressions`, `meta_clicks`.
 - JSONB: `meta_campaigns`, `meta_ads`, `meta_adsets`, `meta_forms`.
@@ -53,6 +53,48 @@ El worker llama a `report/integrated/get` a nivel campaña/anuncio/grupo. Se gua
 - JSONB: `tiktok_campaigns`, `tiktok_ads`, `tiktok_adgroups`.
 
 > El motor de fórmulas puede filtrar métricas TikTok por `advertiser_id` (cuando un cliente tiene varias cuentas). Ver `filterRowByTikTokAccount` en [doc 09](./09-motor-de-formulas.md).
+
+### Moneda y zona horaria de la cuenta
+
+En cada sync de TikTok el worker llama a `/advertiser/info/` (una vez al día por cuenta, cacheado) y deja el resultado en `config_api.tiktok_cuentas_info`:
+
+```json
+{
+  "7387511059776798737": {
+    "currency": "CLP",
+    "timezone": "America/Santiago",
+    "display_timezone": "America/Santiago",
+    "nombre": "…",
+    "ts": "2026-09-28T…"
+  }
+}
+```
+
+Se escribe con `fusionar_config_api` (mismo camino que `meta_estado_cuentas`) y es clave **solo de servidor**: guardar la pestaña TikTok no la pisa. `timezone` es la zona con la que TikTok corta `stat_time_day`, que no tiene por qué ser la de Colombia. Helper: `tiktokInfoCuenta(advertiserId, token)` en `src/lib/tiktok/cuenta.ts`. Todavía no la consume nadie: queda lista para la conversión de moneda y la zona por cliente.
+
+### Reconciliación
+
+`/api/worker/reconcile` audita también TikTok (`AUCTION_ADVERTISER` por día) y el planner la encola para cualquier cliente con Meta **o** TikTok. TikTok rechaza informes diarios de más de 30 días, así que los 120 días por defecto se piden en ventanas de ≤30 (`trocearRangoDias`, `src/lib/tiktok/rangos.ts`). Si una ventana falla, sus días se descartan en vez de compararse a medias.
+
+### Lead Generation (formularios instantáneos → Report-UTM)
+
+Ingesta de los leads de los **Instant Forms** de TikTok en `report_utm.lead_events`, igual que Meta Lead Ads. Cada lead cuenta en `leads.count`, CPL, campos y segmentos de lead.
+
+**Activación (por cuenta):** poner `"tiktok_leads": true` en la entrada de la cuenta dentro de `config_api.tiktok_accounts[]` (o en la raíz de `config_api` para activar todas / la config legacy de una cuenta). Todavía no hay interruptor en la UI; la pestaña TikTok conserva la clave al guardar. Para leads de EEE/Suiza/Reino Unido, añadir `"lead_region": "eu"` a la cuenta (TikTok exige la cabecera `x-lead-region`).
+
+**Requisitos del token:** el usuario que conecta TikTok debe ser **Admin** del anunciante y la app de TikTok for Business debe tener concedido el alcance de **Lead management / Instant Page** (además de Ads Management y Reporting, que ya usa el sync de gasto). Si falta, el error de la integración lo dice explícitamente; hay que reconectar TikTok tras añadir el alcance en la app. Si los formularios se migraron a un _form library_ del Business Center (`/page/library/transfer/`), la descarga por `advertiser_id` deja de verlos: no está soportado todavía.
+
+**Cómo funciona** (`src/lib/report-utm/tiktok-leads.ts`):
+
+1. `GET /page/get/?business_type=LEAD_GEN` → formularios de cada cuenta (caché de 6 h).
+2. Por formulario: `POST /page/lead/task/` crea una tarea de descarga, se sondea hasta `SUCCEED` y `GET /page/lead/task/download/` devuelve un CSV (UTC+0) con **todos** los leads que TikTok conserva (90 días).
+3. Cada fila → `lead_events` con `external_id = tiktok:<lead_id>` (idempotente por el índice único `(cliente_id, external_id)`), `source = form_plugin = 'tiktok_lead_ads'`, UTMs sintetizadas (`utm_source=tiktok`, `utm_medium=paid_social`, `utm_campaign`=campaña, `utm_content`=anuncio, `utm_term`=conjunto, `utm_id`=campaign_id), los tres IDs publicitarios (082), `created_at` = hora del lead y las respuestas en `raw_fields` con la cabecera original. Se aplican la regla de exclusión y la de duplicados del cliente, igual que Meta. Los leads de prueba (`is_test`) se descartan.
+
+**Estado:** `report_utm.integrations` con `tipo = 'tiktok_lead_ads'` (el cron la crea la primera vez que ve el flag; ponerla en `inactive` la pausa). En `config`: `sync_cursor` (unix del lead más reciente), `backfill_done`, `forms`, `forms_leidos`, `form_offset`.
+
+**Disparo:** `GET|POST /api/cron/sync-tiktok-leads[?clienteId=<report_utm cliente>]`, protegido por `CRON_SECRET`. **No está en el plan diario**: `public.sync_jobs.tipo` tiene un CHECK que rechazaría un tipo `tiktok_leads`, y ampliarlo exige una migración. Hasta entonces, programar el endpoint aparte (GitHub Actions / cron externo).
+
+**Límites:** si el CSV de un formulario supera 10 MB TikTok lo entrega en ZIP, que este importador no lee (error explícito en `last_error`); no hay webhook de TikTok configurado, así que la latencia es la del cron.
 
 ---
 

@@ -1,18 +1,22 @@
 'use server';
 
 import { createAdminClient, createClient } from '@/utils/supabase/server';
+import { conZonaDeCliente } from '@/lib/zona-activa';
 import { filterCampaignList, parseTabFilter } from '@/lib/campaign-filter';
 import { notifyUsers } from '@/lib/notifications/notify';
 import { sendWhatsAppNotification } from '@/lib/whatsapp/notify';
 import { getWeeksInRange, clampRangeToToday, colombiaToday, addDaysISO } from '@/lib/date-utils';
+import { rangoPorDefectoCliente } from '@/lib/colombia-date';
 import { revalidatePath } from 'next/cache';
 import { after } from 'next/server';
 import { loadCamposCliente } from '@/lib/sheets/campos-db';
 import { hotmartConectado } from '@/lib/hotmart/cliente';
+import { tiktokConectado } from '@/lib/tiktok/cuenta';
 import { enqueueJob } from '@/lib/sync/queue';
 import { agregarDiarios, vistaIncluyeValor, clavesPlanasDelDia } from '@/lib/sheets/campos';
 import type { CampoValorDiario, CampoAgg, CampoFormato } from '@/lib/sheets/campos';
 import { mergeMetricasDelRango, agruparOfflinePorFecha } from '@/lib/dashboard/merge-metrics';
+import { columnasPorcentajeOffline } from '@/lib/report-utm/bi/campos-cliente';
 import { sanearClienteParaUI } from '@/lib/cliente-seguro';
 import { fetchAllRows } from '@/lib/supabase-paginate';
 import { normalizeSheetConfigs } from '@/lib/integrations/google-sheets-conversiones';
@@ -1002,7 +1006,17 @@ function usaRespuestasPorAnuncio(
  * propia copia del merge —o ninguna—, y por eso una tarjeta con un campo de
  * Sheet funcionaba en el dashboard y salía vacía en el enlace público.
  */
+/**
+ * Las métricas de una pestaña, en la zona horaria del cliente: los días de sus
+ * leads y ventas se cortan como Meta corta el gasto de su cuenta (zona-activa.ts).
+ */
 async function cargarMetricasEnriquecidas(
+  ...args: Parameters<typeof cargarMetricasEnriquecidasEnZona>
+): ReturnType<typeof cargarMetricasEnriquecidasEnZona> {
+  return conZonaDeCliente({ publico: args[1] }, () => cargarMetricasEnriquecidasEnZona(...args));
+}
+
+async function cargarMetricasEnriquecidasEnZona(
   supabase: any,
   clienteId: string,
   startStr: string,
@@ -1076,6 +1090,9 @@ async function cargarMetricasEnriquecidas(
       })
     : Promise.resolve(null);
 
+  // Columnas de porcentaje del Sheet: se promedian, no se suman (ver merge-metrics).
+  const pctOfflinePromise = columnasPorcentajeOffline(supabase, clienteId);
+
   const [metricas, leads, offline, sheetData, leadAnswers, hotmartCubo] = await Promise.all([
     fetchAllRows(() =>
       enRango(supabase.from('metricas_diarias').select('*').eq('cliente_id', clienteId), 'fecha')
@@ -1115,7 +1132,7 @@ async function cargarMetricasEnriquecidas(
   const metrics = mergeMetricasDelRango({
     metricas: inyectarVentasCrm(convertirFilasMetricas(metricas, conv), ventasCrm),
     leads,
-    offlinePorFecha: agruparOfflinePorFecha(offline),
+    offlinePorFecha: agruparOfflinePorFecha(offline, await pctOfflinePromise),
     sheetPorFecha: sheetData.porFecha,
     leadsLegacyPorFecha: sheetData.leadsLegacy,
     incluirFilasOffline: opts?.incluirFilasOffline,
@@ -1206,7 +1223,7 @@ export async function getDashboardData(clientId: string, startStr: string, endSt
   // HotConnect: esos perdían la resolución de los alias $facturacion_* del motor
   // de fórmulas y sus ventas salían en 0 sin ningún aviso.
   if (hotmartConectado(cfg)) availablePlatforms.add('hotmart');
-  if (cfg.tiktok_advertiser_id && cfg.tiktok_access_token) availablePlatforms.add('tiktok');
+  if (tiktokConectado(cfg)) availablePlatforms.add('tiktok');
 
   // Priority: client-specific layout → global assigned layout → null (classic)
   const layout = clienteLayoutRes.data || cliente.global_layout || null;
@@ -2030,7 +2047,16 @@ export async function getTabTotalSpend(
     .eq('cliente_id', clienteId);
   if (fechaInicio) query = query.gte('fecha', fechaInicio);
   if (fechaFin) query = query.lte('fecha', fechaFin);
-  const { data: metrics } = await query;
+  // Los grupos de campaña del cliente: un filtro de pestaña por GRUPO no casa
+  // ninguna campaña sin ellos, y la tarjeta de presupuesto mostraba $0 gastado
+  // mientras las demás tarjetas de la misma pestaña sí filtraban por el grupo.
+  const [{ data: metrics }, { data: campaignGroups }] = await Promise.all([
+    query,
+    supabase
+      .from('campaign_groups')
+      .select('*, campaign_group_mappings (id, campaign_id, campaign_name_pattern)')
+      .eq('cliente_id', clienteId),
+  ]);
 
   if (!metrics) return 0;
 
@@ -2040,7 +2066,7 @@ export async function getTabTotalSpend(
   /** Gasto de una plataforma en una fila, filtrado por el filtro de pestaña si lo hay. */
   const spendDe = (columna: any, campanas: any) => {
     if (!hasFilter || !Array.isArray(campanas)) return parseFloat(columna || '0') || 0;
-    return filterCampaignList(campanas, filter).reduce(
+    return filterCampaignList(campanas, filter, campaignGroups ?? []).reduce(
       (s: number, c: any) => s + (parseFloat(c.spend || '0') || 0),
       0
     );
@@ -2299,9 +2325,9 @@ export async function getMirrorDashboardData(token: string, from?: string, to?: 
   // Mismo criterio que el dashboard interno: hora Colombia y 30 días inclusive.
   // `new Date()` era UTC en Vercel, así que a partir de las 19:00 el rango del
   // enlace público terminaba en mañana.
-  const hoy = colombiaToday();
-  const startStr = from || activeTabObj?.fecha_inicio || addDaysISO(hoy, -29);
-  const endStr = to || activeTabObj?.fecha_finalizacion || hoy;
+  const porDefecto = rangoPorDefectoCliente(30);
+  const startStr = from || activeTabObj?.fecha_inicio || porDefecto.from;
+  const endStr = to || activeTabObj?.fecha_finalizacion || porDefecto.to;
 
   // Las pestañas se piden aparte porque el enriquecimiento las necesita: en modo
   // `tab_mirror` el espejo muestra varias, y un bloque de respuestas definido en
@@ -2369,7 +2395,7 @@ export async function getMirrorDashboardData(token: string, from?: string, to?: 
   const cfg = (cliente.config_api as any) || {};
   if (cfg.ga_property_id) availablePlatforms.add('ga4');
   if (hotmartConectado(cfg)) availablePlatforms.add('hotmart');
-  if (cfg.tiktok_access_token) availablePlatforms.add('tiktok');
+  if (tiktokConectado(cfg)) availablePlatforms.add('tiktok');
 
   // Filter tabs by public_tab_ids if configured on client token
   let allTabs = tabsRes.data || [];

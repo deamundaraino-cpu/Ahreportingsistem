@@ -21,6 +21,7 @@
 // dígitos, solo si tiene al menos 8. Si divergen, el cruce falla en silencio.
 
 import type { AtribucionMetodo, VentaHotmart } from './tipos';
+import { esSenalDeCampana, idPublicitario } from '@/lib/report-utm/lead-ids';
 
 export const LOOKBACK_DIAS = 180;
 /** Tolerancia de reloj: el lead puede llegar segundos después del checkout. */
@@ -52,6 +53,13 @@ export type LeadCandidato = {
   utm_content: string | null;
   utm_term: string | null;
   utm_id: string | null;
+  /**
+   * IDs publicitarios del lead (082). Los da la v2 de la RPC (094); con la v1
+   * llegan sin definir y la herencia se comporta como antes.
+   */
+  campaign_id?: string | null;
+  adset_id?: string | null;
+  ad_id?: string | null;
 };
 
 /** Lo que la atribución necesita de una venta. `VentaHotmart` lo cumple. */
@@ -86,16 +94,33 @@ const CAMPOS_TUPLA = [
   'utm_id',
 ] as const;
 
-/** ¿La venta ya trae atribución propia de Hotmart? */
+/**
+ * ¿La venta ya trae atribución propia de Hotmart? Una macro sin rellenar
+ * (`{{campaign.name}}` en el enlace del checkout) NO cuenta: antes bloqueaba la
+ * herencia del lead bueno del comprador y la venta se quedaba sin campaña.
+ */
 export function esTracking(v: VentaAtribuible): boolean {
   if (v.atribucion_metodo === 'tracking') return true;
   if (v.atribucion_metodo) return false;
-  return Boolean(v.utm_campaign || v.utm_id);
+  return esSenalDeCampana(v.utm_campaign) || esSenalDeCampana(v.utm_id);
 }
 
 /** ¿Tiene alguna tupla con campaña (propia o heredada)? */
 function tieneTupla(v: VentaAtribuible): boolean {
-  return Boolean(v.utm_campaign || v.utm_id);
+  return esSenalDeCampana(v.utm_campaign) || esSenalDeCampana(v.utm_id);
+}
+
+/**
+ * ¿El lead dice de qué campaña es? Por UTM que no sea una macro, o por sus IDs
+ * propios (082): un lead de Meta Lead Ads o de GHL puede traer solo los IDs, y
+ * antes no era candidato.
+ */
+function leadConCampana(l: LeadCandidato): boolean {
+  return (
+    esSenalDeCampana(l.utm_campaign) ||
+    esSenalDeCampana(l.utm_id) ||
+    Boolean(idPublicitario(l.ad_id) || idPublicitario(l.adset_id) || idPublicitario(l.campaign_id))
+  );
 }
 
 export function esAnadido(v: VentaAtribuible): boolean {
@@ -129,7 +154,7 @@ export function elegirLead(
   const hasta = t + TOLERANCIA_MS;
   const enVentana = (l: LeadCandidato) => {
     const c = Date.parse(l.created_at);
-    return !Number.isNaN(c) && c >= desde && c <= hasta && Boolean(l.utm_campaign || l.utm_id);
+    return !Number.isNaN(c) && c >= desde && c <= hasta && leadConCampana(l);
   };
   const ultimo = (ls: LeadCandidato[]) =>
     ls.reduce<LeadCandidato | null>(
@@ -159,6 +184,12 @@ function aplicarTupla(
   ahoraIso: string
 ): void {
   for (const c of CAMPOS_TUPLA) venta[c] = fuente[c] ?? null;
+  // La venta no tiene columnas de ID: el más específico del lead va a `utm_id`,
+  // que el resolver ya sube a su anuncio, conjunto y campaña (como con Meta Lead
+  // Ads). Así una venta heredada cruza por ID aunque el nombre se repita.
+  const l = fuente as Partial<LeadCandidato>;
+  const id = idPublicitario(l.ad_id) ?? idPublicitario(l.adset_id) ?? idPublicitario(l.campaign_id);
+  if (id) venta.utm_id = id;
   venta.atribucion_metodo = metodo;
   venta.atribucion_lead_id = leadId;
   venta.atribucion_at = ahoraIso;

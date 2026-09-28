@@ -1,5 +1,5 @@
 /*!
- * Report-UTM Pixel · v1.0
+ * Report-UTM Pixel · v1.1
  *
  * Instalación:
  *   <script>
@@ -98,10 +98,15 @@
   // Parámetros de ID que se propagan tal cual (ver src/lib/report-utm/lead-ids.ts).
   var ID_PARAMS = ['utm_id', 'campaign_id', 'adset_id', 'ad_id'];
 
-  function captureFirstTouch() {
-    var existing = readCookie('rutm_ft');
-    if (existing) return;
-
+  // Toques de atribución:
+  //   rutm_ft — primer toque: se escribe UNA vez y no se toca en 90 días.
+  //   rutm_lt — último toque: se reescribe en CADA página que traiga señal.
+  //
+  // Hasta la v1.0 las dos cookies se escribían juntas y solo si no existía
+  // rutm_ft, así que el «último» toque era el primero durante 90 días: quien
+  // volvía por otro anuncio seguía atribuido al primero en el checkout y en el
+  // lead de WordPress (que reenvía rutm_lt al servidor desde el plugin 0.5.0).
+  function captureTouches() {
     var touch = {
       source: getQueryParam('utm_source'),
       medium: getQueryParam('utm_medium'),
@@ -123,14 +128,21 @@
       if (idv) touch[ID_PARAMS[p]] = idv;
     }
 
+    // Señal = algo que atribuye: fuente, campaña, medio, click id o un ID de la
+    // entidad. Una página sin nada de eso (la home, la de gracias) no pisa el
+    // último toque: navegar dentro del sitio no es un toque nuevo.
     var hasSignal = touch.source || touch.campaign || touch.click_id || touch.medium;
-    if (hasSignal) {
-      writeCookie('rutm_ft', JSON.stringify(touch), 90);
-      writeCookie('rutm_lt', JSON.stringify(touch), 90);
+    for (var q = 0; !hasSignal && q < ID_PARAMS.length; q++) {
+      if (touch[ID_PARAMS[q]]) hasSignal = true;
     }
+    if (!hasSignal) return;
+
+    var json = JSON.stringify(touch);
+    if (!readCookie('rutm_ft')) writeCookie('rutm_ft', json, 90);
+    writeCookie('rutm_lt', json, 90);
   }
 
-  captureFirstTouch();
+  captureTouches();
 
   var visitorId = getOrCreateVisitorId();
   var sessionId = getOrCreateSessionId();
@@ -265,6 +277,10 @@
         getQueryParam('click_id'),
       custom_data: customData || null,
     };
+    // utm_id y los IDs de la entidad (v1.1): antes solo viajaban al checkout.
+    for (var p = 0; p < ID_PARAMS.length; p++) {
+      payload[ID_PARAMS[p]] = getQueryParam(ID_PARAMS[p]);
+    }
 
     var json = JSON.stringify(payload);
 

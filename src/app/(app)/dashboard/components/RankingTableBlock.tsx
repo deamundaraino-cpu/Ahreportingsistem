@@ -3,7 +3,7 @@
 import React, { useMemo, useEffect, useState, useRef } from 'react';
 import { ExternalLink, ChevronUp, ChevronDown, ChevronsUpDown, Layers, X } from 'lucide-react';
 import type { RankingTableDef, TabCampaignFilter } from '@/lib/layout-types';
-import { evaluateFormula, formatValue } from '@/lib/formula-engine';
+import { evaluateFormula, formatValue, reagregarTasasDeFila } from '@/lib/formula-engine';
 import {
   aggregateRankingRows,
   dimensionSoportaRespuestas,
@@ -202,6 +202,9 @@ export function RankingTableBlock({
         }
       }
     }
+
+    // La suma de arriba vale para conteos, no para la frecuencia (un cociente).
+    reagregarTasasDeFila(merged, matching);
 
     const platforms = isTikTok ? new Set(['tiktok']) : new Set(['meta']);
     const colValues = def.columns.map((col) =>

@@ -68,8 +68,8 @@ hm_tasa_reembolso = (hm_neto_reembolsado / (hm_neto + hm_neto_reembolsado)) * 10
 hm_tasa_bump      = (hm_bumps / hm_compras) * 100
 ```
 
-Una diferencia inevitable con el BI: aquí un ROAS con gasto y sin ventas da 0 (el
-motor es aritmética pura); allí, «—».
+Una diferencia con el BI: aquí un ROAS con gasto y 0 ventas **con Hotmart conectado** da 0 (0 ventas
+es un dato); allí, «—». Sin Hotmart conectado da «—» en los dos (ver «Datos faltantes» más abajo).
 
 Corregidas en la misma auditoría, conservando el id para no romper layouts:
 
@@ -111,6 +111,33 @@ Nombres de alto nivel (empiezan con `$`) que el usuario elige en el Layout Build
 | `enrichTikTokRow(row, filter, campaignGroups?)` (en `campaign-filter.ts`)                      | Análogo de `enrichMetaRow` para TikTok: recalcula `tiktok_spend/impressions/clicks/conversions` desde las campañas de `tiktok_campaigns` que coinciden con el filtro. Conserva `tiktok_campaigns` intacto.             |
 | `formatValue(value, { prefix, suffix, decimals })`                                             | Formatea para mostrar (moneda, %, decimales).                                                                                                                                                                          |
 
+### Datos faltantes (desde 2026-09-28)
+
+Antes un campo sin dato valía 0 y un ROAS sin Hotmart salía «0.00x». Ahora el evaluador distingue
+**dato** (un campo con valor, 0 incluido), **constante** (un literal) y **faltante**:
+
+- Faltante = valor `null`/no numérico en la fila (columna NULL), o columna de una plataforma que el
+  cliente no tiene conectada (`ventas_*`, `hotmart_*`, `funnel_*` → Hotmart; `ga_*` → GA4; `tiktok_*` →
+  TikTok) que vale 0. Un valor distinto de 0 se respeta siempre. Un campo del catálogo que la fila
+  simplemente no trae sigue valiendo 0 (un día sin conversiones offline).
+- `a + b`, `a − b`, `a × b` son faltantes solo si lo son los dos lados: `meta_spend + tiktok_spend`
+  sin TikTok es el gasto de Meta.
+- `a ÷ b` con el **denominador** faltante anula la fórmula (null); con el numerador faltante, el
+  cociente es faltante.
+- Resultado faltante → `null` («—»).
+
+Los números se sustituyen **sin notación exponencial** (`numeroSinExponente`): `1e-7` hacía fallar la
+validación de caracteres y la fórmula daba null.
+
+### Métricas no aditivas al agregar (desde 2026-09-28)
+
+`aggregateFormula` suma cada campo entre filas y después `reagregarNoAditivas` rehace los que no se
+suman, igual que el BI: `meta_frequency` = Σimpresiones ÷ Σalcance (también dentro del día, en
+`enrichMetaRow`, y por campaña en el ranking); `ga_bounce_rate` y `ga_avg_session_duration` =
+promedio ponderado por `ga_sessions`; `tasa_calificacion` = calificados ÷ totales × 100; columnas
+`sheet_*` de tipo porcentaje = promedio ponderado por la cantidad de la fila. Sin base (alcance o
+sesiones 0) el valor es «—». Antes se sumaban (la frecuencia de 30 días era la suma de 30 diarias).
+
 ### Pipeline de `evaluateFormula`
 
 ```
@@ -138,6 +165,6 @@ meta_spend / leads_calificados                    # CPL sobre leads calificados 
 ## Módulos que se apoyan en el motor
 
 - **`campaign-filter.ts`** — `enrichMetaRow()` agrega métricas de campañas que pasan un filtro (por grupo, keyword u operadores) y expande `custom_conversions` a campos `meta_custom_*` que las fórmulas pueden usar. Ver [doc 10](./10-sistema-de-layouts.md).
-- **`form-filter.ts`** — `enrichFormRow()` agrega métricas de formularios Meta (`meta_forms`) por `form_id`/`form_name`.
+- **Formularios de Meta** — las métricas de `meta_forms` se agregan por `form_id`/`form_name` dentro de `campaign-filter.ts` (no hay un `form-filter.ts` aparte).
 - **`ranking-aggregation.ts`** — agrega filas para tablas de ranking (campañas/anuncios/conjuntos, Meta o TikTok).
 - **`country-parser.ts`** — `aggregateByCountry()` agrupa campañas por país (extraído del nombre o de targeting) y calcula CPL/CPR.

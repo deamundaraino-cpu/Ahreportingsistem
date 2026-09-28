@@ -8,6 +8,7 @@
  */
 
 import { createAdminClient } from '@/utils/supabase/server';
+import { parsearAlcance } from './alcance-campanas';
 import { colombiaDateOf } from '@/lib/colombia-date';
 import { evaluarCliente, ordenarPorGravedad, TOLERANCIA_DIAS } from './salud-fuentes';
 import type {
@@ -198,6 +199,23 @@ export async function recogerSenales(cliente: {
     });
   }
 
+  // ¿Otro cliente usa la misma cuenta de Meta? Solo importa si este no dice
+  // cuáles son sus campañas (`alcance_campanas`, alcance-campanas.ts).
+  let cuentaCompartidaSinAlcance: string[] | null = null;
+  const propias = cuentasMetaDeConfig(config);
+  if (pid && propias.size > 0 && !parsearAlcance(config.alcance_campanas)) {
+    const { data: otros } = await db
+      .from('clientes')
+      .select('id, nombre, config_api')
+      .neq('id', pid);
+    cuentaCompartidaSinAlcance = ((otros ?? []) as Array<Record<string, unknown>>)
+      .filter((o) => {
+        const suyas = cuentasMetaDeConfig((o.config_api ?? {}) as Record<string, unknown>);
+        return [...suyas].some((c) => propias.has(c));
+      })
+      .map((o) => String(o.nombre ?? '').trim());
+  }
+
   const fuentes: SenalFuente[] = [
     {
       id: 'leads',
@@ -288,6 +306,7 @@ export async function recogerSenales(cliente: {
     sheetFilasAjenas: pid ? await medirSheetAjeno(db, pid) : null,
     ga4: pid ? await medirGa4(db, pid, config) : null,
     sheetsSync: pid ? await medirSyncSheets(db, pid, config) : null,
+    cuentaCompartidaSinAlcance,
   };
 }
 
@@ -312,7 +331,13 @@ async function medirCruce(
 
   // Sobre los leads que cuentan: medir el cruce con los excluidos dentro daría
   // un porcentaje que baja por leads que ya nadie cuenta.
-  const cols = await columnasCruceLead(db, ['utm_id', 'utm_campaign', 'utm_content', 'utm_term']);
+  const cols = await columnasCruceLead(db, [
+    'utm_id',
+    'utm_campaign',
+    'utm_content',
+    'utm_term',
+    'utm_source',
+  ]);
   let q = db
     .schema('report_utm')
     .from('lead_events')
@@ -490,4 +515,21 @@ export async function saludDeTodos(): Promise<SaludCliente[]> {
   const out: SaludCliente[] = [];
   for (const c of clientes) out.push(evaluarCliente(await recogerSenales(c)));
   return ordenarPorGravedad(out);
+}
+
+/** Ids de las cuentas de Meta configuradas en un `config_api`, sin `act_`. */
+function cuentasMetaDeConfig(config: Record<string, unknown>): Set<string> {
+  const ids = new Set<string>();
+  const norm = (v: unknown) =>
+    String(v ?? '')
+      .replace(/^act_/, '')
+      .trim();
+  if (Array.isArray(config.meta_accounts)) {
+    for (const a of config.meta_accounts as Array<Record<string, unknown>>) {
+      if (a?.account_id) ids.add(norm(a.account_id));
+    }
+  }
+  if (config.meta_account_id) ids.add(norm(config.meta_account_id));
+  ids.delete('');
+  return ids;
 }

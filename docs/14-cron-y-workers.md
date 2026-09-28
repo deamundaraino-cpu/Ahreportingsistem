@@ -137,12 +137,12 @@ desconectados sin aviso. Ver
 
 ## Horarios del sync-worker (hora Colombia)
 
-| Hora           | Plan             | Encola                                                                                                                             |
-| -------------- | ---------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| 05:00          | `diario`         | Métricas de ayer y hoy (todos los clientes) + Sheets (**un job por cliente**) + Meta Leads + leads de GoHighLevel + agregación UTM |
-| 14:00          | `diario`         | Segunda pasada: recoge las correcciones de atribución del día                                                                      |
-| día 7, 03:00   | `cierre_mes`     | Re-descarga forzada del mes anterior (ventana de 35 días) y congelado                                                              |
-| domingo, 03:00 | `reconciliacion` | Audita el gasto de Meta contra el real de cada cuenta y repara los días con desglose incompleto                                    |
+| Hora           | Plan             | Encola                                                                                                                                                                          |
+| -------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 05:00          | `diario`         | Métricas de ayer y hoy (todos los clientes) + Sheets (**un job por cliente**) + Meta Leads + leads y oportunidades de GoHighLevel + leads de TikTok + reconciliación de Hotmart |
+| 14:00          | `diario`         | Segunda pasada: recoge las correcciones de atribución del día                                                                                                                   |
+| día 7, 03:00   | `cierre_mes`     | Re-descarga forzada del mes anterior (ventana de 35 días) y congelado                                                                                                           |
+| domingo, 03:00 | `reconciliacion` | Audita el gasto de Meta contra el real de cada cuenta y repara los días con desglose incompleto                                                                                 |
 
 Los planes `diario` y `reconciliacion` encolan además un `hotmart_reconciliar` por
 cliente con Hotmart: la reconciliación de Hotmart es **diaria** desde el 2026-09-25
@@ -338,12 +338,20 @@ un refresco fallido relee la config antes de marcar la conexión como `expired`:
 otro proceso (el refresco en línea del worker) ya rotó el refresh token, el cliente
 sale como `skipped_concurrent` y no como caído.
 
-### `/api/cron/report-utm/aggregate`
+### Agregación UTM (retirada)
 
-Reagrega `report_utm.sales_events` en `hourly_metrics`. Recalcula el rango
-horario completo afectado: antes seleccionaba por `received_at` pero borraba por
-hora de venta, así que las ventas antiguas desaparecían y los conteos podían
-**bajar** en cada corrida.
+La ruta `/api/cron/report-utm/aggregate` ya no existe y el planificador no encola
+`utm_aggregate` (el tipo se conserva en `sync_jobs_tipo_check` por las filas
+históricas). Los informes leen `sales_events` y `lead_events` directamente.
+
+### Leads de GoHighLevel, oportunidades de GHL y leads de TikTok
+
+El plan diario encola además `ghl_leads`, `ghl_oportunidades` y `tiktok_leads`
+(`src/lib/sync/planner.ts`). **Requiere la migración 094**: el `CHECK` de
+producción no los admitía (ni siquiera `ghl_leads`) y el INSERT rechazado abortaba
+el plan entero, así que la reconciliación diaria de Hotmart tampoco se encolaba.
+Desde la auditoría del 2026-09-28 cada tipo se encola en su propio `try`: uno
+rechazado se anota en `detalle` (`<tipo>_error`) y el resto sigue.
 
 ### `/api/cron/cierre-mes`
 

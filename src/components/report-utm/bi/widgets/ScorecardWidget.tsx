@@ -24,6 +24,8 @@ import { appendWidgetFilters, widgetFilterSignature } from '../widgetQuery';
 import { HelpTip } from '../HelpTip';
 import {
   readTasas,
+  readAvisosConsulta,
+  AvisosConsultaNote,
   readUnavailable,
   readValue,
   TasasNote,
@@ -85,6 +87,7 @@ export function ScorecardWidget({ title, config, filters, calculatedFields = [] 
   /** Motivo por el que esta métrica no se pudo medir, si es el caso. */
   const [naInfo, setNaInfo] = useState<WidgetUnavailable | null>(null);
   const [avisoTasas, setAvisoTasas] = useState<AvisoTasas | null>(null);
+  const [avisosConsulta, setAvisosConsulta] = useState<string[]>([]);
   /** Moneda de reporte del cliente (viaja en `meta` de la respuesta). */
   const [monedaCliente, setMonedaCliente] = useState<string | null>(null);
   /** Nombres de preguntas, respuestas y segmentos (viajan en `meta.etiquetas`). */
@@ -145,6 +148,7 @@ export function ScorecardWidget({ title, config, filters, calculatedFields = [] 
         setEtiquetas(json.meta?.etiquetas ?? {});
         registrarEtiquetas(json.meta?.etiquetas);
         setAvisoTasas(readTasas(json.meta));
+        setAvisosConsulta(readAvisosConsulta(json.meta));
         if (compare) {
           setValue(readValue(json.data?.current?.[0], metric, na));
           setPrev(readValue(json.data?.previous?.[0], metric, na));
@@ -261,6 +265,7 @@ export function ScorecardWidget({ title, config, filters, calculatedFields = [] 
           {/* El «—» de arriba dice QUE no se pudo medir; esto dice POR QUÉ. */}
           <UnavailableNote info={naInfo} />
           <TasasNote aviso={avisoTasas} />
+          <AvisosConsultaNote avisos={avisosConsulta} />
         </div>
       )}
       <p className="text-[10px] text-muted-foreground/60 uppercase tracking-wider">{label}</p>

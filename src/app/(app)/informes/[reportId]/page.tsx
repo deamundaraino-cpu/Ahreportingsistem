@@ -2,6 +2,7 @@ import { notFound } from 'next/navigation';
 import { createAdminClient } from '@/utils/supabase/server';
 import { BiReportCanvas } from '@/components/report-utm/bi/BiReportCanvas';
 import type { BiReport } from '@/components/report-utm/bi/BiTypes';
+import { clienteDashboardDeInforme } from '@/lib/report-utm/bi/frescura';
 
 export const dynamic = 'force-dynamic';
 
@@ -29,5 +30,10 @@ export default async function ReportPage({ params }: Params) {
     updated_at: data.updated_at,
   };
 
-  return <BiReportCanvas report={report} />;
+  // Semáforo de última sincronización del cliente del informe (el mismo del
+  // dashboard): el cliente del BI es el de report_utm; el semáforo lee el del
+  // dashboard, así que se traduce aquí.
+  const frescuraClienteId = await clienteDashboardDeInforme(report.cliente_id);
+
+  return <BiReportCanvas report={report} frescuraClienteId={frescuraClienteId} />;
 }

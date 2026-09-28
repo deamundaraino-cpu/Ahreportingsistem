@@ -19,7 +19,7 @@ import { evaluateAlertRules } from '@/lib/notifications/rules-engine';
 // en lote y con el mismo invariante de siempre: sin tasa el importe es NULL,
 // nunca 0.
 import { importesCuadran, sumarCampanas } from '@/lib/sync/reconcile';
-import { expandirFila } from '@/lib/ads/ads-daily-writer';
+import { FORMAS, expandirFila } from '@/lib/ads/ads-daily-writer';
 import { agruparPorForma, plataformasOmitidas } from '@/lib/sync/upsert-batches';
 import { hotmartConectado, obtenerToken } from '@/lib/hotmart/cliente';
 import { cargarFunnels } from '@/lib/hotmart/persistencia';
@@ -192,6 +192,9 @@ const KNOWN_ACTION_TYPES = new Set(Object.values(META_ACTION_FAMILIES).flat());
  * 7d_click + 1d_view es el estándar de Meta desde iOS 14.
  */
 const META_ATTRIBUTION_WINDOWS = JSON.stringify(['7d_click', '1d_view']);
+
+/** Sin descarga (cliente sin Meta, o rango ya descargado): ningún nivel falló. */
+const NIVELES_META_OK = { ad: true, adset: true } as const;
 
 /** Recolecta action_types no mapeados de toda la corrida, para diagnosticar. */
 const unmappedActionTypes = new Set<string>();
@@ -1135,7 +1138,12 @@ async function sincronizar(request: Request) {
         }
 
         // ─── Helper: Fetch Meta at ad/adset level, RANGO COMPLETO → Map<fecha, item[]> ──
-        async function fetchMetaAtLevelRange(level: 'ad' | 'adset'): Promise<Map<string, any[]>> {
+        // `ok: false` distingue «la API falló» de «no hubo anuncios». Antes los dos
+        // devolvían un mapa vacío, se escribía `meta_ads: []` y la limpieza del
+        // espejo borraba de `ads_daily` los anuncios buenos de esas fechas.
+        async function fetchMetaAtLevelRange(
+          level: 'ad' | 'adset'
+        ): Promise<{ ok: boolean; porDia: Map<string, any[]> }> {
           const flat = new Map<string, any[]>();
           try {
             const idField = level === 'ad' ? 'ad_id' : 'adset_id';
@@ -1161,7 +1169,7 @@ async function sincronizar(request: Request) {
             const paged = await metaInsightsPaged(levelUrl.toString());
             if (!paged.ok) {
               log(`[Meta] fetchMetaAtLevelRange(${level}) error: ${JSON.stringify(paged.error)}`);
-              return flat;
+              return { ok: false, porDia: flat };
             }
 
             // Dedup por primary key DENTRO de cada día (time_increment=1 separa los días)
@@ -1283,20 +1291,21 @@ async function sincronizar(request: Request) {
             });
 
             for (const [day, m] of perDay) flat.set(day, Array.from(m.values()));
-            return flat;
+            return { ok: true, porDia: flat };
           } catch (e: any) {
             log(`[Meta] fetchMetaAtLevelRange(${level}) error: ${e.message}`);
-            return flat;
+            return { ok: false, porDia: flat };
           }
         }
 
         // ─── Fetch ads + adsets para TODO el rango, en paralelo → asignar por día ──
-        const [adsByDate, adsetsByDate] = await Promise.all([
+        const [adsRes, adsetsRes] = await Promise.all([
           fetchMetaAtLevelRange('ad'),
           fetchMetaAtLevelRange('adset'),
         ]);
-        for (const [day, ads] of adsByDate) ensureDay(day).meta_ads = ads;
-        for (const [day, adsets] of adsetsByDate) ensureDay(day).meta_adsets = adsets;
+        for (const [day, ads] of adsRes.porDia) ensureDay(day).meta_ads = ads;
+        for (const [day, adsets] of adsetsRes.porDia) ensureDay(day).meta_adsets = adsets;
+        const nivelesOk = { ad: adsRes.ok, adset: adsetsRes.ok };
 
         // ─── Lead form breakdown (Meta Lead Ads) para TODO el rango ──────────
         try {
@@ -1359,7 +1368,7 @@ async function sincronizar(request: Request) {
           log(`[Meta] Form breakdown fetch failed (non-critical): ${err?.message}`);
         }
 
-        return { byDate, apiSuccess };
+        return { byDate, apiSuccess, nivelesOk };
       }
 
       // ─── Multi-account wrapper (RANGO): consolida todas las cuentas por fecha ──
@@ -1397,7 +1406,7 @@ async function sincronizar(request: Request) {
 
         if (accountsToFetch.length === 0) {
           log(`[Meta] Sin config para el cliente.`);
-          return { byDate, apiSuccess: false, configured: false };
+          return { byDate, apiSuccess: false, configured: false, nivelesOk: NIVELES_META_OK };
         }
 
         // Fetch all accounts in parallel for the whole range
@@ -1407,11 +1416,27 @@ async function sincronizar(request: Request) {
           )
         );
 
-        let apiSuccess = false;
+        // TODAS las cuentas o ninguna. Con «basta una» (lo de antes), si fallaba
+        // una de dos cuentas el día se escribía solo con la otra: el gasto de la
+        // caída desaparecía de `metricas_diarias` y ni el control de desglose lo
+        // veía, porque el gasto de cuenta también salía solo de la que respondió.
+        // Ahora el día conserva lo que ya había en BD y la red de seguridad avisa.
+        const cuentasCaidas = accountsToFetch
+          .filter((_, i) => !accountResults[i].apiSuccess)
+          .map((a) => a.account_id);
+        const apiSuccess = cuentasCaidas.length === 0;
+        if (cuentasCaidas.length > 0 && cuentasCaidas.length < accountsToFetch.length) {
+          log(
+            `[Meta] ${cuentasCaidas.length} de ${accountsToFetch.length} cuentas fallaron (${cuentasCaidas.join(', ')}): se conserva lo guardado en vez de escribir un gasto parcial.`
+          );
+        }
+        const nivelesOk = {
+          ad: accountResults.every((r) => r.nivelesOk.ad),
+          adset: accountResults.every((r) => r.nivelesOk.adset),
+        };
         let anyData = false;
         // Merge results from all accounts, per day
         for (const r of accountResults) {
-          if (r.apiSuccess) apiSuccess = true;
           for (const [day, src] of r.byDate as Map<string, any>) {
             const record = byDate.get(day) || emptyMetaRecord(true);
             record.spend += src.spend;
@@ -1551,7 +1576,7 @@ async function sincronizar(request: Request) {
           }
         }
 
-        return { byDate, apiSuccess, configured: true };
+        return { byDate, apiSuccess, configured: true, nivelesOk };
       }
 
       const emptyTikTokRecord = (apiSuccess: boolean) => ({
@@ -1816,11 +1841,19 @@ async function sincronizar(request: Request) {
           return { byDate, apiSuccess: false, configured: false };
         }
 
+        // Moneda y zona horaria de cada anunciante → `config_api.tiktok_cuentas_info`
+        // (como `meta_estado_cuentas`). En paralelo con los informes, como mucho
+        // una consulta por cuenta al día, y nunca tumba el sync.
+        const infoCuentas = import('@/lib/tiktok/cuenta')
+          .then((m) => m.actualizarInfoCuentasTikTok(adminSupabase, cliente))
+          .catch((e: any) => log(`[TikTok] Info de cuentas no actualizada: ${e?.message ?? e}`));
+
         const results = await Promise.all(
           accountsToFetch.map(({ advertiser_id, token }) =>
             fetchTikTokSingleAccountRange(startDate, endDate, advertiser_id, token)
           )
         );
+        await infoCuentas;
 
         let apiSuccess = false;
         for (const r of results) {
@@ -2254,6 +2287,7 @@ async function sincronizar(request: Request) {
         byDate: new Map<string, any>(),
         apiSuccess: true,
         configured: metaConfigured,
+        nivelesOk: NIVELES_META_OK,
       };
       const emptyRangeTikTok = {
         byDate: new Map<string, any>(),
@@ -2628,8 +2662,10 @@ async function sincronizar(request: Request) {
               meta_impressions: metaRecord.impressions,
               meta_clicks: metaRecord.clicks,
               meta_campaigns: metaRecord.campaigns,
-              meta_ads: metaRecord.meta_ads,
-              meta_adsets: metaRecord.meta_adsets,
+              // Un nivel cuya descarga falló se OMITE (se conserva el de BD) en vez
+              // de escribirse vacío: un `[]` aquí borraba el espejo de ads_daily.
+              ...(metaResult.nivelesOk.ad && { meta_ads: metaRecord.meta_ads }),
+              ...(metaResult.nivelesOk.adset && { meta_adsets: metaRecord.meta_adsets }),
               meta_forms: metaRecord.forms,
             }),
             // Only include TikTok fields when the API call actually succeeded.
@@ -2796,23 +2832,28 @@ async function sincronizar(request: Request) {
               // así que un borrado por fecha a secas se llevaba por delante
               // el espejo bueno y dejaba el día solo con TikTok. Solo se
               // limpia la plataforma que SÍ se acaba de escribir.
-              const fechasPorPlataforma: Record<'meta' | 'tiktok', string[]> = {
-                meta: [],
-                tiktok: [],
-              };
+              //
+              // Y ACOTADO POR NIVEL: si la descarga de anuncios falló, el payload
+              // no trae `meta_ads` (se conserva el de BD) y sus filas del espejo
+              // tampoco deben borrarse. Se limpia solo cada columna escrita.
+              const fechasPorColumna = new Map<string, string[]>();
               for (const p of payloadsAds) {
-                const fecha = String(p.fecha);
-                if ('meta_campaigns' in p) fechasPorPlataforma.meta.push(fecha);
-                if ('tiktok_campaigns' in p) fechasPorPlataforma.tiktok.push(fecha);
+                for (const columna of Object.keys(FORMAS)) {
+                  if (!(columna in p)) continue;
+                  const lista = fechasPorColumna.get(columna) ?? [];
+                  lista.push(String(p.fecha));
+                  fechasPorColumna.set(columna, lista);
+                }
               }
-              for (const plataforma of ['meta', 'tiktok'] as const) {
-                const fechas = [...new Set(fechasPorPlataforma[plataforma])];
-                if (fechas.length === 0) continue;
+              for (const [columna, lista] of fechasPorColumna) {
+                const { plataforma, nivel } = FORMAS[columna];
+                const fechas = [...new Set(lista)];
                 const { error: eLimpieza } = await adminSupabase
                   .from('ads_daily')
                   .delete()
                   .eq('cliente_id', cliente.id)
                   .eq('plataforma', plataforma)
+                  .eq('nivel', nivel)
                   .in('fecha', fechas)
                   .lt('synced_at', inicioEspejo);
                 if (eLimpieza) throw new Error(eLimpieza.message);

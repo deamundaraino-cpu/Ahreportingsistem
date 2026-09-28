@@ -701,3 +701,27 @@ export async function monedaDeClientePublico(db: any, publicId: string): Promise
 export function _limpiarCacheMoneda(): void {
   cache.clear();
 }
+
+/**
+ * (Puro) Aviso si el GASTO de alguna cuenta está en otra moneda que la de
+ * reporte. El gasto no se convierte (la de la cuenta es la de la factura), así
+ * que un CPL o un ROAS con una cuenta en otra moneda compara cosas distintas.
+ * Antes solo lo avisaba la tarjeta de moneda de la ficha, que el cliente no ve;
+ * ahora viaja con cada consulta del BI. Mira Meta y, desde la auditoría del
+ * 2026-09-28, también TikTok (`tiktok_cuentas_info`, que guarda el worker).
+ */
+export function avisoMonedaGasto(monedaReporte: string, configApi: unknown): string | null {
+  const cfg = (configApi ?? {}) as Record<string, unknown>;
+  const ajenas = new Set<string>();
+  for (const m of monedasDeCuentasMeta(cfg)) {
+    if (m !== monedaReporte) ajenas.add(`Meta en ${m}`);
+  }
+  for (const info of Object.values((cfg.tiktok_cuentas_info ?? {}) as Record<string, unknown>)) {
+    const m = (info as { currency?: unknown } | null)?.currency;
+    if (typeof m === 'string' && m.trim() && m.trim().toUpperCase() !== monedaReporte) {
+      ajenas.add(`TikTok en ${m.trim().toUpperCase()}`);
+    }
+  }
+  if (ajenas.size === 0) return null;
+  return `El gasto de ${[...ajenas].join(' y ')} no está en ${monedaReporte}, la moneda del informe: esas cifras no se convierten y los CPL/ROAS que las mezclan no son comparables.`;
+}

@@ -24,6 +24,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 import { colombiaDateOf, colombiaRangeBounds } from '@/lib/colombia-date';
+import { argsZona } from '@/lib/zona-activa';
 
 /** Tupla de atribución de un grupo de leads, tal como la devuelve la RPC. */
 export type TuplaCubo = [
@@ -34,6 +35,9 @@ export type TuplaCubo = [
   campaign_id: string | null,
   adset_id: string | null,
   ad_id: string | null,
+  // La fuente (migración 095): el resolver la usa para no cruzar un nombre con
+  // la plataforma equivocada. Opcional: la RPC anterior no la devuelve.
+  utm_source?: string | null,
 ];
 
 /** El cubo crudo: sin catálogo aplicado, con los valores tal como llegaron. */
@@ -133,13 +137,21 @@ export async function cargarCuboCrudo(
   const partes: CuboCrudo[] = [];
   for (const [ini, fin] of ventanas(desde, hasta)) {
     const b = colombiaRangeBounds(ini, fin);
-    const { data, error } = await db.rpc('leads_cubo', {
+    const args = {
       p_cliente_id: rtmClienteId,
       p_desde: b.gte,
       p_hasta: b.lt,
       p_campos: campos,
       p_limite: LIMITE_GRUPOS,
-    });
+    };
+    // La zona del cliente (095) solo viaja si no es Colombia. Sin la migración,
+    // la función con `p_zona` no existe (PGRST202) y se repite sin ella: los
+    // límites del rango ya van en su zona y solo el corte por día queda en
+    // Colombia, que es lo de antes.
+    let { data, error } = await db.rpc('leads_cubo', { ...args, ...argsZona() });
+    if (error && esFuncionAusente(error) && argsZona().p_zona) {
+      ({ data, error } = await db.rpc('leads_cubo', args));
+    }
     if (error) {
       if (esFuncionAusente(error)) {
         sinFuncionHasta = Date.now() + REINTENTO_SIN_FUNCION_MS;

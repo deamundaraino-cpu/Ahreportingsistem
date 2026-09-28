@@ -103,6 +103,30 @@ en Eduversio es el 18 % de los leads ([doc 21](./21-auditoria-utms-ghl.md)).
 queda sin cruzar como «ambiguo» y aparece en `/cruce-campanas` →
 «Nombres repetidos en varias campañas», en vez de caer en una campaña cualquiera.
 La cura es poner los IDs en el enlace ([doc 22](./22-auditoria-cruce-por-id.md)).
+Desde el 2026-09-28 vale también para el **nombre de campaña**: dos campañas que se
+llaman igual (una duplicada sin renombrar) ya no cruzan con la última escrita; el
+anuncio o el conjunto del lead pueden desempatar.
+
+**El nombre solo cruza dentro de su plataforma** (2026-09-28). `utm_source` dice la
+plataforma (`facebook_*`, `instagram_*`, `ig`, `fb`, `th`, `whatsapp_*` → Meta;
+`tiktok`, `pangle` → TikTok): un lead de TikTok ya no cae en una campaña de Meta
+que se llame igual. Una fuente conocida sin gasto en el reporting (Google, email…)
+no cruza por nombre; una desconocida o una macro busca en todas, como antes. Los
+IDs cruzan siempre, sea cual sea la fuente. Los anuncios y adgroups de TikTok se
+indexan por ID, así que la plantilla `ad_id=__CID__` del doc 22 ya funciona.
+
+**Una corrección manual no pisa un ID exacto.** Una corrección de campaña o de
+conjunto se hace sobre un nombre; si el lead trae un `ad_id` que el índice conoce,
+manda el ID. Solo una corrección de nivel anuncio manda también sobre él.
+
+**Cuenta compartida entre clientes.** Si dos clientes usan la misma cuenta
+publicitaria, el campo «Campañas de este cliente» de la ficha (`alcance_campanas`)
+dice cuáles son suyas: recorta el índice del cruce y el gasto de todos los informes
+BI. Sin él, cada cliente ve el gasto de la cuenta entera.
+
+**Los días, en la zona del cliente.** Leads y ventas se cortan por día en la zona
+de la cuenta de Meta del cliente (o la escrita en la ficha), que es la zona en la
+que Meta corta el gasto. Ver `src/lib/zona-activa.ts` y la migración 095.
 
 El conjunto y el anuncio se titulan con la misma lógica: corrección manual → ID
 propio → ID en `utm_id` o en su propio campo → nombre. Un ID que la cuenta no
@@ -144,7 +168,9 @@ búsqueda use índice (funciona sin ella, pero con un seq scan de 171 MB).
 
 Un lead que no cruza **no se funde en un cubo común**: se queda como su propia
 fila con gasto 0 y la UI la marca. Es deliberado — fundirlas escondía justo el
-problema que hay que arreglar.
+problema que hay que arreglar. Por lo mismo, el gasto sin entidad (objetos de
+TikTok antiguos) sale como «(gasto sin campaña)», no en la fila «(sin campaña)»
+de los leads sin UTM.
 
 ### El eje `utm`
 
@@ -384,7 +410,6 @@ Merece la pena conocerlas para no perder tiempo:
 | Conversiones offline por campaña                           | Ídem — usa un **campo de Sheet**, que sí cruza |
 | Suscripciones en una serie temporal                        | Es una foto, no una serie                      |
 | Contar filas de una fuente diaria                          | Solo el grano de fila se cuenta                |
-| ROAS de Hotmart **por campaña**, hoy                       | Las ventas aún no traen campaña (ver Parte 7)  |
 | CPA o ROAS de Hotmart **por producto**                     | Anuncios no sabe qué producto se vendió        |
 
 > **Ojo con la primera fila.** Lo que no se puede es _repartir_ el gasto entre las

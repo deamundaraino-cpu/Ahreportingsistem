@@ -56,6 +56,13 @@ export interface SenalesCliente {
    * la fuente al día gracias a los datos de agosto.
    */
   sheetsSync?: SenalSheetSync[] | null;
+  /**
+   * Otros clientes que usan la MISMA cuenta de Meta, cuando este no tiene
+   * `alcance_campanas`. Sin alcance, cada uno ve en los informes el gasto de la
+   * cuenta entera y solo sus leads (auditoría del 2026-09-28: «gasto con leads»
+   * del 26 % en Somos rentable). Vacío o ausente = sin problema.
+   */
+  cuentaCompartidaSinAlcance?: string[] | null;
 }
 
 export interface SenalGa4 {
@@ -202,6 +209,17 @@ export function evaluarCliente(s: SenalesCliente): SaludCliente {
         i.tipo === 'meta_cuenta'
           ? 'Revisar el pago o el estado de la cuenta en el Administrador de anuncios de Meta.'
           : 'Reconectar la integración desde la ficha del cliente (Ajustes → Conexiones).',
+    });
+  }
+
+  // ── Cuenta publicitaria compartida sin alcance ──────────────────
+  if (s.cuentaCompartidaSinAlcance && s.cuentaCompartidaSinAlcance.length > 0) {
+    hallazgos.push({
+      gravedad: 'aviso',
+      ambito: 'Cruce · cuenta compartida',
+      titulo: `Comparte la cuenta de Meta con ${s.cuentaCompartidaSinAlcance.join(', ')} y no tiene alcance: sus informes suman el gasto de toda la cuenta`,
+      accion:
+        'Rellenar «Campañas de este cliente» en la ficha (pestaña Meta) con los textos que identifican sus campañas.',
     });
   }
 

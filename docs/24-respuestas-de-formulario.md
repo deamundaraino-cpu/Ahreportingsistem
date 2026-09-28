@@ -29,16 +29,16 @@ siguen valiendo como referencia de las reglas (sobre todo la del gasto).
 **Preguntas medidas.** Una fila por pregunta; al abrirla, sus respuestas con los
 leads y el % de cada una. Todo se guarda al momento:
 
-| Quiero…                                           | Hago…                                                         |
-| ------------------------------------------------- | ------------------------------------------------------------- |
-| cambiar el nombre de una respuesta                | clic en el nombre, escribir, Enter                            |
-| reordenar                                         | arrastrar por el asa, o «Orden automático» (rangos numéricos) |
-| juntar dos formas de escribir lo mismo            | marcar las dos → «Unir»                                       |
-| que «Seleccione una opción» no cuente             | «Apartar» en esa respuesta (cuenta como sin respuesta)        |
-| «todos los que ganan de 2M para arriba»           | «≥» en la respuesta «2M» (crea el segmento acumulado)         |
-| un grupo cualquiera de respuestas                 | marcar → «Nuevo segmento»                                     |
-| una pregunta de casillas (varias respuestas)      | «Se pueden elegir varias»                                     |
-| agrupar valores a mano, cambiar claves de origen  | ⚙ (edición avanzada)                                          |
+| Quiero…                                          | Hago…                                                         |
+| ------------------------------------------------ | ------------------------------------------------------------- |
+| cambiar el nombre de una respuesta               | clic en el nombre, escribir, Enter                            |
+| reordenar                                        | arrastrar por el asa, o «Orden automático» (rangos numéricos) |
+| juntar dos formas de escribir lo mismo           | marcar las dos → «Unir»                                       |
+| que «Seleccione una opción» no cuente            | «Apartar» en esa respuesta (cuenta como sin respuesta)        |
+| «todos los que ganan de 2M para arriba»          | «≥» en la respuesta «2M» (crea el segmento acumulado)         |
+| un grupo cualquiera de respuestas                | marcar → «Nuevo segmento»                                     |
+| una pregunta de casillas (varias respuestas)     | «Se pueden elegir varias»                                     |
+| agrupar valores a mano, cambiar claves de origen | ⚙ (edición avanzada)                                          |
 
 Si llegan respuestas que el campo no conoce, sale el aviso «N respuestas sin
 nombre propio» con «Añadir como respuestas».
@@ -86,29 +86,29 @@ ejemplo. «Medir» la activa; «Es la misma que…» la suma a una pregunta ya m
 
 ## Vocabulario
 
-| Qué                        | Fórmula (dashboard e informes) | Token de widget (BI)            |
-| -------------------------- | ------------------------------ | ------------------------------- |
-| Contactos                  | `utm_leads`                    | `leads_count`                   |
-| Una respuesta              | `lf__<pregunta>__<respuesta>`  | `leadans:<pregunta>:<respuesta>` |
-| No respondieron            | `lf__<pregunta>__sin_respuesta` | `leadans:<pregunta>:sin_respuesta` |
-| Segmento                   | `lseg__<segmento>`             | `leadseg:<segmento>`            |
-| La pregunta (dimensión)    | —                              | `leadfield:<pregunta>`          |
+| Qué                     | Fórmula (dashboard e informes)  | Token de widget (BI)               |
+| ----------------------- | ------------------------------- | ---------------------------------- |
+| Contactos               | `utm_leads`                     | `leads_count`                      |
+| Una respuesta           | `lf__<pregunta>__<respuesta>`   | `leadans:<pregunta>:<respuesta>`   |
+| No respondieron         | `lf__<pregunta>__sin_respuesta` | `leadans:<pregunta>:sin_respuesta` |
+| Segmento                | `lseg__<segmento>`              | `leadseg:<segmento>`               |
+| La pregunta (dimensión) | —                               | `leadfield:<pregunta>`             |
 
 Todo vive en [`src/lib/leads/respuestas/claves.ts`](../src/lib/leads/respuestas/claves.ts).
 
 ## Para quien mantiene el código
 
-| Pieza                                  | Dónde                                                                                          |
-| -------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| Claves estables y referencias exactas  | `src/lib/leads/respuestas/claves.ts`                                                           |
-| Activación automática, orden de rangos | `src/lib/leads/respuestas/catalogo.ts` · `activar-db.ts`                                       |
-| Edición de respuestas                  | `src/lib/leads/respuestas/edicion.ts`                                                          |
-| Cubo único (dashboard)                 | RPC `report_utm.leads_cubo` (migración `090`) · `cubo-db.ts` (ventanas de ≤ 366 días) · `cubo.ts` |
-| Preguntas de las plataformas           | tabla `report_utm.lead_preguntas` (migración `091`) · `preguntas-db.ts` · `wordpress.ts`       |
-| Detección compartida                   | `src/lib/leads/respuestas/deteccion-db.ts` (`VENTANA_DESCUBRIMIENTO_DIAS`)                     |
-| Pantalla                               | `src/components/report-utm/leads/LeadsConfigCard.tsx`                                          |
-| APIs                                   | `/api/report-utm/lead-preguntas` · `/api/report-utm/lead-campos/activar`                       |
-| Seguridad del informe público          | `src/lib/report-utm/bi/public-allowlist.ts`                                                    |
+| Pieza                                  | Dónde                                                                                                                        |
+| -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| Claves estables y referencias exactas  | `src/lib/leads/respuestas/claves.ts`                                                                                         |
+| Activación automática, orden de rangos | `src/lib/leads/respuestas/catalogo.ts` · `activar-db.ts`                                                                     |
+| Edición de respuestas                  | `src/lib/leads/respuestas/edicion.ts`                                                                                        |
+| Cubo único (dashboard)                 | RPC `report_utm.leads_cubo` (migración `090`) · `cubo-db.ts` (ventanas de ≤ 366 días) · `cubo.ts`                            |
+| Preguntas de las plataformas           | tabla `report_utm.lead_preguntas` (migración `091`) · `preguntas-db.ts` · `wordpress.ts`                                     |
+| Detección compartida                   | `src/lib/leads/respuestas/deteccion-db.ts` (`VENTANA_DESCUBRIMIENTO_DIAS`)                                                   |
+| Pantalla                               | `src/components/report-utm/leads/LeadsConfigCard.tsx`                                                                        |
+| APIs                                   | `/api/report-utm/lead-preguntas` · `/api/report-utm/lead-campos/activar`                                                     |
+| Seguridad del informe público          | `src/lib/report-utm/bi/public-allowlist.ts`                                                                                  |
 | Tests                                  | `verify-lead-respuestas`, `verify-bi-publico-seguridad` (puros) · `verify-leads-cubo-db`, `verify-lead-segmentos-db` (datos) |
 
 **Migraciones.** La `090` (claves de respuesta + `leads_cubo`) y la `091`

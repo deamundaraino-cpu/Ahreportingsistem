@@ -81,6 +81,7 @@ export function formulaUsaHotmart(f: string | null | undefined): boolean {
 
 /** Una fila de `hotmart_ventas` con lo que hace falta para aportar y resolver. */
 export type FilaVentaCubo = FilaAporte & {
+  utm_source?: string | null;
   utm_id?: string | null;
   utm_campaign?: string | null;
   utm_content?: string | null;
@@ -108,6 +109,7 @@ export function construirCuboHotmart(
   filas: FilaVentaCubo[],
   opts: {
     campanaDe: (tupla: {
+      utm_source?: string | null;
       utm_id: string | null;
       utm_campaign: string | null;
       utm_content: string | null;
@@ -133,12 +135,13 @@ export function construirCuboHotmart(
   const memoTupla = new Map<string, number>();
   const campanaDeFila = (r: FilaVentaCubo): number => {
     const tupla = {
+      utm_source: r.utm_source ?? null,
       utm_id: r.utm_id ?? null,
       utm_campaign: r.utm_campaign ?? null,
       utm_content: r.utm_content ?? null,
       utm_term: r.utm_term ?? null,
     };
-    const k = `${tupla.utm_id ?? ''}|${tupla.utm_campaign ?? ''}|${tupla.utm_content ?? ''}|${tupla.utm_term ?? ''}`;
+    const k = `${tupla.utm_source ?? ''}|${tupla.utm_id ?? ''}|${tupla.utm_campaign ?? ''}|${tupla.utm_content ?? ''}|${tupla.utm_term ?? ''}`;
     const ya = memoTupla.get(k);
     if (ya !== undefined) return ya;
     const i = indiceDeCampana(opts.campanaDe(tupla) || SIN_CAMPANA);

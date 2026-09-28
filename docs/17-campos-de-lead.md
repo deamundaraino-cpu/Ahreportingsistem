@@ -235,10 +235,10 @@ Para re-apuntar bloques en masa: `npx tsx scripts/reapuntar-bloques-lead.ts`
 | Lectura/escritura y detección | [`src/lib/report-utm/lead-campos-db.ts`](../src/lib/report-utm/lead-campos-db.ts)                                                                               |
 | Token del campo               | `leadfield:<clave>` (dimensión y filtro)                                                                                                                        |
 | Token del segmento            | `leadseg:<clave>` (métrica) · alias de fórmula `lseg__<clave>`                                                                                                  |
-| Métrica por respuesta         | `lf__<campo>__<respuesta>` (fórmula) · `leadans:<campo>:<respuesta>` (widget) — en dashboard e informes, con clave guardada en `lead_campos.respuestas` (090)      |
+| Métrica por respuesta         | `lf__<campo>__<respuesta>` (fórmula) · `leadans:<campo>:<respuesta>` (widget) — en dashboard e informes, con clave guardada en `lead_campos.respuestas` (090)   |
 | Quién usa un campo            | [`src/lib/report-utm/lead-campo-referencias.ts`](../src/lib/report-utm/lead-campo-referencias.ts) · `GET /api/report-utm/lead-campos?con_referencias=1`         |
 | API                           | `/api/report-utm/lead-campos`, `/lead-campos/detectar`, `/lead-campos/segmentos`, `/lead-campos/sugeridas`, `/api/report-utm/bi/lead-fields`                    |
-| UI                            | [`LeadsConfigCard`](../src/components/report-utm/leads/LeadsConfigCard.tsx) (pestaña «Leads» de la ficha) · edición avanzada con `LeadCampoEditorDialog`       |
+| UI                            | [`LeadsConfigCard`](../src/components/report-utm/leads/LeadsConfigCard.tsx) (pestaña «Leads» de la ficha) · edición avanzada con `LeadCampoEditorDialog`        |
 | Comprobaciones                | `npx tsx scripts/verify-lead-segmentos.ts` (puro) · `verify-lead-segmentos-db.ts` y `verify-lead-campo-referencias.ts` (datos reales) · `verify-lead-campos.ts` |
 | Migración de datos            | `npx tsx scripts/migrar-segmentos-lead.ts` (informe · `--aplicar` · `--revertir`) · `scripts/reapuntar-bloques-lead.ts`                                         |
 

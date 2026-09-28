@@ -50,6 +50,12 @@ export const CLAVES_POR_PESTANA: Record<Pestana, readonly string[]> = {
     'meta_account_id',
     // Filtra qué campañas de Meta entran en el dashboard.
     'meta_keywords',
+    // Qué campañas son del cliente cuando comparte cuenta con otro: recorta el
+    // gasto y el cruce del BI (report-utm/alcance-campanas.ts).
+    'alcance_campanas',
+    // Zona horaria de los días del cliente. Vacía = la de su cuenta de Meta
+    // (zona-horaria.ts); se escribe solo para forzar otra.
+    'zona_horaria',
   ],
 
   google: [
@@ -100,6 +106,8 @@ export const CLAVES_SOLO_SERVIDOR: readonly string[] = [
   'hotmart_token_enc',
   'hotmart_token_expires_at',
   'meta_estado_cuentas',
+  // Moneda y zona horaria de cada anunciante de TikTok (src/lib/tiktok/cuenta.ts).
+  'tiktok_cuentas_info',
   'tiktok_advertiser_id',
 ];
 

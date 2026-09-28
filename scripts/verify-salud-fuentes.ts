@@ -401,5 +401,26 @@ seccion('Sync de Sheets: fallos, parones y fechas ilegibles (Somos rentable, 202
   );
 }
 
+// Cuenta compartida sin alcance (auditoría del 2026-09-28).
+{
+  const r = evaluarCliente(senales({ cuentaCompartidaSinAlcance: ['Sur Profundo'] }));
+  check(
+    'cuenta compartida sin alcance → aviso con el otro cliente y su acción',
+    r.hallazgos.some(
+      (h) =>
+        h.ambito === 'Cruce · cuenta compartida' &&
+        h.gravedad === 'aviso' &&
+        h.titulo.includes('Sur Profundo') &&
+        Boolean(h.accion)
+    )
+  );
+  check(
+    'sin cuenta compartida, ningún aviso de alcance',
+    !evaluarCliente(senales({ cuentaCompartidaSinAlcance: [] })).hallazgos.some(
+      (h) => h.ambito === 'Cruce · cuenta compartida'
+    )
+  );
+}
+
 console.log(fallos === 0 ? '\n✓ TODO OK' : `\n✗ ${fallos} comprobación(es) fallida(s)`);
 process.exit(fallos === 0 ? 0 : 1);

@@ -5,6 +5,7 @@ import {
   adaptarIds,
   columnasIdDisponibles,
   idsPublicitarios,
+  insertarLeads,
   type IdsPublicitarios,
 } from './lead-ids';
 import { leerSecreto } from '@/lib/secretos';
@@ -248,6 +249,33 @@ export function idsDeContacto(contact: GhlContact): IdsPublicitarios {
   return idsPublicitarios(g('campaignId'), g('adGroupId'), g('adId'));
 }
 
+/**
+ * El contacto visto SOLO por su último toque: `lastAttributionSource` como un
+ * bloque entero (o, si GHL no lo tiene, `attributionSource` entero).
+ *
+ * `deriveUtms` mezcla campo a campo el primer toque con el último, que es lo
+ * correcto para un lead (lo que lo trajo). Para una VENTA sin lead previo esa
+ * mezcla puede dar una tupla que no existió nunca —la campaña del primer anuncio
+ * con el `adId` del último—; el bloque entero no.
+ */
+function contactoUltimoToque(contact: GhlContact): GhlContact {
+  return {
+    ...contact,
+    attributionSource: contact.lastAttributionSource ?? contact.attributionSource ?? null,
+    lastAttributionSource: null,
+  };
+}
+
+/** `deriveUtms` del último toque, como bloque. Lo usa la venta sin lead (`ghl-ventas.ts`). */
+export function deriveUtmsUltimoToque(contact: GhlContact): UtmsDerivadas {
+  return deriveUtms(contactoUltimoToque(contact));
+}
+
+/** `idsDeContacto` del último toque, como bloque. */
+export function idsDeContactoUltimoToque(contact: GhlContact): IdsPublicitarios {
+  return idsDeContacto(contactoUltimoToque(contact));
+}
+
 /** Valor de un campo personalizado, sea cual sea la forma en que GHL lo devuelva. */
 export function valorDeCampo(cf: GhlCustomFieldValue): string {
   const v = cf.value ?? cf.fieldValue ?? cf.fieldValueString;
@@ -445,7 +473,7 @@ export async function ingestGhlContact(
     ],
     r
   );
-  const { error } = await db.from('lead_events').insert(row);
+  const { error } = await insertarLeads(db, row);
   if (error) {
     // 23505 = unique_violation → el polling ya lo metió. No es un error.
     if ((error as { code?: string }).code === '23505') return { inserted: false };
@@ -503,12 +531,12 @@ export async function ingestGhlContactsBatch(
   );
   if (aInsertar.length === 0) return 0;
 
-  const { error } = await db.from('lead_events').insert(aInsertar);
+  const { error } = await insertarLeads(db, aInsertar);
   if (!error) return aInsertar.length;
 
   let n = 0;
   for (const r of aInsertar) {
-    const { error: e } = await db.from('lead_events').insert(r);
+    const { error: e } = await insertarLeads(db, r);
     if (!e) n++;
     else if ((e as { code?: string }).code !== '23505') {
       console.error('[ghl-leads] batch fallback insert error', e.message);

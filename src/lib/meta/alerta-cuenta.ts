@@ -91,6 +91,7 @@ export async function revisarEstadoCuentasMeta(
       texto: e.texto,
       nombre: e.nombre,
       moneda: e.moneda,
+      zona: e.zona,
       revisada_at: ahora,
     };
   }

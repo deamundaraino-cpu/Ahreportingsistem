@@ -39,6 +39,7 @@
 //     en vez de esperar a la siguiente corrida del worker.
 
 import { NextRequest, NextResponse, after } from 'next/server';
+import { fijarZonaDeCliente } from '@/lib/zona-activa';
 import { createAdminClient } from '@/utils/supabase/server';
 import {
   aEventoLegacy,
@@ -238,6 +239,9 @@ export async function POST(
       .eq('id', integration.id);
 
   // 4) Parsear con el parser compartido
+  // `fecha_venta` se materializa al parsear: en la zona del cliente, como el
+  // resto de sus días (zona-activa.ts).
+  await fijarZonaDeCliente({ rtm: clienteId });
   const resultado = parsearWebhook(payload);
 
   if (!resultado.ok && resultado.motivo === 'no_venta') {
