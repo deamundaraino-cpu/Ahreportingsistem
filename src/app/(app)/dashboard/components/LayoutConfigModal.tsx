@@ -181,7 +181,6 @@ export function FormulaInput({
       return (
         m.id.startsWith('ventas_') ||
         m.id.startsWith('total_') ||
-        m.id.startsWith('funnel_') ||
         m.id.startsWith('hm_')
       );
     if (activeTab === 'ga4') return m.id.startsWith('ga_');

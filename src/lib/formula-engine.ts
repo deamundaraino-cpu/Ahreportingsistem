@@ -380,88 +380,6 @@ export const SEMANTIC_ALIASES: Record<
     defaultSource: 'ventas_upsell',
     options: [{ value: 'ventas_upsell', label: 'Hotmart — Ventas Upsell' }],
   },
-
-  // ── Aliases del Funnel actual (resueltos según la pestaña activa) ────
-  // Estos campos los inyecta DashboardClient en cada row leyendo
-  // hotmart_funnel_data.by_tab[activeTabId]. En tabs sin funnel quedan en 0.
-  '$funnel.principal_count': {
-    label: 'Funnel — Compras (Principal)',
-    defaultSource: 'funnel_principal_count',
-    options: [{ value: 'funnel_principal_count', label: 'Funnel — # Ventas Principal' }],
-  },
-  '$funnel.principal_neto': {
-    label: 'Funnel — Neto Principal',
-    defaultSource: 'funnel_principal_neto',
-    options: [
-      { value: 'funnel_principal_neto', label: 'Funnel — Neto Principal (moneda del cliente)' },
-    ],
-  },
-  '$funnel.principal_bruto': {
-    label: 'Funnel — Bruto Principal',
-    defaultSource: 'funnel_principal_bruto',
-    options: [
-      { value: 'funnel_principal_bruto', label: 'Funnel — Bruto Principal (moneda del cliente)' },
-    ],
-  },
-  '$funnel.bump_count': {
-    label: 'Funnel — # Order Bumps',
-    defaultSource: 'funnel_bump_count',
-    options: [{ value: 'funnel_bump_count', label: 'Funnel — # Order Bumps' }],
-  },
-  '$funnel.bump_neto': {
-    label: 'Funnel — Neto Order Bump',
-    defaultSource: 'funnel_bump_neto',
-    options: [
-      { value: 'funnel_bump_neto', label: 'Funnel — Neto Order Bump (moneda del cliente)' },
-    ],
-  },
-  '$funnel.upsell_count': {
-    label: 'Funnel — # Upsells',
-    defaultSource: 'funnel_upsell_count',
-    options: [{ value: 'funnel_upsell_count', label: 'Funnel — # Upsells' }],
-  },
-  '$funnel.upsell_neto': {
-    label: 'Funnel — Neto Upsell',
-    defaultSource: 'funnel_upsell_neto',
-    options: [{ value: 'funnel_upsell_neto', label: 'Funnel — Neto Upsell (moneda del cliente)' }],
-  },
-  '$funnel.upsell_visits': {
-    label: 'Funnel — Visitas Pág. Upsell',
-    defaultSource: 'funnel_upsell_visits',
-    options: [{ value: 'funnel_upsell_visits', label: 'GA4 — Visitas pág. upsell' }],
-  },
-  '$funnel.pagos_iniciados': {
-    label: 'Funnel — Pagos Iniciados (GA4)',
-    defaultSource: 'funnel_pagos_iniciados',
-    options: [{ value: 'funnel_pagos_iniciados', label: 'GA4 — Visitas pág. de pago' }],
-  },
-  '$funnel.facturacion_neta': {
-    label: 'Funnel — Facturación Neta',
-    defaultSource: 'funnel_facturacion_neta',
-    options: [
-      { value: 'funnel_facturacion_neta', label: 'Funnel — Neto (Principal + Bump + Upsell)' },
-    ],
-  },
-  '$funnel.facturacion_bruta': {
-    label: 'Funnel — Facturación Bruta',
-    defaultSource: 'funnel_facturacion_bruta',
-    options: [{ value: 'funnel_facturacion_bruta', label: 'Funnel — Precio × Ventas Principal' }],
-  },
-  '$funnel.roas': {
-    label: 'Funnel — ROAS',
-    defaultSource: 'funnel_roas',
-    options: [{ value: 'funnel_roas', label: 'Funnel — Neto / Spend' }],
-  },
-  '$funnel.roi': {
-    label: 'Funnel — ROI',
-    defaultSource: 'funnel_roi',
-    options: [{ value: 'funnel_roi', label: 'Funnel — (Neto - Spend) / Spend' }],
-  },
-  '$funnel.dinero_bolsa': {
-    label: 'Funnel — Dinero en la Bolsa',
-    defaultSource: 'funnel_dinero_bolsa',
-    options: [{ value: 'funnel_dinero_bolsa', label: 'Funnel — Neto - Spend' }],
-  },
 };
 
 /**
@@ -471,7 +389,7 @@ export const SEMANTIC_ALIASES: Record<
  */
 export function resolveAliases(formula: string, mapping: Record<string, string> = {}): string {
   let expr = formula;
-  // Sort by length descending so longer aliases ($funnel.facturacion_neta) replace before shorter prefixes
+  // Sort by length descending so longer aliases replace before shorter prefixes
   const sortedAliases = Object.entries(SEMANTIC_ALIASES).sort(([a], [b]) => b.length - a.length);
   for (const [alias, config] of sortedAliases) {
     const replacement = mapping[alias] || config.defaultSource;

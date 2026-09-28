@@ -278,33 +278,10 @@ export const AVAILABLE_METRICS: MetricOption[] = [
   },
 
   // ── Funnel Hotmart · Métricas por pestaña ─────────────────────────────────
-  // Se retiraron del selector las que ningún layout, pestaña, informe ni regla
-  // usaba (`scripts/inventario-metricas-usadas.ts`, 2026-09-12): neto/bruto/
-  // precio del principal, bruto de bump y upsell, y el bloque de downsell. El
-  // motor de fórmulas las sigue resolviendo: un layout que las tuviera seguiría
-  // funcionando, solo no se ofrecen para añadir.
-  { id: 'funnel_principal_count', label: 'Funnel: # Compras Principal' },
-  { id: 'funnel_bump_count', label: 'Funnel: # Order Bumps' },
-  { id: 'funnel_bump_neto', label: 'Funnel: Neto Order Bump' },
-  { id: 'funnel_upsell_count', label: 'Funnel: # Upsells' },
-  { id: 'funnel_upsell_neto', label: 'Funnel: Neto Upsell' },
-  { id: 'funnel_upsell_visits', label: 'Funnel: Visitas Pág. Upsell (GA4)' },
-  { id: 'funnel_pagos_iniciados', label: 'Funnel: Pagos Iniciados (GA4)' },
-  { id: 'funnel_facturacion_bruta', label: 'Funnel: Facturación Bruta' },
-  { id: 'funnel_facturacion_neta', label: 'Funnel: Facturación Neta' },
-  { id: 'funnel_roas', label: 'Funnel: ROAS' },
-  { id: 'funnel_roi', label: 'Funnel: ROI' },
-  { id: 'funnel_dinero_bolsa', label: 'Funnel: Dinero en Bolsa' },
-  { id: 'funnel_costo_compra', label: 'Funnel: Costo/Compra' },
-  { id: 'funnel_costo_visita', label: 'Funnel: Costo/Visita' },
-  { id: 'funnel_costo_pago', label: 'Funnel: Costo/Pago Iniciado' },
-  { id: 'funnel_pct_conversion', label: 'Funnel: % Conversión General' },
-  { id: 'funnel_pct_clics_visitas', label: 'Funnel: % Clics→Visitas' },
-  { id: 'funnel_pct_visitas_pagos', label: 'Funnel: % Visitas→Pagos' },
-  { id: 'funnel_pct_pagos_compras', label: 'Funnel: % Pagos→Compras' },
-  { id: 'funnel_pct_conv_order', label: 'Funnel: % Conv. Order Bump' },
-  { id: 'funnel_pct_conv_upsell', label: 'Funnel: % Conv. Upsell' },
-  { id: 'funnel_pct_conv_downsell', label: 'Funnel: % Conv. Downsell' },
+  // Retiradas TODAS del selector (2026-09-28). Para ventas por pestaña están
+  // las `hm_*`, que además siguen el filtro de campañas. El motor de fórmulas las sigue resolviendo porque dos layouts guardados aún
+  // las usan («Funnel Hotmart Completo» y la columna «Visitas pág. Upsell» de
+  // «Dashboard Principal»); solo no se ofrecen para añadir.
 
   // ── Google Analytics 4 ────────────────────────────────────────────────────
   { id: 'ga_sessions', label: 'GA4: Sesiones' },
