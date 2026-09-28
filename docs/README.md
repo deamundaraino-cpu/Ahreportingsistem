@@ -8,6 +8,8 @@ Plataforma multi-cliente para agencias de publicidad que **consolida métricas d
 
 ## Índice de la documentación
 
+> **¿Acabas de recibir el proyecto?** Empieza por el [Informe de entrega](./00-informe-de-entrega.md): estado actual, qué está sin desplegar, cuidados con la base de datos y plan de las primeras semanas.
+
 | #   | Documento                                                          | Contenido                                                                                                                     |
 | --- | ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------- |
 | 01  | [Introducción](./01-introduccion.md)                               | Qué resuelve la aplicación, conceptos clave y glosario                                                                        |
