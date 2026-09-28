@@ -20,6 +20,21 @@
 
 export const ZONA_POR_DEFECTO = 'America/Bogota';
 
+/** Zonas que se ofrecen al dar de alta un cliente. Cualquier otra IANA se escribe en la ficha. */
+export const ZONAS_HABITUALES: ReadonlyArray<{ zona: string; etiqueta: string }> = [
+  { zona: 'America/Bogota', etiqueta: 'Colombia (Bogotá)' },
+  { zona: 'America/Santiago', etiqueta: 'Chile (Santiago)' },
+  { zona: 'America/Mexico_City', etiqueta: 'México (CDMX)' },
+  { zona: 'America/Lima', etiqueta: 'Perú (Lima)' },
+  { zona: 'America/Argentina/Buenos_Aires', etiqueta: 'Argentina (Buenos Aires)' },
+  { zona: 'America/Sao_Paulo', etiqueta: 'Brasil (São Paulo)' },
+  { zona: 'America/Guayaquil', etiqueta: 'Ecuador (Guayaquil)' },
+  { zona: 'America/Caracas', etiqueta: 'Venezuela (Caracas)' },
+  { zona: 'America/Panama', etiqueta: 'Panamá' },
+  { zona: 'America/New_York', etiqueta: 'EE. UU. (Nueva York)' },
+  { zona: 'Europe/Madrid', etiqueta: 'España (Madrid)' },
+];
+
 /** ¿`Intl` conoce esta zona? */
 export function zonaValida(tz: unknown): tz is string {
   if (typeof tz !== 'string' || !tz.trim()) return false;

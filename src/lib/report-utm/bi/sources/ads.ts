@@ -183,7 +183,24 @@ export const ADS_SOURCE: DataSource = {
       S,
       'results',
       'Resultados',
-      'Resultados según el objetivo de cada campaña (suma de leads, compras e inicios de pago).'
+      'Suma fija de leads, compras e inicios de pago que reporta Meta. No depende del objetivo de cada campaña.'
+    ),
+    // Lo que el CLIENTE cuenta como resultado: sus conversiones personalizadas
+    // marcadas en la tarjeta de Meta. El motor las resuelve por cliente.
+    pixelEvent(
+      S,
+      'resultados_custom',
+      'Resultados (personalizados)',
+      'Suma de las conversiones personalizadas de Meta que el equipo marcó como resultado de este cliente (ajustes → Meta → Conversiones personalizadas).'
+    ),
+    derived(
+      S,
+      'coste_por_resultado_custom',
+      'Coste por resultado (personalizado)',
+      'Cuánto cuesta, en promedio, cada resultado personalizado: gasto de Meta ÷ resultados personalizados. Cuanto MÁS BAJO, mejor.',
+      'campana',
+      'ads.spend_meta / ads.resultados_custom',
+      { format: 'currency', nullUnless: ['ads.resultados_custom'], direction: 'down' }
     ),
     pixelEvent(S, 'video_views', 'Reproducciones', 'Reproducciones de video de los anuncios.', {
       funnelStage: 55,

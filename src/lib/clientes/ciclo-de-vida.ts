@@ -13,8 +13,10 @@
  * cascada (migraciones 080 y 081; `scripts/verify-borrado-cascada.ts` lo vigila
  * en el catálogo). Aquí va lo que ninguna FK alcanza:
  *
- *   · Del agente, sin FK: las propuestas pendientes (`input.client_id`), las
+ *   · Del agente, sin FK: todas sus propuestas (`input.client_id`), las
  *     conversaciones de los grupos fijados al cliente y `agent_contacts.client_scope`.
+ *   · Las revisiones de sus informes BI (`bi_report_revisions.report_id` no
+ *     tiene FK) y las alertas de sincronización que lo nombran en `metadata`.
  *   · Storage: las imágenes de sus bitácoras y sus logos de branding.
  *   · Fuera de la plataforma: la suscripción de sus Páginas de Meta al webhook
  *     de leads y sus grupos de WhatsApp. Lo que no se puede desconectar desde
@@ -26,6 +28,9 @@
  */
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
+
+import { esMonedaReporte } from '../moneda-reporte';
+import { zonaValida } from '../zona-horaria';
 
 type Db = any;
 type Fetch = typeof fetch;
@@ -69,7 +74,12 @@ export async function asegurarEspejoUtm(
   admin: Db,
   publicId: string,
   nombre: string,
-  extra: { descripcion?: string | null; color?: string } = {}
+  extra: {
+    descripcion?: string | null;
+    color?: string;
+    /** `report_utm.clientes.config` inicial (p. ej. `moneda_reporte`); solo al crear. */
+    config?: Record<string, unknown>;
+  } = {}
 ): Promise<{ id: string | null; creado: boolean; error?: string }> {
   const rtm = admin.schema('report_utm');
   const { data: existente, error: e1 } = await rtm
@@ -90,6 +100,7 @@ export async function asegurarEspejoUtm(
         color: extra.color ?? 'emerald',
         status: 'active',
         ...(extra.descripcion !== undefined ? { descripcion: extra.descripcion } : {}),
+        ...(extra.config && Object.keys(extra.config).length > 0 ? { config: extra.config } : {}),
       })
       .select('id')
       .single();
@@ -101,43 +112,91 @@ export async function asegurarEspejoUtm(
   return { id: null, creado: false, error: 'No se encontró un slug libre para el cliente.' };
 }
 
+/** Lo que se puede fijar al dar de alta, además del nombre. Todo opcional. */
+export type OpcionesAlta = {
+  descripcion?: string | null;
+  color?: string;
+  /** Moneda de reporte (espejo UTM). Vacía = la de sus cuentas de Meta. */
+  moneda?: string | null;
+  /** Zona IANA (`config_api.zona_horaria`). Vacía = la de su cuenta de Meta. */
+  zonaHoraria?: string | null;
+  /** Traffickers con acceso desde el primer día (`user_client_assignments`). */
+  traffickers?: string[];
+  /** Quién da el alta, para `assigned_by`. No es un «dueño»: el cliente es de la empresa. */
+  asignadoPor?: string | null;
+};
+
 /**
- * Da de alta un cliente: en el reporting y, enlazado, en Report-UTM. Si el
- * espejo falla, el cliente ya existe: se devuelve el aviso y la ficha del
- * cliente lo vuelve a intentar al abrirse (`asegurarEspejoUtm`).
+ * Da de alta un cliente: en el reporting y, enlazado, en Report-UTM, con sus
+ * ajustes iniciales y los traffickers que lo llevan.
+ *
+ * Todo o nada: si falla el espejo o las asignaciones, se borra la fila recién
+ * creada (la cascada se lleva lo demás) y se devuelve el error. Antes el
+ * cliente quedaba creado a medias y la ficha lo remendaba al abrirse.
+ *
+ * No hay dueño: un cliente es de la empresa, no del usuario que lo crea
+ * (migración 098). El acceso lo dan el rol o una asignación.
  */
 export async function crearCliente(
   admin: Db,
   nombre: string,
-  extra: { descripcion?: string | null; color?: string } = {}
+  opciones: OpcionesAlta = {}
 ): Promise<
   | {
       ok: true;
       cliente: { id: string; nombre: string } & Record<string, unknown>;
-      espejoId: string | null;
-      aviso?: string;
+      espejoId: string;
     }
   | { ok: false; error: string }
 > {
   const limpio = nombre.trim();
   if (!limpio) return { ok: false, error: 'El nombre del cliente es obligatorio.' };
+  if (limpio.length > 120)
+    return { ok: false, error: 'El nombre no puede pasar de 120 caracteres.' };
+
+  const moneda = opciones.moneda?.trim().toUpperCase() || null;
+  if (moneda && !esMonedaReporte(moneda))
+    return { ok: false, error: `Moneda no admitida: ${moneda}` };
+  const zona = opciones.zonaHoraria?.trim() || null;
+  if (zona && !zonaValida(zona)) return { ok: false, error: `Zona horaria desconocida: ${zona}` };
+  const traffickers = unicos(opciones.traffickers ?? []);
 
   const { data, error } = await admin
     .from('clientes')
-    .insert({ nombre: limpio, config_api: {} })
+    .insert({ nombre: limpio, config_api: zona ? { zona_horaria: zona } : {} })
     .select()
     .single();
   if (error) return { ok: false, error: error.message };
 
-  const espejo = await asegurarEspejoUtm(admin, data.id, limpio, extra);
-  return {
-    ok: true,
-    cliente: data,
-    espejoId: espejo.id,
-    aviso: espejo.id
-      ? undefined
-      : `El cliente se creó en el reporting, pero no su espejo en Report-UTM: ${espejo.error}`,
+  const deshacer = async (motivo: string) => {
+    const { error: e } = await admin.from('clientes').delete().eq('id', data.id);
+    return {
+      ok: false as const,
+      error: e
+        ? `${motivo} Y no se pudo deshacer el alta (${e.message}): borra el cliente «${limpio}» a mano.`
+        : `${motivo} No se ha creado nada.`,
+    };
   };
+
+  const espejo = await asegurarEspejoUtm(admin, data.id, limpio, {
+    descripcion: opciones.descripcion,
+    color: opciones.color,
+    config: moneda ? { moneda_reporte: moneda } : undefined,
+  });
+  if (!espejo.id) return deshacer(`No se pudo crear su espejo en Report-UTM: ${espejo.error}.`);
+
+  if (traffickers.length > 0) {
+    const { error: e } = await admin.from('user_client_assignments').insert(
+      traffickers.map((userId) => ({
+        user_id: userId,
+        client_id: data.id,
+        assigned_by: opciones.asignadoPor ?? null,
+      }))
+    );
+    if (e) return deshacer(`No se pudieron asignar sus traffickers: ${e.message}.`);
+  }
+
+  return { ok: true, cliente: data, espejoId: espejo.id };
 }
 
 // ─── Resumen para la confirmación ──────────────────────────────────────
@@ -166,7 +225,11 @@ export function pendientesExternos(o: {
   tiposIntegracion: string[];
   conPixel: boolean;
   gruposWhatsapp: number;
+  /** Su id en Report-UTM: con él se dice qué URL de webhook hay que quitar. */
+  utmId?: string | null;
 }): { automatico: string[]; manual: string[] } {
+  const url = (ruta: string) =>
+    o.utmId ? ` (URL: /api/report-utm/webhooks/${ruta}/${o.utmId})` : '';
   const tipos = new Set(o.tiposIntegracion);
   const automatico: string[] = [];
   const manual: string[] = [];
@@ -183,10 +246,12 @@ export function pendientesExternos(o: {
   }
   if (tipos.has('gohighlevel')) {
     manual.push(
-      'GoHighLevel: desactiva los workflows que envían leads y ventas a Report-UTM (seguirían llegando y fallando).'
+      `GoHighLevel: desactiva los workflows que envían leads y ventas a Report-UTM${url('ghl')} (seguirían llegando y fallando).`
     );
   }
-  if (tipos.has('hotmart')) manual.push('Hotmart: quita el webhook que apunta a Report-UTM.');
+  if (tipos.has('hotmart')) {
+    manual.push(`Hotmart: quita el webhook que apunta a Report-UTM${url('hotmart')}.`);
+  }
   if (tipos.has('s2s') || o.conPixel) {
     manual.push(
       'Sitio web: retira el píxel o el plugin de WordPress de Report-UTM y las llamadas S2S.'
@@ -280,6 +345,7 @@ async function resumir(
       tiposIntegracion: integraciones.map((i: { tipo: string }) => i.tipo),
       conPixel: pixel.length > 0,
       gruposWhatsapp,
+      utmId: utmIds[0] ?? null,
     }),
   };
 }
@@ -329,6 +395,8 @@ type Reunido = {
   grupos: string[];
   /** Páginas de Meta que suscribieron sus integraciones de leads, con su token. */
   paginas: Array<{ page_id: string; page_token: string }>;
+  /** Sus informes BI: sus revisiones no tienen FK y hay que borrarlas a mano. */
+  informes: string[];
 };
 
 type IntegracionMeta = {
@@ -374,7 +442,15 @@ async function reunir(
   }
 
   let paginas: Reunido['paginas'] = [];
+  let informes: string[] = [];
   if (utmIds.length > 0) {
+    const { data: bi, error: eBi } = await admin
+      .from('bi_reports')
+      .select('id')
+      .in('cliente_id', utmIds);
+    if (eBi) return { ok: false, error: `No se pudieron leer sus informes BI: ${eBi.message}` };
+    informes = ((bi ?? []) as Array<{ id: string }>).map((b) => b.id);
+
     const { data, error } = await admin
       .schema('report_utm')
       .from('integrations')
@@ -395,6 +471,7 @@ async function reunir(
       conversaciones: unicos(gruposAgente),
       grupos: unicos([...rutas.map((r) => r.group_id), ...gruposAgente]),
       paginas,
+      informes,
     },
   };
 }
@@ -403,8 +480,14 @@ async function reunir(
  * Lo del agente que ninguna FK alcanza. Va ANTES de borrar el cliente: después
  * no habría forma de encontrarlo.
  *
- *   · Propuestas pendientes con `input.client_id` del cliente: sin esto seguían
- *     en la cola y se podían aprobar. Las ya resueltas son historial.
+ *   · TODAS sus propuestas (`input.client_id`), pendientes o resueltas: las
+ *     pendientes se podían aprobar sobre un cliente inexistente, y las resueltas
+ *     guardan en `input` datos del cliente. El registro de seguridad
+ *     (`agent_audit_log`) se conserva.
+ *   · Las revisiones de sus informes BI: `report_id` no tiene FK, y una
+ *     revisión con `cliente_id` NULL (informe creado sin cliente) sobrevivía.
+ *   · Las alertas de sincronización (`notifications.metadata.cliente_ids`)
+ *     que solo hablan de él. Las que nombran a varios pierden solo su id.
  *   · Conversaciones de sus grupos del agente (`external_id` sin FK al canal);
  *     mensajes y turnos caen con ellas. `agent_audit_log` se conserva: es el
  *     registro de quién hizo qué.
@@ -419,14 +502,19 @@ export async function borrarDatosSueltos(
     publicId,
     utmIds,
     conversaciones = [],
-  }: { publicId: string | null; utmIds: string[]; conversaciones?: string[] }
+    informes = [],
+  }: {
+    publicId: string | null;
+    utmIds: string[];
+    conversaciones?: string[];
+    informes?: string[];
+  }
 ): Promise<Resultado> {
   const ids = unicos([publicId ?? '', ...utmIds]);
   if (ids.length > 0) {
     const { error } = await admin
       .from('agent_action_approvals')
       .delete()
-      .eq('status', 'pendiente')
       .in('input->>client_id', ids);
     if (error) {
       return {
@@ -447,6 +535,43 @@ export async function borrarDatosSueltos(
         ok: false,
         error: `No se pudieron borrar sus conversaciones del agente: ${error.message}`,
       };
+    }
+  }
+
+  if (informes.length > 0) {
+    const { error } = await admin.from('bi_report_revisions').delete().in('report_id', informes);
+    if (error) {
+      return {
+        ok: false,
+        error: `No se pudieron borrar las revisiones de sus informes: ${error.message}`,
+      };
+    }
+  }
+
+  if (publicId) {
+    const { data: alertas, error } = await admin
+      .from('notifications')
+      .select('id, metadata')
+      .contains('metadata', { cliente_ids: [publicId] });
+    if (error) {
+      return { ok: false, error: `No se pudieron revisar sus notificaciones: ${error.message}` };
+    }
+    const solo: string[] = [];
+    for (const n of (alertas ?? []) as Array<{ id: string; metadata: any }>) {
+      const resto = ((n.metadata?.cliente_ids ?? []) as string[]).filter((id) => id !== publicId);
+      if (resto.length === 0) {
+        solo.push(n.id);
+        continue;
+      }
+      const { error: e } = await admin
+        .from('notifications')
+        .update({ metadata: { ...n.metadata, cliente_ids: resto } })
+        .eq('id', n.id);
+      if (e) return { ok: false, error: `No se pudo actualizar una notificación: ${e.message}` };
+    }
+    if (solo.length > 0) {
+      const { error: e } = await admin.from('notifications').delete().in('id', solo);
+      if (e) return { ok: false, error: `No se pudieron borrar sus notificaciones: ${e.message}` };
     }
   }
 
@@ -473,15 +598,25 @@ export async function borrarDatosSueltos(
   return { ok: true, avisos: [] };
 }
 
-/** Tablas que pueden tener decenas de miles de filas por cliente (todas con `id` uuid). */
-const PESADAS: Array<{ schema: 'public' | 'report_utm'; tabla: string }> = [
+/**
+ * Tablas que pueden tener miles de filas por cliente (todas con `id` uuid).
+ * `col`: la columna del cliente, si no es `cliente_id`. `report_utm.hourly_metrics`
+ * no tiene `id` y se queda en la cascada.
+ */
+export const PESADAS: Array<{ schema: 'public' | 'report_utm'; tabla: string; col?: string }> = [
   { schema: 'report_utm', tabla: 'lead_events' },
   { schema: 'report_utm', tabla: 'pixel_events' },
   { schema: 'report_utm', tabla: 'sales_events' },
   { schema: 'public', tabla: 'ads_daily' },
   { schema: 'public', tabla: 'metricas_diarias' },
+  { schema: 'public', tabla: 'metricas_snapshots' },
   { schema: 'public', tabla: 'sheet_filas' },
   { schema: 'public', tabla: 'sheet_campo_valores_diarios' },
+  { schema: 'public', tabla: 'conversiones_offline' },
+  { schema: 'public', tabla: 'conversiones_offline_diarias' },
+  { schema: 'public', tabla: 'hotmart_ventas' },
+  { schema: 'public', tabla: 'whatsapp_messages' },
+  { schema: 'public', tabla: 'leads_diarios', col: 'client_id' },
 ];
 
 /** 16 tramos contiguos del espacio de uuids por su primer dígito: [desde, hasta). */
@@ -491,6 +626,9 @@ export const TRAMOS_UUID: Array<[string, string | null]> = Array.from({ length: 
 ]);
 
 type ErrorDb = { code?: string; message: string } | null;
+
+/** Tras vaciar tablas, un fallo deja el cliente con parte de sus datos: repetir lo termina. */
+const INCOMPLETO = 'Borrado incompleto: vuelve a intentarlo para terminarlo.';
 
 const esTimeout = (e: ErrorDb) =>
   e !== null && (e.code === '57014' || /statement timeout/i.test(e.message));
@@ -524,7 +662,7 @@ async function vaciarPesadas(
   admin: Db,
   { publicId, utmIds }: { publicId: string | null; utmIds: string[] }
 ): Promise<Resultado> {
-  for (const { schema, tabla } of PESADAS) {
+  for (const { schema, tabla, col = 'cliente_id' } of PESADAS) {
     const ids = schema === 'report_utm' ? utmIds : publicId ? [publicId] : [];
     if (ids.length === 0) continue;
     const base = schema === 'public' ? admin : admin.schema(schema);
@@ -532,16 +670,18 @@ async function vaciarPesadas(
     const { data: alguna, error: e0 } = await conReintento<{
       data: unknown[] | null;
       error: ErrorDb;
-    }>(() => base.from(tabla).select('id').in('cliente_id', ids).limit(1));
+    }>(() => base.from(tabla).select('id').in(col, ids).limit(1));
     if (e0) return { ok: false, error: `No se pudo leer ${tabla}: ${e0.message}` };
     if (!alguna?.length) continue;
 
     for (const [desde, hasta] of TRAMOS_UUID) {
       const { error } = await conReintento(() => {
-        const q = base.from(tabla).delete().in('cliente_id', ids).gte('id', desde);
+        const q = base.from(tabla).delete().in(col, ids).gte('id', desde);
         return hasta ? q.lt('id', hasta) : q;
       });
-      if (error) return { ok: false, error: `No se pudo vaciar ${tabla}: ${error.message}` };
+      if (error) {
+        return { ok: false, error: `No se pudo vaciar ${tabla}: ${error.message}. ${INCOMPLETO}` };
+      }
     }
   }
   return { ok: true, avisos: [] };
@@ -702,7 +842,12 @@ async function borrar(
       ? admin.from('clientes').delete().eq('id', ids.publicId)
       : admin.schema('report_utm').from('clientes').delete().in('id', ids.utmIds)
   );
-  if (error) return { ok: false, error: `No se pudo borrar el cliente: ${error.message}` };
+  if (error) {
+    return {
+      ok: false,
+      error: `No se pudo borrar el cliente: ${error.message}. ${INCOMPLETO}`,
+    };
+  }
 
   const avisos = [
     ...(await borrarArchivos(admin, r)),

@@ -29,7 +29,8 @@ Eso es todo. El resto de esta guía son las consecuencias.
 | **Ventas**               | Transacciones de `sales_events` (GHL…), una por fila; **sin Hotmart**        | fila          | fecha · plataforma · campaña · conjunto · anuncio · UTM · columnas de venta                           |
 | **Ventas Hotmart**       | Transacciones de `hotmart_ventas`, una por fila (`hm_*`)                     | fila          | fecha · plataforma · campaña · conjunto · anuncio · UTM · columnas de venta                           |
 | **Anuncios**             | Gasto y métricas de plataforma                                               | día × entidad | fecha · plataforma · campaña · conjunto · anuncio                                                     |
-| **Cuenta**               | GA4, Hotmart de cuenta (`ventas_*`), métricas manuales                       | día           | **solo fecha**                                                                                        |
+| **Cuenta**               | GA4 del sitio (`ga_*`), Hotmart de cuenta (`ventas_*`), métricas manuales    | día           | **solo fecha**                                                                                        |
+| **GA4 por campaña**      | Sesiones y eventos clave de `ga4_sesiones_diarias` (`ga4_*`, `ga4ev:`)       | día × UTM     | fecha · campaña · UTM (`utm_source`, `utm_medium`) — **no** conjunto ni anuncio                       |
 | **Conversiones offline** | Totales diarios de un Sheet                                                  | día           | **solo fecha**                                                                                        |
 | **Campos de Sheet**      | Columnas de un Sheet convertidas en métricas                                 | día / fila    | fecha · valor del campo · campaña · conjunto · anuncio                                                |
 | **Suscripciones**        | Foto actual de Hotmart                                                       | foto          | **ninguno** (solo el total)                                                                           |
@@ -66,7 +67,8 @@ partes. Ejemplos que conviene tener en la cabeza:
 | Gasto                               | sí                      | **no** (Anuncios no tiene país)      |
 | **CPL** (gasto ÷ leads)             | sí                      | **no** — hereda el límite del gasto  |
 | Tasa de conversión (ventas ÷ leads) | sí                      | sí — las dos son de grano fila       |
-| Sesiones GA4                        | **no**                  | **no** — Cuenta solo cruza por fecha |
+| Sesiones GA4 del sitio (`ga_*`)     | **no**                  | **no** — Cuenta solo cruza por fecha |
+| Sesiones GA4 por campaña (`ga4_*`)  | **sí**                  | **no** — GA4 no tiene país de lead   |
 
 Esto es lo que explica el caso que más desconcierta: **un CPL por país sale
 vacío o absurdo**. Los leads sí se reparten por país, el gasto no, así que la
@@ -403,14 +405,14 @@ Afecta a todos los widgets del informe.
 
 Merece la pena conocerlas para no perder tiempo:
 
-| Petición                                                   | Por qué no                                     |
-| ---------------------------------------------------------- | ---------------------------------------------- |
-| Gasto **desglosado** por país / formulario / campo de lead | Anuncios no tiene esas columnas                |
-| Sesiones GA4 por campaña                                   | Cuenta está agregada por día, sin desglose     |
-| Conversiones offline por campaña                           | Ídem — usa un **campo de Sheet**, que sí cruza |
-| Suscripciones en una serie temporal                        | Es una foto, no una serie                      |
-| Contar filas de una fuente diaria                          | Solo el grano de fila se cuenta                |
-| CPA o ROAS de Hotmart **por producto**                     | Anuncios no sabe qué producto se vendió        |
+| Petición                                                   | Por qué no                                         |
+| ---------------------------------------------------------- | -------------------------------------------------- |
+| Gasto **desglosado** por país / formulario / campo de lead | Anuncios no tiene esas columnas                    |
+| Sesiones GA4 por **anuncio o conjunto**                    | GA4 por campaña no guarda `utm_content`/`utm_term` |
+| Conversiones offline por campaña                           | Ídem — usa un **campo de Sheet**, que sí cruza     |
+| Suscripciones en una serie temporal                        | Es una foto, no una serie                          |
+| Contar filas de una fuente diaria                          | Solo el grano de fila se cuenta                    |
+| CPA o ROAS de Hotmart **por producto**                     | Anuncios no sabe qué producto se vendió            |
 
 > **Ojo con la primera fila.** Lo que no se puede es _repartir_ el gasto entre las
 > respuestas. **Dividir** el gasto total del ámbito por un segmento de lead sí se
@@ -469,7 +471,7 @@ Conviene saberlo antes de prometerle un informe a un cliente:
 - **Ventas (`sales_events`)** — las del CRM de GoHighLevel y el espejo del webhook de
   Hotmart, que `sales.*` no cuenta. Para los negocios que cierran fuera de una
   pasarela, la vía es el CRM del Sheet.
-- **GA4** — configurado en 1 de 8 clientes.
+- **GA4** — configurado en 1 cliente (Cris). Hasta el 2026-09-28 con un ID de propiedad que la cuenta de la agencia no veía: nunca entregó datos ([doc 26](./26-auditoria-ga4.md)).
 - **Conversiones offline** — 3 clientes, todo de tipo `lead` y sin importe.
 - **Suscripciones** — 2 clientes.
 

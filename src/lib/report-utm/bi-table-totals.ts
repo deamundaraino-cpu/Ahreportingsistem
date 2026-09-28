@@ -33,6 +33,7 @@ import {
   type BiMetric,
 } from './bi-metadata';
 import { derivadasHotmart } from '@/lib/hotmart/metricas';
+import { BASES_DERIVADAS_GA4, GA4_DERIVADAS, derivadasGa4 } from '@/lib/ga4/metricas';
 
 type Fila = Record<string, unknown>;
 type Bases = Record<string, number>;
@@ -107,7 +108,28 @@ export const RATIOS_DE_TOTAL: Record<string, RatioDeTotal> = {
   },
   hm_tasa_bump: { bases: ['hm_bumps', 'hm_compras'], calc: (b) => hm(b).hm_tasa_bump },
   hm_conversion: { bases: ['hm_compras', 'leads_count'], calc: (b) => hm(b).hm_conversion },
+  // GA4 por campaña: `derivadasGa4`, la misma definición que el motor.
+  ...Object.fromEntries(
+    GA4_DERIVADAS.map((k) => [
+      k,
+      { bases: BASES_DERIVADAS_GA4[k], calc: (b: Bases) => ga4(b)[k] } satisfies RatioDeTotal,
+    ])
+  ),
 };
+
+/** Las derivadas de GA4 por campaña sobre las bases sumadas. */
+function ga4(b: Bases) {
+  return derivadasGa4(
+    {
+      ga4_sesiones: b.ga4_sesiones ?? 0,
+      ga4_sesiones_interaccion: b.ga4_sesiones_interaccion ?? 0,
+      ga4_eventos_clave: b.ga4_eventos_clave ?? 0,
+      ga4_ingresos: b.ga4_ingresos ?? 0,
+    },
+    b.spend ?? 0,
+    b.leads_count ?? 0
+  );
+}
 
 /**
  * Tasas de GA4: promedio ponderado por sesiones, como el motor

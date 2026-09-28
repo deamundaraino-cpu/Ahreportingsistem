@@ -7,7 +7,7 @@ La base de datos vive en **Supabase (PostgreSQL)** y se organiza en dos schemas:
 
 Todas las tablas usan **Row Level Security (RLS)**. La regla general:
 
-- Un usuario solo ve filas de los clientes que le pertenecen (`auth.uid()` vía `user_id`).
+- Los clientes son **de la empresa, no de un usuario** (migración 098). Un usuario ve un cliente si es admin/superadmin o si lo tiene asignado en `user_client_assignments`: es la función `public.puede_ver_cliente(cliente_id)`, que usan las políticas de las tablas por cliente.
 - El email administrador (`robinson@adshouse.com` en `schema.sql`) tiene acceso total.
 - Las tablas de `report_utm` están restringidas a administradores mediante la función `report_utm.is_admin()`.
 - Los **workers** usan la _service role key_, que **omite RLS**.
@@ -26,7 +26,7 @@ Registro maestro de clientes del reporting principal.
 CREATE TABLE public.clientes (
   id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   nombre      TEXT NOT NULL,
-  user_id     UUID REFERENCES auth.users(id) ON DELETE RESTRICT,  -- 081: borrar un usuario no borra clientes
+  user_id     UUID REFERENCES auth.users(id) ON DELETE SET NULL,  -- 098; se elimina en la 099: no hay dueño
   config_api  JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at  TIMESTAMPTZ NOT NULL DEFAULT timezone('utc', now()),
   public_token UUID UNIQUE DEFAULT gen_random_uuid(),  -- migración 006
@@ -36,7 +36,9 @@ CREATE TABLE public.clientes (
 
 - **`config_api`** (JSONB): contenedor de credenciales e integraciones. Ver estructura abajo.
 - **`public_token`**: token para enlaces públicos/espejo.
-- **RLS**: SELECT propio (`auth.uid() = user_id`) + acceso total admin.
+- **RLS**: `puede_ver_cliente(id)` (admin/superadmin o trafficker asignado). Sin política pública: `config_api` guarda credenciales y el rol `anon` no ve ninguna fila (098 cerró `"Public view cliente via token" USING (true)`; `/p/` resuelve su token con el cliente de servicio).
+- **Dueño**: ninguno. Borrar un usuario nunca bloquea ni borra clientes; solo se van sus datos personales (asignaciones, tokens de API, notificaciones) y sus autorías quedan a NULL (`bitacoras.author_id`, 098).
+- **Alta**: `crearCliente` (`src/lib/clientes/ciclo-de-vida.ts`), todo o nada: cliente, espejo UTM, moneda, zona y traffickers, o nada. Solo admin/superadmin. Lo que falta por conectar lo lista la «Puesta en marcha» de la ficha (`src/lib/clientes/puesta-en-marcha.ts`).
 - **Borrado**: toda tabla con `cliente_id` (en los dos esquemas) cae en cascada con
   el cliente (migraciones 080 y 081); `scripts/verify-borrado-cascada.ts` lo
   comprueba en el catálogo. Se borra con `eliminarClienteCompleto`, que limpia
@@ -67,8 +69,11 @@ CREATE TABLE public.clientes (
   "hotmart_refresh_token_enc": "...",
   "hotmart_token_expires_at": "2026-09-25T12:00:00Z",
 
-  // Google Analytics 4
-  "ga_property_id": "properties/123456",
+  // Google Analytics 4 (con la conexión OAuth de la agencia basta la propiedad)
+  "ga_property_id": "524635063",
+  "ga_property_name": "cristributario.cl",
+  "ga_account_name": "Cristributario.cl",
+  // Legacy: service account por cliente, solo si no hay conexión de agencia
   "ga_private_key": "-----BEGIN PRIVATE KEY-----\n...",
   "ga_client_email": "...@....iam.gserviceaccount.com",
 
@@ -688,10 +693,10 @@ CREATE TABLE report_utm.outbound_deliveries (
 
 | Tabla                           | Condición de acceso                              |
 | ------------------------------- | ------------------------------------------------ |
-| `clientes`                      | `auth.uid() = user_id` · admin total             |
-| `metricas_diarias`              | cliente vía `cliente_id → user_id` · admin total |
+| `clientes`                      | `puede_ver_cliente(id)` (rol o asignación)       |
+| `metricas_diarias`              | `puede_ver_cliente(cliente_id)`                  |
 | `campaign_groups` / `_mappings` | propiedad por jerarquía de cliente · admin total |
-| `leads` / `leads_diarios`       | cliente vía `client_id → user_id` · admin total  |
-| `soporte_tickets`               | cliente (SELECT/INSERT) · admin total            |
+| `leads` / `leads_diarios`       | `puede_ver_cliente(client_id)`                   |
+| `soporte_tickets`               | `puede_ver_cliente(cliente_id)` (SELECT/INSERT)  |
 | `api_tokens`                    | `auth.uid() = user_id` · admin total             |
 | `report_utm.*`                  | solo admin (`report_utm.is_admin()`)             |

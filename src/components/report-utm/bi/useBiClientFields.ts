@@ -20,6 +20,7 @@ import type {
   LeadFieldMeta,
   LeadSegmentoMeta,
   MetaCustomConvMeta,
+  Ga4EventoMeta,
 } from '@/lib/report-utm/bi-metadata';
 
 export interface BiClientFields {
@@ -31,6 +32,8 @@ export interface BiClientFields {
   sheetViews: SheetViewMeta[];
   /** Conversiones personalizadas de Meta del cliente (token `metacc:<clave>`). */
   customConversions: MetaCustomConvMeta[];
+  /** Eventos clave de GA4 del cliente (token `ga4ev:<evento>`). */
+  ga4Events: Ga4EventoMeta[];
 }
 
 /**
@@ -134,6 +137,14 @@ export function useBiClientFields(
     SIN_CAMPOS
   );
 
+  // Eventos clave de GA4 (`ga4_estado.eventos`, migración 097).
+  const ga4Events = useCampoRemoto<Ga4EventoMeta[]>(
+    clienteId,
+    (id) => `/api/report-utm/bi/ga4-events?cliente_id=${encodeURIComponent(id)}`,
+    (json) => json.data ?? [],
+    SIN_CAMPOS
+  );
+
   return {
     formFields,
     leadFields: lead.campos,
@@ -142,5 +153,6 @@ export function useBiClientFields(
     sheetFields: sheet.fields,
     sheetViews: sheet.views,
     customConversions,
+    ga4Events,
   };
 }

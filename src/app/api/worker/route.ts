@@ -3,7 +3,12 @@ import { NextResponse } from 'next/server';
 import { requireCronAuth } from '@/lib/cron-auth';
 import { format, parseISO, isBefore, addDays, differenceInDays } from 'date-fns';
 import { createClient as createSSRClient } from '@/utils/supabase/server';
-import { getAgencyAccessToken, hasAgencyGoogleConnection } from '@/lib/integrations/google-auth';
+import { hasAgencyGoogleConnection } from '@/lib/integrations/google-auth';
+import {
+  clasificarErrorGa4,
+  crearClienteGa4,
+  mensajeErrorGa4,
+} from '@/lib/integrations/ga4-cliente';
 import { notifyUsers } from '@/lib/notifications/notify';
 import { colombiaToday, colombiaYesterday } from '@/lib/date-utils';
 import {
@@ -34,6 +39,16 @@ import {
 import type { FunnelHotmart } from '@/lib/hotmart/clasificador';
 import { decidirGuardaHotmart, tieneDatosHotmart } from '@/lib/hotmart/guarda';
 import { reagregarFechasHotmart } from '@/lib/hotmart/reagregar';
+import {
+  META_ATTRIBUTION_WINDOWS,
+  META_GRAPH_VERSION,
+  acumularDescubiertas,
+  filasCatalogo,
+  guardarCatalogo,
+  listarCustomConversions,
+  type ConversionDescubierta,
+} from '@/lib/meta/conversiones-personalizadas-sync';
+import { extraerConversionesPersonalizadas } from '@/lib/meta/conversiones-personalizadas';
 
 // Vercel Hobby corta las funciones a 60s: pedir 300 no las alarga, solo hacía que
 // los presupuestos internos (270s) nunca dispararan y la función muriera a mitad
@@ -181,18 +196,6 @@ const META_ACTION_FAMILIES: Record<string, string[]> = {
 /** action_types conocidos (para reportar los que Meta envía y no mapeamos). */
 const KNOWN_ACTION_TYPES = new Set(Object.values(META_ACTION_FAMILIES).flat());
 
-/**
- * Ventana de atribución explícita para /insights.
- *
- * Sin este parámetro Meta aplica la ventana por defecto de CADA cuenta, así que
- * dos clientes con configuraciones distintas producían conversiones no
- * comparables y el ROAS cambiaba si alguien tocaba los ajustes en Business
- * Manager. Fijarla aquí hace que el número signifique lo mismo para todos.
- *
- * 7d_click + 1d_view es el estándar de Meta desde iOS 14.
- */
-const META_ATTRIBUTION_WINDOWS = JSON.stringify(['7d_click', '1d_view']);
-
 /** Sin descarga (cliente sin Meta, o rango ya descargado): ningún nivel falló. */
 const NIVELES_META_OK = { ad: true, adset: true } as const;
 
@@ -253,6 +256,12 @@ async function sincronizar(request: Request) {
   } else {
     adminSupabase = await createSSRClient();
   }
+
+  // La conexión de Google de la agencia se consulta UNA vez por ejecución: antes
+  // se leía `app_integrations` en cada fecha de cada cliente.
+  let conexionGooglePromesa: Promise<boolean> | null = null;
+  const conexionGoogleAgencia = () =>
+    (conexionGooglePromesa ??= hasAgencyGoogleConnection().catch(() => false));
 
   // Presupuesto de tiempo para reintentos: no reintentar pasado este momento
   // (maxDuration=60s en Hobby; dejamos margen para upserts y respuesta final).
@@ -879,6 +888,10 @@ async function sincronizar(request: Request) {
         return { ok: true, list: all };
       }
 
+      // Conversiones personalizadas vistas en esta corrida del cliente (nivel
+      // campaña, todas las cuentas): alimentan el catálogo al final de fetchMetaRange.
+      const conversionesDescubiertas = new Map<string, ConversionDescubierta>();
+
       // ─── Helper: Fetch Meta Ads for a single account, RANGO COMPLETO ───
       // Pide TODO el rango en UNA llamada paginada por nivel (time_increment=1 → una
       // fila por día con date_start) en vez de una llamada por día.
@@ -903,7 +916,7 @@ async function sincronizar(request: Request) {
         };
 
         try {
-          const url = new URL(`https://graph.facebook.com/v19.0/${actId}/insights`);
+          const url = new URL(`https://graph.facebook.com/${META_GRAPH_VERSION}/${actId}/insights`);
           url.searchParams.append('access_token', token);
           url.searchParams.append(
             'time_range',
@@ -994,21 +1007,11 @@ async function sincronizar(request: Request) {
                 // que es justamente la reproducción de ≥3 segundos.
                 cVideo3s = cVideoViews;
 
-                if (camp.conversions) {
-                  camp.conversions.forEach((cv: any) => {
-                    const type: string = cv.action_type || '';
-                    const val = parseInt(cv.value || '0');
-                    if (type.startsWith('offsite_conversion.fb_pixel_custom.')) {
-                      const key = type
-                        .replace('offsite_conversion.fb_pixel_custom.', '')
-                        .toLowerCase();
-                      cCustomConversions[key] = (cCustomConversions[key] || 0) + val;
-                    } else if (type.startsWith('offsite_conversion.custom.')) {
-                      const key = type.replace('offsite_conversion.custom.', '').toLowerCase();
-                      cCustomConversions[key] = (cCustomConversions[key] || 0) + val;
-                    }
-                  });
-                }
+                // CC (`offsite_conversion.custom.<id>`) solo llegan en `actions`;
+                // los eventos personalizados del píxel, en `conversions`.
+                const cc = extraerConversionesPersonalizadas(camp.actions, camp.conversions);
+                Object.assign(cCustomConversions, cc.valores);
+                acumularDescubiertas(conversionesDescubiertas, day, cc);
 
                 cResults = cLeads + cPurchases + cInitiatesCheckout;
 
@@ -1151,7 +1154,9 @@ async function sincronizar(request: Request) {
             const extraIds =
               level === 'ad' ? 'ad_id,ad_name,adset_id,adset_name,' : 'adset_id,adset_name,';
 
-            const levelUrl = new URL(`https://graph.facebook.com/v19.0/${actId}/insights`);
+            const levelUrl = new URL(
+              `https://graph.facebook.com/${META_GRAPH_VERSION}/${actId}/insights`
+            );
             levelUrl.searchParams.append('access_token', token);
             levelUrl.searchParams.append(
               'time_range',
@@ -1219,21 +1224,10 @@ async function sincronizar(request: Request) {
               // Mismo criterio que a nivel campaña: `video_view` = reproducción de ≥3s.
               iVideo3s = iVideoViews;
 
-              if (item.conversions) {
-                item.conversions.forEach((cv: any) => {
-                  const type: string = cv.action_type || '';
-                  const val = parseInt(cv.value || '0');
-                  if (type.startsWith('offsite_conversion.fb_pixel_custom.')) {
-                    const key = type
-                      .replace('offsite_conversion.fb_pixel_custom.', '')
-                      .toLowerCase();
-                    iCustomConversions[key] = (iCustomConversions[key] || 0) + val;
-                  } else if (type.startsWith('offsite_conversion.custom.')) {
-                    const key = type.replace('offsite_conversion.custom.', '').toLowerCase();
-                    iCustomConversions[key] = (iCustomConversions[key] || 0) + val;
-                  }
-                });
-              }
+              Object.assign(
+                iCustomConversions,
+                extraerConversionesPersonalizadas(item.actions, item.conversions).valores
+              );
 
               iResults = iLeads + iPurchases + iInitiatesCheckout;
 
@@ -1470,9 +1464,7 @@ async function sincronizar(request: Request) {
           }
         }
 
-        // Dedup cross-cuenta POR DÍA (campaign_id es único global en Meta) y
-        // recolección de claves de custom conversions de TODOS los días.
-        const allCustomKeys = new Set<string>();
+        // Dedup cross-cuenta POR DÍA (campaign_id es único global en Meta).
         for (const [, record] of byDate) {
           if (accountsToFetch.length > 1 && record.campaigns.length > 0) {
             const crossDedup = new Map<string, any>();
@@ -1499,11 +1491,6 @@ async function sincronizar(request: Request) {
               0
             );
           }
-          record.campaigns.forEach((camp: any) => {
-            if (camp.custom_conversions) {
-              Object.keys(camp.custom_conversions).forEach((k) => allCustomKeys.add(k));
-            }
-          });
         }
         // El enriquecimiento de targeting/geo ya se hizo por cuenta dentro de
         // fetchMetaSingleAccountRange (cacheado por actId), y el spread del merge
@@ -1516,63 +1503,22 @@ async function sincronizar(request: Request) {
             : 'Sin Datos';
         log(`[Meta] ${startDate}..${endDate} Total consolidado — días con datos: ${byDate.size}`);
 
-        // Auto-discover custom conversions → upsert into catalog (last_seen = fin del rango)
-        if (allCustomKeys.size > 0) {
-          const customConversionNames: Record<string, string> = {};
-          await Promise.all(
-            accountsToFetch.map(async ({ account_id, token }) => {
-              try {
-                const actId = account_id.startsWith('act_') ? account_id : `act_${account_id}`;
-                const ccUrl = new URL(
-                  `https://graph.facebook.com/v19.0/${actId}/customconversions`
-                );
-                ccUrl.searchParams.append('access_token', token);
-                ccUrl.searchParams.append('fields', 'id,name');
-                const res = await fetch(ccUrl.toString());
-                const ccData = await res.json();
-                if (ccData.data) {
-                  ccData.data.forEach((cc: any) => {
-                    customConversionNames[cc.id] = cc.name;
-                  });
-                }
-              } catch (e: any) {
-                log(`[Meta] Error consultando customconversions (non-critical): ${e?.message}`);
-              }
-            })
+        // Catálogo de conversiones personalizadas: nombres reales (paginado), sin
+        // pisar lo que decidió el usuario y sin que `last_seen` retroceda.
+        if (conversionesDescubiertas.size > 0) {
+          const hayCc = Array.from(conversionesDescubiertas.values()).some(
+            (d) => d.origen === 'cc'
           );
-
-          const catalogRows = Array.from(allCustomKeys).map((key) => {
-            const isNumeric = /^\d+$/.test(key);
-            let label = '';
-            if (isNumeric && customConversionNames[key]) {
-              label = customConversionNames[key];
-            } else {
-              const cleanLabel = key
-                .replace(/_/g, ' ')
-                .replace(/\b\w/g, (c) => c.toUpperCase())
-                .trim();
-              label = `Lead ${cleanLabel.replace('Lead', '').trim() || cleanLabel}`;
-            }
-            return {
-              cliente_id: cliente.id,
-              conversion_key: key,
-              label: label,
-              field_id: `meta_custom_${key}`,
-              last_seen: endDate,
-            };
-          });
-
-          const { error: catErr } = await adminSupabase
-            .from('meta_conversiones_catalogo')
-            .upsert(catalogRows, {
-              onConflict: 'cliente_id,conversion_key',
-              ignoreDuplicates: false,
-            });
-
-          if (catErr) {
-            log(`[Meta] ⚠️ Error actualizando catálogo: ${catErr.message}`);
+          const ccs = hayCc
+            ? await listarCustomConversions(accountsToFetch, { log }).catch(() => new Map())
+            : new Map();
+          const filas = filasCatalogo(conversionesDescubiertas, ccs);
+          conversionesDescubiertas.clear();
+          const r = await guardarCatalogo(adminSupabase, cliente.id, filas, endDate);
+          if (r.error) {
+            log(`[Meta] ⚠️ Error actualizando catálogo: ${r.error}`);
           } else {
-            log(`[Meta] ✓ Catálogo actualizado: ${Array.from(allCustomKeys).join(', ')}`);
+            log(`[Meta] ✓ Catálogo actualizado: ${filas.map((x) => x.conversion_key).join(', ')}`);
           }
         }
 
@@ -1992,6 +1938,12 @@ async function sincronizar(request: Request) {
         apiSuccess: boolean;
         /** false = el cliente no tiene GA4 conectado (ceros son correctos). */
         configured: boolean;
+        /**
+         * Vistas de las páginas de pago, contando cada URL UNA vez. Sumar
+         * `payment_page_views` por pestaña duplicaba una página de pago
+         * compartida por dos embudos.
+         */
+        pagos_iniciados_total: number;
       };
       async function fetchGA4(targetDate: string): Promise<GARecord> {
         const record: GARecord = {
@@ -1999,34 +1951,23 @@ async function sincronizar(request: Request) {
           bounceRate: 0,
           avgSessionDuration: 0,
           funnel_pages: {},
+          pagos_iniciados_total: 0,
           apiSuccess: true,
           configured: false,
         };
-        // Necesita una propiedad. La autenticación puede venir de:
-        //  1) OAuth de agencia (preferido) — solo hace falta ga_property_id
-        //  2) Service account legacy por cliente (ga_client_email + ga_private_key)
-        const useAgencyOAuth = await hasAgencyGoogleConnection();
+        // Necesita una propiedad y una credencial (OAuth de agencia o service
+        // account legacy): la precedencia vive en `crearClienteGa4`.
         const hasServiceAccount = !!(config.ga_client_email && config.ga_private_key);
-        if (!config.ga_property_id || (!useAgencyOAuth && !hasServiceAccount)) {
+        if (!config.ga_property_id || (!(await conexionGoogleAgencia()) && !hasServiceAccount)) {
           platformLogs.ga4 = 'Sin configurar';
           return record;
         }
         record.configured = true;
 
         try {
-          const { BetaAnalyticsDataClient } = await import('@google-analytics/data');
-          const client = useAgencyOAuth
-            ? new BetaAnalyticsDataClient({ authClient: (await getAgencyAccessToken()) as any })
-            : new BetaAnalyticsDataClient({
-                credentials: {
-                  client_email: config.ga_client_email,
-                  private_key: config.ga_private_key.replace(/\\n/g, '\n'),
-                },
-              });
-
-          const propertyName = config.ga_property_id.startsWith('properties/')
-            ? config.ga_property_id
-            : `properties/${config.ga_property_id}`;
+          const ga = await crearClienteGa4(config, await conexionGoogleAgencia());
+          if (!ga) throw new Error('GA4 sin credenciales');
+          const { client, propertyName } = ga;
 
           const [response] = await ga4Run(() =>
             client.runReport({
@@ -2143,11 +2084,24 @@ async function sincronizar(request: Request) {
                 record.funnel_pages[q.tab_id].upsell_page_views = map.get(q.url) || 0;
               }
             }
+            const pagosPorUrl = new Map<string, number>();
+            for (const q of queries) {
+              if (q.role !== 'payment') continue;
+              const map = q.url.startsWith('/') ? viewsByPath : viewsByTitle;
+              pagosPorUrl.set(q.url.toLowerCase(), map.get(q.url) || 0);
+            }
+            record.pagos_iniciados_total = [...pagosPorUrl.values()].reduce((a, b) => a + b, 0);
           }
 
           platformLogs.ga4 = 'Conectado OK';
         } catch (e: any) {
-          log(`[GA4] Error: ${e.message}`);
+          log(
+            `[GA4] Error: ${mensajeErrorGa4(clasificarErrorGa4(e), {
+              via: null,
+              propertyId: config.ga_property_id,
+              detalle: e?.message,
+            })}`
+          );
           // Antes el record en ceros se upserteaba igual y borraba las sesiones
           // ya guardadas para esa fecha.
           record.apiSuccess = false;
@@ -2174,6 +2128,7 @@ async function sincronizar(request: Request) {
         bounceRate: 0,
         avgSessionDuration: 0,
         funnel_pages: {},
+        pagos_iniciados_total: 0,
         apiSuccess: false,
         configured: true,
       });
@@ -2568,7 +2523,7 @@ async function sincronizar(request: Request) {
           }
 
           // ─── Merge funnel breakdown: Hotmart sales + GA4 page views per tab ───
-          // Total pagos_iniciados (suma de payment_page_views de todos los funnels)
+          // Total pagos_iniciados: vistas de las páginas de pago, cada URL una vez.
           let totalPagosIniciados = 0;
           const byTabFinal: Record<string, any> = {};
           for (const tabId of Object.keys(hotmartRecord.by_tab)) {
@@ -2581,9 +2536,9 @@ async function sincronizar(request: Request) {
             fb.upsell.page_visits = gp.upsell_page_views;
             fb.pagos_iniciados = gp.payment_page_views;
             fb.landing_sessions = gp.landing_sessions;
-            totalPagosIniciados += gp.payment_page_views;
             byTabFinal[tabId] = fb;
           }
+          totalPagosIniciados = gaRecord.pagos_iniciados_total;
           const funnelDataPayload = {
             by_tab: byTabFinal,
             extras: hotmartRecord.extras,
@@ -2649,7 +2604,8 @@ async function sincronizar(request: Request) {
           if (!metaFailed) sourceSyncedAt.meta = nowIso;
           if (!tiktokFailed) sourceSyncedAt.tiktok = nowIso;
           if (!hotmartFailed) sourceSyncedAt.hotmart = nowIso;
-          if (!ga4Failed) sourceSyncedAt.ga4 = nowIso;
+          // Solo con GA configurado: marcarlo en clientes sin GA fingía frescura.
+          if (!ga4Failed && gaRecord.configured) sourceSyncedAt.ga4 = nowIso;
 
           upsertPayloads.push({
             cliente_id: cliente.id,

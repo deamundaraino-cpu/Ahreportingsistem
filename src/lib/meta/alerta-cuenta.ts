@@ -18,34 +18,13 @@
 import { consultarEstadoCuenta, type EstadoCuentaMeta } from './estado-cuenta';
 import { notifyUsers } from '@/lib/notifications/notify';
 import { sendWhatsAppNotification } from '@/lib/whatsapp/notify';
+import { cuentasMetaDe } from './cuentas';
+
+export { cuentasMetaDe };
 
 const DEDUPE_MS = 24 * 60 * 60 * 1000;
 const REVISION_TTL_MS = 3 * 60 * 60 * 1000;
 const MOTIVO = 'meta_cuenta_bloqueada';
-
-/** Cuentas de Meta configuradas en un cliente, sin duplicados. */
-export function cuentasMetaDe(
-  config: Record<string, any>
-): Array<{ account_id: string; token: string }> {
-  let cuentas: Array<{ account_id: string; token: string }> = [];
-  if (Array.isArray(config.meta_accounts) && config.meta_accounts.length > 0) {
-    cuentas = config.meta_accounts
-      .filter((a: any) => a?.account_id)
-      .map((a: any) => ({
-        account_id: String(a.account_id),
-        token: a.token || config.meta_token || '',
-      }));
-  } else if (config.meta_token && config.meta_account_id) {
-    cuentas = [{ account_id: String(config.meta_account_id), token: String(config.meta_token) }];
-  }
-  const vistas = new Set<string>();
-  return cuentas.filter((c) => {
-    const k = c.account_id.replace(/^act_/, '');
-    if (!c.token || vistas.has(k)) return false;
-    vistas.add(k);
-    return true;
-  });
-}
 
 /** Mensaje humano para la alerta. Puro. */
 export function mensajeAlerta(clienteNombre: string, bloqueadas: EstadoCuentaMeta[]): string {

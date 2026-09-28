@@ -26,6 +26,8 @@ import {
   makeSheetMetric,
   makeSheetView,
   isSheetToken,
+  isGa4EvMetric,
+  makeGa4EvMetric,
 } from './bi-metadata';
 import type { BiMetric } from './bi-metadata';
 import { loadCamposCliente } from '@/lib/sheets/campos-db';
@@ -169,6 +171,28 @@ export async function getMetricAvailability(
     .lte('fecha_venta', dateTo)
     .limit(2000);
 
+  // GA4 por campaña (migración 097). Si la tabla aún no existe, la consulta
+  // falla y simplemente no aporta disponibilidad.
+  const ga4Q = publicClienteId
+    ? db
+        .from('ga4_sesiones_diarias')
+        .select('sesiones, sesiones_interaccion, eventos_clave, ingresos')
+        .eq('cliente_id', publicClienteId)
+        .gte('fecha', dateFrom)
+        .lte('fecha', dateTo)
+        .gt('sesiones', 0)
+        .limit(5000)
+    : null;
+  const ga4EvQ = publicClienteId
+    ? db
+        .from('ga4_eventos_clave_diarios')
+        .select('evento, eventos_clave')
+        .eq('cliente_id', publicClienteId)
+        .gte('fecha', dateFrom)
+        .lte('fecha', dateTo)
+        .limit(5000)
+    : null;
+
   if (params.cliente_id) {
     leadsQ.eq('cliente_id', params.cliente_id);
     salesQ.eq('cliente_id', params.cliente_id);
@@ -178,13 +202,27 @@ export async function getMetricAvailability(
     hotmartQ = hotmartQ.eq('cliente_id', publicClienteId);
   }
 
-  const [leadsRes, salesRes, offlineRes, subsRes, hotmartRes] = await Promise.all([
-    leadsQ,
-    salesQ,
-    fetchAllRows(offlineQ).then((data) => ({ data })),
-    subsQ,
-    publicClienteId ? hotmartQ : Promise.resolve({ data: [] }),
-  ]);
+  const [leadsRes, salesRes, offlineRes, subsRes, hotmartRes, ga4Res, ga4EvRes] = await Promise.all(
+    [
+      leadsQ,
+      salesQ,
+      fetchAllRows(offlineQ).then((data) => ({ data })),
+      subsQ,
+      publicClienteId ? hotmartQ : Promise.resolve({ data: [] }),
+      ga4Q ?? Promise.resolve({ data: [] }),
+      ga4EvQ ?? Promise.resolve({ data: [] }),
+    ]
+  );
+
+  for (const g of (ga4Res.data ?? []) as Array<Record<string, unknown>>) {
+    bump('ga4_sesiones', num(g.sesiones));
+    bump('ga4_sesiones_interaccion', num(g.sesiones_interaccion));
+    bump('ga4_eventos_clave', num(g.eventos_clave));
+    bump('ga4_ingresos', num(g.ingresos));
+  }
+  for (const e of (ga4EvRes.data ?? []) as Array<Record<string, unknown>>) {
+    if (e.evento) bump(makeGa4EvMetric(String(e.evento)), num(e.eventos_clave));
+  }
 
   for (const v of (hotmartRes.data ?? []) as Array<Record<string, unknown>>) {
     const estado = String(v.estado ?? '');
@@ -354,6 +392,24 @@ export async function getMetricAvailability(
       case 'hm_conversion':
         out[metric] = has('hm_compras') && has('leads_count');
         break;
+      // GA4 por campaña: disponibles si lo están sus operandos.
+      case 'ga4_tasa_interaccion':
+      case 'ga4_tasa_rebote':
+      case 'ga4_tasa_sesion_lead':
+        out[metric] = has('ga4_sesiones');
+        break;
+      case 'ga4_tasa_evento_clave':
+        out[metric] = has('ga4_sesiones') && has('ga4_eventos_clave');
+        break;
+      case 'ga4_coste_sesion':
+        out[metric] = has('spend') && has('ga4_sesiones');
+        break;
+      case 'ga4_coste_evento_clave':
+        out[metric] = has('spend') && has('ga4_eventos_clave');
+        break;
+      case 'ga4_roas':
+        out[metric] = has('spend') && has('ga4_ingresos');
+        break;
       // La tasa existe haya o no ventas (con el cliente en dólares vale 1).
       case 'hm_tasa_cambio':
         out[metric] = true;
@@ -367,7 +423,7 @@ export async function getMetricAvailability(
   // Tokens dinámicos: columnas de Sheet (offfield:*) y campos de Sheet
   // (sheetdim:/sheetagg:/sheetview:) vistos en el rango.
   for (const k of Object.keys(totals)) {
-    if (isOfflineFieldMetric(k) || isSheetToken(k)) out[k] = has(k);
+    if (isOfflineFieldMetric(k) || isSheetToken(k) || isGa4EvMetric(k)) out[k] = has(k);
   }
 
   return out;

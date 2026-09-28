@@ -51,13 +51,15 @@ const PREFIJOS_DEL_CLIENTE = [
   'leadans:',
   'offfield:',
   'metacc:',
+  'ga4ev:',
   'sheetdim:',
   'sheetagg:',
   'sheetview:',
   'field:',
   'fieldagg:',
 ];
-const ALIAS_DEL_CLIENTE = /\b(lf__|lseg__|off__|sf__|sv__|f_(sum|avg|min|max|count)__)[a-z0-9_]+/i;
+const ALIAS_DEL_CLIENTE =
+  /\b(lf__|lseg__|off__|sf__|sv__|ga4ev__|f_(sum|avg|min|max|count)__)[a-z0-9_]+/i;
 
 /** Avisa de los widgets que dependen de campos propios del cliente de origen. */
 function avisoCamposDelCliente(layout: BiWidget[], calc: { expression: string }[]): string | null {

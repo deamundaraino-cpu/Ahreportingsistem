@@ -99,6 +99,7 @@ import { refDeCuboHotmart, clavesHotmartYRefDelDia } from '@/lib/dashboard/hotma
 import type { HotmartCuboLite } from '@/lib/dashboard/hotmart-cubo';
 import { diasFueraDeCaptacion } from '@/lib/dashboard/rango-captacion';
 import { TabArchiveView } from './TabArchiveView';
+import { macrosConversionesMeta } from '@/lib/dashboard/metric-catalog';
 import { MonedaReporteProvider, useMonedaReporte } from './MonedaReporteContext';
 import { precioUsdEnFila, textoAvisoTasas, type AvisoTasas } from '@/lib/moneda-reporte';
 
@@ -699,14 +700,16 @@ function DynamicDashboard({
   }, [activeLayout]);
 
   const layoutCustomMetrics = useMemo(() => {
-    const result: Record<string, string> = {};
+    // Primero las macros del cliente (`meta_resultados_custom` = sus conversiones
+    // marcadas como resultado); una métrica del layout con el mismo id gana.
+    const result: Record<string, string> = macrosConversionesMeta(conversionesCatalogo);
     if (activeLayout.custom_metrics) {
       activeLayout.custom_metrics.forEach((m: MetricDef) => {
         result[m.id] = m.formula;
       });
     }
     return result;
-  }, [activeLayout.custom_metrics]);
+  }, [activeLayout.custom_metrics, conversionesCatalogo]);
 
   const handleDashboardDragEnd = useCallback(
     (event: DragEndEvent) => {
@@ -1149,7 +1152,10 @@ function DynamicDashboard({
       );
       return {
         ...row,
-        // Si hay landing pages configuradas, reemplazar ga_sessions con las sesiones del funnel
+        // Si hay landing pages configuradas, `ga_sessions` pasa a ser las VISTAS
+        // de esas páginas (screenPageViews, no sesiones): es lo que mide el
+        // embudo de la pestaña. El BI y el agente siguen con las sesiones del
+        // sitio, así que las dos cifras no tienen por qué coincidir.
         ...(landingSessions > 0 ? { ga_sessions: landingSessions } : {}),
         funnel_principal_count: fb?.principal?.count ?? 0,
         funnel_principal_neto: fb?.principal?.net ?? 0,
@@ -1601,6 +1607,7 @@ function DynamicDashboard({
         onToggleArchived={handleToggleArchived}
         isTeam={isTeam}
         availablePlatforms={platformSet}
+        customMetrics={macrosConversionesMeta(conversionesCatalogo)}
       />
     );
   }

@@ -6,6 +6,7 @@
 
 // `bi/expr.ts` es puro (sin imports), así que respeta la regla de arriba.
 import { parseExpr, isExprError, evalExpr } from './bi/expr';
+import { PREFIJO_ALIAS_CC, aliasFormulaCc } from '@/lib/meta/conversiones-personalizadas';
 import {
   extraerReferenciasDeLead,
   esTokenRespuesta as isLeadAnsMetricLocal,
@@ -104,6 +105,8 @@ export type BiMetric =
   | 'landing_page_views'
   | 'complete_registration'
   | 'results'
+  | 'resultados_custom'
+  | 'coste_por_resultado_custom'
   | 'video_views'
   | 'video_thruplay'
   | 'messaging_conversations'
@@ -129,6 +132,18 @@ export type BiMetric =
   | 'ga_sessions'
   | 'ga_bounce_rate'
   | 'ga_avg_session_duration'
+  // ── GA4 por campaña (public.ga4_sesiones_diarias, migración 097) ──
+  | 'ga4_sesiones'
+  | 'ga4_sesiones_interaccion'
+  | 'ga4_eventos_clave'
+  | 'ga4_ingresos'
+  | 'ga4_tasa_interaccion'
+  | 'ga4_tasa_rebote'
+  | 'ga4_tasa_evento_clave'
+  | 'ga4_coste_sesion'
+  | 'ga4_coste_evento_clave'
+  | 'ga4_tasa_sesion_lead'
+  | 'ga4_roas'
   // ── TikTok ──
   | 'tiktok_conversions'
   // ── Hotmart (columnas escalares de metricas_diarias) ──
@@ -335,6 +350,13 @@ export const ADDITIVE_METRICS: ReadonlySet<string> = new Set<string>([
   // (`hm_tasa_cambio`) NO: es un promedio.
   'hm_neto_usd',
   'hm_bruto_usd',
+  // Suma de conversiones personalizadas marcadas como resultado.
+  'resultados_custom',
+  // GA4 por campaña: conteos e importe. Sus tasas se recalculan en el Total.
+  'ga4_sesiones',
+  'ga4_sesiones_interaccion',
+  'ga4_eventos_clave',
+  'ga4_ingresos',
 ]);
 
 /** ¿La fila "Total" de una tabla puede sumar esta métrica directamente? */
@@ -346,6 +368,10 @@ export function isAdditiveMetric(metric: string): boolean {
   if (isLeadSegMetric(metric)) return true;
   // Una respuesta de lead también es un conteo de contactos.
   if (isLeadAnsMetricLocal(metric)) return true;
+  // Una conversión personalizada de Meta es un conteo de eventos.
+  if (isMetaCcMetric(metric)) return true;
+  // Un evento clave de GA4 es un conteo.
+  if (isGa4EvMetric(metric)) return true;
   return ADDITIVE_METRICS.has(metric);
 }
 
@@ -537,6 +563,10 @@ export interface BiPivotRow {
 //                   • 'campaign' cruza por fecha y por campaña/anuncio/conjunto
 //                                (gasto y JSONB de anuncios: no hay UTM en
 //                                metricas_diarias, solo el nombre de la entidad)
+//                   • 'utm'      fecha, campaña y UTM crudas (source/medium),
+//                                pero NO anuncio ni conjunto (GA4 por campaña)
+//                   • 'campaign_top' fecha y campaña: la intersección de las
+//                                dos anteriores (coste por sesión = gasto ÷ GA4)
 //                   • 'total'    solo total o fecha (columnas escalares de
 //                                metricas_diarias: GA4, Hotmart, offline)
 //                   • 'global'   solo el total del período (snapshot puntual)
@@ -552,7 +582,7 @@ export type MetricGroup =
   | 'offline'
   | 'subs';
 
-export type MetricBreakdown = 'any' | 'campaign' | 'total' | 'global';
+export type MetricBreakdown = 'any' | 'campaign' | 'utm' | 'campaign_top' | 'total' | 'global';
 
 export interface MetricMetaEntry {
   label: string;
@@ -653,6 +683,21 @@ export const METRIC_META: Record<BiMetric, MetricMetaEntry> = {
     breakdown: 'campaign',
   },
   results: { label: 'Resultados', format: 'number', group: 'campana', breakdown: 'campaign' },
+  // Conversiones personalizadas marcadas como «resultado» en la tarjeta de Meta
+  // del cliente (`meta_conversiones_catalogo.es_resultado`). Sin ninguna marcada
+  // valen null, no 0: el cliente no ha definido qué cuenta como resultado.
+  resultados_custom: {
+    label: 'Resultados (personalizados)',
+    format: 'number',
+    group: 'campana',
+    breakdown: 'campaign',
+  },
+  coste_por_resultado_custom: {
+    label: 'Coste por resultado (personalizado)',
+    format: 'currency',
+    group: 'campana',
+    breakdown: 'campaign',
+  },
   video_views: {
     label: 'Reproducciones',
     format: 'number',
@@ -760,6 +805,63 @@ export const METRIC_META: Record<BiMetric, MetricMetaEntry> = {
     group: 'ga4',
     breakdown: 'total',
   },
+  // ── GA4 por campaña (ga4_sesiones_diarias: día × tupla UTM de la sesión) ──
+  ga4_sesiones: {
+    label: 'Sesiones GA4 (por campaña)',
+    format: 'number',
+    group: 'ga4',
+    breakdown: 'utm',
+  },
+  ga4_sesiones_interaccion: {
+    label: 'Sesiones con interacción (GA4)',
+    format: 'number',
+    group: 'ga4',
+    breakdown: 'utm',
+  },
+  ga4_eventos_clave: {
+    label: 'Eventos clave (GA4)',
+    format: 'number',
+    group: 'ga4',
+    breakdown: 'utm',
+  },
+  ga4_ingresos: { label: 'Ingresos (GA4)', format: 'currency', group: 'ga4', breakdown: 'utm' },
+  ga4_tasa_interaccion: {
+    label: 'Tasa de interacción (GA4)',
+    format: 'percent',
+    group: 'ga4',
+    breakdown: 'utm',
+  },
+  ga4_tasa_rebote: {
+    label: 'Tasa de rebote (GA4, por campaña)',
+    format: 'percent',
+    group: 'ga4',
+    breakdown: 'utm',
+  },
+  ga4_tasa_evento_clave: {
+    label: 'Tasa de eventos clave (GA4)',
+    format: 'percent',
+    group: 'ga4',
+    breakdown: 'utm',
+  },
+  ga4_coste_sesion: {
+    label: 'Coste por sesión (GA4)',
+    format: 'currency',
+    group: 'ga4',
+    breakdown: 'campaign_top',
+  },
+  ga4_coste_evento_clave: {
+    label: 'Coste por evento clave (GA4)',
+    format: 'currency',
+    group: 'ga4',
+    breakdown: 'campaign_top',
+  },
+  ga4_tasa_sesion_lead: {
+    label: 'Conversión sesión → lead',
+    format: 'percent',
+    group: 'ga4',
+    breakdown: 'utm',
+  },
+  ga4_roas: { label: 'ROAS (GA4)', format: 'ratio', group: 'ga4', breakdown: 'campaign_top' },
   // ── Hotmart ──
   // OJO: `hotmart_pagos_iniciados` se calcula desde GA4 (payment_page_views),
   // no desde la API de Hotmart. El nombre viene del dashboard clásico.
@@ -1092,10 +1194,12 @@ export function metricCrossesDimension(metric: string, dimension: string): boole
   // Las columnas extra de Sheet offline viven en conversiones_offline_diarias,
   // que es día×cliente: se comportan como 'total'.
   if (isOfflineFieldMetric(metric)) return dimension === 'date';
-  // Conversiones personalizadas de Meta: se leen del nivel campaña, así que se
-  // reparten por fecha y por campaña real, no por anuncio, conjunto ni lead.
-  if (isMetaCcMetric(metric))
-    return dimension === 'date' || unifiedTarget(dimension) === 'campaign';
+  // Conversiones personalizadas de Meta: viajan con el gasto (mismo JSONB, los
+  // tres niveles), así que se reparten igual que él: fecha, campaña, conjunto y
+  // anuncio. No por lead.
+  if (isMetaCcMetric(metric)) return dimension === 'date' || unifiedTarget(dimension) !== null;
+  // Eventos clave de GA4: misma tabla por tupla UTM que las sesiones.
+  if (isGa4EvMetric(metric)) return cruzaComoUtm(dimension);
   const meta = METRIC_META[metric as BiMetric];
   if (!meta) return true; // calculada, campo de formulario o de Sheet
   switch (meta.breakdown) {
@@ -1103,11 +1207,29 @@ export function metricCrossesDimension(metric: string, dimension: string): boole
       return true;
     case 'campaign':
       return dimension === 'date' || unifiedTarget(dimension) !== null;
+    case 'utm':
+      return cruzaComoUtm(dimension);
+    case 'campaign_top':
+      return dimension === 'date' || unifiedTarget(dimension) === 'campaign';
     case 'total':
       return dimension === 'date';
     case 'global':
       return false;
   }
+}
+
+/**
+ * Dimensiones de una fuente con eje `campaign` + `utm` pero sin anuncio ni
+ * conjunto (GA4 por campaña): la fecha, la campaña resuelta y las UTM crudas.
+ */
+export function cruzaComoUtm(dimension: string): boolean {
+  return (
+    dimension === 'date' ||
+    unifiedTarget(dimension) === 'campaign' ||
+    dimension === 'utm_source' ||
+    dimension === 'utm_medium' ||
+    dimension === 'utm_campaign_raw'
+  );
 }
 
 /** Métricas del catálogo que pertenecen a un grupo, en orden de declaración. */
@@ -1611,6 +1733,10 @@ export function basesAditivasDeFormula(expression: string): Map<string, string> 
       const r = parseClaveFormulaRespuesta(id);
       if (r) token = tokenRespuesta(r.campo, r.resp);
       else if (id.startsWith('lseg__')) token = makeLeadSegMetric(id.slice('lseg__'.length));
+      else if (id.startsWith(PREFIJO_ALIAS_CC))
+        token = makeMetaCcMetric(id.slice(PREFIJO_ALIAS_CC.length));
+      else if (id.startsWith(GA4_EV_ALIAS_PREFIX))
+        token = makeGa4EvMetric(id.slice(GA4_EV_ALIAS_PREFIX.length));
     }
     if (!token || !isAdditiveMetric(token)) return null;
     out.set(id, token);
@@ -1740,10 +1866,37 @@ export function parseMetaCcMetric(token: string): string | null {
   return isMetaCcMetric(token) ? token.slice(META_CC_PREFIX.length) : null;
 }
 
+/**
+ * Alias de una conversión en un campo calculado: `mcc__<clave saneada>`
+ * (`spend / mcc__lead_docenciau` = coste por esa conversión). El motor lo
+ * resuelve contra el catálogo del cliente (`resolverClaveCc`).
+ */
+export { aliasFormulaCc as metaCcAlias, PREFIJO_ALIAS_CC };
+
+/** Alias `mcc__<x>` referenciados por una expresión calc. */
+export function extractMetaCcAliases(expression: string): { ref: string; alias: string }[] {
+  const out: { ref: string; alias: string }[] = [];
+  const re = /\bmcc__([a-z0-9_]+)\b/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(expression)) !== null) {
+    const ref = m[1].toLowerCase();
+    out.push({ ref, alias: `${PREFIJO_ALIAS_CC}${ref}` });
+  }
+  return out;
+}
+
 /** Una conversión personalizada del cliente, tal como se ofrece en el BI. */
 export interface MetaCustomConvMeta {
   key: string;
   label: string;
+  /** Alias para campos calculados (`mcc__<clave>`). */
+  alias?: string;
+  tipo?: string;
+  es_resultado?: boolean;
+  /** Con actividad en los últimos 90 días y sin archivar. */
+  activa?: boolean;
+  archivada?: boolean;
+  ultima_actividad?: string | null;
 }
 
 /** Etiqueta legible de un token `metacc:`. null si no lo es. */
@@ -1752,6 +1905,62 @@ export function metaCcLabel(token: string, convs: MetaCustomConvMeta[] = []): st
   if (!key) return null;
   const meta = convs.find((c) => c.key === key);
   return `${meta?.label ?? humanizeFieldKey(key)} (Meta · conversión)`;
+}
+
+// ── Eventos clave de GA4 ───────────────────────────────────────────────
+// Token `ga4ev:<evento>` (el `eventName` de GA4, p. ej. `ga4ev:purchase`); en
+// las fórmulas, `ga4ev__<evento>` (`spend / ga4ev__generate_lead` = coste por
+// ese evento). Salen de `ga4_eventos_clave_diarios` y se reparten como las
+// sesiones: fecha, campaña y UTM crudas. El catálogo por cliente es
+// `ga4_estado.eventos`.
+
+export const GA4_EV_PREFIX = 'ga4ev:';
+export const GA4_EV_ALIAS_PREFIX = 'ga4ev__';
+
+/** Un `eventName` de GA4 válido: letra y luego letras, dígitos o `_`. */
+const EVENTO_GA4 = /^[a-z][a-z0-9_]*$/i;
+
+export function makeGa4EvMetric(evento: string): string {
+  return `${GA4_EV_PREFIX}${evento}`;
+}
+export function isGa4EvMetric(token: string): boolean {
+  return (
+    typeof token === 'string' &&
+    token.startsWith(GA4_EV_PREFIX) &&
+    EVENTO_GA4.test(token.slice(GA4_EV_PREFIX.length))
+  );
+}
+export function parseGa4EvMetric(token: string): string | null {
+  return isGa4EvMetric(token) ? token.slice(GA4_EV_PREFIX.length) : null;
+}
+/** Alias de fórmula de un evento. GA4 ya limita el nombre a `[A-Za-z0-9_]`. */
+export function ga4EvAlias(evento: string): string {
+  return `${GA4_EV_ALIAS_PREFIX}${evento}`;
+}
+
+/** Alias `ga4ev__<evento>` referenciados por una expresión calc. */
+export function extractGa4EvAliases(expression: string): { evento: string; alias: string }[] {
+  const out: { evento: string; alias: string }[] = [];
+  const re = /\bga4ev__([a-z][a-z0-9_]*)\b/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(expression)) !== null) out.push({ evento: m[1], alias: m[0] });
+  return out;
+}
+
+/** Un evento clave de GA4 del cliente, tal como se ofrece en el BI. */
+export interface Ga4EventoMeta {
+  /** `eventName` de GA4. */
+  key: string;
+  label: string;
+  /** Alias para campos calculados (`ga4ev__<evento>`). */
+  alias: string;
+  ultima_actividad: string | null;
+}
+
+/** Etiqueta legible de un token `ga4ev:`. null si no lo es. */
+export function ga4EvLabel(token: string): string | null {
+  const ev = parseGa4EvMetric(token);
+  return ev ? `Evento clave: ${ev} (GA4)` : null;
 }
 
 // ── Campos de Sheet (tablas sheet_campos / sheet_campo_valores_diarios) ──
@@ -2653,7 +2862,11 @@ export const METRIC_GLOSSARY: Record<string, string> = {
   video_thruplay:
     'Reproducciones que llegaron a 15 segundos o al final del video. Mide interés real, no un scroll.',
   results:
-    'Resultados según el objetivo de cada campaña (suma de leads, compras e inicios de pago).',
+    'Suma fija de leads, compras e inicios de pago que reporta Meta. No depende del objetivo de cada campaña.',
+  resultados_custom:
+    'Suma de las conversiones personalizadas de Meta que el equipo marcó como resultado de este cliente (ajustes → Meta → Conversiones personalizadas).',
+  coste_por_resultado_custom:
+    'Cuánto cuesta, en promedio, cada resultado personalizado: gasto de Meta ÷ resultados personalizados. Cuanto MÁS BAJO, mejor.',
   post_engagement:
     'Interacciones totales con los anuncios: reacciones, comentarios, compartidos y clics.',
   // ── Las que solo existen a nivel de cuenta ──
@@ -2724,6 +2937,10 @@ export const LOWER_IS_BETTER = new Set([
   'hm_tasa_reembolso',
   'ventas_reembolsado',
   'ventas_reembolsado_count',
+  'coste_por_resultado_custom',
+  'ga4_tasa_rebote',
+  'ga4_coste_sesion',
+  'ga4_coste_evento_clave',
 ]);
 
 /** ¿Para esta métrica, bajar es mejorar? */

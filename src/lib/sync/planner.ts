@@ -19,6 +19,17 @@ function tieneSheets(configApi: unknown): boolean {
   );
 }
 
+/** ¿El cliente tiene una propiedad de GA4 configurada? */
+export function tieneGa4(configApi: unknown): boolean {
+  const cfg = (configApi ?? {}) as { ga_property_id?: unknown };
+  return String(cfg.ga_property_id ?? '').trim() !== '';
+}
+
+/** Días que cubre cada job diario de GA4: GA asienta los datos en 24-72 h. */
+export const DIAS_REFRESCO_GA4 = 3;
+/** Histórico que se trae al conectar una propiedad (~13 meses). */
+export const DIAS_BACKFILL_GA4 = 395;
+
 /** Prioridades: menor = antes. El sync manual (1) siempre adelanta al cron. */
 export const PRIORIDAD = {
   manual: 1,
@@ -37,6 +48,35 @@ export type PlanResult = { encolados: number; detalle: Record<string, number> };
  * cifras definitivas; "hoy" da una foto parcial para que el dashboard no
  * aparezca vacío durante la jornada.
  */
+/** `YYYY-MM-DD` + n días (UTC, sin hora: no depende de la zona). */
+function sumarDias(fecha: string, n: number): string {
+  const d = new Date(`${fecha}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * Backfill del desglose de GA4 de un cliente: al guardar una propiedad nueva o
+ * tras una prueba de acceso correcta. Tramos de 90 días (cada uno son ~3
+ * ventanas de un mes), del más antiguo al más reciente.
+ */
+export async function planGa4Backfill(
+  db: any,
+  clienteId: string,
+  opts?: { dias?: number; triggeredBy?: string }
+): Promise<number> {
+  const hoy = colombiaToday();
+  return enqueueRange(db, {
+    tipo: 'ga4',
+    clienteId,
+    start: sumarDias(hoy, -(opts?.dias ?? DIAS_BACKFILL_GA4)),
+    end: hoy,
+    chunkDays: 90,
+    prioridad: PRIORIDAD.manual,
+    triggeredBy: opts?.triggeredBy ?? 'ga4:backfill',
+  });
+}
+
 export async function planDiario(db: any, opts?: { triggeredBy?: string }): Promise<PlanResult> {
   const triggeredBy = opts?.triggeredBy ?? 'planner';
   const hoy = colombiaToday();
@@ -133,6 +173,35 @@ export async function planDiario(db: any, opts?: { triggeredBy?: string }): Prom
    * atribuye por lead lo reciente que quedó sin campaña. Es barato: un cliente
    * con Hotmart, unas pocas páginas.
    */
+  /**
+   * GA4 desglosado por campaña (job `ga4`, migración 097). Una sola petición
+   * cubre los últimos días, así que se re-piden cada día hasta que GA asienta.
+   * En su propio try: si el CHECK de producción aún no conoce `ga4` (097 sin
+   * aplicar), el resto del plan sigue.
+   */
+  let ga4 = 0;
+  try {
+    for (const c of (clientes ?? []) as Array<{ id: string; config_api: unknown }>) {
+      if (!tieneGa4(c.config_api)) continue;
+      const job = await enqueueJob(db, {
+        tipo: 'ga4',
+        clienteId: c.id,
+        start: sumarDias(hoy, -DIAS_REFRESCO_GA4),
+        end: hoy,
+        prioridad: PRIORIDAD.diario,
+        triggeredBy,
+      });
+      if (job) {
+        total++;
+        ga4++;
+      }
+    }
+  } catch (e) {
+    console.error('[planDiario] no se pudo encolar ga4:', (e as Error)?.message ?? e);
+    detalle.ga4_error = 1;
+  }
+  if (ga4 > 0) detalle.ga4 = ga4;
+
   const hm = await planHotmartReconciliacion(db, { triggeredBy: `${triggeredBy}:hotmart` });
   total += hm.encolados;
   if (hm.encolados > 0) detalle.hotmart_reconciliar = hm.encolados;

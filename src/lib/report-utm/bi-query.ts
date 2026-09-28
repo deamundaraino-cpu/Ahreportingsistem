@@ -4,6 +4,14 @@ import { columnaExcluidoDisponible } from './lead-exclusion';
 import { escLike, patronLike } from './leads-filtros';
 import { COLUMNAS_ID, SELECT_IDS_VENTA, columnasIdDisponibles } from './lead-ids';
 import { cargarAlcanceCampanas, predicadoAlcance } from './alcance-campanas';
+import {
+  cargarCatalogoCc,
+  pideConversiones,
+  planConversiones,
+  sumarConversiones,
+  valoresConversiones,
+  type PeticionCc,
+} from './bi/meta-custom-conv';
 import { registrarAvisoConsulta, registrarConversor } from './bi/avisos-tasas';
 import {
   cargarConversor,
@@ -73,7 +81,23 @@ import {
   isLeadFieldDim,
   parseLeadFieldDim,
   NON_ATTRIBUTABLE_FIELDS,
+  cruzaComoUtm,
+  parseGa4EvMetric,
+  extractGa4EvAliases,
 } from './bi-metadata';
+import {
+  GA4_CON_GASTO,
+  GA4_CON_LEADS,
+  GA4_DERIVADAS,
+  GA4_MEDIDAS,
+  GA4_METRICAS,
+  aporteVacioGa4,
+  derivadasGa4,
+  ga4SinDatos,
+  sumarAporteGa4,
+  type AporteGa4,
+} from '@/lib/ga4/metricas';
+import { cargarEstadoGa4 } from '@/lib/ga4/estado';
 import {
   COLUMNAS_APORTE,
   aporteDeVenta,
@@ -86,6 +110,7 @@ import {
 import { colombiaDateOf, colombiaRangeBounds } from '@/lib/colombia-date';
 import {
   loadResolver,
+  plataformaDeFuente,
   resolvePublicClienteId,
   SIN_CAMPANA,
   SIN_ANUNCIO,
@@ -314,6 +339,16 @@ export async function runBiQuery(params: BiQueryParams): Promise<BiQueryRow[]> {
   }
   const requires = (keys: string[]) => keys.some((k) => required.has(k));
 
+  // ── Conversiones personalizadas de Meta ───────────────────────────
+  // `metacc:<clave>`, alias `mcc__<clave>` y resultados personalizados. Se
+  // resuelven contra el catálogo del cliente y viajan con el gasto.
+  const pedidoCc = pideConversiones(params);
+  let planCc: PeticionCc | null = null;
+  if (pedidoCc.tokens.length > 0 || pedidoCc.aliases.length > 0 || pedidoCc.resultados) {
+    const publicCc = params.cliente_id ? await resolvePublicClienteId(params.cliente_id) : null;
+    planCc = planConversiones(pedidoCc, publicCc ? await cargarCatalogoCc(supabase, publicCc) : []);
+  }
+
   // ── Campos de formulario (raw_fields JSONB) ───────────────────────
   // Dimensión de campo (agrupar por raw_fields.<clave>) + métricas de campo
   // (sum/avg/… de un campo). Las métricas de campo pueden venir directamente
@@ -382,6 +417,19 @@ export async function runBiQuery(params: BiQueryParams): Promise<BiQueryRow[]> {
   const sheetFields = Array.from(sheetReqs.values());
   const isSheetDimQuery = sheetDimClave !== null;
 
+  // ── Eventos clave de GA4 (`ga4ev:<evento>`, alias `ga4ev__<evento>`) ──
+  const ga4Evs: Ga4EvReq[] = [];
+  for (const m of params.metrics) {
+    const ev = parseGa4EvMetric(m);
+    if (ev) ga4Evs.push({ evento: ev, outKey: m });
+  }
+  for (const cf of params.calculated ?? []) {
+    for (const a of extractGa4EvAliases(cf.expression)) {
+      if (!ga4Evs.some((e) => e.outKey === a.alias))
+        ga4Evs.push({ evento: a.evento, outKey: a.alias });
+    }
+  }
+
   const isSalesOnlyDim = SALES_ONLY_DIMS.has(params.dimension);
   // Dimensión unificada: leads, ventas y gasto se agrupan por el NOMBRE real de
   // la misma entidad (campaña / anuncio / conjunto), no por la columna cruda de
@@ -396,7 +444,15 @@ export async function runBiQuery(params: BiQueryParams): Promise<BiQueryRow[]> {
   // un campo calculado guardado puede seguir nombrándola.
   const needsLeads =
     // `hm_conversion` = compras de Hotmart ÷ leads: necesita el denominador.
-    (requires(['leads_count', 'leads_total', 'cpl', 'conversion_rate', 'hm_conversion']) ||
+    (requires([
+      'leads_count',
+      'leads_total',
+      'cpl',
+      'conversion_rate',
+      'hm_conversion',
+      // Sesión → lead de GA4 divide los leads entre las sesiones.
+      ...GA4_CON_LEADS,
+    ]) ||
       isFieldDimQuery ||
       fieldMetrics.length > 0 ||
       leadSegs.length > 0) &&
@@ -416,33 +472,41 @@ export async function runBiQuery(params: BiQueryParams): Promise<BiQueryRow[]> {
   const needsAds =
     !isFieldDimQuery &&
     !isSheetDimQuery &&
-    requires([
-      'spend',
-      'meta_spend',
-      'tiktok_spend',
-      'cpl',
-      'cpa',
-      'roas',
-      'clicks',
-      'impressions',
-      'cpc',
-      'cpm',
-      'frequency',
-      'ctr',
-      ...AD_JSONB_METRICS,
-      ...AD_SCALAR_METRICS,
-      ...AD_RATE_METRICS,
-      ...MANUAL_JSONB_METRICS.map((m) => m.metric),
-      'hotmart_revenue',
-      'hotmart_sales',
-      'hotmart_roas',
-      'hotmart_cpa',
-      'hotmart_roi',
-      // El ROAS y el CPA reales de Hotmart necesitan el gasto como denominador.
-      'hm_roas',
-      'hm_cpa',
-      'hm_cpa_compra',
-    ]);
+    ((planCc !== null && planCc.claves.length > 0) ||
+      requires([
+        'spend',
+        'meta_spend',
+        'tiktok_spend',
+        'cpl',
+        'cpa',
+        'roas',
+        'clicks',
+        'impressions',
+        'cpc',
+        'cpm',
+        'frequency',
+        'ctr',
+        ...AD_JSONB_METRICS,
+        ...AD_SCALAR_METRICS,
+        ...AD_RATE_METRICS,
+        ...MANUAL_JSONB_METRICS.map((m) => m.metric),
+        'hotmart_revenue',
+        'hotmart_sales',
+        'hotmart_roas',
+        'hotmart_cpa',
+        'hotmart_roi',
+        // El ROAS y el CPA reales de Hotmart necesitan el gasto como denominador.
+        'hm_roas',
+        'hm_cpa',
+        'hm_cpa_compra',
+        'resultados_custom',
+        'coste_por_resultado_custom',
+        // Coste por sesión / evento clave y ROAS de GA4 dividen el gasto.
+        ...GA4_CON_GASTO,
+      ]));
+  // GA4 por campaña. Sin exclusiones por dimensión: si el corte no existe en
+  // GA4, `queryGa4Direct` lo dice (`aplica: false`) y las celdas salen «—».
+  const needsGa4 = requires([...GA4_METRICAS]) || ga4Evs.length > 0;
   // Offline (día×cliente) y suscripciones (snapshot) son globales/por fecha,
   // no cruzan por dimensiones de lead/venta/anuncio.
   const isBreakdownDim = isSalesOnlyDim || unified !== null || isFieldDimQuery || isSheetDimQuery;
@@ -524,7 +588,35 @@ export async function runBiQuery(params: BiQueryParams): Promise<BiQueryRow[]> {
   // ── ADS query (metricas_diarias) ──────────────────────────────────
   let adsData: AdRow[] = [];
   if (needsAds) {
-    adsData = await queryAdsDirect(params, dateFrom, dateTo);
+    adsData = await queryAdsDirect(params, dateFrom, dateTo, planCc?.claves ?? []);
+  }
+
+  // ── GA4 por campaña (ga4_sesiones_diarias) ────────────────────────
+  let ga4Data: Ga4Resultado | null = null;
+  if (needsGa4) {
+    ga4Data = await queryGa4Direct(
+      params,
+      dateFrom,
+      dateTo,
+      resolver,
+      nocross,
+      ga4Evs,
+      requires(['ga4_ingresos', 'ga4_roas'])
+    );
+  }
+  // El GA4 de la cuenta (`ga_*`) de un cliente sin propiedad: «—», no 0.
+  let gaNoConfigurado = false;
+  if (
+    params.cliente_id &&
+    requires([
+      'ga_sessions',
+      'ga_bounce_rate',
+      'ga_avg_session_duration',
+      'hotmart_pagos_iniciados',
+    ])
+  ) {
+    const pub = await resolvePublicClienteId(params.cliente_id);
+    gaNoConfigurado = pub ? !(await cargarEstadoGa4(pub)).configurado : false;
   }
 
   // ── OFFLINE query (conversiones_offline_diarias) ──────────────────
@@ -585,7 +677,7 @@ export async function runBiQuery(params: BiQueryParams): Promise<BiQueryRow[]> {
     };
   }
 
-  const fusionado = mergeResults(
+  return mergeResults(
     params,
     leadsData,
     salesData,
@@ -600,41 +692,10 @@ export async function runBiQuery(params: BiQueryParams): Promise<BiQueryRow[]> {
     nocross,
     hotmartData,
     leadSegs,
-    tasaBi
+    tasaBi,
+    planCc,
+    { ga4: ga4Data, gaNoConfigurado }
   );
-
-  // ── Conversiones personalizadas de Meta (`metacc:<clave>`) ─────────
-  // Se suman al resultado fusionado desde su propio lector: total, fecha y
-  // campaña real. Cualquier otra dimensión no las puede repartir y quedan en 0.
-  const ccTokens = params.metrics.filter((m) => typeof m === 'string' && m.startsWith('metacc:'));
-  if (ccTokens.length === 0) return fusionado;
-  // Las conversiones de Meta son de nivel campaña: tampoco saben qué respondió
-  // cada lead. Mismo criterio que el gasto en `mergeResults`.
-  if (consultaSinGasto(params)) {
-    return fusionado.map((r) => {
-      const o: BiQueryRow = { ...r };
-      for (const t of ccTokens) (o as Record<string, unknown>)[t] = null;
-      return o;
-    });
-  }
-  const { queryMetaCustomConv, aplicarMetaCustomConv } = await import('./bi/meta-custom-conv');
-  const unifiedCc = unifiedTarget(params.dimension);
-  const grouping = params.date_grouping ?? 'day';
-  const ccData = await queryMetaCustomConv(
-    params.cliente_id,
-    dateFrom,
-    dateTo,
-    ccTokens,
-    (fecha, campana) =>
-      params.dimension === 'none'
-        ? 'total'
-        : params.dimension === 'date'
-          ? truncateDate(fecha, grouping)
-          : unifiedCc === 'campaign'
-            ? campana
-            : null
-  );
-  return aplicarMetaCustomConv(fusionado, ccData, ccTokens);
 }
 
 /** ¿Hay filtro por nombre de campaña, anuncio o conjunto? */
@@ -1577,6 +1638,236 @@ async function queryHotmartDirect(
   return Array.from(map.values()).sort((a, b) => b.hm_neto - a.hm_neto);
 }
 
+// ── GA4 por campaña (public.ga4_sesiones_diarias, migración 097) ──────
+//
+// Mismo patrón que Hotmart: la tabla guarda la tupla UTM de la sesión en crudo y
+// la campaña se resuelve AQUÍ con el mismo resolver que los leads, así que las
+// sesiones caen en la misma fila que el gasto y los leads de su campaña.
+
+/** Un evento clave pedido: por token (`ga4ev:x`) o por alias en una fórmula. */
+interface Ga4EvReq {
+  evento: string;
+  /** Clave con la que se emite (el token o el alias). */
+  outKey: string;
+}
+
+interface Ga4Row extends AporteGa4 {
+  dim: string;
+  ev: Record<string, number>;
+}
+
+/**
+ * Lectura de GA4 ya agregada por clave de dimensión.
+ *  · `sinDatos`: GA4 sin configurar o sin sincronizar → celdas null, no 0.
+ *  · `aplica: false`: el corte pedido no existe en GA4 (anuncio, conjunto,
+ *    columnas de lead o de venta) → celdas null con su diagnóstico.
+ */
+interface Ga4Resultado {
+  aplica: boolean;
+  sinDatos: boolean;
+  ingresosNulos: boolean;
+  filas: Ga4Row[];
+  eventos: Ga4EvReq[];
+}
+
+/** Filtros que una fila de GA4 puede cumplir: su tupla UTM y la plataforma. */
+const GA4_FILTROS = new Set(['utm_source', 'utm_medium', 'utm_campaign', 'utm_id', 'platform']);
+
+/** ¿Hay un corte (dimensión o filtro) que GA4 no puede responder? */
+function ga4NoAplica(params: BiQueryParams): boolean {
+  const dim = params.dimension;
+  if (dim !== 'none' && !cruzaComoUtm(dim)) return true;
+  const conValor = (v: unknown) => v !== null && v !== undefined && String(v).trim() !== '';
+  for (const [k, v] of Object.entries(params.filters ?? {})) {
+    if (conValor(v) && !GA4_FILTROS.has(k)) return true;
+  }
+  return !!params.advancedFilter?.groups?.some((g) =>
+    g.conditions?.some((c) => conValor(c.value) && !GA4_FILTROS.has(c.field))
+  );
+}
+
+/** ¿Una celda cumple un filtro plano (`eq:a,b`, `contains:x`…)? */
+function cumpleFiltroPlano(celda: string, raw: string): boolean {
+  const { op, value } = parseFilterValue(raw);
+  const vals = op === 'eq' && value.includes(',') ? parseSeleccion(value) : [value];
+  return vals.some((v) => matchFilterCondition(celda, op, v));
+}
+
+/** RPC de lectura paginada con `.range()` (PostgREST corta en 1.000 filas). */
+async function leerRpcGa4(
+  supabase: any,
+  fn: 'ga4_sesiones_resumen' | 'ga4_eventos_resumen',
+  args: Record<string, unknown>
+): Promise<Record<string, unknown>[] | null> {
+  const out: Record<string, unknown>[] = [];
+  const PAGINA = 1000;
+  for (let desde = 0; desde < 200_000; desde += PAGINA) {
+    const { data, error } = await supabase.rpc(fn, args).range(desde, desde + PAGINA - 1);
+    if (error) return null;
+    const filas = (data ?? []) as Record<string, unknown>[];
+    out.push(...filas);
+    if (filas.length < PAGINA) break;
+  }
+  return out;
+}
+
+async function queryGa4Direct(
+  params: BiQueryParams,
+  dateFrom: string,
+  dateTo: string,
+  resolver: CampaignResolver | null,
+  nocross: Set<string>,
+  eventos: Ga4EvReq[],
+  pideIngresos: boolean
+): Promise<Ga4Resultado> {
+  const vacio = (aplica: boolean, sinDatos: boolean): Ga4Resultado => ({
+    aplica,
+    sinDatos,
+    ingresosNulos: false,
+    filas: [],
+    eventos,
+  });
+  if (!params.cliente_id) return vacio(true, true);
+  const publicId = await resolvePublicClienteId(params.cliente_id);
+  if (!publicId) return vacio(true, true);
+  const estado = await cargarEstadoGa4(publicId);
+  if (ga4SinDatos(estado)) return vacio(true, true);
+  if (ga4NoAplica(params)) return vacio(false, false);
+
+  if (estado.cubiertoDesde && dateFrom < estado.cubiertoDesde) {
+    registrarAvisoConsulta(
+      `GA4 por campaña tiene datos desde el ${estado.cubiertoDesde}: los días anteriores del rango no suman sesiones.`
+    );
+  }
+
+  const supabase = await createAdminClient();
+
+  // Ingresos: la moneda de la propiedad frente a la de reporte del cliente.
+  const monedaCliente = await monedaDeClienteUtm(supabase, params.cliente_id);
+  const monedaGa = (estado.moneda ?? '').toUpperCase();
+  let convertir: ((v: number, fecha: string) => number) | null = (v) => v;
+  let ingresosNulos = false;
+  if (pideIngresos && monedaGa && monedaGa !== monedaCliente) {
+    if (monedaGa === 'USD') {
+      const conv = registrarConversor(
+        await cargarConversor(supabase, monedaCliente, dateFrom, dateTo)
+      );
+      convertir = (v, fecha) => conv.convertir(v, fecha);
+    } else {
+      convertir = null;
+      ingresosNulos = true;
+      registrarAvisoConsulta(
+        `Los ingresos de GA4 están en ${monedaGa} y el informe en ${monedaCliente}: no hay tasa para convertirlos, se muestran como «—».`
+      );
+    }
+  }
+  // Convertir necesita el día de cada fila; agrupar por fecha también.
+  const porFecha =
+    params.dimension === 'date' ||
+    (pideIngresos && monedaGa === 'USD' && monedaGa !== monedaCliente);
+
+  const [sesiones, evRows] = await Promise.all([
+    leerRpcGa4(supabase, 'ga4_sesiones_resumen', {
+      p_cliente_id: publicId,
+      p_desde: dateFrom,
+      p_hasta: dateTo,
+      p_por_fecha: porFecha,
+    }),
+    eventos.length
+      ? leerRpcGa4(supabase, 'ga4_eventos_resumen', {
+          p_cliente_id: publicId,
+          p_desde: dateFrom,
+          p_hasta: dateTo,
+          p_eventos: Array.from(new Set(eventos.map((e) => e.evento))),
+          p_por_fecha: porFecha,
+        })
+      : Promise.resolve([] as Record<string, unknown>[]),
+  ]);
+  if (sesiones === null || evRows === null) {
+    registrarAvisoConsulta('No se pudo leer GA4 por campaña: vuelve a cargar en unos segundos.');
+    return vacio(true, true);
+  }
+
+  const plan = buildEntityFilterPlan(params, resolver);
+  const adv = plan.restAdvanced;
+  const hayAdv = advancedFilterHasConditions(adv);
+  // Vacíos como NULL, igual que en `lead_events`: así «(sin valor)» y
+  // «(sin campaña)» caen en la misma fila que los leads sin UTM.
+  const normalizar = (r: Record<string, unknown>) => {
+    for (const k of ['utm_source', 'utm_medium', 'utm_campaign', 'utm_id']) {
+      if (r[k] === '') r[k] = null;
+    }
+    r.platform = plataformaDeFuente(r.utm_source) ?? '';
+    return r;
+  };
+  const pasa = (r: Record<string, unknown>) => {
+    for (const [k, raw] of Object.entries(params.filters ?? {})) {
+      if (!raw || !String(raw).trim() || !GA4_FILTROS.has(k)) continue;
+      // Con resolver, el filtro de campaña va por el nombre resuelto (abajo).
+      if (k === 'utm_campaign' && plan.inMemory) continue;
+      if (!cumpleFiltroPlano(String(r[k] ?? ''), String(raw))) return false;
+    }
+    if (hayAdv && !evalAdvancedRow(r, adv, 'sales')) return false;
+    if (plan.inMemory && !rowPassesEntityFilters(r, plan, resolver!)) return false;
+    return true;
+  };
+  const dimDe = (r: Record<string, unknown>) =>
+    getDimValue(r, params.dimension, params.date_grouping, [], resolver, nocross, 'fecha');
+
+  const map = new Map<string, Ga4Row>();
+  const entrada = (dim: string) => {
+    let e = map.get(dim);
+    if (!e) {
+      e = { dim, ...aporteVacioGa4(), ev: {} };
+      map.set(dim, e);
+    }
+    return e;
+  };
+  for (const raw of sesiones) {
+    const r = normalizar(raw);
+    if (!pasa(r)) continue;
+    const e = entrada(dimDe(r));
+    const ingresos = Number(r.ingresos ?? 0) || 0;
+    sumarAporteGa4(e, {
+      ga4_sesiones: Number(r.sesiones ?? 0),
+      ga4_sesiones_interaccion: Number(r.sesiones_interaccion ?? 0),
+      ga4_eventos_clave: Number(r.eventos_clave ?? 0),
+      ga4_ingresos: convertir ? convertir(ingresos, String(r.fecha ?? dateTo)) : 0,
+    });
+  }
+  for (const raw of evRows) {
+    const r = normalizar(raw);
+    if (!pasa(r)) continue;
+    const e = entrada(dimDe(r));
+    const ev = String(r.evento ?? '');
+    e.ev[ev] = (e.ev[ev] ?? 0) + (Number(r.eventos_clave ?? 0) || 0);
+  }
+
+  return { aplica: true, sinDatos: false, ingresosNulos, filas: [...map.values()], eventos };
+}
+
+/**
+ * Métricas de la fuente `cuenta` (columnas escalares de `metricas_diarias`, sin
+ * desglose por entidad). `tiktok_conversions` no: se lee también por campaña.
+ */
+const ESCALARES_CUENTA: readonly string[] = [
+  ...AD_SCALAR_METRICS.filter((m) => m !== 'tiktok_conversions'),
+  ...AD_RATE_METRICS,
+  ...MANUAL_JSONB_METRICS.map((m) => m.metric),
+  'hotmart_revenue',
+  'hotmart_sales',
+  'hotmart_roas',
+  'hotmart_cpa',
+  'hotmart_roi',
+];
+/** GA4 del sitio entero (y la página de pago, que también sale de GA4). */
+const GA_CUENTA: readonly string[] = [
+  'ga_sessions',
+  'ga_bounce_rate',
+  'ga_avg_session_duration',
+  'hotmart_pagos_iniciados',
+];
+
 interface AdRow {
   dim: string | null;
   spend: number;
@@ -1671,7 +1962,9 @@ const MAX_AD_DAY_ROWS = 5000;
 async function queryAdsDirect(
   params: BiQueryParams,
   dateFrom: string,
-  dateTo: string
+  dateTo: string,
+  /** Conversiones personalizadas a acumular junto al gasto. */
+  ccKeys: string[] = []
 ): Promise<AdRow[]> {
   // ── Aplicación de filtros al gasto ─────────────────────────────────
   //   • Filtro NO atribuible (país/formulario/campo de lead/Sheet) → el gasto no
@@ -1711,6 +2004,14 @@ async function queryAdsDirect(
   // camino con desglose aunque se pida el total: la columna escalar
   // `meta_spend` es la de la cuenta entera y no se puede recortar.
   const alcance = publicId ? predicadoAlcance(await cargarAlcanceCampanas(publicId)) : null;
+  // ¿El nivel lo fuerza SOLO el alcance? Entonces la consulta es de la cuenta
+  // (total o por fecha) y las métricas de la cuenta sí aplican: GA4 del sitio,
+  // Hotmart y manuales son del cliente, no de la cuenta publicitaria compartida.
+  const soloAlcance =
+    !!alcance &&
+    matchers.size === 0 &&
+    !breakdown &&
+    (params.dimension === 'none' || params.dimension === 'date');
   if (alcance) {
     const previo = matchers.get('campaign');
     matchers.set('campaign', previo ? (n) => alcance(n) && previo(n) : alcance);
@@ -1720,7 +2021,7 @@ async function queryAdsDirect(
     ? needed.reduce((a, b) => (ENTITY_LEVEL[a].rank >= ENTITY_LEVEL[b].rank ? a : b))
     : null;
 
-  if (!level) return queryAdsScalar(params, dateFrom, dateTo, publicId, platform);
+  if (!level) return queryAdsScalar(params, dateFrom, dateTo, publicId, platform, ccKeys);
 
   // `ads_daily` es la tabla normalizada que la migración 063 creó justo para
   // no leer los JSONB: una fila por (cliente, fecha, plataforma, nivel,
@@ -1729,28 +2030,65 @@ async function queryAdsDirect(
   // tiempo. Los dos caminos tienen que dar el MISMO número —lo comprueba
   // `scripts/verify-ads-daily-paridad.ts`—, así que cuál se use es una
   // decisión de coste, no de resultado.
-  if (!forzarJsonb() && publicId && (await adsDailyCubre(publicId, level, dateFrom, dateTo))) {
-    return queryAdsFromDaily(
-      params,
-      dateFrom,
-      dateTo,
-      publicId,
-      level,
-      breakdown,
-      matchers,
-      platform
-    );
-  }
-  return queryAdsFromJsonb(
-    params,
-    dateFrom,
-    dateTo,
-    publicId,
-    level,
-    breakdown,
-    matchers,
-    platform
+  // Con conversiones personalizadas se lee el JSONB: `ads_daily_resumen` solo
+  // agrega las claves numéricas de `eventos` y descarta `eventos.custom`.
+  const filas =
+    ccKeys.length === 0 &&
+    !forzarJsonb() &&
+    publicId &&
+    (await adsDailyCubre(publicId, level, dateFrom, dateTo))
+      ? await queryAdsFromDaily(
+          params,
+          dateFrom,
+          dateTo,
+          publicId,
+          level,
+          breakdown,
+          matchers,
+          platform
+        )
+      : await queryAdsFromJsonb(
+          params,
+          dateFrom,
+          dateTo,
+          publicId,
+          level,
+          breakdown,
+          matchers,
+          platform,
+          ccKeys
+        );
+  if (!soloAlcance || platform) return filas;
+  return fundirEscalaresCuenta(
+    filas,
+    await queryAdsScalar(params, dateFrom, dateTo, publicId, null, [], true)
   );
+}
+
+/**
+ * Copia las métricas de la cuenta (GA4, Hotmart, manuales) de la lectura escalar
+ * a las filas del gasto por entidad, por clave de fila (total o fecha).
+ */
+function fundirEscalaresCuenta(filas: AdRow[], escalares: AdRow[]): AdRow[] {
+  const porDim = new Map(filas.map((f) => [f.dim ?? 'total', f]));
+  const claves = [
+    ...AD_SCALAR_METRICS.filter((m) => m !== 'tiktok_conversions'),
+    ...MANUAL_JSONB_METRICS.map((m) => m.metric),
+    '_ga_bounce_wsum',
+    '_ga_dur_wsum',
+  ];
+  for (const e of escalares) {
+    const dim = e.dim ?? 'total';
+    let f = porDim.get(dim);
+    if (!f) {
+      f = { dim, ...newAdEntry() } as AdRow;
+      filas.push(f);
+      porDim.set(dim, f);
+    }
+    for (const k of claves) f[k] = Number(e[k] ?? 0);
+    f.__escalares = 1;
+  }
+  return filas;
 }
 
 /**
@@ -2033,7 +2371,13 @@ async function queryAdsScalar(
   dateFrom: string,
   dateTo: string,
   publicId: string | null,
-  platform: 'meta' | 'tiktok' | null
+  platform: 'meta' | 'tiktok' | null,
+  ccKeys: string[] = [],
+  /**
+   * Solo las columnas de la cuenta (GA4, Hotmart, manuales), sin el JSONB de
+   * campañas: para completar el gasto que salió del desglose por entidad.
+   */
+  soloEscalares = false
 ): Promise<AdRow[]> {
   const db = await createAdminClient();
   const adCols = [
@@ -2049,7 +2393,7 @@ async function queryAdsScalar(
     // Métricas cargadas a mano por el equipo (ventas cerradas): viven en este
     // JSONB, no en una columna propia.
     'metricas_manuales',
-    'meta_campaigns',
+    ...(soloEscalares ? [] : ['meta_campaigns']),
   ];
   let q = db
     .from('metricas_diarias')
@@ -2125,11 +2469,16 @@ async function queryAdsScalar(
       const camps = (r.meta_campaigns as Record<string, unknown>[] | null) ?? [];
       for (const c of camps) {
         for (const k of AD_JSONB_METRICS) entry[k] += Number(c[k] ?? 0);
+        if (ccKeys.length) sumarConversiones(entry, c.custom_conversions, ccKeys);
       }
     }
   }
 
-  return Array.from(map.entries()).map(([dim, v]) => ({ dim, ...v }) as AdRow);
+  // `__escalares`: esta fila SÍ trae las métricas de la cuenta. Con un recorte
+  // por plataforma no se leen, y `mergeResults` las deja en «—» en vez de 0.
+  return Array.from(map.entries()).map(
+    ([dim, v]) => ({ dim, ...v, __escalares: platform ? 0 : 1 }) as unknown as AdRow
+  );
 }
 
 /**
@@ -2146,7 +2495,8 @@ async function queryAdsFromJsonb(
   level: EntityKind,
   breakdown: EntityKind | null,
   matchers: Map<EntityKind, (name: string) => boolean>,
-  platform: 'meta' | 'tiktok' | null
+  platform: 'meta' | 'tiktok' | null,
+  ccKeys: string[] = []
 ): Promise<AdRow[]> {
   const db = await createAdminClient();
   const spec = ENTITY_LEVEL[level];
@@ -2272,6 +2622,8 @@ async function queryAdsFromJsonb(
         if (withJsonbMetrics) {
           for (const k of AD_JSONB_METRICS) entry[k] += Number(el[k] ?? 0);
         }
+        // Conversiones personalizadas: solo Meta las tiene.
+        if (isMeta && ccKeys.length) sumarConversiones(entry, el.custom_conversions, ccKeys);
         // TikTok solo reporta 4 métricas; `conversions` es la única propia.
         if (!isMeta) entry.tiktok_conversions += Number(el.conversions ?? 0);
       }
@@ -2868,9 +3220,22 @@ function mergeResults(
   nocross: Set<string> = new Set(),
   hotmartData: HotmartRow[] = [],
   leadSegs: LeadSegReq[] = [],
-  tasa: TasaBi | null = null
+  tasa: TasaBi | null = null,
+  planCc: PeticionCc | null = null,
+  extra: { ga4?: Ga4Resultado | null; gaNoConfigurado?: boolean } = {}
 ): BiQueryRow[] {
+  const ga4 = extra.ga4 ?? null;
+  const ga4Nulo = !ga4 || ga4.sinDatos || !ga4.aplica;
+  // Escalares de la CUENTA (GA4 del sitio, Hotmart agregado, manuales) que esta
+  // consulta no puede atribuir: el gasto salió del desglose por entidad (filtro
+  // de campaña) o por plataforma, que no los lee. Antes salían 0; ahora «—».
+  const cuentaNula = new Set<string>();
+  if (adsData.length > 0 && !adsData.some((r) => Number(r.__escalares ?? 0) === 1)) {
+    for (const k of ESCALARES_CUENTA) cuentaNula.add(k);
+  }
+  if (extra.gaNoConfigurado) for (const k of GA_CUENTA) cuentaNula.add(k);
   const keys = new Set<string>();
+  if (ga4 && !ga4Nulo) ga4.filas.forEach((r) => keys.add(r.dim));
   leadsData.forEach((r) => keys.add(r.dim ?? 'total'));
   salesData.forEach((r) => keys.add(r.dim ?? 'total'));
   hotmartData.forEach((r) => keys.add(r.dim ?? 'total'));
@@ -2961,6 +3326,15 @@ function mergeResults(
     for (const k of AD_JSONB_METRICS) {
       if (params.metrics.includes(k)) row[k] = Number(ad?.[k] ?? 0);
     }
+    // Conversiones personalizadas: por su token (`metacc:`) y, en las fórmulas,
+    // por su alias (`mcc__`). Mismo objeto para la fila y para `baseValues`.
+    const cc = valoresConversiones(ad, planCc, meta_spend);
+    for (const [k, v] of Object.entries(cc.valores)) {
+      if ((params.metrics as string[]).includes(k)) row[k] = v;
+    }
+    if (params.metrics.includes('resultados_custom')) row.resultados_custom = cc.resultados;
+    if (params.metrics.includes('coste_por_resultado_custom'))
+      row.coste_por_resultado_custom = cc.coste;
     if (params.metrics.includes('frequency'))
       row.frequency = reach > 0 ? round2(impressions / reach) : null;
     if (params.metrics.includes('ctr'))
@@ -3036,6 +3410,35 @@ function mergeResults(
     };
     for (const [k, v] of Object.entries(hmFila)) {
       if ((params.metrics as string[]).includes(k)) row[k] = v;
+    }
+
+    // ── GA4 por campaña (ga4_sesiones_diarias) ──
+    // Un solo objeto para la fila y para `baseValues`, como `hmFila`.
+    const g4 = ga4?.filas.find((r) => r.dim === key);
+    const g4Base: AporteGa4 = g4
+      ? {
+          ga4_sesiones: g4.ga4_sesiones,
+          ga4_sesiones_interaccion: g4.ga4_sesiones_interaccion,
+          ga4_eventos_clave: round2(g4.ga4_eventos_clave),
+          ga4_ingresos: round2(g4.ga4_ingresos),
+        }
+      : aporteVacioGa4();
+    const g4Der = derivadasGa4(g4Base, spend, leads_count);
+    const g4Fila: Record<string, number | null> = {};
+    for (const k of GA4_MEDIDAS) g4Fila[k] = ga4Nulo ? null : g4Base[k];
+    for (const k of GA4_DERIVADAS) g4Fila[k] = ga4Nulo ? null : r2(g4Der[k]);
+    if (ga4?.ingresosNulos) {
+      g4Fila.ga4_ingresos = null;
+      g4Fila.ga4_roas = null;
+    }
+    for (const e of ga4?.eventos ?? []) {
+      g4Fila[e.outKey] = ga4Nulo ? null : round2(g4?.ev[e.evento] ?? 0);
+    }
+    for (const [k, v] of Object.entries(g4Fila)) {
+      if ((params.metrics as string[]).includes(k)) row[k] = v;
+    }
+    for (const k of cuentaNula) {
+      if (k in row) row[k] = null;
     }
 
     // Conversiones offline
@@ -3125,6 +3528,9 @@ function mergeResults(
         ...segValues, // token leadseg:<clave> Y alias lseg__<clave>
       };
       for (const k of AD_JSONB_METRICS) baseValues[k] = Number(ad?.[k] ?? 0);
+      Object.assign(baseValues, cc.valores); // token metacc:<k> y alias mcc__<k>
+      baseValues.resultados_custom = cc.resultados ?? 0;
+      baseValues.coste_por_resultado_custom = cc.coste ?? 0;
       for (const k of AD_SCALAR_METRICS) baseValues[k] = Number(ad?.[k] ?? 0);
       for (const { metric } of MANUAL_JSONB_METRICS) baseValues[metric] = Number(ad?.[metric] ?? 0);
       baseValues.ga_bounce_rate = gaBounceRate ?? 0;
@@ -3146,6 +3552,8 @@ function mergeResults(
       // gemelos que había que tocar a la vez, y la tasa de reembolso llegó a
       // divergir entre la tabla y los campos calculados.
       for (const [k, v] of Object.entries(hmFila)) baseValues[k] = v ?? 0;
+      // GA4 por campaña: tokens fijos y alias `ga4ev__` de los eventos.
+      for (const [k, v] of Object.entries(g4Fila)) baseValues[k] = v ?? 0;
       baseValues.offline_leads = off?.offline_leads ?? 0;
       baseValues.offline_ventas = off?.offline_ventas ?? 0;
       baseValues.offline_revenue = round2(off?.offline_revenue ?? 0);

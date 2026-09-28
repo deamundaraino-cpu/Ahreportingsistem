@@ -153,6 +153,11 @@ export const AVAILABLE_METRICS: MetricOption[] = [
   // ── Meta · Resultado de objetivo ─────────────────────────────────────────
   { id: 'meta_results', label: 'Meta: Resultados' },
   { id: 'meta_cost_per_result', label: 'Meta: Costo por Resultado' },
+  // Las conversiones personalizadas que el cliente marcó como «resultado» en
+  // ajustes → Meta. Se resuelven por cliente (`macrosConversionesMeta`): una
+  // plantilla compartida las usa sin nombrar conversiones de nadie.
+  { id: 'meta_resultados_custom', label: 'Meta: Resultados (personalizados)' },
+  { id: 'meta_cost_per_result_custom', label: 'Meta: Coste por resultado (personalizado)' },
 
   // ── Hotmart ───────────────────────────────────────────────────────────────
   // Todo lo que sale de Hotmart se etiqueta «Hotmart:». Antes la mitad decía
@@ -368,8 +373,66 @@ export function tieneVentasOffline(
   );
 }
 
+/** Fila del catálogo de conversiones personalizadas tal como llega al dashboard. */
+export interface ConversionCatalogoResumen {
+  conversion_key: string;
+  label: string;
+  field_id: string;
+  /** Desde la migración 096; antes no existen. */
+  es_resultado?: boolean | null;
+  archivada?: boolean | null;
+  ultima_actividad?: string | null;
+  last_seen?: string | null;
+}
+
+/** Días sin actividad tras los que una conversión deja de ofrecerse. */
+const DIAS_CONVERSION_ANTIGUA = 90;
+
+/**
+ * Conversiones que se ofrecen en los selectores: con actividad en los últimos
+ * 90 días y sin archivar, más las marcadas como resultado y las que ya usa el
+ * layout (`textoEnUso`): esconder algo que un bloque usa sería peor que el ruido.
+ */
+export function conversionesOfrecidas(
+  catalogo: ConversionCatalogoResumen[] = [],
+  textoEnUso = '',
+  hoy: string = new Date().toISOString().slice(0, 10)
+): ConversionCatalogoResumen[] {
+  const limite = new Date(`${hoy}T00:00:00Z`);
+  limite.setUTCDate(limite.getUTCDate() - DIAS_CONVERSION_ANTIGUA);
+  const desde = limite.toISOString().slice(0, 10);
+  const usadas = new Set<string>();
+  for (const m of textoEnUso.matchAll(/meta_custom_[A-Za-z0-9_]+/g)) usadas.add(m[0]);
+  return catalogo.filter((c) => {
+    if (usadas.has(c.field_id) || c.es_resultado) return true;
+    if (c.archivada) return false;
+    const ultima = c.ultima_actividad ?? c.last_seen ?? null;
+    // Sin fecha (catálogo antiguo sin columnas): se ofrece.
+    return !ultima || ultima >= desde;
+  });
+}
+
+/**
+ * Macros por cliente para las métricas de resultados personalizados:
+ * `meta_resultados_custom` = suma de las conversiones marcadas. Sin ninguna
+ * marcada no hay macro: el identificador queda sin resolver y la tarjeta
+ * muestra «–» en vez de un 0 que se leería como «no hubo resultados».
+ *
+ * Una clave con espacios o símbolos (`lead -agenda-directa`) no es un
+ * identificador de fórmula válido y se deja fuera.
+ */
+export function macrosConversionesMeta(
+  catalogo: ConversionCatalogoResumen[] = []
+): Record<string, string> {
+  const ids = catalogo
+    .filter((c) => c.es_resultado && /^[a-z0-9_]+$/.test(c.conversion_key))
+    .map((c) => `meta_custom_${c.conversion_key}`);
+  if (ids.length === 0) return {};
+  return { meta_resultados_custom: `(${ids.join(' + ')})` };
+}
+
 export function buildAvailableMetrics(
-  conversionesCatalogo: { conversion_key: string; label: string; field_id: string }[] = [],
+  conversionesCatalogo: ConversionCatalogoResumen[] = [],
   googleSheetsConversiones?: any[],
   sheetCampos: SheetCampoResumen[] = [],
   sheetVistas: SheetVistaResumen[] = [],
@@ -381,9 +444,11 @@ export function buildAvailableMetrics(
    * trafficker pueda usarlas en cualquier tarjeta, gráfica o columna y no solo
    * dentro del bloque de respuestas.
    */
-  leadAnswerCampos: LeadAnswerCampoResumen[] = []
+  leadAnswerCampos: LeadAnswerCampoResumen[] = [],
+  /** Layout serializado: las conversiones que ya usa se ofrecen aunque sean antiguas. */
+  textoEnUso = ''
 ): MetricOption[] {
-  const dynamic = (conversionesCatalogo || []).map((c) => ({
+  const dynamic = conversionesOfrecidas(conversionesCatalogo || [], textoEnUso).map((c) => ({
     id: c.field_id,
     label: `Meta: ${c.label}`,
   }));

@@ -56,6 +56,7 @@ import {
   RECOMMENDED_METRICS,
   METRIC_GROUP_META,
   metricsOfGroup,
+  ga4EvLabel,
 } from '@/lib/report-utm/bi-metadata';
 import { normalizarClaveLead } from '@/lib/report-utm/lead-campos';
 import { useBiClientFields } from './useBiClientFields';
@@ -185,6 +186,7 @@ export function BiWidgetEditor({
     sheetFields,
     sheetViews,
     customConversions,
+    ga4Events,
   } = useBiClientFields(clienteId, dateFrom, dateTo);
   const [grouping, setGrouping] = useState<'day' | 'week' | 'month'>(
     widget?.config?.date_grouping ?? 'day'
@@ -389,6 +391,7 @@ export function BiWidgetEditor({
     sheetFields,
     sheetViews,
     customConversions,
+    ga4Events,
     calculatedFields: calculatedFields.map((c) => ({ name: c.name, format: c.format })),
   });
 
@@ -452,11 +455,24 @@ export function BiWidgetEditor({
     label: `${f.label} (Sheet)`,
   }));
 
-  // Conversiones personalizadas de Meta → métricas "metacc:<clave>". Se reparten
-  // por fecha y por campaña (ver `metricCrossesDimension`).
-  const ccMetricOptions = customConversions.map((c) => ({
+  // Conversiones personalizadas de Meta → métricas "metacc:<clave>". Viajan con
+  // el gasto: se reparten por fecha, campaña, conjunto y anuncio. Las que llevan
+  // 90 días sin actividad (o archivadas) van aparte, tras «Ver todas» o la
+  // búsqueda, salvo que el widget ya las use.
+  const ccOpt = (c: (typeof customConversions)[number]) => ({
     value: `metacc:${c.key}`,
     label: `${c.label} (Meta · conversión)`,
+  });
+  const ccEnUso = (c: (typeof customConversions)[number]) =>
+    (type === 'table' ? tableCols : [String(metric)]).includes(`metacc:${c.key}`);
+  const ccVigente = (c: (typeof customConversions)[number]) => c.activa !== false || ccEnUso(c);
+  const ccMetricOptions = customConversions.filter(ccVigente).map(ccOpt);
+  const ccAntiguasOptions = customConversions.filter((c) => !ccVigente(c)).map(ccOpt);
+  // Eventos clave de GA4 → métricas "ga4ev:<evento>". Se reparten como las
+  // sesiones de GA4: fecha, campaña y UTM (no anuncio ni conjunto).
+  const ga4EvMetricOptions = ga4Events.map((ev) => ({
+    value: `ga4ev:${ev.key}`,
+    label: `Evento clave: ${ev.label} (GA4)`,
   }));
   const ccLabel = (k: string) =>
     k.startsWith('metacc:')
@@ -470,6 +486,7 @@ export function BiWidgetEditor({
     METRIC_META[k as BiMetric]?.label ??
     fieldMetricLabel(k) ??
     ccLabel(k) ??
+    ga4EvLabel(k) ??
     offlineFieldLabel(k, offlineFields) ??
     sheetFieldLabel(k, sheetFields, sheetViews) ??
     leadSegLabel(k, leadSegments) ??
@@ -544,6 +561,12 @@ export function BiWidgetEditor({
     { key: 'sheet', title: 'Campos de Sheet', items: sheetMetricOptions },
     { key: 'offline', title: 'Columnas de Sheet offline', items: offlineMetricOptions },
     { key: 'metacc', title: 'Conversiones personalizadas de Meta', items: ccMetricOptions },
+    {
+      key: 'metacc_antiguas',
+      title: 'Conversiones de Meta sin actividad (90 días)',
+      items: showAllMetrics || searchQ ? ccAntiguasOptions : [],
+    },
+    { key: 'ga4ev', title: 'Eventos clave de GA4', items: ga4EvMetricOptions },
   ];
 
   // Sin "ver todas" ni búsqueda, del catálogo fijo solo se muestran las
@@ -1077,6 +1100,8 @@ export function BiWidgetEditor({
                       sheetViews={sheetViews}
                       leadSegments={leadSegments}
                       leadFields={leadFields}
+                      customConversions={customConversions}
+                      ga4Events={ga4Events}
                     />
                     <div className="grid grid-cols-2 gap-2">
                       <div>

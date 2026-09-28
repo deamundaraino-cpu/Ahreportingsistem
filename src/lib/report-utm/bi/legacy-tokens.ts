@@ -48,6 +48,8 @@ export const LEGACY_MEASURE_IDS: Readonly<Record<string, string>> = {
   landing_page_views: 'ads.landing_page_views',
   complete_registration: 'ads.complete_registration',
   results: 'ads.results',
+  resultados_custom: 'ads.resultados_custom',
+  coste_por_resultado_custom: 'ads.coste_por_resultado_custom',
   video_views: 'ads.video_views',
   video_thruplay: 'ads.video_thruplay',
   messaging_conversations: 'ads.messaging_conversations',
@@ -74,6 +76,19 @@ export const LEGACY_MEASURE_IDS: Readonly<Record<string, string>> = {
   ga_sessions: 'cuenta.ga_sessions',
   ga_bounce_rate: 'cuenta.ga_bounce_rate',
   ga_avg_session_duration: 'cuenta.ga_avg_session_duration',
+  // GA4 por campaña (migración 097). Los `ga_*` de arriba NO se redirigen aquí:
+  // son el total del sitio y la suma por campaña puede no coincidir con él.
+  ga4_sesiones: 'ga4.sesiones',
+  ga4_sesiones_interaccion: 'ga4.sesiones_interaccion',
+  ga4_eventos_clave: 'ga4.eventos_clave',
+  ga4_ingresos: 'ga4.ingresos',
+  ga4_tasa_interaccion: 'ga4.tasa_interaccion',
+  ga4_tasa_rebote: 'ga4.tasa_rebote',
+  ga4_tasa_evento_clave: 'ga4.tasa_evento_clave',
+  ga4_coste_sesion: 'ga4.coste_sesion',
+  ga4_coste_evento_clave: 'ga4.coste_evento_clave',
+  ga4_tasa_sesion_lead: 'ga4.tasa_sesion_lead',
+  ga4_roas: 'ga4.roas',
 
   // ── Hotmart ──
   // El id canónico dice de dónde sale de verdad (GA4), y la etiqueta conserva

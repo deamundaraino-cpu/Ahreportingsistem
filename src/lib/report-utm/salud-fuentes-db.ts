@@ -10,6 +10,7 @@
 import { createAdminClient } from '@/utils/supabase/server';
 import { parsearAlcance } from './alcance-campanas';
 import { colombiaDateOf } from '@/lib/colombia-date';
+import { zonaHorariaDeCliente } from '@/lib/zona-horaria';
 import { evaluarCliente, ordenarPorGravedad, TOLERANCIA_DIAS } from './salud-fuentes';
 import type {
   SaludCliente,
@@ -413,7 +414,7 @@ async function medirGa4(
   config: Record<string, unknown>
 ): Promise<SenalGa4 | null> {
   if (!config.ga_property_id) return null;
-  const [{ data: sesion }, { data: tabs }] = await Promise.all([
+  const [{ data: sesion }, { data: tabs }, { data: estado, error: errEstado }] = await Promise.all([
     db
       .from('metricas_diarias')
       .select('fecha')
@@ -422,7 +423,16 @@ async function medirGa4(
       .order('fecha', { ascending: false })
       .limit(1),
     db.from('cliente_tabs').select('hotmart_funnel, archived').eq('cliente_id', pid),
+    // Sin la migración 097 esta lectura falla y el desglose queda sin medir.
+    db
+      .from('ga4_estado')
+      .select(
+        'ultimo_ok_at, ultimo_error, ultimo_error_codigo, ultimo_error_at, umbral, fila_otros, zona_horaria'
+      )
+      .eq('cliente_id', pid)
+      .maybeSingle(),
   ]);
+  const e = errEstado ? null : (estado as Record<string, unknown> | null);
   const activas = (
     (tabs ?? []) as Array<{
       hotmart_funnel: Record<string, unknown> | null;
@@ -432,8 +442,25 @@ async function medirGa4(
   return {
     ultimaSesion: (sesion?.[0]?.fecha as string | undefined) ?? null,
     pestanas: activas.length,
-    pestanasConPago: activas.filter((t) => String(t.hotmart_funnel?.payment_page_url ?? '').trim())
-      .length,
+    // Solo cuentan los embudos ACTIVOS: el worker no pide la página de pago de
+    // un embudo deshabilitado, así que contarlo decía «mapeada» sin medirse.
+    pestanasConPago: activas.filter(
+      (t) =>
+        t.hotmart_funnel?.enabled === true &&
+        String(t.hotmart_funnel?.payment_page_url ?? '').trim()
+    ).length,
+    desglose: e
+      ? {
+          ultimoOk: (e.ultimo_ok_at as string | null) ?? null,
+          ultimoError: (e.ultimo_error as string | null) ?? null,
+          ultimoErrorCodigo: (e.ultimo_error_codigo as string | null) ?? null,
+          ultimoErrorAt: (e.ultimo_error_at as string | null) ?? null,
+          umbral: !!e.umbral,
+          filaOtros: !!e.fila_otros,
+          zona: (e.zona_horaria as string | null) ?? null,
+        }
+      : null,
+    zonaCliente: zonaHorariaDeCliente(config),
   };
 }
 

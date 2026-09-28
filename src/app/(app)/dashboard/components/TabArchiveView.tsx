@@ -38,7 +38,8 @@ function computeCardValue(
   metrics: any[],
   campaignGroups: any[],
   dateOverride?: { from: string; to: string },
-  availablePlatforms: Set<string> = PLATAFORMAS_POR_DEFECTO
+  availablePlatforms: Set<string> = PLATAFORMAS_POR_DEFECTO,
+  customMetrics: Record<string, string> = {}
 ): number | null {
   let rows = metrics;
   const from = dateOverride !== undefined ? dateOverride.from : tab.fecha_inicio;
@@ -52,7 +53,7 @@ function computeCardValue(
   if (card.sheetFilter) {
     rows = rows.map((r) => enrichOfflineRow(r, card.sheetFilter));
   }
-  return aggregateFormula(card.formula, rows, {}, {}, availablePlatforms, {});
+  return aggregateFormula(card.formula, rows, {}, {}, availablePlatforms, customMetrics);
 }
 
 export function TabArchiveView({
@@ -66,6 +67,7 @@ export function TabArchiveView({
   onToggleArchived,
   isTeam,
   availablePlatforms,
+  customMetrics = {},
 }: {
   tabs: any[];
   metrics: any[];
@@ -78,6 +80,8 @@ export function TabArchiveView({
   isTeam: boolean;
   /** Plataformas conectadas del cliente (las mismas que usa el dashboard). */
   availablePlatforms?: Set<string>;
+  /** Macros del cliente (resultados personalizados de Meta). */
+  customMetrics?: Record<string, string>;
 }) {
   const monedaReporte = useMonedaReporte();
   const [expandedTabIds, setExpandedTabIds] = useState<Set<string>>(new Set());
@@ -340,7 +344,8 @@ export function TabArchiveView({
                                 archiveMetrics,
                                 campaignGroups,
                                 tabDateOverrides[tab.id],
-                                availablePlatforms
+                                availablePlatforms,
+                                customMetrics
                               )
                             : null;
                           const formatted = formatValue(value, {

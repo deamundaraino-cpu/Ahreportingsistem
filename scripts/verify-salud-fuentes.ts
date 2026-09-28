@@ -338,6 +338,76 @@ seccion('GA4 vigilado por sí mismo (Cris Tributario, 2026-09-12)');
   );
 }
 
+seccion('GA4 por campaña: el error real, umbrales y zona (migración 097)');
+{
+  const desglose = (p: Record<string, unknown> = {}) => ({
+    ultimoOk: `${HOY}T10:00:00Z`,
+    ultimoError: null,
+    ultimoErrorCodigo: null,
+    ultimoErrorAt: null,
+    umbral: false,
+    filaOtros: false,
+    zona: 'America/Bogota',
+    ...p,
+  });
+  const ga = (d: ReturnType<typeof desglose> | null, zonaCliente = 'America/Bogota') => ({
+    ultimaSesion: HOY,
+    pestanas: 1,
+    pestanasConPago: 1,
+    desglose: d,
+    zonaCliente,
+  });
+  // El caso real de Cris (2026-09-28): la propiedad escrita a mano no la veía
+  // la cuenta de la agencia y el error solo llegaba a un log.
+  const sinPermiso = evaluarCliente(
+    senales({
+      ga4: ga(
+        desglose({
+          ultimoOk: null,
+          ultimoError:
+            'Sin permisos: la cuenta de la agencia no tiene acceso a la propiedad 511475756.',
+          ultimoErrorCodigo: 'sin_permiso',
+          ultimoErrorAt: `${HOY}T10:00:00Z`,
+        })
+      ),
+    })
+  );
+  const hSinPermiso = sinPermiso.hallazgos.find((h) => h.titulo.includes('por campaña'));
+  check('un error de permisos del desglose → crítico', sinPermiso.gravedad === 'critico');
+  check(
+    'y la acción es el mensaje real de GA4, no una deducción',
+    !!hSinPermiso?.accion?.includes('511475756')
+  );
+  const recuperado = evaluarCliente(
+    senales({
+      ga4: ga(
+        desglose({
+          ultimoError: 'viejo',
+          ultimoErrorCodigo: 'otro',
+          ultimoErrorAt: '2026-08-01T00:00:00Z',
+        })
+      ),
+    })
+  );
+  check('un error ANTERIOR al último éxito ya no se reporta', recuperado.hallazgos.length === 0);
+  const umbral = evaluarCliente(senales({ ga4: ga(desglose({ umbral: true })) }));
+  check(
+    'umbrales de privacidad → aviso',
+    umbral.gravedad === 'aviso' && umbral.hallazgos.some((h) => h.titulo.includes('umbrales'))
+  );
+  const zona = evaluarCliente(
+    senales({ ga4: ga(desglose({ zona: 'Pacific/Easter' }), 'America/Santiago') })
+  );
+  check(
+    'zona de la propiedad distinta de la del cliente → aviso',
+    zona.gravedad === 'aviso' && zona.hallazgos.some((h) => h.titulo.includes('Pacific/Easter'))
+  );
+  check(
+    'desglose sano no produce hallazgos',
+    evaluarCliente(senales({ ga4: ga(desglose()) })).hallazgos.length === 0
+  );
+}
+
 seccion('Sync de Sheets: fallos, parones y fechas ilegibles (Somos rentable, 2026-09-14)');
 {
   // El caso real: la cola en verde, la fuente «al día» con los datos de agosto

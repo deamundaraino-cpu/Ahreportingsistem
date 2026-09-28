@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { authenticateApiToken, requirePermission } from '@/lib/api-token-auth';
 import { ApiError, apiErrorResponse, handleUnexpectedError } from '@/lib/error-handler';
+import { clientesVisiblesDe } from '@/lib/agent/context';
 
 /**
  * GET /api/v1/campaigns
@@ -25,18 +26,24 @@ export async function GET(request: NextRequest) {
       process.env.SUPABASE_SERVICE_ROLE_KEY!
     );
 
-    // Build the campaign_groups query scoped to the token's user
+    // Solo los clientes que ve el usuario del token (rol o asignación).
+    const visibles = await clientesVisiblesDe(supabase, ctx.userId);
+    if (visibles !== 'all' && visibles.length === 0) {
+      return NextResponse.json({ campaign_groups: [] });
+    }
+
     let query = supabase
       .from('campaign_groups')
       .select(
         `
         id, nombre, descripcion, color, created_at,
-        clientes!inner(id, nombre, user_id),
+        clientes!inner(id, nombre),
         campaign_group_mappings(id, campaign_id, campaign_name_pattern)
       `
       )
-      .eq('clientes.user_id', ctx.userId)
       .order('nombre', { ascending: true });
+
+    if (visibles !== 'all') query = query.in('cliente_id', visibles);
 
     if (clientId) {
       query = query.eq('cliente_id', clientId);

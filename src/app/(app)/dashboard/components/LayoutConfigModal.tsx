@@ -77,6 +77,7 @@ import type {
   MetricType,
   MetricOption,
   LeadAnswerCampoResumen,
+  ConversionCatalogoResumen,
 } from '@/lib/dashboard/metric-catalog';
 import type { SheetCampoResumen, SheetVistaResumen } from '../_actions';
 
@@ -1868,7 +1869,7 @@ export function LayoutConfigModal({
   onClose: () => void;
   onLayoutApplied: (layout: ReportLayout) => void;
   tabId?: string;
-  conversionesCatalogo?: { conversion_key: string; label: string; field_id: string }[];
+  conversionesCatalogo?: ConversionCatalogoResumen[];
   googleSheetsConversiones?: any[];
   conversionesOfflineRaw?: any[];
   /** Campos de Sheet del cliente: se ofrecen como métricas `sf_<clave>`. */
@@ -1891,7 +1892,8 @@ export function LayoutConfigModal({
     sheetCampos,
     sheetVistas,
     hayVentasOffline,
-    leadAnswerCampos
+    leadAnswerCampos,
+    JSON.stringify(currentLayout ?? {})
   );
   const [step, setStep] = useState<'select' | 'edit'>(currentLayout ? 'edit' : 'select');
   const [workingLayout, setWorkingLayout] = useState<ReportLayout | null>(currentLayout);

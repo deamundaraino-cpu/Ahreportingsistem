@@ -27,6 +27,7 @@ import 'server-only';
 
 import { z } from 'zod';
 import { getMetricasCliente, MAX_DIAS_RANGO } from '@/lib/metrics/client-metrics';
+import { cargarEstadoGa4 } from '@/lib/ga4/estado';
 import { resolverPeriodo, PRESETS } from '@/lib/date-presets';
 import type { AnyAgentTool } from '../types';
 import { exigirCliente } from '../registry';
@@ -181,6 +182,9 @@ const getSummary: AnyAgentTool = {
 
     const t = res.totals;
     const ventasCerradas = totalVentasCerradas(res.rows);
+    // Sin propiedad de GA4, las sesiones son DESCONOCIDAS (null), no 0: un 0
+    // se leería como «nadie visitó el sitio».
+    const gaConfigurado = (await cargarEstadoGa4(input.client_id)).configurado;
 
     return {
       period: { from: res.rango.from, to: res.rango.to, etiqueta: periodo.etiqueta },
@@ -195,8 +199,8 @@ const getSummary: AnyAgentTool = {
         meta_leads: t.meta_leads ?? 0,
         meta_purchases: t.meta_purchases ?? 0,
         tiktok_spend: t.tiktok_spend ?? 0,
-        ga_sessions: t.ga_sessions ?? 0,
-        hotmart_pagos_iniciados: t.hotmart_pagos_iniciados ?? 0,
+        ga_sessions: gaConfigurado ? (t.ga_sessions ?? 0) : null,
+        hotmart_pagos_iniciados: gaConfigurado ? (t.hotmart_pagos_iniciados ?? 0) : null,
         ventas_principal: t.ventas_principal ?? 0,
         ventas_bump: t.ventas_bump ?? 0,
         ventas_upsell: t.ventas_upsell ?? 0,

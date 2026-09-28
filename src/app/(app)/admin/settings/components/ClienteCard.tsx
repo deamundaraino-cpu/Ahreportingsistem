@@ -12,9 +12,11 @@ import { deleteCliente, resumenBorradoCliente, setClienteArchivado } from '../_a
 
 interface ClienteCardProps {
   cliente: any;
+  /** Pasos de la puesta en marcha resueltos (hechos u omitidos) sobre el total. */
+  puesta?: { resueltos: number; total: number } | null;
 }
 
-export function ClienteCard({ cliente }: ClienteCardProps) {
+export function ClienteCard({ cliente, puesta }: ClienteCardProps) {
   const router = useRouter();
   const [pendiente, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -86,6 +88,17 @@ export function ClienteCard({ cliente }: ClienteCardProps) {
               <Conexion label="TikTok Ads" ok={cliente.conexiones?.tiktok} />
               <Conexion label="Google Analytics" ok={cliente.conexiones?.ga} />
             </div>
+            {puesta && (
+              <p
+                className={`mt-3 text-xs ${
+                  puesta.resueltos === puesta.total
+                    ? 'text-emerald-600 dark:text-emerald-400'
+                    : 'text-amber-600 dark:text-amber-400'
+                }`}
+              >
+                Puesta en marcha: {puesta.resueltos} de {puesta.total}
+              </p>
+            )}
             {error && <p className="text-[11px] text-red-500 mt-2">{error}</p>}
           </CardContent>
           <CardFooter className="pt-2 border-t border-border mt-2 flex justify-between items-center gap-2">

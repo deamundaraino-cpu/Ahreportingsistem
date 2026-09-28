@@ -187,6 +187,9 @@ export const MACRO_MAP: Record<string, string> = {
   meta_cost_per_thruplay: 'meta_spend / meta_video_thruplay',
   meta_cost_per_messaging_conversation: 'meta_spend / meta_messaging_conversations_started',
   meta_cost_per_result: 'meta_spend / meta_results',
+  // `meta_resultados_custom` es una macro POR CLIENTE (`macrosConversionesMeta`):
+  // sin conversiones marcadas no se define y el coste sale «–».
+  meta_cost_per_result_custom: 'meta_spend / meta_resultados_custom',
   // Incluye el DOWNSELL, como `total_roas` (auditoría del 2026-09-25): sin él,
   // un cliente con downsell veía un ROAS de Meta más bajo que el real.
   meta_roas: '(ventas_principal + ventas_bump + ventas_upsell + ventas_downsell) / meta_spend',
@@ -356,6 +359,10 @@ export const SEMANTIC_ALIASES: Record<
       { value: 'meta_purchases', label: 'Meta — Purchases' },
       { value: 'meta_leads', label: 'Meta — Leads' },
       { value: 'meta_complete_registration', label: 'Meta — Registros Completados' },
+      {
+        value: 'meta_resultados_custom',
+        label: 'Meta — Resultados personalizados (según cliente)',
+      },
     ],
   },
   $facturacion_principal: {

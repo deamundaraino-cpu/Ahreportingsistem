@@ -52,7 +52,39 @@ export type SyncJobTipo =
    * Hace falta un job aparte porque `sales/history` filtra por FECHA DE COMPRA:
    * un reembolso de hoy sobre una compra de hace un mes no aparece hoy.
    */
-  | 'hotmart_reconciliar';
+  | 'hotmart_reconciliar'
+  /**
+   * Desglose de GA4 por fuente/medio/campaña y eventos clave de un RANGO →
+   * `ga4_sesiones_diarias` / `ga4_eventos_clave_diarios` (ga4-desglose.ts).
+   * Requiere la migración 097.
+   */
+  | 'ga4';
+
+/**
+ * Todos los tipos, en tiempo de ejecución. `verify-sync-tipos.ts` comprueba
+ * que están en el último `sync_jobs_tipo_check` de `migrations/`: un tipo que
+ * el CHECK no conoce hace fallar el INSERT, y en `planDiario` eso abortaba el
+ * resto del plan (incidente de `ghl_leads`, migración 094).
+ */
+export const SYNC_JOB_TIPOS = [
+  'metricas',
+  'sheets_leads',
+  'sheets_conversiones',
+  'meta_leads',
+  'ghl_leads',
+  'ghl_oportunidades',
+  'tiktok_leads',
+  'cierre_mes',
+  'reconciliar',
+  'hotmart_ventas',
+  'hotmart_reconciliar',
+  'ga4',
+] as const satisfies readonly SyncJobTipo[];
+// Exhaustividad: si se añade un tipo a la unión y no a la lista, esto no compila.
+const _todosLosTipos: Record<SyncJobTipo, true> = Object.fromEntries(
+  SYNC_JOB_TIPOS.map((t) => [t, true])
+) as Record<(typeof SYNC_JOB_TIPOS)[number], true>;
+void _todosLosTipos;
 
 export type SyncJobEstado = 'pending' | 'running' | 'done' | 'error' | 'cancelled';
 
@@ -94,7 +126,7 @@ export type EnqueueInput = {
  * incluir el futuro. Los de Sheets quedan fuera a propósito — la hoja del
  * cliente sí puede tener filas con fecha futura y ahí sí hay algo que leer.
  */
-const TIPOS_SIN_FUTURO: SyncJobTipo[] = ['metricas', 'reconciliar'];
+const TIPOS_SIN_FUTURO: SyncJobTipo[] = ['metricas', 'reconciliar', 'ga4'];
 
 /**
  * Recorta el futuro del rango de un job.

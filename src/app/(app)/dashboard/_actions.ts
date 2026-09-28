@@ -1188,7 +1188,9 @@ export async function getDashboardData(clientId: string, startStr: string, endSt
       .order('orden', { ascending: true }),
     supabase
       .from('meta_conversiones_catalogo')
-      .select('conversion_key, label, field_id')
+      // Todas las columnas: con la migración 096 traen es_resultado / archivada /
+      // ultima_actividad, y sin ella la consulta no falla.
+      .select('*')
       .eq('cliente_id', clientId)
       .order('label', { ascending: true }),
     supabase
@@ -2369,7 +2371,9 @@ export async function getMirrorDashboardData(token: string, from?: string, to?: 
     ),
     supabase
       .from('meta_conversiones_catalogo')
-      .select('conversion_key, label, field_id')
+      // Todas las columnas: con la migración 096 traen es_resultado / archivada /
+      // ultima_actividad, y sin ella la consulta no falla.
+      .select('*')
       .eq('cliente_id', cliente.id)
       .order('label', { ascending: true }),
     supabase

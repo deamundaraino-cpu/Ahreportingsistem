@@ -3,7 +3,6 @@
 import { createClient, createAdminClient } from '@/utils/supabase/server';
 import { sanearClienteParaListado } from '@/lib/cliente-seguro';
 import { revalidatePath } from 'next/cache';
-import { BetaAnalyticsDataClient } from '@google-analytics/data';
 import type {
   ConversionesConfig,
   DriveSheet,
@@ -40,7 +39,18 @@ import {
   mapaArchivados,
   resumenBorrado,
 } from '@/lib/clientes/ciclo-de-vida';
+import { CLAVE_OMITIDOS } from '@/lib/clientes/puesta-en-marcha';
 import { interpretarEstadoCuenta } from '@/lib/meta/estado-cuenta';
+import { cuentasMetaDe } from '@/lib/meta/cuentas';
+import { sincronizarCatalogo } from '@/lib/meta/conversiones-personalizadas-sync';
+import {
+  DIAS_ANTIGUA,
+  TIPOS_CONVERSION,
+  conversionActiva,
+  type TipoConversion,
+} from '@/lib/meta/conversiones-personalizadas';
+import { buscarReferenciasConversion } from '@/lib/meta/conversiones-referencias';
+import { addDaysISO, hoyCliente } from '@/lib/colombia-date';
 
 /**
  * Marca `archivado` en cada cliente. El estado vive en su espejo de
@@ -142,23 +152,89 @@ export async function getCliente(id: string) {
     : cliente;
 }
 
-export async function createCliente(data: { nombre: string }) {
-  // Una sola casa: el cliente nace también en Report-UTM, ya enlazado. Antes
-  // aparecía allí solo cuando alguien visitaba su listado, y un cliente creado
-  // desde Report-UTM nacía huérfano, sin gasto con el que cruzar.
-  const r = await crearCliente(await createAdminClient(), data.nombre);
+/**
+ * Alta de un cliente desde Ajustes. Solo admin y superadmin: un cliente es de la
+ * empresa, y crearlo no lo ata a quien lo crea (migración 098). Hasta el
+ * 2026-09-28 esta acción no comprobaba nada: cualquier sesión, hasta un viewer,
+ * podía crear clientes con el cliente de servicio.
+ *
+ * Nace ya con moneda, zona y traffickers si se indican; lo demás (Meta, Sheets,
+ * Hotmart…) lo guía la «Puesta en marcha» de su ficha.
+ */
+export async function createCliente(data: {
+  nombre: string;
+  moneda?: string | null;
+  zonaHoraria?: string | null;
+  traffickers?: string[];
+}) {
+  const sesion = await sesionActual();
+  if (!sesion || !ROLES_ADMIN.has(sesion.rol)) {
+    return { error: 'Solo un administrador puede crear clientes.' };
+  }
+
+  const admin = await createAdminClient();
+  const pedidos = [...new Set(data.traffickers ?? [])];
+  if (pedidos.length > 0) {
+    const { data: validos, error } = await admin
+      .from('user_profiles')
+      .select('id')
+      .in('id', pedidos)
+      .eq('role', 'trafficker');
+    if (error) return { error: error.message };
+    if ((validos ?? []).length !== pedidos.length) {
+      return { error: 'Alguno de los usuarios elegidos no es trafficker.' };
+    }
+  }
+
+  // Una sola casa: el cliente nace también en Report-UTM, ya enlazado, o no nace.
+  const r = await crearCliente(admin, data.nombre, {
+    moneda: data.moneda,
+    zonaHoraria: data.zonaHoraria,
+    traffickers: pedidos,
+    asignadoPor: sesion.userId,
+  });
   if (!r.ok) {
     console.error('Error creating client:', r.error);
     return { error: r.error };
   }
-  if (r.aviso) console.error('[createCliente]', r.aviso);
 
   revalidatePath('/admin/settings');
-  revalidatePath('/admin/settings');
+  revalidatePath('/dashboard');
   return { success: true, data: r.cliente };
 }
 
-async function rolActual(): Promise<string | null> {
+/** ¿Puede quien mira crear, archivar y borrar clientes? Para mostrar u ocultar botones. */
+export async function puedeAdministrarClientes(): Promise<boolean> {
+  const sesion = await sesionActual();
+  return sesion !== null && ROLES_ADMIN.has(sesion.rol);
+}
+
+/** Traffickers para asignar en el alta: id y nombre legible. Solo para admins. */
+export async function getTraffickersParaAlta(): Promise<Array<{ id: string; etiqueta: string }>> {
+  const sesion = await sesionActual();
+  if (!sesion || !ROLES_ADMIN.has(sesion.rol)) return [];
+  const admin = await createAdminClient();
+  const { data: perfiles } = await admin
+    .from('user_profiles')
+    .select('id, full_name')
+    .eq('role', 'trafficker');
+  if (!perfiles?.length) return [];
+  const {
+    data: { users },
+  } = await admin.auth.admin.listUsers({ perPage: 1000 });
+  const correo = new Map((users ?? []).map((u) => [u.id, u.email ?? '']));
+  return (perfiles as Array<{ id: string; full_name?: string | null }>)
+    .map((p) => {
+      const email = correo.get(p.id) ?? '';
+      return {
+        id: p.id,
+        etiqueta: p.full_name ? `${p.full_name}${email ? ` · ${email}` : ''}` : email || p.id,
+      };
+    })
+    .sort((x, y) => x.etiqueta.localeCompare(y.etiqueta));
+}
+
+async function sesionActual(): Promise<{ userId: string; rol: string } | null> {
   const supabaseStore = await createClient();
   const {
     data: { user },
@@ -169,15 +245,20 @@ async function rolActual(): Promise<string | null> {
     .select('role')
     .eq('id', user.id)
     .single();
-  return profile?.role ?? 'viewer';
+  return { userId: user.id, rol: profile?.role ?? 'viewer' };
 }
 
-const ROLES_BORRADO = new Set(['superadmin', 'admin']);
+async function rolActual(): Promise<string | null> {
+  return (await sesionActual())?.rol ?? null;
+}
+
+/** Crear, archivar y borrar clientes. */
+const ROLES_ADMIN = new Set(['superadmin', 'admin']);
 
 /** Lo que se perdería al borrar, para el diálogo de confirmación. */
 export async function resumenBorradoCliente(id: string) {
   const rol = await rolActual();
-  if (!rol || !ROLES_BORRADO.has(rol))
+  if (!rol || !ROLES_ADMIN.has(rol))
     return { error: 'Solo un administrador puede borrar clientes.' };
   const resumen = await resumenBorrado(await createAdminClient(), id);
   if (!resumen) return { error: 'El cliente no existe.' };
@@ -187,7 +268,7 @@ export async function resumenBorradoCliente(id: string) {
 /** Archiva o reactiva el cliente en los dos lados a la vez. */
 export async function setClienteArchivado(id: string, archivado: boolean) {
   const rol = await rolActual();
-  if (!rol || !ROLES_BORRADO.has(rol)) return { error: 'Solo un administrador puede archivar.' };
+  if (!rol || !ROLES_ADMIN.has(rol)) return { error: 'Solo un administrador puede archivar.' };
 
   const admin = await createAdminClient();
   const { data: cliente } = await admin
@@ -259,7 +340,7 @@ export async function assignLayoutToCliente(clienteId: string, layoutId: string 
 export async function deleteCliente(id: string) {
   const rol = await rolActual();
   if (!rol) return { error: 'No autorizado' };
-  if (!ROLES_BORRADO.has(rol)) {
+  if (!ROLES_ADMIN.has(rol)) {
     return { error: 'Solo los administradores pueden borrar clientes' };
   }
 
@@ -348,87 +429,12 @@ export async function deleteLayout(id: string) {
 // ─── Connection Tests ───────────────────────────────────────────────────────
 
 export async function testGA4Connection(config: any) {
-  if (!config.ga_property_id) {
-    return { error: 'Falta el Property ID de Google Analytics 4.' };
-  }
-
-  // Misma precedencia que el worker: OAuth de agencia primero, service account
-  // como fallback legacy. Antes esta prueba solo sabía usar service account, así
-  // que fallaba en clientes configurados por OAuth (que son el modo recomendado).
-  const { hasAgencyGoogleConnection, getAgencyAccessToken } =
-    await import('@/lib/integrations/google-auth');
-  const useAgencyOAuth = await hasAgencyGoogleConnection();
-  const hasServiceAccount = !!(config.ga_client_email && config.ga_private_key);
-
-  if (!useAgencyOAuth && !hasServiceAccount) {
-    return {
-      error:
-        'No hay conexión de Google de la agencia ni credenciales de Service Account. Conecta la cuenta en Ajustes → Conexión Google.',
-    };
-  }
-
-  try {
-    const propertyName = config.ga_property_id.startsWith('properties/')
-      ? config.ga_property_id
-      : `properties/${config.ga_property_id}`;
-
-    let client: BetaAnalyticsDataClient;
-    if (useAgencyOAuth) {
-      client = new BetaAnalyticsDataClient({ authClient: (await getAgencyAccessToken()) as any });
-    } else {
-      let cleanKey = config.ga_private_key;
-      if (cleanKey.includes('\\n')) {
-        cleanKey = cleanKey.replace(/\\n/g, '\n');
-      }
-      client = new BetaAnalyticsDataClient({
-        credentials: {
-          client_email: config.ga_client_email,
-          private_key: cleanKey,
-          project_id: config.ga_project_id,
-        },
-      });
-    }
-
-    // Llamada mínima: pedir 1 día de sesiones
-    const [response] = await client.runReport({
-      property: propertyName,
-      dateRanges: [{ startDate: 'yesterday', endDate: 'yesterday' }],
-      metrics: [{ name: 'sessions' }],
-    });
-
-    const via = useAgencyOAuth ? 'OAuth de agencia' : 'Service Account';
-    const sessions = response.rows?.[0]?.metricValues?.[0]?.value || '0';
-    return {
-      success: true,
-      message: `Conexión exitosa vía ${via}. Sesiones ayer: ${sessions}`,
-    };
-  } catch (err: any) {
-    // Mapeo de errores amigables
-    const msg = err.message || '';
-    if (msg.includes('PERMISSION_DENIED') || msg.includes('403')) {
-      return useAgencyOAuth
-        ? {
-            error: `⛔ Sin permisos. La cuenta de Google de la agencia no tiene acceso a esta propiedad. Dale rol "Lector" en GA4 → Administrar → Gestión de acceso a la propiedad.`,
-          }
-        : {
-            error:
-              '⛔ Sin permisos. Verifica que el email de servicio tenga rol "Lector" en GA4 → Admin → Gestión de acceso a la propiedad.',
-          };
-    }
-    if (msg.includes('NOT_FOUND') || msg.includes('404')) {
-      return {
-        error:
-          '❌ Property ID no encontrado. Verifica el ID numérico en GA4 → Administrar → Detalles de la propiedad.',
-      };
-    }
-    if (msg.includes('UNAUTHENTICATED') || msg.includes('invalid_grant')) {
-      return {
-        error:
-          '🔑 Credenciales inválidas. Verifica que el JSON de la cuenta de servicio sea correcto y no esté expirado.',
-      };
-    }
-    return { error: `Error: ${msg}` };
-  }
+  // Misma precedencia de credenciales que el worker (`crearClienteGa4`). Si
+  // falla por permisos, `probarAccesoGa4` contrasta con las propiedades que ve
+  // la cuenta de la agencia: así se descubrió que Cris tenía un ID equivocado.
+  const { probarAccesoGa4 } = await import('@/lib/integrations/ga4-cliente');
+  const r = await probarAccesoGa4(config);
+  return r.ok ? { success: true, message: r.mensaje } : { error: r.mensaje };
 }
 
 export async function testMetaConnection(token: string, accountId: string) {
@@ -624,131 +630,183 @@ export async function testHotmartConnection(config: any, clienteId?: string) {
   }
 }
 
-export async function refreshMetaCustomConversions(clienteId: string, metaConfig: any) {
-  const hasMulti = metaConfig?.meta_accounts?.length > 0;
-  const hasLegacy = metaConfig?.meta_token && metaConfig?.meta_account_id;
-  if (!hasMulti && !hasLegacy) {
-    return { error: 'El cliente no tiene conectada la API de Meta Ads.' };
+/**
+ * Botón «Sincronizar» de la tarjeta de conversiones: descubre las conversiones
+ * personalizadas con actividad en los últimos 90 días (zona del cliente) y
+ * actualiza el catálogo. Lee las cuentas y tokens de la config GUARDADA: el
+ * navegador ya no los envía. El segundo argumento se ignora (compatibilidad).
+ */
+export async function refreshMetaCustomConversions(clienteId: string, _legacy?: unknown) {
+  void _legacy;
+  const rol = await rolActual();
+  if (!rol || rol === 'viewer') return { error: 'No autorizado.' };
+
+  const admin = await createAdminClient();
+  const { data: cliente } = await admin
+    .from('clientes')
+    .select('config_api')
+    .eq('id', clienteId)
+    .maybeSingle();
+  if (!cliente) return { error: 'El cliente no existe.' };
+  const config = (cliente.config_api ?? {}) as Record<string, any>;
+  const cuentas = cuentasMetaDe(config);
+  if (cuentas.length === 0) {
+    return {
+      error:
+        'El cliente no tiene cuentas de Meta guardadas. Guarda la configuración antes de sincronizar.',
+    };
   }
 
-  const accountsToQuery: { account_id: string; token: string }[] = hasMulti
-    ? metaConfig.meta_accounts
-        .filter((a: any) => a.account_id)
-        .map((a: any) => ({
-          account_id: a.account_id,
-          token: a.token || metaConfig.meta_token || '',
-        }))
-    : [{ account_id: metaConfig.meta_account_id, token: metaConfig.meta_token }];
-
+  const hasta = hoyCliente(config);
+  const desde = addDaysISO(hasta, -(DIAS_ANTIGUA - 1));
   try {
-    const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-    const until = new Date().toISOString().split('T')[0];
-
-    const allCustomKeys = new Set<string>();
-
-    await Promise.all(
-      accountsToQuery.map(async ({ account_id, token }) => {
-        const actId = account_id.startsWith('act_') ? account_id : `act_${account_id}`;
-        const url = new URL(`https://graph.facebook.com/v19.0/${actId}/insights`);
-        url.searchParams.append('access_token', token);
-        url.searchParams.append('time_range', JSON.stringify({ since, until }));
-        url.searchParams.append('fields', 'conversions');
-        url.searchParams.append('level', 'account');
-
-        const res = await fetch(url.toString());
-        const data = await res.json();
-
-        if (data.error) {
-          console.warn(`[refreshMeta] ${account_id} error: ${data.error.message}`);
-          return;
-        }
-
-        if (data.data?.[0]?.conversions) {
-          data.data[0].conversions.forEach((cv: any) => {
-            const type: string = cv.action_type || '';
-            if (type.startsWith('offsite_conversion.fb_pixel_custom.')) {
-              const key = type.replace('offsite_conversion.fb_pixel_custom.', '').toLowerCase();
-              allCustomKeys.add(key);
-            } else if (type.startsWith('offsite_conversion.custom.')) {
-              const key = type.replace('offsite_conversion.custom.', '').toLowerCase();
-              allCustomKeys.add(key);
-            }
-          });
-        }
-      })
-    );
-
-    if (allCustomKeys.size === 0) {
-      return {
-        success: true,
-        count: 0,
-        message:
-          'No se encontraron conversiones personalizadas con actividad en los últimos 30 días.',
-      };
+    const r = await sincronizarCatalogo(admin, clienteId, cuentas, desde, hasta);
+    if (r.error) return { error: `Error guardando en BD: ${r.error}` };
+    if (r.cuentasConError.length === cuentas.length) {
+      return { error: 'Meta no respondió para ninguna cuenta (revisa el token).' };
     }
-
-    // Fetch custom conversion names to get friendly names
-    const customConversionNames: Record<string, string> = {};
-    await Promise.all(
-      accountsToQuery.map(async ({ account_id, token }) => {
-        try {
-          const actId = account_id.startsWith('act_') ? account_id : `act_${account_id}`;
-          const ccUrl = new URL(`https://graph.facebook.com/v19.0/${actId}/customconversions`);
-          ccUrl.searchParams.append('access_token', token);
-          ccUrl.searchParams.append('fields', 'id,name');
-          const res = await fetch(ccUrl.toString());
-          const ccData = await res.json();
-          if (ccData.data) {
-            ccData.data.forEach((cc: any) => {
-              customConversionNames[cc.id] = cc.name;
-            });
-          }
-        } catch (e: any) {
-          console.warn(`[refreshMeta customconversions] error:`, e?.message);
-        }
-      })
-    );
-
-    // Prepare data for upsert
-    const catalogRows = Array.from(allCustomKeys).map((key) => {
-      const isNumeric = /^\d+$/.test(key);
-      let label = '';
-      if (isNumeric && customConversionNames[key]) {
-        label = customConversionNames[key];
-      } else {
-        const cleanKey = key
-          .replace(/_/g, ' ')
-          .replace(/\b\w/g, (c) => c.toUpperCase())
-          .trim();
-        label = `Lead ${cleanKey.replace('Lead', '').trim() || cleanKey}`;
-      }
-      return {
-        cliente_id: clienteId,
-        conversion_key: key,
-        label: label,
-        field_id: `meta_custom_${key}`,
-        last_seen: new Date().toISOString().split('T')[0],
-      };
-    });
-
-    const supabase = await createAdminClient();
-    const { error: catErr } = await supabase
-      .from('meta_conversiones_catalogo')
-      .upsert(catalogRows, { onConflict: 'cliente_id,conversion_key' });
-
-    if (catErr) {
-      return { error: `Error guardando en BD: ${catErr.message}` };
-    }
-
+    const avisoCuentas =
+      r.cuentasConError.length > 0 ? ` Sin respuesta de: ${r.cuentasConError.join(', ')}.` : '';
+    revalidatePath('/admin/settings');
     return {
       success: true,
-      count: allCustomKeys.size,
-      conversions: Array.from(allCustomKeys),
-      message: `Se actualizaron ${allCustomKeys.size} conversiones personalizadas exitosamente.`,
+      count: r.total,
+      conversions: r.claves,
+      message:
+        r.total === 0
+          ? `No hay conversiones personalizadas con actividad en los últimos ${DIAS_ANTIGUA} días.${avisoCuentas}`
+          : `${r.total} conversiones con actividad (${r.nuevas} nuevas).${avisoCuentas}`,
     };
   } catch (e: any) {
-    return { error: e.message };
+    return { error: e?.message ?? 'Error desconocido' };
   }
+}
+
+export interface ConversionMetaFila {
+  conversion_key: string;
+  label: string;
+  field_id: string;
+  last_seen: string | null;
+  origen: 'cc' | 'evento';
+  nombre_meta: string | null;
+  label_manual: string | null;
+  tipo: TipoConversion;
+  es_resultado: boolean;
+  archivada: boolean;
+  regla: unknown;
+  ultima_actividad: string | null;
+  activa: boolean;
+}
+
+/** Catálogo del cliente para la tarjeta de ajustes (incluye antiguas y archivadas). */
+export async function listarConversionesMeta(
+  clienteId: string
+): Promise<{ data?: ConversionMetaFila[]; migrada?: boolean; hoy?: string; error?: string }> {
+  const rol = await rolActual();
+  if (!rol) return { error: 'No autorizado.' };
+  const admin = await createAdminClient();
+  const [{ data: cliente }, completo] = await Promise.all([
+    admin.from('clientes').select('config_api').eq('id', clienteId).maybeSingle(),
+    admin
+      .from('meta_conversiones_catalogo')
+      .select(
+        'conversion_key, label, field_id, last_seen, origen, nombre_meta, label_manual, tipo, es_resultado, archivada, regla, ultima_actividad'
+      )
+      .eq('cliente_id', clienteId)
+      .order('label'),
+  ]);
+  const hoy = hoyCliente(cliente?.config_api ?? undefined);
+  let filas: any[] | null = completo.data;
+  let migrada = true;
+  if (completo.error) {
+    // Sin la migración 096: solo las columnas antiguas.
+    migrada = false;
+    const antiguo = await admin
+      .from('meta_conversiones_catalogo')
+      .select('conversion_key, label, field_id, last_seen')
+      .eq('cliente_id', clienteId)
+      .order('label');
+    if (antiguo.error) return { error: antiguo.error.message };
+    filas = antiguo.data;
+  }
+  const data = (filas ?? []).map((r: any): ConversionMetaFila => {
+    const ultima = r.ultima_actividad ?? r.last_seen ?? null;
+    return {
+      conversion_key: r.conversion_key,
+      label: r.label,
+      field_id: r.field_id,
+      last_seen: r.last_seen ?? null,
+      origen: r.origen ?? (/^\d+$/.test(r.conversion_key) ? 'cc' : 'evento'),
+      nombre_meta: r.nombre_meta ?? null,
+      label_manual: r.label_manual ?? null,
+      tipo: (TIPOS_CONVERSION as readonly string[]).includes(r.tipo) ? r.tipo : 'otro',
+      es_resultado: Boolean(r.es_resultado),
+      archivada: Boolean(r.archivada),
+      regla: r.regla ?? null,
+      ultima_actividad: ultima,
+      activa: !r.archivada && conversionActiva(ultima, hoy),
+    };
+  });
+  return { data, migrada, hoy };
+}
+
+/**
+ * Cambia lo que decide el usuario sobre una conversión. Lista blanca de campos:
+ * el resto lo mantiene el sync.
+ */
+export async function actualizarConversionMeta(
+  clienteId: string,
+  conversionKey: string,
+  patch: {
+    label_manual?: string | null;
+    tipo?: string;
+    es_resultado?: boolean;
+    archivada?: boolean;
+  }
+) {
+  const rol = await rolActual();
+  if (!rol || rol === 'viewer') return { error: 'No autorizado.' };
+  const cambios: Record<string, unknown> = {};
+  if ('label_manual' in patch) {
+    const v = (patch.label_manual ?? '').trim();
+    if (v.length > 80) return { error: 'El nombre admite como mucho 80 caracteres.' };
+    cambios.label_manual = v || null;
+  }
+  if (patch.tipo !== undefined) {
+    if (!(TIPOS_CONVERSION as readonly string[]).includes(patch.tipo)) {
+      return { error: 'Tipo no válido.' };
+    }
+    cambios.tipo = patch.tipo;
+  }
+  if (patch.es_resultado !== undefined) cambios.es_resultado = Boolean(patch.es_resultado);
+  if (patch.archivada !== undefined) cambios.archivada = Boolean(patch.archivada);
+  if (Object.keys(cambios).length === 0) return { success: true };
+
+  const admin = await createAdminClient();
+  const { error } = await admin
+    .from('meta_conversiones_catalogo')
+    .update(cambios)
+    .eq('cliente_id', clienteId)
+    .eq('conversion_key', conversionKey);
+  if (error) {
+    return {
+      error: /column .* does not exist|schema cache/i.test(error.message)
+        ? 'Falta aplicar la migración 096 para editar conversiones.'
+        : error.message,
+    };
+  }
+  revalidatePath('/admin/settings');
+  revalidatePath(`/dashboard/${clienteId}`);
+  revalidatePath(`/report/${clienteId}`);
+  return { success: true };
+}
+
+/** Dónde se usa una conversión (antes de archivarla). */
+export async function referenciasConversionMeta(clienteId: string, conversionKey: string) {
+  const rol = await rolActual();
+  if (!rol) return { error: 'No autorizado.' };
+  const admin = await createAdminClient();
+  return { data: await buscarReferenciasConversion(admin, clienteId, conversionKey) };
 }
 
 export async function testTikTokConnection(accessToken: string, advertiserId: string) {
@@ -1525,7 +1583,8 @@ export async function guardarConfigPestana(
   // Misma validación de la clave privada de GA4 que hacía `updateClienteConfig`:
   // el JSON de la service account trae los saltos de línea escapados.
   if (typeof limpio.ga_private_key === 'string' && limpio.ga_private_key) {
-    const key = limpio.ga_private_key.replace(/\n/g, '\n');
+    // `/\\n/g`: la secuencia escapada. Con `/\n/g` era un no-op (salto → salto).
+    const key = limpio.ga_private_key.replace(/\\n/g, '\n');
     if (!key.includes('BEGIN PRIVATE KEY') || !key.includes('END PRIVATE KEY')) {
       return {
         error: 'El formato de la Private Key de GA4 es inválido. Sube el archivo JSON original.',
@@ -1537,6 +1596,19 @@ export async function guardarConfigPestana(
   if (Object.keys(limpio).length === 0) return { success: true };
 
   const supabase = await createAdminClient();
+
+  // ¿Cambia la propiedad de GA4? Entonces hay que traer su histórico desglosado.
+  let propiedadGa4Nueva: string | null = null;
+  if (typeof limpio.ga_property_id === 'string' && limpio.ga_property_id.trim()) {
+    const { data: previo } = await supabase
+      .from('clientes')
+      .select('config_api')
+      .eq('id', clienteId)
+      .maybeSingle();
+    const antes = String((previo?.config_api as any)?.ga_property_id ?? '').trim();
+    if (antes !== limpio.ga_property_id.trim()) propiedadGa4Nueva = limpio.ga_property_id.trim();
+  }
+
   const { error } = await supabase.rpc('fusionar_config_api', {
     p_cliente_id: clienteId,
     p_parche: limpio,
@@ -1546,7 +1618,51 @@ export async function guardarConfigPestana(
     return { error: error.message };
   }
 
+  if (propiedadGa4Nueva) {
+    // No bloquea el guardado: si la cola rechaza el tipo (097 sin aplicar), el
+    // plan diario lo recogerá igualmente para los últimos días.
+    try {
+      const { planGa4Backfill } = await import('@/lib/sync/planner');
+      await planGa4Backfill(supabase, clienteId, { triggeredBy: 'ga4:propiedad-nueva' });
+    } catch (e) {
+      console.error('[guardarConfigPestana] backfill GA4', (e as Error)?.message ?? e);
+    }
+  }
+
   revalidatePath(`/admin/settings/${clienteId}`);
   revalidatePath('/admin/settings');
+  return { success: true };
+}
+
+/**
+ * Marca (o desmarca) un paso opcional de la «Puesta en marcha» como «No aplica».
+ * Escribe solo `config_api.puesta_en_marcha_omitidos`, con la fusión atómica:
+ * ninguna pestaña de la ficha manda esa clave, así que guardarlas no la pisa.
+ */
+export async function marcarPasoPuestaEnMarcha(clienteId: string, clave: string, omitir: boolean) {
+  const rol = await rolActual();
+  if (!rol || rol === 'viewer') return { error: 'No autorizado' };
+  if (!/^[a-z0-9_]{1,40}$/.test(clave)) return { error: 'Paso desconocido.' };
+
+  const admin = await createAdminClient();
+  const { data, error } = await admin
+    .from('clientes')
+    .select('config_api')
+    .eq('id', clienteId)
+    .maybeSingle();
+  if (error) return { error: error.message };
+  if (!data) return { error: 'El cliente no existe.' };
+
+  const actuales = (data.config_api as Record<string, unknown> | null)?.[CLAVE_OMITIDOS];
+  const lista = new Set(Array.isArray(actuales) ? actuales.map(String) : []);
+  if (omitir) lista.add(clave);
+  else lista.delete(clave);
+
+  const { error: e } = await admin.rpc('fusionar_config_api', {
+    p_cliente_id: clienteId,
+    p_parche: { [CLAVE_OMITIDOS]: [...lista] },
+  });
+  if (e) return { error: e.message };
+  revalidatePath(`/admin/settings/${clienteId}`);
   return { success: true };
 }

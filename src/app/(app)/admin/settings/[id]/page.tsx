@@ -4,6 +4,7 @@ import { getCliente, getLayouts, getGoogleConnectionStatus } from '../_actions';
 import { ClientConfigForm } from '../components/ClientConfigForm';
 import { createAdminClient } from '@/utils/supabase/server';
 import { asegurarEspejoUtm } from '@/lib/clientes/ciclo-de-vida';
+import { cargarPuestaEnMarcha } from '@/lib/clientes/puesta-en-marcha';
 import { cargarDatosUtm } from './_datos-utm';
 import { MetaLeadsCard } from '@/components/report-utm/MetaLeadsCard';
 import { MetaCAPICard } from '@/components/report-utm/MetaCAPICard';
@@ -46,9 +47,13 @@ export default async function ClientDetailPage(props: { params: Promise<{ id: st
   }
 
   // El cliente de Report-UTM es el espejo de este; si por algo no existe, se crea.
-  const espejo = await asegurarEspejoUtm(await createAdminClient(), cliente.id, cliente.nombre);
+  const admin = await createAdminClient();
+  const espejo = await asegurarEspejoUtm(admin, cliente.id, cliente.nombre);
   const rtmId = espejo.id;
-  const datos = rtmId ? await cargarDatosUtm(rtmId, cliente.id) : null;
+  const [datos, puestaEnMarcha] = await Promise.all([
+    rtmId ? cargarDatosUtm(rtmId, cliente.id) : null,
+    cargarPuestaEnMarcha(admin, cliente.id).catch(() => null),
+  ]);
 
   const slots =
     rtmId && datos
@@ -136,6 +141,7 @@ export default async function ClientDetailPage(props: { params: Promise<{ id: st
           googleConnected={google.connected}
           googleEmail={google.email}
           slots={slots}
+          puestaEnMarcha={puestaEnMarcha}
         />
       </Suspense>
     </div>

@@ -3,17 +3,11 @@ import 'server-only';
 /**
  * Construcción del contexto de ejecución de las herramientas.
  *
- * Aquí se reconcilian los dos modelos de autorización que convivían:
- *
- *   · El servidor MCP filtraba por `clientes.user_id`.
- *   · La aplicación usa `user_profiles.role` + `user_client_assignments`.
- *
- * Un trafficker con asignaciones explícitas veía N clientes en la interfaz y su
- * token podía devolverle otros distintos, o ninguno.
- *
- * La unión es ADITIVA a propósito: quien ya veía un cliente por `user_id` lo
- * sigue viendo. Hacerla restrictiva habría dejado sin datos, de golpe y sin
- * aviso, a los conectores que ya están en uso.
+ * Un solo modelo de autorización, el de la aplicación: `user_profiles.role` +
+ * `user_client_assignments`. El servidor MCP filtraba además por
+ * `clientes.user_id` («dueño» del cliente); desde la migración 098 los clientes
+ * son de la empresa y esa vía desaparece: un trafficker ve lo que tiene
+ * asignado, y admin/superadmin lo ven todo.
  */
 
 import { createAdminClient } from '@/utils/supabase/server';
@@ -36,8 +30,8 @@ function normalizarRol(valor: unknown): RolApp {
 /**
  * Clientes que puede ver un usuario.
  *
- * `'all'` solo para administradores. Para el resto, la unión de sus
- * asignaciones explícitas y los clientes que le pertenecen por `user_id`.
+ * `'all'` solo para administradores. Para el resto, sus asignaciones
+ * explícitas. Es el mismo criterio que `public.puede_ver_cliente` en RLS.
  */
 export async function resolverClientesVisibles(
   db: Awaited<ReturnType<typeof createAdminClient>>,
@@ -46,22 +40,28 @@ export async function resolverClientesVisibles(
 ): Promise<string[] | 'all'> {
   if (rol === 'superadmin' || rol === 'admin') return 'all';
 
-  const [asignados, propios] = await Promise.all([
-    db.from('user_client_assignments').select('client_id').eq('user_id', userId),
-    db.from('clientes').select('id').eq('user_id', userId),
-  ]);
+  const { data } = await db
+    .from('user_client_assignments')
+    .select('client_id')
+    .eq('user_id', userId);
 
   const ids = new Set<string>();
-  for (const a of asignados.data ?? []) {
+  for (const a of data ?? []) {
     const v = (a as { client_id?: string }).client_id;
     if (v) ids.add(v);
   }
-  for (const c of propios.data ?? []) {
-    const v = (c as { id?: string }).id;
-    if (v) ids.add(v);
-  }
-
   return [...ids];
+}
+
+/**
+ * Rol + visibilidad de un usuario en una llamada. Para las rutas que solo
+ * necesitan filtrar clientes (/api/v1/*, miniaturas de anuncios).
+ */
+export async function clientesVisiblesDe(
+  db: Awaited<ReturnType<typeof createAdminClient>>,
+  userId: string
+): Promise<string[] | 'all'> {
+  return resolverClientesVisibles(db, userId, await resolverRol(db, userId));
 }
 
 /** Lee el rol de la aplicación. Ante la duda, el rol menos capaz. */

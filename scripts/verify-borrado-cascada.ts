@@ -12,8 +12,13 @@
  *      por otra FK en cascada.
  *   2. Ninguna columna con «client» en el nombre queda sin FK, salvo el array
  *      `agent_contacts.client_scope`, que lo cubre el código.
- *   3. Borrar un usuario no borra clientes: `clientes.user_id` es RESTRICT
- *      (migración 081).
+ *   3. Los clientes son de la empresa (migración 098, sustituye a la regla
+ *      RESTRICT de la 081): borrar un usuario nunca se bloquea —ninguna FK
+ *      hacia `auth.users` es RESTRICT/NO ACTION— y su cascada no alcanza datos
+ *      de clientes salvo los personales de la lista blanca. `clientes.user_id`
+ *      no existe (099) o es SET NULL (098).
+ *   4. `public.clientes` no es legible sin sesión (la política `USING (true)`
+ *      exponía `config_api`) y ninguna política depende de `clientes.user_id`.
  *
  *   npx tsx --conditions=react-server scripts/verify-borrado-cascada.ts
  */
@@ -40,6 +45,12 @@ const SET_NULL_INOCUOS = new Set([
 
 /** Columnas de cliente que no admiten FK y cubre el código. */
 const SIN_FK_PERMITIDAS = new Set(['public.agent_contacts.client_scope']);
+
+/** FK desde `auth.users` a tablas de cliente que SÍ deben caer con el usuario: son suyas. */
+const CASCADA_USUARIO_PERSONAL = new Set([
+  'public.user_client_assignments.user_id',
+  'public.notifications.user_id',
+]);
 
 type Arista = { hija: string; madre: string; cols: string; del: string; conname: string };
 
@@ -106,14 +117,66 @@ async function main() {
     inesperadas.join(', ')
   );
 
-  console.log('\n3. Borrar un usuario no borra clientes');
-  const [duenio] = await sqlRemoto<{ del: string }>(`
-    select confdeltype::text as del from pg_constraint
-     where conrelid = 'public.clientes'::regclass and conname = 'clientes_user_id_fkey'`);
+  console.log('\n3. Borrar un usuario nunca se bloquea ni se lleva clientes');
+  const deUsuario = await sqlRemoto<{ col: string; del: string }>(`
+    select n.nspname||'.'||r.relname||'.'||a.attname as col, c.confdeltype::text as del
+      from pg_constraint c
+      join pg_class r on r.oid = c.conrelid
+      join pg_namespace n on n.oid = r.relnamespace
+      join pg_attribute a on a.attrelid = c.conrelid and a.attnum = any(c.conkey)
+     where c.contype = 'f' and c.confrelid = 'auth.users'::regclass
+       and n.nspname in ('public', 'report_utm')`);
+  check('hay FK hacia auth.users (la consulta ve el catálogo)', deUsuario.length > 5);
+
+  const bloquean = deUsuario.filter((f) => f.del === 'r' || f.del === 'a');
   check(
-    'clientes.user_id → auth.users es RESTRICT (migración 081)',
-    duenio?.del === 'r',
-    `confdeltype = ${duenio?.del ?? 'sin FK'}`
+    'ninguna FK hacia auth.users es RESTRICT / NO ACTION',
+    bloquean.length === 0,
+    bloquean.map((f) => `${f.col}: ${f.del}`).join('; ')
+  );
+
+  const deCliente = new Set(['public.clientes', 'report_utm.clientes', ...hijas]);
+  const arrastran = deUsuario.filter(
+    (f) =>
+      f.del === 'c' &&
+      deCliente.has(f.col.split('.').slice(0, 2).join('.')) &&
+      !CASCADA_USUARIO_PERSONAL.has(f.col)
+  );
+  check(
+    'la cascada de un usuario no alcanza datos de clientes (fuera de lo personal)',
+    arrastran.length === 0,
+    arrastran.map((f) => f.col).join(', ')
+  );
+
+  const duenio = deUsuario.find((f) => f.col === 'public.clientes.user_id');
+  const [columna] = await sqlRemoto<{ n: number }>(`
+    select count(*)::int as n from information_schema.columns
+     where table_schema = 'public' and table_name = 'clientes' and column_name = 'user_id'`);
+  check(
+    'clientes.user_id no existe (099) o es SET NULL (098)',
+    columna?.n === 0 || duenio?.del === 'n',
+    `columna: ${columna?.n ? 'sí' : 'no'}, confdeltype = ${duenio?.del ?? 'sin FK'}`
+  );
+
+  console.log('\n4. Acceso a public.clientes');
+  const abiertas = await sqlRemoto<{ policyname: string }>(`
+    select policyname from pg_policies
+     where schemaname = 'public' and tablename = 'clientes'
+       and (roles && array['anon','public']::name[]) and qual = 'true'`);
+  check(
+    'public.clientes sin política abierta a anon (config_api guarda tokens)',
+    abiertas.length === 0,
+    abiertas.map((p) => p.policyname).join(', ')
+  );
+
+  const porDuenio = await sqlRemoto<{ pol: string }>(`
+    select schemaname||'.'||tablename||' :: '||policyname as pol from pg_policies
+     where coalesce(qual, '')||coalesce(with_check, '') ~ 'user_id'
+       and coalesce(qual, '')||coalesce(with_check, '') ~ 'FROM clientes'`);
+  check(
+    'ninguna política depende de clientes.user_id',
+    porDuenio.length === 0,
+    porDuenio.map((p) => p.pol).join(', ')
   );
 
   console.log(fallos === 0 ? '\n✓ TODO OK\n' : `\n✗ ${fallos} fallo(s)\n`);
