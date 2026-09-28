@@ -4,9 +4,13 @@ import {
   saveGoogleIntegration,
   GOOGLE_OAUTH_SCOPES,
 } from '@/lib/integrations/google-auth';
+import { MOTIVO_STATE } from '@/lib/hotmart/oauth-state';
+import { COOKIE_STATE_GOOGLE, verificarStateGoogle } from '@/lib/integrations/google-oauth-state';
 
 // Callback OAuth de Google (conexión a nivel agencia).
-// Google redirige aquí con ?code={CODE}&state=agency
+// Google redirige aquí con ?code={CODE}&state={STATE FIRMADO}. El `state` se
+// valida contra la cookie que dejó `/api/auth/google` ANTES de canjear el código:
+// sin esa comprobación cualquiera podía sustituir la cuenta de la agencia.
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const appUrl = process.env.NEXT_PUBLIC_APP_URL!;
@@ -18,6 +22,24 @@ export async function GET(request: NextRequest) {
   if (error || !code) {
     const msg = error ?? 'code faltante';
     return NextResponse.redirect(`${settingsUrl}?google_error=${encodeURIComponent(msg)}`);
+  }
+
+  const nonce = request.cookies.get(COOKIE_STATE_GOOGLE)?.value ?? null;
+  let verificacion: ReturnType<typeof verificarStateGoogle>;
+  try {
+    verificacion = verificarStateGoogle(searchParams.get('state'), nonce);
+  } catch {
+    return NextResponse.redirect(
+      `${settingsUrl}?google_error=${encodeURIComponent('Servidor sin CRON_SECRET configurado')}`
+    );
+  }
+  if (!verificacion.ok) {
+    // Sin tocar la base de datos: ese es el punto.
+    const res = NextResponse.redirect(
+      `${settingsUrl}?google_error=${encodeURIComponent(MOTIVO_STATE[verificacion.motivo])}`
+    );
+    res.cookies.delete(COOKIE_STATE_GOOGLE);
+    return res;
   }
 
   try {
@@ -51,7 +73,9 @@ export async function GET(request: NextRequest) {
       scopes: GOOGLE_OAUTH_SCOPES,
     });
 
-    return NextResponse.redirect(`${settingsUrl}?google_connected=1`);
+    const ok = NextResponse.redirect(`${settingsUrl}?google_connected=1`);
+    ok.cookies.delete(COOKIE_STATE_GOOGLE);
+    return ok;
   } catch (e) {
     const msg = e instanceof Error ? e.message : 'Error con Google';
     return NextResponse.redirect(`${settingsUrl}?google_error=${encodeURIComponent(msg)}`);

@@ -171,8 +171,9 @@ check(
   // 86 + las 3 de la moneda de reporte (hm_neto_usd, hm_bruto_usd, hm_tasa_cambio)
   // + las 6 de compras de la auditoría de Hotmart (hm_compras, hm_bumps,
   // hm_cpa_compra, hm_ticket_compra, hm_tasa_bump, hm_conversion)
-  // + las 2 de resultados personalizados (resultados_custom, coste_por_resultado_custom).
-  legacyMetrics.length === 97,
+  // + las 2 de resultados personalizados (resultados_custom, coste_por_resultado_custom)
+  // + las 11 de GA4 por campaña (fuente `ga4`, migración 097).
+  legacyMetrics.length === 108,
   String(legacyMetrics.length)
 );
 
@@ -414,8 +415,8 @@ check(
 
 const conGlosario = Object.keys(METRIC_GLOSSARY).length;
 check(
-  `el registro amplía el glosario de ${conGlosario} a las 97 métricas`,
-  REG.measures().length === 97 && sinHelp.length === 0
+  `el registro amplía el glosario de ${conGlosario} a las 108 métricas`,
+  REG.measures().length === 108 && sinHelp.length === 0
 );
 
 // ════════════════════════════════════════════════════════════
@@ -603,7 +604,7 @@ check(
 const porPublic = STATIC_SOURCES.filter((s) => s.clientKey.scope === 'public').map((s) => s.id);
 check(
   'las fuentes que dependen de public_cliente_id están declaradas',
-  JSON.stringify(porPublic.sort()) === '["ads","cuenta","hotmart","offline","sheet","subs"]',
+  JSON.stringify(porPublic.sort()) === '["ads","cuenta","ga4","hotmart","offline","sheet","subs"]',
   porPublic.join(', ')
 );
 const porReportUtm = STATIC_SOURCES.filter((s) => s.clientKey.scope === 'report_utm').map(

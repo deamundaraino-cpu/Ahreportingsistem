@@ -180,7 +180,7 @@ const getReport: AnyAgentTool = {
 
 // ── list_report_fields ───────────────────────────────────────────────────
 
-const FUENTES = ['todas', 'fijas', 'formulario', 'sheet', 'offline', 'meta'] as const;
+const FUENTES = ['todas', 'fijas', 'formulario', 'sheet', 'offline', 'meta', 'ga4'] as const;
 
 function coincide(buscar: string | undefined, ...textos: (string | null | undefined)[]): boolean {
   if (!buscar) return true;
@@ -195,7 +195,8 @@ const listReportFields: AnyAgentTool = {
     'Qué métricas y dimensiones puede usar un widget para un cliente, con el id EXACTO que hay ' +
     'que poner en `config.metric` / `config.dimension`: las fijas (gasto, leads, CPL, Hotmart, ' +
     'GA4…) y las propias del cliente (preguntas y respuestas de formulario, segmentos, campos de ' +
-    'Sheet, columnas offline, conversiones de Meta), con su alias para fórmulas. Úsala ANTES de ' +
+    'Sheet, columnas offline, conversiones de Meta, eventos clave de GA4), con su alias para ' +
+    'fórmulas. Úsala ANTES de ' +
     'crear o editar widgets: un id inventado se rechaza. Con `dimension` marca las métricas que no ' +
     'se pueden desglosar por ella.',
   input: z.object({
@@ -304,6 +305,11 @@ const listReportFields: AnyAgentTool = {
             (m.activa || input.incluir_antiguas || input.buscar) &&
             coincide(input.buscar, m.clave, m.nombre)
         );
+      }
+      if (fuente === 'todas' || fuente === 'ga4') {
+        // Eventos clave de GA4: `ga4ev:<evento>`, alias `ga4ev__<evento>`. Se
+        // reparten por fecha, campaña y UTM, como `ga4_sesiones`.
+        out.eventos_ga4 = d.eventos_ga4.filter((e) => coincide(input.buscar, e.clave, e.nombre));
       }
     }
 

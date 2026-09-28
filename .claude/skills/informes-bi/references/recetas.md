@@ -25,6 +25,12 @@
 2. Barras de reparto: `{"type":"bar","config":{"metric":"leads_count","dimension":"leadfield:rango","limit":30}}`.
 3. Tabla por campaña: `{"type":"table","config":{"metric":"spend,leads_count,leadans:rango:2m_3m,CPL 2M-3M","dimension":"utm_campaign"}}`.
 
+**GA4 por campaña** (sesiones, coste por sesión y sesión → lead):
+```json
+{"type":"table","title":"Tráfico por campaña","w":4,"h":2,"config":{"metric":"spend,ga4_sesiones,ga4_coste_sesion,leads_count,ga4_tasa_sesion_lead","dimension":"utm_campaign","limit":20,"show_totals":true}}
+```
+Para que cruce exacto con el gasto, los anuncios de Meta deben llevar `utm_id={{campaign.id}}` en los parámetros de URL. Eventos clave frente a leads: `{"metric":"leads_count,ga4ev:generate_lead","dimension":"utm_campaign"}`.
+
 **Embudo**: `{"type":"funnel","config":{"metrics":["impressions","clicks","leads_count","sales_count"]}}`. Valen como etapa los conteos y los segmentos o respuestas de lead.
 
 **Agrupar en una sección**: crea la sección con `add_report_widget` (`{"type":"section","title":"Captación","config":{"columns":4}}`) y añade dentro con `seccion_id`, o pásala entera con `children`.

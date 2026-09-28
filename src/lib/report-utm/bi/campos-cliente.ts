@@ -32,6 +32,8 @@ import {
   makeOfflineFieldMetric,
   offlineFieldAlias,
   makeMetaCcMetric,
+  makeGa4EvMetric,
+  ga4EvAlias,
   type OfflineFieldMeta,
   type OfflineFieldType,
   type SheetCampoAgg,
@@ -176,6 +178,16 @@ export type CamposDinamicos = {
     /** Con actividad en los últimos 90 días y sin archivar. */
     activa: boolean;
   }>;
+  /** Eventos clave de GA4 vistos en la propiedad (`ga4_estado.eventos`). */
+  eventos_ga4: Array<{
+    clave: string;
+    nombre: string;
+    /** `ga4ev:<evento>` */
+    token: string;
+    /** Alias para campos calculados (`ga4ev__<evento>`). */
+    alias_formula: string;
+    ultima_actividad: string | null;
+  }>;
   /** Fuentes que no se pudieron leer: «no se pudo mirar» no es «no hay». */
   avisos: string[];
 };
@@ -192,6 +204,7 @@ export function aliasesDeCatalogo(c: CamposDinamicos): Set<string> {
   for (const v of c.sheet.vistas) out.add(v.alias_formula);
   for (const o of c.offline) out.add(o.alias_formula);
   for (const m of c.conversiones_meta) out.add(m.alias_formula);
+  for (const e of c.eventos_ga4) out.add(e.alias_formula);
   return out;
 }
 
@@ -211,6 +224,7 @@ export function tokensDeCatalogo(c: CamposDinamicos): Set<string> {
   for (const v of c.sheet.vistas) out.add(v.token);
   for (const o of c.offline) out.add(o.token);
   for (const m of c.conversiones_meta) out.add(m.token);
+  for (const e of c.eventos_ga4) out.add(e.token);
   return out;
 }
 
@@ -242,6 +256,7 @@ export async function camposDinamicosCliente(
     sheet: { campos: [], vistas: [] },
     offline: [],
     conversiones_meta: [],
+    eventos_ga4: [],
     avisos,
   };
 
@@ -354,6 +369,30 @@ export async function camposDinamicosCliente(
     }
   } catch (e) {
     avisos.push(`No se pudieron leer las conversiones de Meta: ${(e as Error).message}`);
+  }
+
+  // Eventos clave de GA4 (migración 097). Sin fila de estado: el cliente no
+  // tiene GA4 sincronizado y simplemente no hay eventos que ofrecer.
+  try {
+    const { data, error } = await db
+      .from('ga4_estado')
+      .select('eventos')
+      .eq('cliente_id', publicId)
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    const eventos = (data?.eventos ?? {}) as Record<string, string>;
+    out.eventos_ga4 = Object.entries(eventos)
+      .filter(([k]) => /^[a-z][a-z0-9_]*$/i.test(k))
+      .sort((a, b) => String(b[1]).localeCompare(String(a[1])))
+      .map(([clave, ultima]) => ({
+        clave,
+        nombre: `Evento clave: ${clave} (GA4)`,
+        token: makeGa4EvMetric(clave),
+        alias_formula: ga4EvAlias(clave),
+        ultima_actividad: ultima ?? null,
+      }));
+  } catch (e) {
+    avisos.push(`No se pudieron leer los eventos clave de GA4: ${(e as Error).message}`);
   }
 
   return out;

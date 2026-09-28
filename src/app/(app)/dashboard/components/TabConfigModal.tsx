@@ -838,7 +838,9 @@ export function TabConfigModal({
                             Separá por comas. Si empieza con{' '}
                             <code className="bg-card px-1 rounded">/</code> filtra por URL, si no
                             por título de página (pageTitle en GA4). Para A/B tests podés poner
-                            varias: las sesiones se suman.
+                            varias: se suman. Ojo: se cuentan VISTAS de página (como el informe
+                            «Páginas» de GA4), no sesiones, y en esta pestaña sustituyen a las
+                            sesiones del sitio en «Visitas».
                           </p>
                         </div>
 

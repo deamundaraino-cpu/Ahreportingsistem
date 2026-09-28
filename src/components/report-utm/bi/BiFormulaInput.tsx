@@ -19,7 +19,9 @@ import {
   leadSegAlias,
   leadAnsAlias,
   metaCcAlias,
+  ga4EvAlias,
 } from '@/lib/report-utm/bi-metadata';
+import { GA4_METRICAS } from '@/lib/ga4/metricas';
 import type {
   BiMetric,
   FormFieldMeta,
@@ -29,6 +31,7 @@ import type {
   LeadSegmentoMeta,
   LeadFieldMeta,
   MetaCustomConvMeta,
+  Ga4EventoMeta,
 } from '@/lib/report-utm/bi-metadata';
 import { refsOf } from '@/lib/report-utm/bi/expr';
 import { respuestasDeCampo } from './fuentesDelCliente';
@@ -51,6 +54,8 @@ interface Props {
   leadFields?: LeadFieldMeta[];
   /** Conversiones personalizadas de Meta, con sus alias mcc__. */
   customConversions?: MetaCustomConvMeta[];
+  /** Eventos clave de GA4, con sus alias ga4ev__. */
+  ga4Events?: Ga4EventoMeta[];
   placeholder?: string;
 }
 
@@ -73,7 +78,8 @@ function buildGroups(
   sheetViews: SheetViewMeta[],
   leadSegments: LeadSegmentoMeta[],
   leadFields: LeadFieldMeta[] = [],
-  customConversions: MetaCustomConvMeta[] = []
+  customConversions: MetaCustomConvMeta[] = [],
+  ga4Events: Ga4EventoMeta[] = []
 ): { title: string; items: MetricOption[] }[] {
   const of = (keys: string[]): MetricOption[] =>
     keys
@@ -134,7 +140,13 @@ function buildGroups(
     'hm_bruto_usd',
     'hm_tasa_cambio',
   ]);
-  const ga = of(['ga_sessions', 'ga_bounce_rate', 'ga_avg_session_duration']);
+  const ga = of([
+    'ga_sessions',
+    'ga_bounce_rate',
+    'ga_avg_session_duration',
+    // GA4 por campaña (migración 097): se reparten por campaña y UTM.
+    ...GA4_METRICAS,
+  ]);
   const offline = of(['offline_leads', 'offline_ventas', 'offline_revenue', 'offline_total']);
   const subs = of(['subs_active', 'subs_delayed', 'subs_canceled', 'subs_total', 'subs_mrr']);
 
@@ -195,6 +207,14 @@ function buildGroups(
     },
   ]);
 
+  // Eventos clave de GA4 (alias ga4ev__<evento>): «gasto ÷ esto» es el coste
+  // por ese evento, repartible por campaña.
+  const eventosGa4: MetricOption[] = ga4Events.map((ev) => ({
+    key: ev.alias ?? ga4EvAlias(ev.key),
+    label: `Evento clave: ${ev.label} (GA4)`,
+    conteo: true,
+  }));
+
   // Conversiones personalizadas de Meta (alias mcc__<clave>): «gasto ÷ esto» es
   // el coste por conversión. Las antiguas (90 días sin actividad) no se ofrecen,
   // pero una fórmula que ya las use sigue funcionando.
@@ -212,6 +232,7 @@ function buildGroups(
     { title: 'Conversiones personalizadas de Meta', items: conversionesMeta },
     { title: 'Hotmart', items: hotmart },
     { title: 'Google Analytics', items: ga },
+    { title: 'Eventos clave de GA4', items: eventosGa4 },
     { title: 'Offline', items: offline },
     { title: 'Respuestas de formulario', items: respuestasLead },
     { title: 'Segmentos de lead', items: segmentosLead },
@@ -233,6 +254,7 @@ export function BiFormulaInput({
   leadSegments = [],
   leadFields = [],
   customConversions = [],
+  ga4Events = [],
   placeholder,
 }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -246,7 +268,8 @@ export function BiFormulaInput({
     sheetViews,
     leadSegments,
     leadFields,
-    customConversions
+    customConversions,
+    ga4Events
   );
   // Lectura en lenguaje natural de la fórmula: «Inversión ÷ Rango de ingresos:
   // $2M a $3M». Es la forma de comprobar que se eligió lo que se quería sin

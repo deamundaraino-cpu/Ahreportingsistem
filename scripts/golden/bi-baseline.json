@@ -1,5 +1,5 @@
 {
-  "generado": "2026-09-25T13:31:34.328Z",
+  "generado": "2026-09-28T20:40:22.306Z",
   "rango": {
     "desde": "2026-08-01",
     "hasta": "2026-08-31"
@@ -1157,7 +1157,7 @@
         "filas": [
           {
             "__dim": null,
-            "ga_sessions": 0,
+            "ga_sessions": null,
             "ga_bounce_rate": null,
             "ga_avg_session_duration": null
           }
@@ -2161,7 +2161,7 @@
         "filas": [
           {
             "__dim": null,
-            "ga_sessions": 0,
+            "ga_sessions": null,
             "ga_bounce_rate": null,
             "ga_avg_session_duration": null
           }

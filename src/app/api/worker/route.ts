@@ -3,7 +3,12 @@ import { NextResponse } from 'next/server';
 import { requireCronAuth } from '@/lib/cron-auth';
 import { format, parseISO, isBefore, addDays, differenceInDays } from 'date-fns';
 import { createClient as createSSRClient } from '@/utils/supabase/server';
-import { getAgencyAccessToken, hasAgencyGoogleConnection } from '@/lib/integrations/google-auth';
+import { hasAgencyGoogleConnection } from '@/lib/integrations/google-auth';
+import {
+  clasificarErrorGa4,
+  crearClienteGa4,
+  mensajeErrorGa4,
+} from '@/lib/integrations/ga4-cliente';
 import { notifyUsers } from '@/lib/notifications/notify';
 import { colombiaToday, colombiaYesterday } from '@/lib/date-utils';
 import {
@@ -251,6 +256,12 @@ async function sincronizar(request: Request) {
   } else {
     adminSupabase = await createSSRClient();
   }
+
+  // La conexión de Google de la agencia se consulta UNA vez por ejecución: antes
+  // se leía `app_integrations` en cada fecha de cada cliente.
+  let conexionGooglePromesa: Promise<boolean> | null = null;
+  const conexionGoogleAgencia = () =>
+    (conexionGooglePromesa ??= hasAgencyGoogleConnection().catch(() => false));
 
   // Presupuesto de tiempo para reintentos: no reintentar pasado este momento
   // (maxDuration=60s en Hobby; dejamos margen para upserts y respuesta final).
@@ -1927,6 +1938,12 @@ async function sincronizar(request: Request) {
         apiSuccess: boolean;
         /** false = el cliente no tiene GA4 conectado (ceros son correctos). */
         configured: boolean;
+        /**
+         * Vistas de las páginas de pago, contando cada URL UNA vez. Sumar
+         * `payment_page_views` por pestaña duplicaba una página de pago
+         * compartida por dos embudos.
+         */
+        pagos_iniciados_total: number;
       };
       async function fetchGA4(targetDate: string): Promise<GARecord> {
         const record: GARecord = {
@@ -1934,34 +1951,23 @@ async function sincronizar(request: Request) {
           bounceRate: 0,
           avgSessionDuration: 0,
           funnel_pages: {},
+          pagos_iniciados_total: 0,
           apiSuccess: true,
           configured: false,
         };
-        // Necesita una propiedad. La autenticación puede venir de:
-        //  1) OAuth de agencia (preferido) — solo hace falta ga_property_id
-        //  2) Service account legacy por cliente (ga_client_email + ga_private_key)
-        const useAgencyOAuth = await hasAgencyGoogleConnection();
+        // Necesita una propiedad y una credencial (OAuth de agencia o service
+        // account legacy): la precedencia vive en `crearClienteGa4`.
         const hasServiceAccount = !!(config.ga_client_email && config.ga_private_key);
-        if (!config.ga_property_id || (!useAgencyOAuth && !hasServiceAccount)) {
+        if (!config.ga_property_id || (!(await conexionGoogleAgencia()) && !hasServiceAccount)) {
           platformLogs.ga4 = 'Sin configurar';
           return record;
         }
         record.configured = true;
 
         try {
-          const { BetaAnalyticsDataClient } = await import('@google-analytics/data');
-          const client = useAgencyOAuth
-            ? new BetaAnalyticsDataClient({ authClient: (await getAgencyAccessToken()) as any })
-            : new BetaAnalyticsDataClient({
-                credentials: {
-                  client_email: config.ga_client_email,
-                  private_key: config.ga_private_key.replace(/\\n/g, '\n'),
-                },
-              });
-
-          const propertyName = config.ga_property_id.startsWith('properties/')
-            ? config.ga_property_id
-            : `properties/${config.ga_property_id}`;
+          const ga = await crearClienteGa4(config, await conexionGoogleAgencia());
+          if (!ga) throw new Error('GA4 sin credenciales');
+          const { client, propertyName } = ga;
 
           const [response] = await ga4Run(() =>
             client.runReport({
@@ -2078,11 +2084,24 @@ async function sincronizar(request: Request) {
                 record.funnel_pages[q.tab_id].upsell_page_views = map.get(q.url) || 0;
               }
             }
+            const pagosPorUrl = new Map<string, number>();
+            for (const q of queries) {
+              if (q.role !== 'payment') continue;
+              const map = q.url.startsWith('/') ? viewsByPath : viewsByTitle;
+              pagosPorUrl.set(q.url.toLowerCase(), map.get(q.url) || 0);
+            }
+            record.pagos_iniciados_total = [...pagosPorUrl.values()].reduce((a, b) => a + b, 0);
           }
 
           platformLogs.ga4 = 'Conectado OK';
         } catch (e: any) {
-          log(`[GA4] Error: ${e.message}`);
+          log(
+            `[GA4] Error: ${mensajeErrorGa4(clasificarErrorGa4(e), {
+              via: null,
+              propertyId: config.ga_property_id,
+              detalle: e?.message,
+            })}`
+          );
           // Antes el record en ceros se upserteaba igual y borraba las sesiones
           // ya guardadas para esa fecha.
           record.apiSuccess = false;
@@ -2109,6 +2128,7 @@ async function sincronizar(request: Request) {
         bounceRate: 0,
         avgSessionDuration: 0,
         funnel_pages: {},
+        pagos_iniciados_total: 0,
         apiSuccess: false,
         configured: true,
       });
@@ -2503,7 +2523,7 @@ async function sincronizar(request: Request) {
           }
 
           // ─── Merge funnel breakdown: Hotmart sales + GA4 page views per tab ───
-          // Total pagos_iniciados (suma de payment_page_views de todos los funnels)
+          // Total pagos_iniciados: vistas de las páginas de pago, cada URL una vez.
           let totalPagosIniciados = 0;
           const byTabFinal: Record<string, any> = {};
           for (const tabId of Object.keys(hotmartRecord.by_tab)) {
@@ -2516,9 +2536,9 @@ async function sincronizar(request: Request) {
             fb.upsell.page_visits = gp.upsell_page_views;
             fb.pagos_iniciados = gp.payment_page_views;
             fb.landing_sessions = gp.landing_sessions;
-            totalPagosIniciados += gp.payment_page_views;
             byTabFinal[tabId] = fb;
           }
+          totalPagosIniciados = gaRecord.pagos_iniciados_total;
           const funnelDataPayload = {
             by_tab: byTabFinal,
             extras: hotmartRecord.extras,
@@ -2584,7 +2604,8 @@ async function sincronizar(request: Request) {
           if (!metaFailed) sourceSyncedAt.meta = nowIso;
           if (!tiktokFailed) sourceSyncedAt.tiktok = nowIso;
           if (!hotmartFailed) sourceSyncedAt.hotmart = nowIso;
-          if (!ga4Failed) sourceSyncedAt.ga4 = nowIso;
+          // Solo con GA configurado: marcarlo en clientes sin GA fingía frescura.
+          if (!ga4Failed && gaRecord.configured) sourceSyncedAt.ga4 = nowIso;
 
           upsertPayloads.push({
             cliente_id: cliente.id,

@@ -1152,7 +1152,10 @@ function DynamicDashboard({
       );
       return {
         ...row,
-        // Si hay landing pages configuradas, reemplazar ga_sessions con las sesiones del funnel
+        // Si hay landing pages configuradas, `ga_sessions` pasa a ser las VISTAS
+        // de esas páginas (screenPageViews, no sesiones): es lo que mide el
+        // embudo de la pestaña. El BI y el agente siguen con las sesiones del
+        // sitio, así que las dos cifras no tienen por qué coincidir.
         ...(landingSessions > 0 ? { ga_sessions: landingSessions } : {}),
         funnel_principal_count: fb?.principal?.count ?? 0,
         funnel_principal_neto: fb?.principal?.net ?? 0,

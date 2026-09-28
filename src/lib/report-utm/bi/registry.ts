@@ -22,6 +22,7 @@ import { SALES_SOURCE } from './sources/sales';
 import { HOTMART_SOURCE } from './sources/hotmart';
 import { ADS_SOURCE } from './sources/ads';
 import { CUENTA_SOURCE } from './sources/cuenta';
+import { GA4_SOURCE } from './sources/ga4';
 import { OFFLINE_SOURCE } from './sources/offline';
 import { SHEET_SOURCE } from './sources/sheet';
 import { SUBS_SOURCE } from './sources/subs';
@@ -43,6 +44,8 @@ export const STATIC_SOURCES: readonly DataSource[] = [
   HOTMART_SOURCE,
   ADS_SOURCE,
   CUENTA_SOURCE,
+  // GA4 por campaña: junto a `cuenta`, que tiene el GA4 del sitio entero.
+  GA4_SOURCE,
   OFFLINE_SOURCE,
   SHEET_SOURCE,
   SUBS_SOURCE,
@@ -282,7 +285,7 @@ export function conflictsAmong(reg: ResolvedRegistry, ids: string[]): Array<[str
 // ════════════════════════════════════════════════════════════════════════
 
 /** El enum que usaba `METRIC_META.breakdown`. Se mantiene para la fachada. */
-export type LegacyBreakdown = 'any' | 'campaign' | 'total' | 'global';
+export type LegacyBreakdown = 'any' | 'campaign' | 'utm' | 'campaign_top' | 'total' | 'global';
 
 /**
  * Traduce los ejes de una fuente al enum histórico.
@@ -295,16 +298,48 @@ export function legacyBreakdownOfSource(src: DataSource): LegacyBreakdown {
   if (!src.joinAxes.length) return 'global';
   // Grano de fila: se desglosa por cualquier columna suya.
   if (src.joinAxes.includes('lead_column') || src.joinAxes.includes('sales_column')) return 'any';
+  // Campaña + UTM sin anuncio/conjunto (GA4 por campaña): cruza por fuente y
+  // medio, pero NO por anuncio ni conjunto, que es justo lo contrario del gasto.
+  if (
+    src.joinAxes.includes('utm') &&
+    src.joinAxes.includes('campaign') &&
+    !src.joinAxes.includes('ad')
+  )
+    return 'utm';
   if (src.joinAxes.includes('campaign')) return 'campaign';
   return 'total';
 }
 
-const BREAKDOWN_RANK: Record<LegacyBreakdown, number> = {
-  any: 0,
-  campaign: 1,
-  total: 2,
-  global: 3,
+/**
+ * Qué dimensiones admite cada desglose, por clases: `utm` (source/medium/utm
+ * crudo), `campana` (la campaña resuelta), `entidad` (anuncio y conjunto) y
+ * `lead` (columnas de lead). La fecha la admiten todos salvo `global`.
+ *
+ * `utm` y `campaign` no son comparables —uno cruza por fuente y el otro por
+ * anuncio—, así que combinar desgloses es INTERSECAR estas clases, no tomar el
+ * «peor» de una escala lineal.
+ */
+const CLASES_DE: Record<LegacyBreakdown, ReadonlySet<string>> = {
+  any: new Set(['fecha', 'utm', 'campana', 'entidad', 'lead']),
+  campaign: new Set(['fecha', 'campana', 'entidad']),
+  utm: new Set(['fecha', 'utm', 'campana']),
+  campaign_top: new Set(['fecha', 'campana']),
+  total: new Set(['fecha']),
+  global: new Set(),
 };
+
+/** El desglose cuyo conjunto de clases es exactamente la intersección. */
+function combinarDesgloses(a: LegacyBreakdown, b: LegacyBreakdown): LegacyBreakdown {
+  const inter = [...CLASES_DE[a]].filter((c) => CLASES_DE[b].has(c));
+  const orden: LegacyBreakdown[] = ['any', 'campaign', 'utm', 'campaign_top', 'total', 'global'];
+  return (
+    orden.find(
+      (k) => CLASES_DE[k].size === inter.length && inter.every((c) => CLASES_DE[k].has(c))
+    ) ??
+    // Sin desglose exacto, el más restrictivo que siga admitiendo la fecha.
+    (inter.includes('fecha') ? 'total' : 'global')
+  );
+}
 
 /**
  * Desglose de un campo en el enum histórico. Para una derivada, el MÁS
@@ -319,8 +354,7 @@ export function legacyBreakdownOfField(reg: ResolvedRegistry, id: string): Legac
   for (const leaf of leaves) {
     const s = reg.sourceOf(leaf);
     if (!s) continue;
-    const b = legacyBreakdownOfSource(s);
-    if (BREAKDOWN_RANK[b] > BREAKDOWN_RANK[worst]) worst = b;
+    worst = combinarDesgloses(worst, legacyBreakdownOfSource(s));
   }
   return worst;
 }

@@ -3,7 +3,6 @@
 import { createClient, createAdminClient } from '@/utils/supabase/server';
 import { sanearClienteParaListado } from '@/lib/cliente-seguro';
 import { revalidatePath } from 'next/cache';
-import { BetaAnalyticsDataClient } from '@google-analytics/data';
 import type {
   ConversionesConfig,
   DriveSheet,
@@ -358,87 +357,12 @@ export async function deleteLayout(id: string) {
 // ─── Connection Tests ───────────────────────────────────────────────────────
 
 export async function testGA4Connection(config: any) {
-  if (!config.ga_property_id) {
-    return { error: 'Falta el Property ID de Google Analytics 4.' };
-  }
-
-  // Misma precedencia que el worker: OAuth de agencia primero, service account
-  // como fallback legacy. Antes esta prueba solo sabía usar service account, así
-  // que fallaba en clientes configurados por OAuth (que son el modo recomendado).
-  const { hasAgencyGoogleConnection, getAgencyAccessToken } =
-    await import('@/lib/integrations/google-auth');
-  const useAgencyOAuth = await hasAgencyGoogleConnection();
-  const hasServiceAccount = !!(config.ga_client_email && config.ga_private_key);
-
-  if (!useAgencyOAuth && !hasServiceAccount) {
-    return {
-      error:
-        'No hay conexión de Google de la agencia ni credenciales de Service Account. Conecta la cuenta en Ajustes → Conexión Google.',
-    };
-  }
-
-  try {
-    const propertyName = config.ga_property_id.startsWith('properties/')
-      ? config.ga_property_id
-      : `properties/${config.ga_property_id}`;
-
-    let client: BetaAnalyticsDataClient;
-    if (useAgencyOAuth) {
-      client = new BetaAnalyticsDataClient({ authClient: (await getAgencyAccessToken()) as any });
-    } else {
-      let cleanKey = config.ga_private_key;
-      if (cleanKey.includes('\\n')) {
-        cleanKey = cleanKey.replace(/\\n/g, '\n');
-      }
-      client = new BetaAnalyticsDataClient({
-        credentials: {
-          client_email: config.ga_client_email,
-          private_key: cleanKey,
-          project_id: config.ga_project_id,
-        },
-      });
-    }
-
-    // Llamada mínima: pedir 1 día de sesiones
-    const [response] = await client.runReport({
-      property: propertyName,
-      dateRanges: [{ startDate: 'yesterday', endDate: 'yesterday' }],
-      metrics: [{ name: 'sessions' }],
-    });
-
-    const via = useAgencyOAuth ? 'OAuth de agencia' : 'Service Account';
-    const sessions = response.rows?.[0]?.metricValues?.[0]?.value || '0';
-    return {
-      success: true,
-      message: `Conexión exitosa vía ${via}. Sesiones ayer: ${sessions}`,
-    };
-  } catch (err: any) {
-    // Mapeo de errores amigables
-    const msg = err.message || '';
-    if (msg.includes('PERMISSION_DENIED') || msg.includes('403')) {
-      return useAgencyOAuth
-        ? {
-            error: `⛔ Sin permisos. La cuenta de Google de la agencia no tiene acceso a esta propiedad. Dale rol "Lector" en GA4 → Administrar → Gestión de acceso a la propiedad.`,
-          }
-        : {
-            error:
-              '⛔ Sin permisos. Verifica que el email de servicio tenga rol "Lector" en GA4 → Admin → Gestión de acceso a la propiedad.',
-          };
-    }
-    if (msg.includes('NOT_FOUND') || msg.includes('404')) {
-      return {
-        error:
-          '❌ Property ID no encontrado. Verifica el ID numérico en GA4 → Administrar → Detalles de la propiedad.',
-      };
-    }
-    if (msg.includes('UNAUTHENTICATED') || msg.includes('invalid_grant')) {
-      return {
-        error:
-          '🔑 Credenciales inválidas. Verifica que el JSON de la cuenta de servicio sea correcto y no esté expirado.',
-      };
-    }
-    return { error: `Error: ${msg}` };
-  }
+  // Misma precedencia de credenciales que el worker (`crearClienteGa4`). Si
+  // falla por permisos, `probarAccesoGa4` contrasta con las propiedades que ve
+  // la cuenta de la agencia: así se descubrió que Cris tenía un ID equivocado.
+  const { probarAccesoGa4 } = await import('@/lib/integrations/ga4-cliente');
+  const r = await probarAccesoGa4(config);
+  return r.ok ? { success: true, message: r.mensaje } : { error: r.mensaje };
 }
 
 export async function testMetaConnection(token: string, accountId: string) {
@@ -1587,7 +1511,8 @@ export async function guardarConfigPestana(
   // Misma validación de la clave privada de GA4 que hacía `updateClienteConfig`:
   // el JSON de la service account trae los saltos de línea escapados.
   if (typeof limpio.ga_private_key === 'string' && limpio.ga_private_key) {
-    const key = limpio.ga_private_key.replace(/\n/g, '\n');
+    // `/\\n/g`: la secuencia escapada. Con `/\n/g` era un no-op (salto → salto).
+    const key = limpio.ga_private_key.replace(/\\n/g, '\n');
     if (!key.includes('BEGIN PRIVATE KEY') || !key.includes('END PRIVATE KEY')) {
       return {
         error: 'El formato de la Private Key de GA4 es inválido. Sube el archivo JSON original.',
@@ -1599,6 +1524,19 @@ export async function guardarConfigPestana(
   if (Object.keys(limpio).length === 0) return { success: true };
 
   const supabase = await createAdminClient();
+
+  // ¿Cambia la propiedad de GA4? Entonces hay que traer su histórico desglosado.
+  let propiedadGa4Nueva: string | null = null;
+  if (typeof limpio.ga_property_id === 'string' && limpio.ga_property_id.trim()) {
+    const { data: previo } = await supabase
+      .from('clientes')
+      .select('config_api')
+      .eq('id', clienteId)
+      .maybeSingle();
+    const antes = String((previo?.config_api as any)?.ga_property_id ?? '').trim();
+    if (antes !== limpio.ga_property_id.trim()) propiedadGa4Nueva = limpio.ga_property_id.trim();
+  }
+
   const { error } = await supabase.rpc('fusionar_config_api', {
     p_cliente_id: clienteId,
     p_parche: limpio,
@@ -1606,6 +1544,17 @@ export async function guardarConfigPestana(
   if (error) {
     console.error('[guardarConfigPestana]', error);
     return { error: error.message };
+  }
+
+  if (propiedadGa4Nueva) {
+    // No bloquea el guardado: si la cola rechaza el tipo (097 sin aplicar), el
+    // plan diario lo recogerá igualmente para los últimos días.
+    try {
+      const { planGa4Backfill } = await import('@/lib/sync/planner');
+      await planGa4Backfill(supabase, clienteId, { triggeredBy: 'ga4:propiedad-nueva' });
+    } catch (e) {
+      console.error('[guardarConfigPestana] backfill GA4', (e as Error)?.message ?? e);
+    }
   }
 
   revalidatePath(`/admin/settings/${clienteId}`);

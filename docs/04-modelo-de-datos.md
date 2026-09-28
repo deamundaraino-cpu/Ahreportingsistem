@@ -67,8 +67,11 @@ CREATE TABLE public.clientes (
   "hotmart_refresh_token_enc": "...",
   "hotmart_token_expires_at": "2026-09-25T12:00:00Z",
 
-  // Google Analytics 4
-  "ga_property_id": "properties/123456",
+  // Google Analytics 4 (con la conexión OAuth de la agencia basta la propiedad)
+  "ga_property_id": "524635063",
+  "ga_property_name": "cristributario.cl",
+  "ga_account_name": "Cristributario.cl",
+  // Legacy: service account por cliente, solo si no hay conexión de agencia
   "ga_private_key": "-----BEGIN PRIVATE KEY-----\n...",
   "ga_client_email": "...@....iam.gserviceaccount.com",
 

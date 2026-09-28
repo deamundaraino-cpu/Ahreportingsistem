@@ -52,11 +52,12 @@ const PREFIJOS_DINAMICOS = [
   'leadans:',
   'offfield:',
   'metacc:',
+  'ga4ev:',
   'sheetdim:',
   'sheetagg:',
   'sheetview:',
 ];
-const ALIAS_DINAMICO = /^(lf__|lseg__|off__|sf__|sv__)/i;
+const ALIAS_DINAMICO = /^(lf__|lseg__|off__|sf__|sv__|ga4ev__)/i;
 
 /** ¿Algún widget o fórmula usa campos propios del cliente? Solo entonces se carga el catálogo. */
 export function usaCamposDinamicos(widgets: BiWidget[], expresiones: string[] = []): boolean {

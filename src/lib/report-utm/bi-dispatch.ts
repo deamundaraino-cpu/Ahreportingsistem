@@ -15,7 +15,9 @@ import {
   NON_ATTRIBUTABLE_FIELDS,
 } from './bi-metadata';
 import { resolvePublicClienteId } from './campaign-resolver';
-import { leadFieldLabel, leadAnsLabel, leadSegLabel } from './bi-metadata';
+import { cargarEstadoGa4 } from '@/lib/ga4/estado';
+import { ga4SinDatos } from '@/lib/ga4/metricas';
+import { leadFieldLabel, leadAnsLabel, leadSegLabel, ga4EvLabel } from './bi-metadata';
 import { loadLeadCampos, loadLeadSegmentos } from './lead-campos-db';
 import { createAdminClient } from '@/utils/supabase/server';
 import { avisoMonedaGasto, monedaDeClienteUtm, type AvisoTasas } from '@/lib/moneda-reporte';
@@ -84,7 +86,18 @@ async function diagnosticarSeguro(p: ParsedBiQuery): Promise<QueryDiagnostics | 
     // lee las fuentes que cuelgan del cliente público).
     if (!p.cliente_id) return undefined;
     const publicId = await resolvePublicClienteId(p.cliente_id);
+    // GA4 por campaña sin propiedad o sin una sincronización correcta: el «—»
+    // de sus celdas se explica como «no configurado», no como falta de datos.
+    const pideGa4 = [
+      ...(p.metrics as unknown as string[]),
+      ...p.calculated.map((c) => c.expression),
+    ].some((t) => /\bga4(_|ev:|ev__)/.test(t));
+    const notConfigured =
+      pideGa4 && publicId && ga4SinDatos(await cargarEstadoGa4(publicId))
+        ? new Set(['ga4'])
+        : undefined;
     return computeDiagnostics({
+      notConfigured,
       metrics: p.metrics as unknown as string[],
       dimension: p.dimension,
       dimension2: p.dimension2,
@@ -171,6 +184,18 @@ function tokensDeLead(p: ParsedBiQuery): string[] {
 
 /** Etiquetas del catálogo de Leads para los tokens de la consulta. Nunca lanza. */
 async function etiquetasSeguras(p: ParsedBiQuery): Promise<Record<string, string> | undefined> {
+  // Eventos clave de GA4: la etiqueta sale del propio token, sin catálogo.
+  const ga4: Record<string, string> = {};
+  for (const t of p.metrics as unknown as string[]) {
+    const e = ga4EvLabel(t);
+    if (e) ga4[t] = e;
+  }
+  const lead = await etiquetasDeLead(p);
+  const out = { ...ga4, ...(lead ?? {}) };
+  return Object.keys(out).length ? out : undefined;
+}
+
+async function etiquetasDeLead(p: ParsedBiQuery): Promise<Record<string, string> | undefined> {
   const tokens = tokensDeLead(p);
   if (tokens.length === 0 || !p.cliente_id) return undefined;
   try {

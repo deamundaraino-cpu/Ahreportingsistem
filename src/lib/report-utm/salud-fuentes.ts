@@ -71,6 +71,22 @@ export interface SenalGa4 {
   /** Pestañas activas del cliente y cuántas tienen página de pago mapeada. */
   pestanas: number;
   pestanasConPago: number;
+  /**
+   * Estado del desglose por campaña (`ga4_estado`, migración 097). Ausente si la
+   * tabla no existe o el job `ga4` nunca corrió para este cliente.
+   */
+  desglose?: {
+    ultimoOk: string | null;
+    ultimoError: string | null;
+    ultimoErrorCodigo: string | null;
+    ultimoErrorAt: string | null;
+    umbral: boolean;
+    filaOtros: boolean;
+    /** Zona horaria de la PROPIEDAD de GA4. */
+    zona: string | null;
+  } | null;
+  /** Zona horaria del cliente (`zonaHorariaDeCliente`). */
+  zonaCliente?: string | null;
 }
 
 /** Último registro de `conversiones_offline_sync_log` de un Sheet. */
@@ -303,6 +319,42 @@ export function evaluarCliente(s: SenalesCliente): SaludCliente {
           accion: 'Revisar el acceso a la propiedad GA4 y el log de /admin/sync.',
         });
       }
+    }
+    // Desglose por campaña: el error REAL que devolvió GA4, no una deducción.
+    const d = ga.desglose;
+    if (d?.ultimoError && (!d.ultimoOk || (d.ultimoErrorAt ?? '') > d.ultimoOk)) {
+      hallazgos.push({
+        gravedad: d.ultimoErrorCodigo === 'sin_permiso' || !d.ultimoOk ? 'critico' : 'aviso',
+        ambito: 'Integración · GA4',
+        titulo: 'La sincronización de GA4 por campaña está fallando.',
+        accion: d.ultimoError,
+      });
+    } else if (d?.ultimoOk && diasEntre(d.ultimoOk.slice(0, 10), s.hoy) > TOLERANCIA_DIAS.cuenta) {
+      hallazgos.push({
+        gravedad: 'aviso',
+        ambito: 'Integración · GA4',
+        titulo: `GA4 por campaña no se actualiza desde el ${d.ultimoOk.slice(0, 10)}.`,
+        accion: 'Revisar los jobs «ga4» en /admin/sync.',
+      });
+    }
+    if (d?.umbral) {
+      hallazgos.push({
+        gravedad: 'aviso',
+        ambito: 'Integración · GA4',
+        titulo:
+          'GA4 oculta filas por umbrales de privacidad: la suma por campaña puede quedar por debajo del total del sitio.',
+        accion:
+          'En GA4 → Administrar → Identidad para los informes, usar «Basada en dispositivo» elimina los umbrales en los informes.',
+      });
+    }
+    if (d?.zona && ga.zonaCliente && d.zona !== ga.zonaCliente) {
+      hallazgos.push({
+        gravedad: 'aviso',
+        ambito: 'Integración · GA4',
+        titulo: `La propiedad de GA4 está en ${d.zona} y el cliente en ${ga.zonaCliente}: sus días no coinciden con los del gasto.`,
+        accion:
+          'Alinear la zona horaria en GA4 → Administrar → Detalles de la propiedad, o asumir el desfase al comparar por día.',
+      });
     }
     if (ga.pestanas > 0 && ga.pestanasConPago === 0) {
       hallazgos.push({

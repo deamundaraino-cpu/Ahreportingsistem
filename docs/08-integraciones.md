@@ -102,17 +102,26 @@ Ingesta de los leads de los **Instant Forms** de TikTok en `report_utm.lead_even
 
 **API**: `@google-analytics/data` (Data API). Declarado como `serverExternalPackages` en `next.config.ts`.
 
-### Configuración (manual, por cliente)
+### Configuración
 
-En `config_api`:
+- **Conexión de agencia (preferida).** Una sola cuenta de Google para toda la agencia (Ajustes → Conexión Google, `app_integrations.provider = 'google'`). El flujo `/api/auth/google` exige rol admin y un `state` firmado ligado a una cookie (`google-oauth-state.ts`).
+- **Por cliente**, en `config_api`: `ga_property_id` (ID numérico, p. ej. `524635063`), `ga_property_name` y `ga_account_name`, que se rellenan con el **selector de propiedades**. No escribas el ID a mano: la cuenta de la agencia tiene que verla.
+- **Service account (legacy):** `ga_client_email` + `ga_private_key`. Solo se usa si no hay conexión de agencia.
+- **«Probar conexión»** (`probarAccesoGa4`) hace una consulta real. Si falla, dice si la cuenta de la agencia ve la propiedad y qué acceso darle.
 
-- `ga_property_id` (p. ej. `properties/123456`)
-- `ga_private_key` (clave privada de cuenta de servicio; el formulario valida y normaliza los `\n`)
-- `ga_client_email`
+La precedencia de credenciales vive en `lib/integrations/ga4-cliente.ts` (`crearClienteGa4`), compartida por el worker, el desglose y la prueba.
 
 ### Datos sincronizados
 
-El worker obtiene **sesiones** y eventos del sitio. Se guardan en `ga_sessions`. En el motor de fórmulas, el alias `$visitas` apunta por defecto a `ga_sessions`.
+| Qué                                      | Dónde                                                                             | Cómo                                                                                                                       |
+| ---------------------------------------- | --------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| Sesiones, rebote y duración del sitio    | `metricas_diarias.ga_sessions`, `ga_bounce_rate` (0-1), `ga_avg_session_duration` | Job `metricas`, un `runReport` por día sin dimensiones                                                                     |
+| Vistas de las páginas del embudo         | `hotmart_funnel_data.by_tab.*` y `hotmart_pagos_iniciados`                        | Job `metricas`, `screenPageViews` por `pagePath`/`pageTitle` de las URL de cada pestaña (VISTAS, no sesiones)              |
+| **Sesiones y eventos clave por campaña** | `ga4_sesiones_diarias`, `ga4_eventos_clave_diarios`, `ga4_estado` (migración 097) | Job `ga4` (`/api/worker/ga4`, `ga4-desglose.ts`): ventanas de 31 días con `date` + fuente/medio/campaña/`utm_id`, paginado |
+
+El desglose se re-pide los últimos 4 días a diario (`planDiario`). Al guardar una propiedad nueva se encolan ~13 meses. El último error de GA4 queda en `ga4_estado.ultimo_error` y aparece en la salud de fuentes.
+
+En el motor de fórmulas, el alias `$visitas` apunta por defecto a `ga_sessions`. En el BI, GA4 por campaña es la fuente `ga4` (tokens `ga4_*` y `ga4ev:<evento>`), que cruza con el gasto y los leads por campaña: ver el [doc 26](./26-auditoria-ga4.md).
 
 ---
 
@@ -764,7 +773,7 @@ disparador de ventas no cambian. Mapeo de endpoints en `src/lib/whatsapp/provide
 | ------------------------------------ | -------------------------------------------------------------------------------- | ------------------------------------------------ | --------------------------------------------------------------------------------------- |
 | Meta Ads                             | OAuth (env app + token por cliente)                                              | `/admin/settings/[id]`                           | `meta_*`, `meta_campaigns/ads/adsets/forms`                                             |
 | TikTok Ads                           | OAuth (env app + token por cliente)                                              | `/admin/settings/[id]`                           | `tiktok_*`, `tiktok_campaigns/ads/adgroups`                                             |
-| GA4                                  | Cuenta de servicio por cliente                                                   | `config_api.ga_*`                                | `ga_sessions`                                                                           |
+| GA4                                  | OAuth de agencia (service account por cliente como legacy)                       | `config_api.ga_property_id` (selector)           | `ga_*`, `ga4_sesiones_diarias`, `ga4_eventos_clave_diarios`, `ga4_estado`               |
 | Hotmart (API)                        | HotConnect (OAuth) o client id + secret / Basic, cifrados                        | `config_api.hotmart_*` + funnel por tab          | `hotmart_ventas` → `ventas_*`, `hotmart_funnel_data`                                    |
 | Google Sheets — Leads                | RETIRADA (migración 059)                                                         | `config_api.google_sheets` (respaldo)            | `leads`, `leads_diarios` (solo lectura)                                                 |
 | Campos de Sheet                      | — (capa sobre lo anterior)                                                       | `sheet_campos`, `sheet_campo_vistas`             | `sheet_campo_valores_diarios`                                                           |

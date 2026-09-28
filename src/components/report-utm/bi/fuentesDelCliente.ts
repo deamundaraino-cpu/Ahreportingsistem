@@ -17,6 +17,7 @@ import type {
   LeadFieldMeta,
   LeadSegmentoMeta,
   MetaCustomConvMeta,
+  Ga4EventoMeta,
   OfflineFieldMeta,
   SheetFieldMeta,
   SheetViewMeta,
@@ -48,6 +49,8 @@ export interface EntradaFuentesDelCliente {
   sheetFields: SheetFieldMeta[];
   sheetViews: SheetViewMeta[];
   customConversions: MetaCustomConvMeta[];
+  /** Eventos clave de GA4 (opcional: los editores antiguos no los cargan). */
+  ga4Events?: Ga4EventoMeta[];
   calculatedFields: { name: string; format?: string }[];
 }
 
@@ -223,6 +226,16 @@ export function fuentesDelCliente(e: EntradaFuentesDelCliente): CatalogSource[] 
           c.activa === false ? 'Sin actividad (90 días)' : 'Personalizadas',
           { additive: true }
         )
+      )
+    )
+  );
+  out.push(
+    fuente(
+      'cliente_ga4ev',
+      'Eventos clave de GA4',
+      'daily',
+      (e.ga4Events ?? []).map((ev) =>
+        medida(`ga4ev:${ev.key}`, `Evento clave: ${ev.label}`, 'GA4', { additive: true })
       )
     )
   );

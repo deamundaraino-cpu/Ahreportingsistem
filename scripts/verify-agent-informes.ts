@@ -1063,8 +1063,11 @@ async function main() {
   // impide que crezca sin que nadie lo vea. 174 desde el 2026-09-28: las dos
   // métricas de resultados personalizados (`resultados_custom`,
   // `coste_por_resultado_custom`) heredan la MISMA pareja que cualquier métrica
-  // de anuncios (`utm_id`, `platform`), no una discrepancia nueva.
-  const DISCREPANCIAS_CONOCIDAS = 174;
+  // de anuncios (`utm_id`, `platform`), no una discrepancia nueva. 177 desde la
+  // migración 097: las tres derivadas de GA4 que dividen el gasto
+  // (`ga4_coste_sesion`, `ga4_coste_evento_clave`, `ga4_roas`) heredan la pareja
+  // `utm_id` del gasto, igual que `cpl`.
+  const DISCREPANCIAS_CONOCIDAS = 177;
   let difs = 0;
   for (const m of Object.keys(METRIC_META)) {
     for (const d of Object.keys(DIMENSION_META)) {

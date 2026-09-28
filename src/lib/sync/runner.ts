@@ -154,6 +154,13 @@ function buildRequest(job: SyncJob, appUrl: string): { url: string; method: 'GET
       );
       return { url: `${base}/api/worker/hotmart?${p}`, method: 'GET' };
     }
+    case 'ga4': {
+      const p = new URLSearchParams();
+      if (job.cliente_id) p.set('cliente_id', job.cliente_id);
+      if (start) p.set('desde', start);
+      if (job.fecha_fin) p.set('hasta', job.fecha_fin);
+      return { url: `${base}/api/worker/ga4?${p}`, method: 'GET' };
+    }
     default:
       throw new Error(`Tipo de job desconocido: ${job.tipo}`);
   }
