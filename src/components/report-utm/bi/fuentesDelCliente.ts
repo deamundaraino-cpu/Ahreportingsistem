@@ -219,14 +219,18 @@ export function fuentesDelCliente(e: EntradaFuentesDelCliente): CatalogSource[] 
       'cliente_metacc',
       'Conversiones de Meta',
       'daily',
-      e.customConversions.map((c) =>
-        medida(
-          `metacc:${c.key}`,
-          c.label,
-          c.activa === false ? 'Sin actividad (90 días)' : 'Personalizadas',
-          { additive: true }
+      // Activas primero y antiguas después: el selector pinta una cabecera cada
+      // vez que cambia el grupo, y en orden alfabético salían intercaladas.
+      [...e.customConversions]
+        .sort((a, b) => Number(a.activa === false) - Number(b.activa === false))
+        .map((c) =>
+          medida(
+            `metacc:${c.key}`,
+            c.label,
+            c.activa === false ? 'Sin actividad (90 días)' : 'Personalizadas',
+            { additive: true }
+          )
         )
-      )
     )
   );
   out.push(

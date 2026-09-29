@@ -1063,7 +1063,9 @@ export function BiWidgetEditor({
           {/* Metric + Dimension (not for funnel/slicer/estructurales) */}
           {!isStructural && type !== 'funnel' && type !== 'slicer' && (
             <>
-              <div>
+              {/* A todo el ancho: en media columna el selector fuente → campo
+                  dejaba ~150 px por nombre y todos se leían «Número de propie…». */}
+              <div className="md:col-span-2">
                 <div className="flex items-center justify-between mb-1">
                   <label className="flex items-center gap-1 text-xs font-medium text-muted-foreground">
                     {useFormula && allowFormula ? 'Fórmula' : 'Métrica'}
@@ -1161,19 +1163,21 @@ export function BiWidgetEditor({
                 {!(allowFormula && useFormula) && (
                   <>
                     {/* Selector de métrica del catálogo */}
-                    {/* Buscador de campos */}
-                    <div className="relative mb-1.5">
-                      <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-                      <input
-                        type="text"
-                        value={metricSearch}
-                        onChange={(e) => setMetricSearch(e.target.value)}
-                        placeholder="Buscar campo…"
-                        className="w-full pl-8 pr-3 py-1.5 text-xs rounded-lg bg-muted border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
-                      />
-                    </div>
                     {type === 'table' ? (
                       <>
+                        {/* Buscador de columnas. Solo filtra esta lista: el
+                            selector de los demás widgets trae el suyo, y dos
+                            buscadores apilados (uno que no hacía nada) confundían. */}
+                        <div className="relative mb-1.5">
+                          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+                          <input
+                            type="text"
+                            value={metricSearch}
+                            onChange={(e) => setMetricSearch(e.target.value)}
+                            placeholder="Buscar campo…"
+                            className="w-full pl-8 pr-3 py-1.5 text-xs rounded-lg bg-muted border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
+                          />
+                        </div>
                         {/* Selector multi-columna, agrupado por origen */}
                         <div className="max-h-56 overflow-y-auto rounded-lg border border-border bg-muted/30">
                           {metricGroups.map((g) => (
@@ -1274,7 +1278,7 @@ export function BiWidgetEditor({
               </div>
 
               {type !== 'scorecard' && (
-                <div>
+                <div className="md:col-span-2">
                   <label className="flex items-center gap-1 text-xs font-medium text-muted-foreground mb-1">
                     Dimensión
                     <HelpTip text="Cómo se agrupan los datos. Ej: por Source muestra una fila/barra por cada utm_source; por Fecha muestra la evolución en el tiempo; por Campaña compara campañas." />

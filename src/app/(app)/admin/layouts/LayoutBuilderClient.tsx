@@ -374,28 +374,6 @@ const METRIC_CATALOG = [
       { id: 'leads_registrados', label: 'Leads registrados', desc: 'Entrada manual de leads' },
     ],
   },
-  {
-    category: 'Google Sheets · Leads',
-    color: 'green',
-    metrics: [
-      { id: 'leads_totales', label: 'Leads Totales', desc: 'Total de leads de todas las hojas' },
-      {
-        id: 'leads_calificados',
-        label: 'Leads Calificados',
-        desc: 'Leads que cumplen los criterios de calidad',
-      },
-      {
-        id: 'leads_no_calificados',
-        label: 'Leads No Calificados',
-        desc: 'Leads que no cumplen los criterios de calidad',
-      },
-      {
-        id: 'tasa_calificacion',
-        label: 'Tasa de Calificación %',
-        desc: 'Porcentaje de leads calificados sobre el total',
-      },
-    ],
-  },
 ];
 
 // Colores de categoría

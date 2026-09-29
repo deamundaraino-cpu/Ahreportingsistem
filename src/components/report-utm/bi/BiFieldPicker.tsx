@@ -96,6 +96,9 @@ export function BiFieldPicker({
   const [sources, setSources] = useState<CatalogSource[] | null>(null);
   const [activeSource, setActiveSource] = useState<string | null>(null);
   const [q, setQ] = useState('');
+  /** Campo bajo el ratón: su ficha se enseña en el pie en vez de en un `title`
+   *  que nadie descubre. Sin hover, la ficha es la del campo elegido. */
+  const [hover, setHover] = useState<{ field: CatalogField; sourceLabel: string } | null>(null);
 
   useEffect(() => {
     const params = new URLSearchParams();
@@ -171,6 +174,16 @@ export function BiFieldPicker({
   /** Aviso de solapamiento: mide lo mismo que algo ya elegido. */
   const solapaCon = (f: CatalogField) => (f.conflictsWith ?? []).filter((id) => yaElegidos.has(id));
 
+  const elegido = (() => {
+    if (!value) return null;
+    for (const s of fuentesUtiles) {
+      const field = s.fields.find((f) => f.id === value);
+      if (field) return { field, sourceLabel: s.label };
+    }
+    return null;
+  })();
+  const ficha = hover ?? elegido;
+
   return (
     <div className="rounded-xl border border-border overflow-hidden">
       <div className="flex items-center gap-2 border-b border-border px-3 py-2">
@@ -184,7 +197,7 @@ export function BiFieldPicker({
       </div>
 
       {resultados ? (
-        <div className="max-h-72 overflow-y-auto">
+        <div className="max-h-80 overflow-y-auto" onMouseLeave={() => setHover(null)}>
           {resultados.length === 0 && (
             <p className="text-xs text-muted-foreground px-3 py-4">Sin resultados.</p>
           )}
@@ -196,19 +209,23 @@ export function BiFieldPicker({
               disabled={!source.available}
               selected={field.id === value}
               overlaps={solapaCon(field)}
+              onHover={() => setHover({ field, sourceLabel: source.label })}
               onPick={() => source.available && onChange(field.id, field)}
             />
           ))}
         </div>
       ) : (
-        <div className="grid grid-cols-[minmax(0,11rem)_1fr] divide-x divide-border">
+        <div className="grid grid-cols-[minmax(0,12rem)_1fr] divide-x divide-border">
           {/* ── Paso 1: la fuente ── */}
-          <ul className="max-h-72 overflow-y-auto py-1">
+          {/* Los nombres de fuente se parten en dos líneas en vez de cortarse:
+              «Anuncios (Meta / Ti…» no dice qué fuente es. */}
+          <ul className="max-h-80 overflow-y-auto py-1">
             {fuentesUtiles.map((s) => (
               <li key={s.id}>
                 <button
                   type="button"
                   onClick={() => setActiveSource(s.id)}
+                  title={s.label}
                   className={`w-full text-left px-3 py-2 text-xs flex items-center gap-1.5 ${
                     s.id === activa.id
                       ? 'bg-muted font-medium text-foreground'
@@ -216,7 +233,7 @@ export function BiFieldPicker({
                   }`}
                 >
                   {!s.available && <Lock className="h-3 w-3 shrink-0 text-amber-500" />}
-                  <span className="truncate flex-1">{s.label}</span>
+                  <span className="flex-1 min-w-0 leading-snug break-words">{s.label}</span>
                   <span className="text-[10px] tabular-nums opacity-60">{s.fields.length}</span>
                   {s.id === activa.id && <ChevronRight className="h-3 w-3 shrink-0" />}
                 </button>
@@ -225,7 +242,7 @@ export function BiFieldPicker({
           </ul>
 
           {/* ── Paso 2: el campo ── */}
-          <div className="max-h-72 overflow-y-auto">
+          <div className="max-h-80 overflow-y-auto" onMouseLeave={() => setHover(null)}>
             <div className="px-3 py-2 border-b border-border bg-muted/30">
               <p className="text-[10px] text-muted-foreground leading-snug">
                 {GRAIN_TEXT[activa.grain]}
@@ -250,15 +267,20 @@ export function BiFieldPicker({
               return campos.map((f, i) => (
                 <div key={f.id}>
                   {conGrupos && (i === 0 || campos[i - 1].group !== f.group) && (
-                    <p className="px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                    <p className="sticky top-0 z-10 px-3 pt-2 pb-1 bg-card border-b border-border text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
                       {f.group}
                     </p>
                   )}
                   <FieldRow
                     field={f}
+                    // Bajo la cabecera de su pregunta, «Número de propiedades: 1-2»
+                    // se lee «1-2»: repetir la pregunta es lo que cortaba la
+                    // respuesta y dejaba veinte filas idénticas.
+                    shortLabel={conGrupos ? sinPrefijo(f.label, f.group) : undefined}
                     disabled={!activa.available}
                     selected={f.id === value}
                     overlaps={solapaCon(f)}
+                    onHover={() => setHover({ field: f, sourceLabel: activa.label })}
                     onPick={() => activa.available && onChange(f.id, f)}
                   />
                 </div>
@@ -267,23 +289,62 @@ export function BiFieldPicker({
           </div>
         </div>
       )}
+
+      {/* ── Ficha del campo: qué es y cómo se usa ── */}
+      <div className="border-t border-border bg-muted/30 px-3 py-2 min-h-[3.25rem]">
+        {ficha ? (
+          <>
+            <p className="text-[11px] font-medium text-foreground leading-snug break-words">
+              {ficha.field.label}
+              <span className="font-normal text-muted-foreground"> · {ficha.sourceLabel}</span>
+            </p>
+            <p className="mt-0.5 text-[10px] text-muted-foreground leading-snug">
+              {ficha.field.help || descripcionPorDefecto(ficha.field)}
+            </p>
+          </>
+        ) : (
+          <p className="text-[10px] text-muted-foreground leading-snug">
+            Pasa el ratón por un campo para ver qué mide y cómo usarlo.
+          </p>
+        )}
+      </div>
     </div>
   );
 }
 
+/** «Pregunta: respuesta» → «respuesta» cuando la pregunta ya es la cabecera. */
+function sinPrefijo(label: string, group: string): string {
+  const prefijo = `${group}: `;
+  return label.startsWith(prefijo) ? label.slice(prefijo.length) : label;
+}
+
+/** Para los campos sin `help` (Sheet, conversiones, GA4…): al menos qué tipo de
+ *  dato es y si se puede sumar, que es lo que decide cómo usarlo. */
+function descripcionPorDefecto(f: CatalogField): string {
+  if (f.kind === 'dimension') return 'Agrupa los datos: una fila o barra por cada valor de este campo.';
+  if (f.additive === true) return 'Recuento o suma: se puede sumar entre días y campañas.';
+  if (f.additive === false) return 'Valor calculado (media, ratio, mínimo o máximo): no lo sumes con otros.';
+  return 'Métrica de esta fuente.';
+}
+
 function FieldRow({
   field,
+  shortLabel,
   sourceLabel,
   disabled,
   selected,
   overlaps,
+  onHover,
   onPick,
 }: {
   field: CatalogField;
+  /** Etiqueta sin la parte que ya dice la cabecera del grupo. */
+  shortLabel?: string;
   sourceLabel?: string;
   disabled?: boolean;
   selected?: boolean;
   overlaps: string[];
+  onHover?: () => void;
   onPick: () => void;
 }) {
   // `crossesDimension === false` significa que con la dimensión actual este
@@ -295,8 +356,10 @@ function FieldRow({
     <button
       type="button"
       onClick={onPick}
+      onMouseEnter={onHover}
+      onFocus={onHover}
       disabled={disabled}
-      title={field.help || undefined}
+      title={field.label}
       className={`w-full text-left px-3 py-2 flex items-start gap-2 text-xs ${
         disabled
           ? 'opacity-40 cursor-not-allowed'
@@ -309,8 +372,12 @@ function FieldRow({
         {selected && <Check className="h-3 w-3 text-primary" />}
       </span>
       <span className="min-w-0 flex-1">
-        <span className="flex items-center gap-1.5">
-          <span className="truncate text-foreground">{field.label}</span>
+        <span className="flex items-start gap-1.5">
+          {/* Se parte en líneas en vez de cortarse: la parte que distingue un
+              campo de otro suele estar al final del nombre. */}
+          <span className="min-w-0 break-words leading-snug text-foreground">
+            {shortLabel ?? field.label}
+          </span>
           {field.recommended && (
             <span className="shrink-0 text-[9px] uppercase tracking-wide text-emerald-600 dark:text-emerald-400">
               recomendada

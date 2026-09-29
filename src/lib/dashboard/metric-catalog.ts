@@ -301,11 +301,12 @@ export const AVAILABLE_METRICS: MetricOption[] = [
   // ── Manual ────────────────────────────────────────────────────────────────
   { id: 'leads_registrados', label: 'Leads Registrados (Manual)' },
 
-  // ── Google Sheets · Leads ─────────────────────────────────────────────────
-  { id: 'leads_totales', label: 'GSheets: Leads Totales' },
-  { id: 'leads_calificados', label: 'GSheets: Leads Calificados' },
-  { id: 'leads_no_calificados', label: 'GSheets: Leads No Calificados' },
-  { id: 'tasa_calificacion', label: 'GSheets: Tasa de Calificación (%)' },
+  // Las cuatro fijas de «Google Sheets · Leads» (`leads_totales`,
+  // `leads_calificados`, `leads_no_calificados`, `tasa_calificacion`) se
+  // retiraron del selector el 2026-09-28: ningún layout, pestaña, informe ni
+  // regla las usaba (`scripts/inventario-metricas-usadas.ts`) y los Sheets se
+  // miden con CAMPOS DE SHEET, que cada cliente define. El motor las sigue
+  // resolviendo desde el campo `calidad_lead` si existe.
 
   // ── Report-UTM ────────────────────────────────────────────────────────────
   // Contactos reales del formulario (web + Meta Lead Ads unificados), no lo
