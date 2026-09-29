@@ -4,13 +4,34 @@ import 'server-only';
  * Operaciones del día a día: tareas del roadmap, bitácoras de cliente, reglas
  * de alerta y sincronización bajo demanda.
  *
- * Todas las escrituras pasan por aprobación. Ninguna es de riesgo alto salvo el
- * borrado, que sencillamente no existe: el agente no borra nada.
+ * Todas las escrituras pasan por aprobación salvo `sync_client`: refrescar los
+ * datos de un cliente desde sus plataformas no cambia nada que la siguiente
+ * sincronización no vuelva a traer, y esperar a que alguien lo apruebe por
+ * WhatsApp dejaba al agente contestando con cifras viejas. Ninguna es de riesgo
+ * alto salvo el borrado, que sencillamente no existe: el agente no borra nada.
  */
 
 import { z } from 'zod';
 import { ApiError } from '@/lib/error-handler';
-import type { AnyAgentTool } from '../types';
+import type { AgentContext, AnyAgentTool } from '../types';
+import type { SyncJobTipo } from '@/lib/sync/queue';
+import {
+  CANALES_SYNC,
+  ETIQUETA_CANAL,
+  MAX_DIAS_SYNC_AGENTE,
+  MINUTOS_FRENO,
+  TIPOS_DE_CANAL,
+  canalesDeCliente,
+  diasDeRango,
+  encolarSyncCliente,
+  frenoSync,
+  leerContextoSync,
+  planSyncCliente,
+  type CanalSync,
+  type ContextoSync,
+  type EstadoCanal,
+} from '@/lib/sync/cliente';
+import { colombiaToday } from '@/lib/date-utils';
 import { exigirCliente, idsVisibles } from '../registry';
 
 const clienteIdSchema = z.string().uuid().describe('UUID del cliente.');
@@ -372,23 +393,115 @@ const createAlertRule: AnyAgentTool = {
 
 // ── Sincronización ──────────────────────────────────────────────────────────
 
+const canalesSchema = z
+  .array(z.enum(CANALES_SYNC))
+  .min(1)
+  .optional()
+  .describe(
+    'Solo estos canales (por defecto, todos los conectados): metricas, sheets, ga4, hotmart, ' +
+      'meta_leads, ghl, tiktok_leads.'
+  );
+const fechaSync = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/)
+  .describe('Fecha YYYY-MM-DD (zona Colombia).');
+
+const NOTA_ASINCRONA =
+  'No es tiempo real: los trabajos entran en la cola y el worker los procesa en unos minutos. ' +
+  'Consulta el avance con get_sync_status (client_id) antes de dar las cifras por actualizadas.';
+
+/** Canal al que pertenece un tipo de job, para agrupar el estado por canal. */
+const CANAL_DE_TIPO = new Map<string, CanalSync>(
+  (Object.entries(TIPOS_DE_CANAL) as Array<[CanalSync, string[]]>).flatMap(([canal, tipos]) =>
+    tipos.map((t) => [t, canal] as const)
+  )
+);
+
+/**
+ * Despierta al ejecutor de respaldo para no esperar al siguiente poll del VPS,
+ * como hace el botón del dashboard. Nunca bloquea ni falla la herramienta.
+ */
+async function avisarWorker(): Promise<boolean> {
+  if (!process.env.CRON_SECRET) return false;
+  try {
+    const { internalCronFetch } = await import('@/lib/internal-fetch');
+    const empujar = () =>
+      internalCronFetch('/api/worker/run-jobs', { method: 'POST' }).then(
+        () => undefined,
+        () => undefined
+      );
+    try {
+      // Dentro de una petición, `after` deja terminar el empujón tras responder.
+      const { after } = await import('next/server');
+      after(empujar);
+    } catch {
+      void empujar();
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Contexto del cliente, o NOT_FOUND. Comprueba antes el acceso. */
+async function contextoDeSync(ctx: AgentContext, clientId: string): Promise<ContextoSync> {
+  exigirCliente(ctx, clientId);
+  const c = await leerContextoSync(ctx.db, clientId);
+  if (!c) throw new ApiError('NOT_FOUND', `No se encuentra el cliente ${clientId}.`, 404);
+  return c;
+}
+
+/** Canales pedidos y conectados; si no queda ninguno, lo explica. */
+function canalesUtiles(estados: EstadoCanal[], pedidos?: CanalSync[]): EstadoCanal[] {
+  const elegidos = pedidos?.length ? estados.filter((e) => pedidos.includes(e.canal)) : estados;
+  const conectados = elegidos.filter((e) => e.conectado);
+  if (conectados.length === 0) {
+    throw new ApiError(
+      'VALIDATION_ERROR',
+      'No hay nada que sincronizar: ' +
+        elegidos.map((e) => `${e.canal} (${e.detalle})`).join('; ') +
+        '. Las integraciones se conectan desde el panel del cliente.',
+      400
+    );
+  }
+  return conectados;
+}
+
+function fichaCanales(estados: EstadoCanal[]) {
+  return estados.map((e) => ({
+    canal: e.canal,
+    nombre: ETIQUETA_CANAL[e.canal],
+    conectado: e.conectado,
+    detalle: e.detalle,
+  }));
+}
+
 const getSyncStatus: AnyAgentTool = {
   name: 'get_sync_status',
   domain: 'operaciones',
   description:
     'Estado de la sincronización de datos: trabajos en cola, en curso y con error. Útil cuando ' +
     'las cifras parecen desactualizadas — antes de interpretar una caída, conviene descartar que ' +
-    'sea un problema de sincronización.',
-  input: z.object({ client_id: clienteIdSchema.optional() }),
+    'sea un problema de sincronización. Con `client_id` resume además el último trabajo de cada ' +
+    'canal (`por_canal`), que es como se sigue una sync_client recién lanzada.',
+  input: z.object({
+    client_id: clienteIdSchema.optional(),
+    solo_agente: z
+      .boolean()
+      .optional()
+      .describe('Solo los trabajos lanzados desde el agente (sync_client / trigger_sync).'),
+  }),
   scopes: ['read:metrics'],
-  handler: async (input: { client_id?: string }, ctx) => {
+  handler: async (input: { client_id?: string; solo_agente?: boolean }, ctx) => {
     if (input.client_id) exigirCliente(ctx, input.client_id);
 
     let q = ctx.db
       .from('sync_jobs')
-      .select('id, tipo, cliente_id, estado, intentos, last_error, created_at, updated_at')
+      .select(
+        'id, tipo, cliente_id, estado, intentos, last_error, fecha_inicio, fecha_fin, triggered_by, created_at, updated_at'
+      )
       .order('created_at', { ascending: false })
-      .limit(20);
+      .limit(input.client_id ? 40 : 20);
 
     if (input.client_id) q = q.eq('cliente_id', input.client_id);
     else {
@@ -399,67 +512,186 @@ const getSyncStatus: AnyAgentTool = {
         q = q.in('cliente_id', ids);
       }
     }
+    if (input.solo_agente) q = q.eq('triggered_by', 'agente');
 
     const { data, error } = await q;
     if (error) {
       throw new ApiError('DATABASE_ERROR', `No se pudo leer el estado: ${error.message}`, 500);
     }
 
-    const jobs = (data ?? []) as { estado: string }[];
+    const jobs = (data ?? []) as Array<{
+      tipo: string;
+      estado: string;
+      last_error: string | null;
+      created_at: string;
+      updated_at: string;
+    }>;
     const porEstado: Record<string, number> = {};
     for (const j of jobs) porEstado[j.estado] = (porEstado[j.estado] ?? 0) + 1;
 
-    return { resumen: porEstado, jobs: data ?? [] };
+    // El último job de cada canal (vienen ordenados del más reciente al más antiguo).
+    const porCanal: Record<string, unknown> = {};
+    if (input.client_id) {
+      for (const j of jobs) {
+        const canal = CANAL_DE_TIPO.get(j.tipo) ?? j.tipo;
+        if (canal in porCanal) continue;
+        porCanal[canal] = {
+          tipo: j.tipo,
+          estado: j.estado,
+          actualizado: j.updated_at,
+          ...(j.last_error ? { error: j.last_error } : {}),
+        };
+      }
+    }
+
+    return {
+      resumen: porEstado,
+      ...(input.client_id ? { por_canal: porCanal } : {}),
+      jobs,
+    };
   },
 };
+
+const syncClient: AnyAgentTool = {
+  name: 'sync_client',
+  domain: 'operaciones',
+  description:
+    'Sincroniza AHORA todos los canales conectados de un cliente con su ventana reciente: ' +
+    'métricas de Meta/TikTok (ayer y hoy), Google Sheets, GA4, ventas de Hotmart y leads de Meta ' +
+    'Lead Ads, GoHighLevel y TikTok. Úsala cuando pidan «sincroniza a X» o cuando las cifras ' +
+    'parezcan desactualizadas. Se aplica al momento; no duplica si ya hay una sincronización en ' +
+    `curso o se lanzó hace menos de ${MINUTOS_FRENO} minutos. Para un periodo concreto usa ` +
+    'trigger_sync. No es tiempo real: sigue el avance con get_sync_status.',
+  input: z.object({ client_id: clienteIdSchema, canales: canalesSchema }),
+  scopes: ['write:sync'],
+  minLevel: 'operador',
+  mutation: {
+    risk: 'low',
+    approval: 'directa',
+    summarize: (i: { client_id: string; canales?: string[] }) =>
+      `Sincronizar ${i.canales?.length ? i.canales.join(', ') : 'todos los canales'} del cliente ${i.client_id}`,
+  },
+  handler: async (input: { client_id: string; canales?: CanalSync[] }, ctx) => {
+    const c = await contextoDeSync(ctx, input.client_id);
+    const estados = canalesDeCliente(c);
+    const utiles = canalesUtiles(estados, input.canales);
+
+    // El freno: la instancia Micro no aguanta tormentas de sincronizaciones.
+    const freno = await frenoSync(ctx.db, input.client_id);
+    if (freno.recientesAgente.length > 0) {
+      const ultimo = freno.recientesAgente[0];
+      const minutos = Math.max(
+        0,
+        Math.round((Date.now() - Date.parse(ultimo.created_at)) / 60_000)
+      );
+      return {
+        estado: 'reciente',
+        nota:
+          `Ya se lanzó una sincronización de este cliente hace ${minutos} min; no se repite hasta ` +
+          `pasados ${MINUTOS_FRENO}. Su avance está abajo y en get_sync_status.`,
+        jobs: freno.recientesAgente.map((j) => ({ tipo: j.tipo, estado: j.estado })),
+        canales: fichaCanales(estados),
+      };
+    }
+
+    const plan = planSyncCliente(c, utiles, {
+      omitirTipos: freno.enCurso.map((j) => j.tipo as SyncJobTipo),
+      triggeredBy: 'agente',
+    });
+    const res = await encolarSyncCliente(ctx.db, plan);
+    const avisado = res.encolados.length > 0 ? await avisarWorker() : false;
+    const enCurso = [...new Set(freno.enCurso.map((j) => j.tipo))];
+
+    return {
+      estado: res.encolados.length > 0 ? 'encolado' : 'ya_en_curso',
+      canales: fichaCanales(estados),
+      encolados: res.encolados,
+      ...(enCurso.length || res.duplicados.length
+        ? { ya_en_cola: [...new Set([...enCurso, ...res.duplicados.map((d) => d.tipo)])] }
+        : {}),
+      ...(res.errores.length ? { errores: res.errores } : {}),
+      worker_avisado: avisado,
+      nota: NOTA_ASINCRONA,
+    };
+  },
+};
+
+/** Valida el rango pedido a trigger_sync. Lanza con un mensaje que el modelo entiende. */
+function exigirRango(desde: string, hasta: string): void {
+  if (desde > hasta) throw new ApiError('VALIDATION_ERROR', '`desde` va después de `hasta`.', 400);
+  if (desde > colombiaToday()) {
+    throw new ApiError(
+      'VALIDATION_ERROR',
+      'El rango empieza en el futuro: no hay nada que traer.',
+      400
+    );
+  }
+  const dias = diasDeRango(desde, hasta);
+  if (dias > MAX_DIAS_SYNC_AGENTE) {
+    throw new ApiError(
+      'VALIDATION_ERROR',
+      `Son ${dias} días; desde el agente se aceptan hasta ${MAX_DIAS_SYNC_AGENTE}. ` +
+        'Para un histórico más largo usa el panel de sincronización.',
+      400
+    );
+  }
+}
 
 const triggerSync: AnyAgentTool = {
   name: 'trigger_sync',
   domain: 'operaciones',
   description:
-    'Encola una sincronización de datos para un cliente. NO es tiempo real: pone el trabajo en ' +
-    'la cola y el worker lo procesa, así que los datos pasan a ser de hace un minuto en vez de ' +
-    'hace unas horas. Requiere aprobación de una persona antes de aplicarse.',
+    'Vuelve a traer un PERIODO concreto (`desde`/`hasta`, hasta ' +
+    `${MAX_DIAS_SYNC_AGENTE} días) de todos los canales conectados de un cliente, o de los que ` +
+    'se indiquen: para rellenar un hueco o corregir días antiguos. Troceado en tramos, como el ' +
+    'panel. Para refrescar lo reciente usa sync_client, que no necesita aprobación. Esta ' +
+    'requiere aprobación de una persona antes de aplicarse.',
   input: z.object({
     client_id: clienteIdSchema,
-    desde: z
-      .string()
-      .regex(/^\d{4}-\d{2}-\d{2}$/)
-      .optional(),
-    hasta: z
-      .string()
-      .regex(/^\d{4}-\d{2}-\d{2}$/)
-      .optional(),
+    desde: fechaSync,
+    hasta: fechaSync,
+    canales: canalesSchema,
   }),
   scopes: ['write:sync'],
   minLevel: 'operador',
   mutation: {
     risk: 'low',
-    summarize: (i: { client_id: string }) => `Sincronizar los datos del cliente ${i.client_id}`,
+    summarize: (i: { client_id: string; desde: string; hasta: string; canales?: string[] }) =>
+      `Sincronizar ${i.canales?.length ? i.canales.join(', ') : 'todos los canales'} del cliente ` +
+      `${i.client_id} del ${i.desde} al ${i.hasta}`,
+    // Lo comprobable se comprueba al PROPONER: rango, acceso y que haya algo
+    // conectado. Si no, el modelo oía «pendiente» para algo que iba a fallar.
+    precheck: async (
+      i: { client_id: string; desde: string; hasta: string; canales?: CanalSync[] },
+      ctx
+    ) => {
+      exigirRango(i.desde, i.hasta);
+      const c = await contextoDeSync(ctx, i.client_id);
+      canalesUtiles(canalesDeCliente(c), i.canales);
+    },
   },
-  handler: async (input: { client_id: string; desde?: string; hasta?: string }, ctx) => {
-    exigirCliente(ctx, input.client_id);
-
-    const { enqueueJob } = await import('@/lib/sync/queue');
-    const { colombiaToday, colombiaYesterday } = await import('@/lib/date-utils');
-
-    const job = await enqueueJob(ctx.db, {
-      tipo: 'metricas',
-      clienteId: input.client_id,
-      start: input.desde ?? colombiaYesterday(),
-      end: input.hasta ?? colombiaToday(),
-      prioridad: 1,
+  handler: async (
+    input: { client_id: string; desde: string; hasta: string; canales?: CanalSync[] },
+    ctx
+  ) => {
+    exigirRango(input.desde, input.hasta);
+    const c = await contextoDeSync(ctx, input.client_id);
+    const estados = canalesDeCliente(c);
+    const utiles = canalesUtiles(estados, input.canales);
+    const plan = planSyncCliente(c, utiles, {
+      rango: { desde: input.desde, hasta: input.hasta },
       triggeredBy: 'agente',
     });
-
+    const res = await encolarSyncCliente(ctx.db, plan);
+    const avisado = res.encolados.length > 0 ? await avisarWorker() : false;
     return {
-      encolado: job !== null,
-      job_id: job?.id ?? null,
-      // Un duplicado no es un error: significa que ya había una sincronización
-      // pendiente para ese mismo rango.
-      nota: job
-        ? 'Sincronización encolada. Tardará un momento en reflejarse.'
-        : 'Ya había una sincronización pendiente para ese rango; no se ha duplicado.',
+      estado: res.encolados.length > 0 ? 'encolado' : 'ya_en_curso',
+      canales: fichaCanales(estados),
+      encolados: res.encolados,
+      ...(res.duplicados.length ? { ya_en_cola: res.duplicados } : {}),
+      ...(res.errores.length ? { errores: res.errores } : {}),
+      worker_avisado: avisado,
+      nota: NOTA_ASINCRONA,
     };
   },
 };
@@ -473,5 +705,6 @@ export const toolsOperaciones: AnyAgentTool[] = [
   listAlertRules,
   createAlertRule,
   getSyncStatus,
+  syncClient,
   triggerSync,
 ];

@@ -11,8 +11,26 @@ import { colombiaToday, colombiaYesterday, COLOMBIA_UTC_OFFSET_MS } from '../dat
 import { hotmartConectado } from '../hotmart/cliente';
 import { normalizeSheetConfigs } from '../integrations/google-sheets-conversiones';
 
+/** ¿El cliente tiene alguna cuenta publicitaria de Meta? */
+export function tieneMeta(configApi: unknown): boolean {
+  const cfg = (configApi ?? {}) as Record<string, unknown>;
+  return (
+    (Array.isArray(cfg.meta_accounts) && cfg.meta_accounts.length > 0) ||
+    (!!cfg.meta_token && !!cfg.meta_account_id)
+  );
+}
+
+/** ¿El cliente tiene alguna cuenta publicitaria de TikTok? */
+export function tieneTiktok(configApi: unknown): boolean {
+  const cfg = (configApi ?? {}) as Record<string, unknown>;
+  return (
+    (Array.isArray(cfg.tiktok_accounts) && cfg.tiktok_accounts.length > 0) ||
+    (!!cfg.tiktok_access_token && !!cfg.tiktok_advertiser_id)
+  );
+}
+
 /** ¿El cliente tiene al menos un Google Sheet habilitado y con URL? */
-function tieneSheets(configApi: unknown): boolean {
+export function tieneSheets(configApi: unknown): boolean {
   const cfg = (configApi ?? {}) as { google_sheets_conversiones?: unknown };
   return normalizeSheetConfigs(cfg.google_sheets_conversiones).some(
     (s) => s.enabled && s.sheet_url
@@ -310,17 +328,10 @@ export async function planReconciliacion(
 
   let total = 0;
   for (const c of (clientes ?? []) as Array<{ id: string; config_api: any }>) {
-    const cfg = c.config_api ?? {};
-    const tieneMeta =
-      (Array.isArray(cfg.meta_accounts) && cfg.meta_accounts.length > 0) ||
-      (!!cfg.meta_token && !!cfg.meta_account_id);
     // La ruta de reconciliación audita Meta Y TikTok (cada una solo si el
     // cliente la tiene). Filtrar solo por Meta dejaba sin auditar a un cliente
     // que anuncia únicamente en TikTok.
-    const tieneTikTok =
-      (Array.isArray(cfg.tiktok_accounts) && cfg.tiktok_accounts.length > 0) ||
-      (!!cfg.tiktok_access_token && !!cfg.tiktok_advertiser_id);
-    if (!tieneMeta && !tieneTikTok) continue;
+    if (!tieneMeta(c.config_api) && !tieneTiktok(c.config_api)) continue;
 
     const job = await enqueueJob(db, {
       tipo: 'reconciliar',

@@ -666,8 +666,10 @@ async function main() {
   }
   const directas = ALL_TOOLS.filter((t) => esDirecta(t)).map((t) => t.name);
   check(
-    'solo los informes tienen escrituras directas',
-    ALL_TOOLS.filter((t) => esDirecta(t)).every((t) => t.domain === 'informes'),
+    'solo los informes (y sync_client) tienen escrituras directas',
+    ALL_TOOLS.filter((t) => esDirecta(t)).every(
+      (t) => t.domain === 'informes' || t.name === 'sync_client'
+    ),
     directas.join(',')
   );
   for (const n of ['share_report', 'delete_report', 'set_report_client']) {

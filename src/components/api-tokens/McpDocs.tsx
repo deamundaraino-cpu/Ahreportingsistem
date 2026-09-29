@@ -635,7 +635,10 @@ export function McpDocs({ appUrl, onIrATokens }: { appUrl: string; onIrATokens: 
               ],
               ['read:campaigns', 'Campañas de Meta y su evolución diaria.'],
               ['read:reports', 'Informes BI y plantillas.'],
-              ['write:sync', 'Encolar una sincronización.'],
+              [
+                'write:sync',
+                'Sincronizar los canales de un cliente (sync_client al momento; un periodo, con aprobación).',
+              ],
               ['write:context', 'Perfil del cliente, estrategia de pestaña y correcciones.'],
               [
                 'write:reports',
@@ -904,7 +907,9 @@ export function McpDocs({ appUrl, onIrATokens }: { appUrl: string; onIrATokens: 
           </li>
           <li>
             <strong>Las cifras parecen viejas.</strong> Pregunta por <C>get_sync_status</C> antes de
-            sacar conclusiones de una caída.
+            sacar conclusiones de una caída. <C>sync_client</C> refresca al momento todos los
+            canales conectados del cliente (no repite si se lanzó hace menos de 10 minutos) y{' '}
+            <C>trigger_sync</C> vuelve a traer un periodo de hasta 90 días, con aprobación.
           </li>
         </ul>
       </Ficha>

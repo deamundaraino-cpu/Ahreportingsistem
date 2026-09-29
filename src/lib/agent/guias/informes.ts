@@ -192,6 +192,7 @@ export const INSTRUCCIONES_MCP = [
   '· Casi todas las herramientas piden `client_id`: sácalo de `list_clients` o `resolve_client`.',
   '· Antes de valorar el rendimiento de un cliente usa `analyze_performance`; respeta `no_aplican` y `fuentes_ausentes`.',
   '· Los importes van en la moneda del campo `moneda`: no sumes importes de clientes distintos.',
+  '· Si las cifras parecen viejas o piden «sincroniza a X», `sync_client` refresca al momento todos los canales conectados del cliente (Meta, TikTok, Sheets, GA4, Hotmart, leads del CRM); sigue el avance con `get_sync_status`. Un periodo antiguo se pide con `trigger_sync` (`desde`/`hasta`, requiere aprobación).',
   '',
   GUIA_INFORMES_CORTA,
 ].join('\n');

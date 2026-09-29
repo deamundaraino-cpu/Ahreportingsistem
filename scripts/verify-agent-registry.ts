@@ -177,20 +177,31 @@ for (const f of fuentes) {
 console.log('\n── Escrituras directas: solo reversibles e internas ─────────');
 
 // Crear y editar informes se aplica al momento (con aprobación por paso no se
-// podía terminar ninguno). La excepción tiene que seguir siendo estrecha.
+// podía terminar ninguno), y refrescar los datos recientes de un cliente
+// también (`sync_client`, con freno). La excepción tiene que seguir siendo
+// estrecha: fuera de informes, solo lo que está en esta lista.
+const DIRECTAS_FUERA_DE_INFORMES = new Set(['sync_client']);
 for (const t of ALL_TOOLS) {
   if (t.mutation?.approval !== 'directa') continue;
   check(`[${t.name}] directa ⇒ riesgo bajo`, t.mutation.risk === 'low');
-  check(`[${t.name}] directa ⇒ dominio informes`, t.domain === 'informes');
+  check(
+    `[${t.name}] directa ⇒ informes o lista blanca`,
+    t.domain === 'informes' || DIRECTAS_FUERA_DE_INFORMES.has(t.name)
+  );
   check(
     `[${t.name}] directa ⇒ al menos nivel operador`,
     nivelAlcanza(t.minLevel ?? 'consulta', 'operador')
   );
 }
-for (const n of ['share_report', 'delete_report', 'set_report_client']) {
+for (const n of ['share_report', 'delete_report', 'set_report_client', 'trigger_sync']) {
   const t = getTool(n);
   check(`'${n}' existe y pide aprobación`, Boolean(t) && t!.mutation?.approval !== 'directa');
 }
+check(
+  "'sync_client' existe, es directa y exige write:sync",
+  getTool('sync_client')?.mutation?.approval === 'directa' &&
+    (getTool('sync_client')?.scopes ?? []).includes('write:sync')
+);
 {
   const INFORMES = [
     'add_report_widget',

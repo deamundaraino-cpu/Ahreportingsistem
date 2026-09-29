@@ -24,7 +24,7 @@ La lista canónica es `ALL_PERMISSIONS`, en `src/lib/api-token-auth.ts`. El sche
 | `read:campaigns` | Campañas de Meta y su evolución diaria                                    |
 | `read:reports`   | Informes BI y plantillas                                                  |
 | `read:context`   | Reservado; hoy no lo exige ninguna herramienta                            |
-| `write:sync`     | Encolar una sincronización                                                |
+| `write:sync`     | Sincronizar un cliente: reciente al momento, un periodo con aprobación    |
 | `write:context`  | Perfil de cliente, estrategia de pestaña y correcciones del agente        |
 | `write:reports`  | Crear y editar informes (al momento), compartir y borrar (con aprobación) |
 | `write:tasks`    | Tareas del roadmap y reglas de alerta                                     |
@@ -76,7 +76,7 @@ Las herramientas **no se declaran aquí**. Salen de `ALL_TOOLS` (`src/lib/agent/
 
 Esa misma fuente alimenta la documentación de la interfaz, a través de `catalogoPublico()` (`src/lib/agent/catalogo.ts`) y de `GET /api/agent/tools`. El panel listaba cuatro herramientas escritas a mano, una de ellas —`get_campaign_groups`— inexistente; derivarlo impide que vuelva a pasar. Lo cubre `scripts/verify-agent-catalogo.ts`.
 
-Por dominio: `clientes` (4), `metricas` (5, incluidas las de leads), `analisis` (2), `campanas` (2, solo lectura), `contexto` (7), `informes` (19), `operaciones` (9), `administracion` (5).
+Por dominio: `clientes` (4), `metricas` (5, incluidas las de leads), `analisis` (2), `campanas` (2, solo lectura), `contexto` (7), `informes` (19), `operaciones` (10), `administracion` (5).
 
 ### Autorización en tres ejes
 
@@ -88,11 +88,19 @@ Los tres se aplican a la vez y el resultado es siempre el más restrictivo.
 
 `toolsFor` filtra el catálogo además de rechazar al ejecutar: ofrecerle al modelo una herramienta que va a ser rechazada solo sirve para que prometa lo que no puede.
 
-### Las escrituras no se ejecutan desde MCP (salvo editar informes)
+### Las escrituras no se ejecutan desde MCP (salvo editar informes y sincronizar)
 
 Una herramienta con `mutation` registra una propuesta en `agent_action_approvals` y devuelve `pendiente_de_aprobacion` con un resumen en lenguaje natural. Aprobar exige nivel `aprobador` (riesgo `low`) o `admin` (riesgo `high`), y **quien aprueba no puede ser quien propuso**. La propuesta caduca a las 24 h. Al aprobarse, la acción se ejecuta con la identidad del proponente.
 
-La excepción son las escrituras con `mutation.approval: 'directa'` (solo admitido con riesgo `low`, y hoy solo en el dominio `informes`): crear, editar, duplicar, guardar como plantilla, retirar el enlace y restaurar un informe se aplican al momento y devuelven `estado: 'aplicado'`. Con aprobación por paso no se podía terminar ningún informe: `create_report` devolvía «pendiente» sin id al que añadir widgets. A cambio, cada una guarda antes el estado anterior en `bi_report_revisions` (migración 092) y devuelve un `revision_id` que `restore_report_revision` deshace; la escritura es condicionada a `updated_at` y responde `CONFLICT` si otro guardó entre medias. Publicar el enlace (`share_report`), borrar (`delete_report`) y cambiar el cliente (`set_report_client`) siguen siendo propuestas de riesgo alto.
+La excepción son las escrituras con `mutation.approval: 'directa'` (solo admitido con riesgo `low`: el dominio `informes` y `sync_client`): crear, editar, duplicar, guardar como plantilla, retirar el enlace y restaurar un informe se aplican al momento y devuelven `estado: 'aplicado'`. Con aprobación por paso no se podía terminar ningún informe: `create_report` devolvía «pendiente» sin id al que añadir widgets. A cambio, cada una guarda antes el estado anterior en `bi_report_revisions` (migración 092) y devuelve un `revision_id` que `restore_report_revision` deshace; la escritura es condicionada a `updated_at` y responde `CONFLICT` si otro guardó entre medias. Publicar el enlace (`share_report`), borrar (`delete_report`) y cambiar el cliente (`set_report_client`) siguen siendo propuestas de riesgo alto.
+
+### Sincronizar un cliente
+
+`sync_client` encola al momento TODOS los canales conectados de un cliente con su ventana de refresco (`src/lib/sync/cliente.ts`): `metricas` ayer–hoy (Meta, TikTok y los agregados de Hotmart y GA4), `sheets_conversiones`, `ga4` de los últimos días, `hotmart_ventas` de 7 días y los leads de Meta Lead Ads, GoHighLevel (contactos y oportunidades) y TikTok. «Conectado» se decide con las mismas reglas que el planner (`tieneMeta`, `tieneSheets`, `tieneGa4`, `hotmartConectado`, integraciones de `report_utm`). Lleva un freno para la instancia Micro: no reencola lo que ya está en curso y no hace nada si el agente la lanzó hace menos de 10 minutos. Después despierta a `/api/worker/run-jobs`, como el botón del dashboard.
+
+`trigger_sync` vuelve a traer un periodo (`desde`/`hasta`, hasta 90 días, troceado en tramos) y sigue siendo una propuesta.
+
+Los jobs de leads por cliente llevan `params.rtm_cliente_id`: sus rutas filtran `report_utm.integrations` por el id de `report_utm.clientes`, y `sync_jobs.cliente_id` es el público. Antes de esto, un job de leads por cliente llegaba con el id público, no casaba ninguna integración y se daba por hecho sin sincronizar nada; ahora, si le falta el id, falla (`clienteDeLeads` en `src/lib/sync/runner.ts`).
 
 `mutation.precheck` corre antes de registrar la propuesta, con los permisos de quien la pide: un informe ajeno o inexistente se rechaza al proponer, no al aprobar.
 

@@ -87,8 +87,32 @@ export type RunnerResult = {
   details: Array<{ jobId: string; tipo: string; estado: string; message?: string }>;
 };
 
+/**
+ * Cliente de un job de leads/CRM (`meta_leads`, `ghl_*`, `tiktok_leads`).
+ *
+ * Sus rutas filtran `report_utm.integrations`, que usa el id de
+ * `report_utm.clientes`; `sync_jobs.cliente_id`, en cambio, es el id PÚBLICO
+ * (lleva FK a `public.clientes`). Pasarle el público a la ruta no casaba
+ * ninguna integración: respondía `clientes: 0` y el job se daba por HECHO sin
+ * haber sincronizado nada. Por eso un job por cliente lleva el id de report_utm
+ * en `params.rtm_cliente_id` (lo pone `planSyncCliente`), y uno que no lo trae
+ * falla en vez de fingir que terminó. Sin cliente, el job es global.
+ */
+function clienteDeLeads(job: SyncJob): string | null {
+  if (!job.cliente_id) return null;
+  const rtm = job.params?.rtm_cliente_id;
+  if (typeof rtm === 'string' && rtm) return rtm;
+  throw new Error(
+    `El job ${job.tipo} del cliente ${job.cliente_id} no trae params.rtm_cliente_id: ` +
+      'sin él la ruta no encuentra la integración.'
+  );
+}
+
 /** Traduce un job a la petición HTTP que lo ejecuta. */
-function buildRequest(job: SyncJob, appUrl: string): { url: string; method: 'GET' | 'POST' } {
+export function buildRequest(
+  job: SyncJob,
+  appUrl: string
+): { url: string; method: 'GET' | 'POST' } {
   const base = appUrl.replace(/\/$/, '');
   const qs = new URLSearchParams();
   const start = job.fecha_inicio;
@@ -112,24 +136,28 @@ function buildRequest(job: SyncJob, appUrl: string): { url: string; method: 'GET
       return { url: `${base}/api/worker/google-sheets-conversiones?${qs}`, method: 'GET' };
     case 'meta_leads': {
       const p = new URLSearchParams();
-      if (job.cliente_id) p.set('clienteId', job.cliente_id);
+      const rtm = clienteDeLeads(job);
+      if (rtm) p.set('clienteId', rtm);
       return { url: `${base}/api/cron/sync-meta-leads?${p}`, method: 'POST' };
     }
     case 'ghl_leads': {
       // Sin rango de fechas: el cursor de GHL es `dateAdded` y vive en la
       // integración, no en el job (ver `syncGhlLeadsForCliente`).
       const p = new URLSearchParams();
-      if (job.cliente_id) p.set('clienteId', job.cliente_id);
+      const rtm = clienteDeLeads(job);
+      if (rtm) p.set('clienteId', rtm);
       return { url: `${base}/api/cron/sync-ghl-leads?${p}`, method: 'POST' };
     }
     case 'ghl_oportunidades': {
       const p = new URLSearchParams();
-      if (job.cliente_id) p.set('clienteId', job.cliente_id);
+      const rtm = clienteDeLeads(job);
+      if (rtm) p.set('clienteId', rtm);
       return { url: `${base}/api/cron/sync-ghl-oportunidades?${p}`, method: 'POST' };
     }
     case 'tiktok_leads': {
       const p = new URLSearchParams();
-      if (job.cliente_id) p.set('clienteId', job.cliente_id);
+      const rtm = clienteDeLeads(job);
+      if (rtm) p.set('clienteId', rtm);
       return { url: `${base}/api/cron/sync-tiktok-leads?${p}`, method: 'POST' };
     }
     case 'cierre_mes':
