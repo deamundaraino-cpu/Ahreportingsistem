@@ -31,7 +31,9 @@ export const GA4_SOURCE: DataSource = {
   clientKey: { scope: 'public', via: 'public_cliente_id' },
   grainKind: 'daily',
   grain: ['cliente_id', 'fecha', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_id'],
-  joinAxes: ['date', 'campaign', 'utm'],
+  // `landing` (migración 100): las métricas de sesión salen de
+  // `ga4_landing_diarios` cuando se agrupa o filtra por página de entrada.
+  joinAxes: ['date', 'campaign', 'utm', 'landing'],
   dateColumn: 'fecha',
   dateType: 'date',
   fields: [
@@ -56,6 +58,14 @@ export const GA4_SOURCE: DataSource = {
       'Eventos clave (GA4)',
       'Conversiones que el sitio registra en Google Analytics (compras, formularios enviados…), todas sumadas. Para una en concreto usa su métrica «Evento clave: …».',
       'ga4'
+    ),
+    measure(
+      S,
+      'visitantes',
+      'Visitantes (GA4, suma diaria)',
+      'Personas distintas que visitaron el sitio cada día, sumadas: quien vuelve otro día cuenta dos veces, así que en un periodo largo es mayor que las personas únicas. No se suma en el Total de una tabla.',
+      'ga4',
+      { dedup: true }
     ),
     money(
       S,

@@ -104,6 +104,12 @@ export interface EstadoGa4Lite {
   filaOtros: boolean;
   /** Eventos clave conocidos → última fecha con actividad. */
   eventos: Record<string, string>;
+  /**
+   * Páginas (migración 100): ¿se sincronizaron alguna vez y desde cuándo? Van
+   * aparte porque la migración 100 puede no estar aplicada aunque la 097 sí.
+   */
+  paginasSincronizado?: boolean;
+  paginasCubiertoDesde?: string | null;
 }
 
 /**
@@ -113,3 +119,11 @@ export interface EstadoGa4Lite {
 export function ga4SinDatos(estado: EstadoGa4Lite | null): boolean {
   return !estado || !estado.configurado || !estado.sincronizado;
 }
+
+/** Lo mismo para las tablas por página (landing y vistas). */
+export function ga4PaginasSinDatos(estado: EstadoGa4Lite | null): boolean {
+  return !estado || !estado.configurado || !estado.paginasSincronizado;
+}
+
+/** Métricas de GA4 que solo existen por página (`ga4_landing_diarios` / vistas). */
+export const GA4_METRICAS_PAGINA = ['ga4_visitantes', 'ga4_vistas'] as const;

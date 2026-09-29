@@ -21,6 +21,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { ga4Run } from '@/lib/rate-limit';
 import { addDaysISO } from '@/lib/colombia-date';
+import { rutaDePagina } from '@/lib/report-utm/page-url';
 import {
   clasificarErrorGa4,
   crearClienteGa4,
@@ -68,6 +69,22 @@ export interface FilaEventoGa4 {
   eventos_clave: number;
 }
 
+/** Sesiones por página de entrada × tupla UTM (`ga4_landing_diarios`). */
+export interface FilaLandingGa4 extends FilaSesionesGa4 {
+  /** Ruta normalizada con `rutaDePagina`; `''` = `(not set)`. */
+  landing: string;
+  /** `totalUsers` del día para la tupla: NO se suma entre días ni filas. */
+  visitantes: number;
+}
+
+/** Vistas por página (`ga4_vistas_diarias`). */
+export interface FilaVistaGa4 {
+  fecha: string;
+  host: string;
+  pagina: string;
+  vistas: number;
+}
+
 export interface MetadatosGa4 {
   zona_horaria: string | null;
   moneda: string | null;
@@ -93,14 +110,15 @@ const DIMS_SESION = [
   'sessionCampaignId',
 ] as const;
 
-function base(desde: string, hasta: string, offset: number) {
+function base(desde: string, hasta: string, offset: number, dims: readonly string[] = DIMS_SESION) {
   return {
     dateRanges: [{ startDate: desde, endDate: hasta }],
     limit: LIMITE_PAGINA_GA4,
     offset,
     keepEmptyRows: false,
-    // Orden estable: sin él dos páginas pueden solapar o saltarse filas.
-    orderBys: DIMS_SESION.map((d) => ({ dimension: { dimensionName: d } })),
+    // Orden estable por TODAS las dimensiones: sin él dos páginas pueden
+    // solapar o saltarse filas.
+    orderBys: dims.map((d) => ({ dimension: { dimensionName: d } })),
     returnPropertyQuota: offset === 0,
   };
 }
@@ -130,6 +148,39 @@ export function peticionEventos(desde: string, hasta: string, offset = 0) {
         numericFilter: { operation: 'GREATER_THAN' as const, value: { int64Value: '0' } },
       },
     },
+  };
+}
+
+/** Dimensiones del informe por página de entrada: la tupla + `landingPage`. */
+const DIMS_LANDING = [...DIMS_SESION, 'landingPage'] as const;
+/** Dimensiones del informe de vistas por página. */
+const DIMS_VISTAS = ['date', 'hostName', 'pagePath'] as const;
+
+/**
+ * Sesiones por página de entrada. `landingPage` es la ruta de la PRIMERA vista
+ * de la sesión, sin host ni query: cada sesión cuenta en una sola página, así
+ * que las sesiones por landing se pueden sumar.
+ */
+export function peticionLanding(desde: string, hasta: string, offset = 0) {
+  return {
+    ...base(desde, hasta, offset, DIMS_LANDING),
+    dimensions: DIMS_LANDING.map((name) => ({ name })),
+    metrics: [
+      { name: 'sessions' },
+      { name: 'engagedSessions' },
+      { name: 'keyEvents' },
+      { name: 'totalRevenue' },
+      { name: 'totalUsers' },
+    ],
+  };
+}
+
+/** Vistas por página de todo el sitio, como el informe «Páginas» de GA4. */
+export function peticionVistas(desde: string, hasta: string, offset = 0) {
+  return {
+    ...base(desde, hasta, offset, DIMS_VISTAS),
+    dimensions: DIMS_VISTAS.map((name) => ({ name })),
+    metrics: [{ name: 'screenPageViews' }],
   };
 }
 
@@ -257,6 +308,98 @@ export function filasEventos(resps: RespuestaGa4[]): FilaEventoGa4[] {
   return [...acc.values()];
 }
 
+/**
+ * Filas por página de entrada. La ruta se normaliza con `rutaDePagina` (la
+ * misma función que agrupa los leads), y las filas que colisionan tras
+ * normalizar (`/a` y `/A/`) se suman.
+ */
+export function filasLanding(resps: RespuestaGa4[]): FilaLandingGa4[] {
+  const acc = new Map<string, FilaLandingGa4>();
+  for (const resp of resps) {
+    const { dims, mets } = indices(resp);
+    const m = (row: NonNullable<RespuestaGa4['rows']>[number], name: string) => {
+      const i = mets.get(name);
+      return i === undefined ? 0 : num(row.metricValues?.[i]);
+    };
+    const iLp = dims.get('landingPage');
+    for (const row of resp.rows ?? []) {
+      const t = tuplaDe(row, dims);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(t.fecha)) continue;
+      const landing = rutaDePagina(
+        iLp === undefined ? '' : String(row.dimensionValues?.[iLp]?.value ?? '')
+      );
+      const k = `${claveTupla(t)}\u0001${landing}`;
+      const prev = acc.get(k) ?? {
+        ...t,
+        landing,
+        sesiones: 0,
+        sesiones_interaccion: 0,
+        eventos_clave: 0,
+        ingresos: 0,
+        visitantes: 0,
+      };
+      prev.sesiones += m(row, 'sessions');
+      prev.sesiones_interaccion += m(row, 'engagedSessions');
+      prev.eventos_clave += m(row, 'keyEvents') || m(row, 'conversions');
+      prev.ingresos += m(row, 'totalRevenue');
+      prev.visitantes += m(row, 'totalUsers');
+      acc.set(k, prev);
+    }
+  }
+  return [...acc.values()];
+}
+
+/** Filas de vistas por página: `pagePath` normalizado, host en minúsculas. */
+export function filasVistas(resps: RespuestaGa4[]): FilaVistaGa4[] {
+  const acc = new Map<string, FilaVistaGa4>();
+  for (const resp of resps) {
+    const { dims, mets } = indices(resp);
+    const d = (row: NonNullable<RespuestaGa4['rows']>[number], name: string) => {
+      const i = dims.get(name);
+      return i === undefined ? '' : String(row.dimensionValues?.[i]?.value ?? '');
+    };
+    const iV = mets.get('screenPageViews');
+    for (const row of resp.rows ?? []) {
+      const fecha = fechaGa(d(row, 'date'));
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha)) continue;
+      const vistas = iV === undefined ? 0 : num(row.metricValues?.[iV]);
+      if (vistas <= 0) continue;
+      const host = normalizarValorGa(d(row, 'hostName')).toLowerCase();
+      const pagina = rutaDePagina(d(row, 'pagePath'));
+      const k = [fecha, host, pagina].join('\u0001');
+      const prev = acc.get(k) ?? { fecha, host, pagina, vistas: 0 };
+      prev.vistas += vistas;
+      acc.set(k, prev);
+    }
+  }
+  return [...acc.values()];
+}
+
+/**
+ * ¿Qué informe de páginas NO se debe escribir? Si la ventana tiene sesiones
+ * pero el informe de landing o el de vistas llegó vacío, algo falló a medias
+ * (un corte de GA4, un límite): mejor conservar lo guardado que borrarlo.
+ */
+export function paginasSospechosas(
+  sesionesVentana: number,
+  landing: FilaLandingGa4[],
+  vistas: FilaVistaGa4[]
+): { landing: boolean; vistas: boolean } {
+  if (sesionesVentana <= 0) return { landing: false, vistas: false };
+  return { landing: landing.length === 0, vistas: vistas.length === 0 };
+}
+
+/**
+ * Diferencia relativa entre las sesiones por landing y las de la tupla UTM. Son
+ * dos informes distintos de GA4: con umbrales o fila «(other)» no tienen por
+ * qué cuadrar al 100 %, pero un desvío grande es un aviso.
+ */
+export function desvioLanding(sesionesTupla: number, landing: FilaLandingGa4[]): number {
+  const l = landing.reduce((a, f) => a + f.sesiones, 0);
+  if (sesionesTupla <= 0) return l > 0 ? 1 : 0;
+  return Math.abs(l - sesionesTupla) / sesionesTupla;
+}
+
 /** Metadatos combinados de varias respuestas (un flag en cualquiera cuenta). */
 export function metadatosDeRespuestas(resps: RespuestaGa4[]): MetadatosGa4 {
   const out: MetadatosGa4 = {
@@ -328,6 +471,11 @@ export interface ResultadoSyncGa4 {
   ok: boolean;
   sesiones: number;
   eventos: number;
+  /** Filas escritas por página de entrada y por vistas (migración 100). */
+  landing: number;
+  vistas: number;
+  /** Aviso no fatal de las páginas (no hacen fallar la ventana). */
+  avisoPaginas?: string;
   ventanas: number;
   partial: boolean;
   resumeFrom: string | null;
@@ -347,11 +495,52 @@ async function paginar(
   };
   const primera = await run(0);
   const total = Number(primera.rowCount ?? primera.rows?.length ?? 0);
-  if (total > MAX_FILAS_VENTANA) {
-    throw new Error(`GA4 devolvió ${total} filas en una ventana (tope ${MAX_FILAS_VENTANA})`);
-  }
+  if (total > MAX_FILAS_VENTANA) throw new DemasiadasFilas(total);
   const resto = await Promise.all(offsetsPendientes(total).map(run));
   return [primera, ...resto];
+}
+
+/** La ventana devolvió más filas que el tope: hay que partirla. */
+class DemasiadasFilas extends Error {
+  constructor(total: number) {
+    super(`GA4 devolvió ${total} filas en una ventana (tope ${MAX_FILAS_VENTANA})`);
+  }
+}
+
+/**
+ * `paginar` que, si la ventana supera el tope de filas, la parte en dos (hasta
+ * llegar a un día) antes de rendirse. Los informes por página tienen más
+ * cardinalidad que el de campaña; con el volumen de hoy (~700 filas/mes) no
+ * salta, pero un sitio con miles de URL no debe tumbar la sincronización.
+ */
+async function paginarPartiendo(
+  ga: ClienteGa4,
+  desde: string,
+  hasta: string,
+  peticion: (d: string, h: string, offset: number) => Record<string, unknown>
+): Promise<RespuestaGa4[]> {
+  try {
+    return await paginar(ga, (o) => peticion(desde, hasta, o));
+  } catch (e) {
+    if (!(e instanceof DemasiadasFilas) || desde >= hasta) throw e;
+    const dias = Math.round(
+      (Date.parse(`${hasta}T00:00:00Z`) - Date.parse(`${desde}T00:00:00Z`)) / 86_400_000
+    );
+    const medio = addDaysISO(desde, Math.floor(dias / 2));
+    const [a, b] = await Promise.all([
+      paginarPartiendo(ga, desde, medio, peticion),
+      paginarPartiendo(ga, addDaysISO(medio, 1), hasta, peticion),
+    ]);
+    return [...a, ...b];
+  }
+}
+
+/** ¿La RPC no existe (migración 100 sin aplicar)? */
+function faltaRpc(error: { code?: string; message?: string } | null): boolean {
+  return (
+    !!error &&
+    (error.code === 'PGRST202' || /could not find the function/i.test(error.message ?? ''))
+  );
 }
 
 async function registrarError(
@@ -393,6 +582,8 @@ export async function sincronizarGa4Cliente(
     ok: true,
     sesiones: 0,
     eventos: 0,
+    landing: 0,
+    vistas: 0,
     ventanas: 0,
     partial: false,
     resumeFrom: null,
@@ -404,6 +595,8 @@ export async function sincronizarGa4Cliente(
   }
 
   const tope = hasta > opts.hoy ? opts.hoy : hasta;
+  // Sin la migración 100 las páginas se saltan en todo el rango (una vez avisado).
+  let paginasDisponibles = true;
   for (const [ini, fin] of ventanas(desde, tope)) {
     if (!opts.hayTiempo()) {
       res.partial = true;
@@ -453,6 +646,25 @@ export async function sincronizarGa4Cliente(
       log(
         `[GA4 desglose] ${cliente.nombre ?? cliente.id} ${ini}…${fin}: ${sesiones.length} tuplas, ${eventos.length} eventos${md.umbral ? ' (umbral)' : ''}`
       );
+
+      // ── Páginas (migración 100): no obligatorias ──────────────────
+      // Un fallo aquí se registra en `ga4_estado.paginas_*` y NO hace fallar la
+      // ventana: las campañas ya se escribieron y son lo que más se usa.
+      if (paginasDisponibles) {
+        const r = await sincronizarPaginas(db, ga, cliente.id, ini, fin, sesiones);
+        if (r.faltaMigracion) {
+          paginasDisponibles = false;
+          res.avisoPaginas = 'Migración 100 sin aplicar: no se sincronizan las páginas de GA4.';
+          log(`[GA4 páginas] ${res.avisoPaginas}`);
+        } else {
+          res.landing += r.landing;
+          res.vistas += r.vistas;
+          if (r.aviso) {
+            res.avisoPaginas = r.aviso;
+            log(`[GA4 páginas] ${cliente.nombre ?? cliente.id} ${ini}…${fin}: ${r.aviso}`);
+          }
+        }
+      }
     } catch (e) {
       const codigo = clasificarErrorGa4(e);
       const msg = mensajeErrorGa4(codigo, {
@@ -466,4 +678,61 @@ export async function sincronizarGa4Cliente(
     }
   }
   return res;
+}
+
+/**
+ * Informes por página de una ventana: sesiones por página de entrada y vistas
+ * por página. Se piden a la vez; cada uno se escribe solo si llegó completo y no
+ * es sospechoso (el otro se pasa como NULL y la RPC lo deja intacto).
+ */
+async function sincronizarPaginas(
+  db: SupabaseClient,
+  ga: ClienteGa4,
+  clienteId: string,
+  ini: string,
+  fin: string,
+  sesionesTupla: FilaSesionesGa4[]
+): Promise<{ landing: number; vistas: number; aviso?: string; faltaMigracion?: boolean }> {
+  const [rl, rv] = await Promise.allSettled([
+    paginarPartiendo(ga, ini, fin, peticionLanding),
+    paginarPartiendo(ga, ini, fin, peticionVistas),
+  ]);
+  const landing = rl.status === 'fulfilled' ? filasLanding(rl.value) : null;
+  const vistas = rv.status === 'fulfilled' ? filasVistas(rv.value) : null;
+  const totalSes = sesionesTupla.reduce((a, f) => a + f.sesiones, 0);
+  const sospecha = paginasSospechosas(totalSes, landing ?? [], vistas ?? []);
+  const escribirLanding = landing !== null && !sospecha.landing;
+  const escribirVistas = vistas !== null && !sospecha.vistas;
+
+  const avisos: string[] = [];
+  if (rl.status === 'rejected')
+    avisos.push(`landing: ${(rl.reason as Error)?.message ?? rl.reason}`);
+  if (rv.status === 'rejected')
+    avisos.push(`vistas: ${(rv.reason as Error)?.message ?? rv.reason}`);
+  if (landing && sospecha.landing) avisos.push('landing vacío con sesiones: no se sobrescribe');
+  if (vistas && sospecha.vistas) avisos.push('vistas vacías con sesiones: no se sobrescribe');
+  if (escribirLanding && desvioLanding(totalSes, landing!) > 0.05) {
+    avisos.push(
+      `las sesiones por landing difieren más de un 5 % de las de campaña (${landing!.reduce((a, f) => a + f.sesiones, 0)} frente a ${totalSes})`
+    );
+  }
+  const aviso = avisos.length ? avisos.join(' · ') : undefined;
+  if (!escribirLanding && !escribirVistas) return { landing: 0, vistas: 0, aviso };
+
+  const md = metadatosDeRespuestas([
+    ...(rl.status === 'fulfilled' ? rl.value : []),
+    ...(rv.status === 'fulfilled' ? rv.value : []),
+  ]);
+  const { data, error } = await db.rpc('ga4_reemplazar_paginas', {
+    p_cliente_id: clienteId,
+    p_desde: ini,
+    p_hasta: fin,
+    p_landing: escribirLanding ? landing : null,
+    p_vistas: escribirVistas ? vistas : null,
+    p_estado: { umbral: md.umbral, fila_otros: md.fila_otros, error: aviso ?? null },
+  });
+  if (faltaRpc(error)) return { landing: 0, vistas: 0, faltaMigracion: true };
+  if (error) return { landing: 0, vistas: 0, aviso: `ga4_reemplazar_paginas: ${error.message}` };
+  const escr = (data ?? {}) as { landing?: number; vistas?: number };
+  return { landing: escr.landing ?? 0, vistas: escr.vistas ?? 0, aviso };
 }

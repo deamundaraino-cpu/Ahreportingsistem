@@ -182,3 +182,43 @@ Por fuente, `Facebook_Right_Column` trae 216 sesiones con **99 % de rebote y 0 l
 - `verify-bi-registry`: 108 métricas, paridad de etiquetas, formatos, grupos y desgloses.
 - `verify-agent-informes`: el tope de discrepancias sube de 174 a 177 por la misma pareja `utm_id` que ya hereda todo el gasto.
 - De punta a punta: prueba de acceso real a GA4, backfill de Cris y `runBiQuery` por campaña, fuente, total y anuncio (GA4 → «—»).
+
+## 8. Ampliación del 2026-09-29: GA4 por página y selector por proveedor
+
+Pedido: «sesiones, vistas y visitas como métricas», por página y con los leads al lado, y el selector de campos ordenado por proveedor.
+
+**Qué se añadió** (migración **100**, aplicada por el dueño del proyecto):
+
+| Métrica / dimensión             | Qué es                                                                                                                      | Se desglosa por                                  |
+| ------------------------------- | --------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
+| `ga4_visitantes`                | Personas de cada día (`totalUsers`), **sumadas**: quien vuelve otro día cuenta dos veces; la fila Total sale «—»            | fecha, campaña, fuente, medio, página de entrada |
+| `ga4_vistas`                    | Vistas de página (`screenPageViews`) de todo el sitio                                                                       | fecha y página vista                             |
+| `landing` («Página de entrada») | La página por la que empezó la sesión (`landingPage`) y la `page_url` del lead, con la misma normalización (`rutaDePagina`) | —                                                |
+| `ga4_pagina` («Página (GA4)»)   | La página vista; solo para `ga4_vistas`                                                                                     | —                                                |
+
+- **Tablas nuevas:** `ga4_landing_diarios` (día × landing × UTM) y `ga4_vistas_diarias` (día × host × página). `ga4_sesiones_diarias` no se tocó, así que las cifras por campaña ya entregadas no cambian.
+- **Sincronización:** el job `ga4` pide las páginas en la misma ventana que las campañas. Si fallan, lo registra en `ga4_estado.paginas_*` sin hacer fallar la ventana.
+- **Cruce por página de entrada:** los leads y las métricas de sesión de GA4. Gasto, CPL, ventas, Hotmart y `ga4ev:` salen «—». La página de entrada se puede filtrar, y el desplegable ofrece también las páginas que solo conoce GA4.
+- **Selector de campos:** carpetas **Google Analytics 4** y **Hotmart** (`fuentesPorProveedor.ts`). Solo cambia la presentación: cada campo conserva su id y sus avisos.
+  - GA4: todo el sitio (por día), por campaña, por página y eventos clave. «Pagos iniciados» va aquí por decisión del dueño.
+  - Hotmart: por venta y totales por día.
+
+**Cifras de Cris** (1-27 de septiembre):
+
+- 1.675 sesiones, tanto sumando por campaña como por página de entrada.
+- 1.652 visitantes (suma diaria) y 2.009 vistas.
+- Página con más sesiones: `/asesoria-de-ahorro-tributario-v2`, con 504 sesiones y 69 % de rebote.
+- Los leads de Cris casi no traen página (GoHighLevel), así que su columna «leads» por landing sale en 0. En Eduversio, la suma por landing cuadra con el total (20.230).
+
+**Verificación:**
+
+- `verify-ga4-desglose.ts` cubre:
+  - la ruta canónica: GA4 `/x` ≡ lead `https://…/x/?fbclid=…`, e idempotencia;
+  - las peticiones;
+  - las colisiones;
+  - las guardas;
+  - la matriz de cruce, igual en el editor y en el registro;
+  - las carpetas del selector;
+  - la migración 100.
+- Nuevo `verify-ga4-paginas-db.ts` en `test:datos`.
+- `verify-bi-registry`: 110 métricas. `verify-agent-informes`: las discrepancias siguen en 177.

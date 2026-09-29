@@ -24,7 +24,17 @@ export const LEADS_SOURCE: DataSource = {
   clientKey: { scope: 'report_utm' },
   grainKind: 'row',
   grain: ['id'],
-  joinAxes: ['date', 'platform', 'campaign', 'adset', 'ad', 'utm', 'lead_column', 'lead_raw'],
+  joinAxes: [
+    'date',
+    'platform',
+    'campaign',
+    'adset',
+    'ad',
+    'utm',
+    'lead_column',
+    'lead_raw',
+    'landing',
+  ],
   dateColumn: 'created_at',
   // timestamptz: hay que convertir a día local antes de agrupar. Lo hace el
   // motor con `colombiaDateOf` (bi-query.ts), y el recorte del rango con
@@ -111,5 +121,12 @@ export const LEADS_SOURCE: DataSource = {
     dimension(S, 'form_name', 'Formulario', 'lead_column', 'leads'),
     dimension(S, 'form_plugin', 'Plugin', 'lead_column', 'leads'),
     dimension(S, 'attribution_method', 'Atribución', 'lead_column', 'leads'),
+    // Página de entrada: la `page_url` del lead normalizada con
+    // `rutaDePagina`, la misma regla que el `landingPage` de GA4. Eje propio
+    // (no `lead_column`) porque GA4 también lo tiene y el gasto no.
+    dimension(S, 'landing', 'Página de entrada', 'landing', 'leads', {
+      column: 'page_url',
+      resolve: 'page_path',
+    }),
   ],
 };

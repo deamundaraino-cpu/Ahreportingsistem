@@ -40,3 +40,44 @@ export function normalizarPageUrl(url: string | null | undefined): string | null
   // Si no queda ningún parámetro, `toString()` ya omite el `?` sobrante.
   return u.toString();
 }
+
+/** Etiqueta de las filas sin página (lead sin `page_url`, sesión `(not set)`). */
+export const SIN_PAGINA = '(sin página)';
+
+/**
+ * Ruta canónica de una página, para cruzar GA4 con los leads.
+ *
+ * GA4 da `landingPage` sin host ni query y sin barra final
+ * (`/asesoria-v2`), `pagePath` CON barra final (`/asesoria-v2/`), y un lead trae
+ * la URL entera, a veces aún con `fbclid` (Eduversio: 38.000 URL distintas
+ * para 19 rutas). Las tres tienen que caer en la misma clave o el cruce
+ * «sesiones → leads por landing» no junta nada.
+ *
+ * Sin host a propósito: GA4 no lo da en `landingPage` y cada cliente usa un solo
+ * dominio (medido el 2026-09-28). `''` = página desconocida.
+ *
+ * Idempotente: `rutaDePagina(rutaDePagina(x)) === rutaDePagina(x)`.
+ */
+export function rutaDePagina(v: string | null | undefined): string {
+  let s = String(v ?? '').trim();
+  if (!s || s.toLowerCase() === '(not set)') return '';
+  if (s === '(other)') return s;
+  // Esquema o `//host`: quedarse con la ruta.
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(s) || s.startsWith('//')) {
+    try {
+      s = new URL(s.startsWith('//') ? `https:${s}` : s).pathname;
+    } catch {
+      s = s.replace(/^[a-z][a-z0-9+.-]*:\/\/[^/?#]*/i, '').replace(/^\/\/[^/?#]*/, '');
+    }
+  }
+  s = s.split(/[?#]/, 1)[0];
+  try {
+    s = decodeURIComponent(s);
+  } catch {
+    // Una secuencia `%` rota se deja tal cual: mejor una ruta fea que perderla.
+  }
+  s = s.toLowerCase().replace(/\/{2,}/g, '/');
+  if (!s.startsWith('/')) s = `/${s}`;
+  if (s.length > 1) s = s.replace(/\/+$/, '');
+  return s || '/';
+}

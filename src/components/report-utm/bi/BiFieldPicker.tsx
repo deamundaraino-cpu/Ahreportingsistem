@@ -22,6 +22,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { Search, ChevronRight, AlertCircle, Lock, Check, Info } from 'lucide-react';
+import { agruparPorProveedor } from './fuentesPorProveedor';
 
 export interface CatalogField {
   id: string;
@@ -50,6 +51,8 @@ export interface CatalogSource {
   available: boolean;
   unavailableReason?: string;
   fields: CatalogField[];
+  /** Texto propio bajo la fuente (las carpetas por proveedor lo traen). */
+  nota?: string;
 }
 
 interface Props {
@@ -124,7 +127,9 @@ export function BiFieldPicker({
     if (!sources) return [];
     // Las del cliente van PRIMERO: son las que este informe tiene de propio y
     // las que más cuesta encontrar en una lista larga.
-    return [...extraSources, ...sources]
+    // GA4 y Hotmart se juntan en una carpeta por proveedor cada uno: sus
+    // campos vienen de varias tablas y nadie sabe en cuál vive cada uno.
+    return agruparPorProveedor([...extraSources, ...sources])
       .map((s) => ({
         ...s,
         fields: s.fields.filter((f) => {
@@ -245,7 +250,7 @@ export function BiFieldPicker({
           <div className="max-h-80 overflow-y-auto" onMouseLeave={() => setHover(null)}>
             <div className="px-3 py-2 border-b border-border bg-muted/30">
               <p className="text-[10px] text-muted-foreground leading-snug">
-                {GRAIN_TEXT[activa.grain]}
+                {activa.nota ?? GRAIN_TEXT[activa.grain]}
               </p>
               {!activa.available && (
                 <p className="mt-1 flex items-start gap-1 text-[10px] text-amber-600 dark:text-amber-500">
@@ -257,8 +262,17 @@ export function BiFieldPicker({
             {/* Las recomendadas primero: son las que sirven para el 90%
                             de los informes y cruzan bien entre sí. */}
             {(() => {
+              // Por grupo en el orden en que llegan y, dentro, las recomendadas
+              // primero: ordenar solo por recomendadas partía un grupo en dos y
+              // repetía su cabecera.
+              const ordenGrupo = new Map<string, number>();
+              for (const f of activa.fields) {
+                if (!ordenGrupo.has(f.group)) ordenGrupo.set(f.group, ordenGrupo.size);
+              }
               const campos = [...activa.fields].sort(
-                (a, b) => Number(!!b.recommended) - Number(!!a.recommended)
+                (a, b) =>
+                  ordenGrupo.get(a.group)! - ordenGrupo.get(b.group)! ||
+                  Number(!!b.recommended) - Number(!!a.recommended)
               );
               // Con varios grupos (una pregunta con sus respuestas, otra con
               // las suyas…) se enseña la cabecera de cada uno: sin ella, veinte
@@ -321,9 +335,11 @@ function sinPrefijo(label: string, group: string): string {
 /** Para los campos sin `help` (Sheet, conversiones, GA4…): al menos qué tipo de
  *  dato es y si se puede sumar, que es lo que decide cómo usarlo. */
 function descripcionPorDefecto(f: CatalogField): string {
-  if (f.kind === 'dimension') return 'Agrupa los datos: una fila o barra por cada valor de este campo.';
+  if (f.kind === 'dimension')
+    return 'Agrupa los datos: una fila o barra por cada valor de este campo.';
   if (f.additive === true) return 'Recuento o suma: se puede sumar entre días y campañas.';
-  if (f.additive === false) return 'Valor calculado (media, ratio, mínimo o máximo): no lo sumes con otros.';
+  if (f.additive === false)
+    return 'Valor calculado (media, ratio, mínimo o máximo): no lo sumes con otros.';
   return 'Métrica de esta fuente.';
 }
 

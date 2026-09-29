@@ -74,7 +74,7 @@ async function procesar(request: Request, arranque: number) {
     const desde = desdeParam ?? addDaysISO(hasta, -3);
     try {
       const r = await sincronizarGa4Cliente(db, cliente, desde, hasta, { hayTiempo, hoy, log });
-      filasEscritas += r.sesiones + r.eventos;
+      filasEscritas += r.sesiones + r.eventos + r.landing + r.vistas;
       // Solo un job de UN cliente sabe reanudar (como Hotmart).
       if (clienteId && r.partial && r.resumeFrom) {
         partial = true;

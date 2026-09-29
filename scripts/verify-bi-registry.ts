@@ -172,8 +172,9 @@ check(
   // + las 6 de compras de la auditoría de Hotmart (hm_compras, hm_bumps,
   // hm_cpa_compra, hm_ticket_compra, hm_tasa_bump, hm_conversion)
   // + las 2 de resultados personalizados (resultados_custom, coste_por_resultado_custom)
-  // + las 11 de GA4 por campaña (fuente `ga4`, migración 097).
-  legacyMetrics.length === 108,
+  // + las 11 de GA4 por campaña (fuente `ga4`, migración 097)
+  // + visitantes y vistas de GA4 por página (migración 100).
+  legacyMetrics.length === 110,
   String(legacyMetrics.length)
 );
 
@@ -415,8 +416,8 @@ check(
 
 const conGlosario = Object.keys(METRIC_GLOSSARY).length;
 check(
-  `el registro amplía el glosario de ${conGlosario} a las 108 métricas`,
-  REG.measures().length === 108 && sinHelp.length === 0
+  `el registro amplía el glosario de ${conGlosario} a las 110 métricas`,
+  REG.measures().length === 110 && sinHelp.length === 0
 );
 
 // ════════════════════════════════════════════════════════════
@@ -604,7 +605,8 @@ check(
 const porPublic = STATIC_SOURCES.filter((s) => s.clientKey.scope === 'public').map((s) => s.id);
 check(
   'las fuentes que dependen de public_cliente_id están declaradas',
-  JSON.stringify(porPublic.sort()) === '["ads","cuenta","ga4","hotmart","offline","sheet","subs"]',
+  JSON.stringify(porPublic.sort()) ===
+    '["ads","cuenta","ga4","ga4_paginas","hotmart","offline","sheet","subs"]',
   porPublic.join(', ')
 );
 const porReportUtm = STATIC_SOURCES.filter((s) => s.clientKey.scope === 'report_utm').map(

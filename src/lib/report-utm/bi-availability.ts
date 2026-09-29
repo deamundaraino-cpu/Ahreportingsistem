@@ -193,6 +193,28 @@ export async function getMetricAvailability(
         .limit(5000)
     : null;
 
+  // Páginas (migración 100). Basta saber si hay ALGUNA fila con datos.
+  const ga4PagQ = publicClienteId
+    ? Promise.all([
+        db
+          .from('ga4_landing_diarios')
+          .select('visitantes')
+          .eq('cliente_id', publicClienteId)
+          .gte('fecha', dateFrom)
+          .lte('fecha', dateTo)
+          .gt('visitantes', 0)
+          .limit(1),
+        db
+          .from('ga4_vistas_diarias')
+          .select('vistas')
+          .eq('cliente_id', publicClienteId)
+          .gte('fecha', dateFrom)
+          .lte('fecha', dateTo)
+          .gt('vistas', 0)
+          .limit(1),
+      ])
+    : null;
+
   if (params.cliente_id) {
     leadsQ.eq('cliente_id', params.cliente_id);
     salesQ.eq('cliente_id', params.cliente_id);
@@ -213,6 +235,13 @@ export async function getMetricAvailability(
       ga4EvQ ?? Promise.resolve({ data: [] }),
     ]
   );
+  const [ga4Landing, ga4Vistas] = ga4PagQ ? await ga4PagQ : [{ data: [] }, { data: [] }];
+  for (const g of (ga4Landing.data ?? []) as Array<Record<string, unknown>>) {
+    bump('ga4_visitantes', num(g.visitantes));
+  }
+  for (const g of (ga4Vistas.data ?? []) as Array<Record<string, unknown>>) {
+    bump('ga4_vistas', num(g.vistas));
+  }
 
   for (const g of (ga4Res.data ?? []) as Array<Record<string, unknown>>) {
     bump('ga4_sesiones', num(g.sesiones));

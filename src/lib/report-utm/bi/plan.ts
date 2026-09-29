@@ -168,9 +168,14 @@ export function skipReasonFor(
   // Un filtro no atribuible anula el gasto y sus derivados, pero no los leads.
   // La regla física: solo afecta a las fuentes que NO pueden filtrar por
   // columnas de lead.
+  // Cada filtro exige su eje: la página de entrada la tienen los leads y GA4;
+  // el resto (país, formulario…), solo las fuentes con columnas de lead.
   const filtros = ctx.unattributableFilters ?? [];
-  if (filtros.length && !src.joinAxes.includes('lead_column')) {
-    return { kind: 'unattributable_filter', fields: filtros };
+  const sinEje = filtros.filter(
+    (f) => !src.joinAxes.includes(f === 'landing' ? 'landing' : 'lead_column')
+  );
+  if (sinEje.length) {
+    return { kind: 'unattributable_filter', fields: sinEje };
   }
   if (dim && !sourceCrossesAxis(src, dim.axis)) {
     return { kind: 'grain_mismatch', axis: dim.axis };

@@ -146,6 +146,9 @@ function buildGroups(
     'ga_avg_session_duration',
     // GA4 por campaña (migración 097): se reparten por campaña y UTM.
     ...GA4_METRICAS,
+    // GA4 por página (migración 100).
+    'ga4_visitantes',
+    'ga4_vistas',
   ]);
   const offline = of(['offline_leads', 'offline_ventas', 'offline_revenue', 'offline_total']);
   const subs = of(['subs_active', 'subs_delayed', 'subs_canceled', 'subs_total', 'subs_mrr']);

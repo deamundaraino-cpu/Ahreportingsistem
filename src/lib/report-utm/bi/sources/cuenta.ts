@@ -63,7 +63,9 @@ export const CUENTA_SOURCE: DataSource = {
       'hotmart_pagos_iniciados',
       'Pagos iniciados (GA4 · pág. de pago)',
       'Veces que alguien llegó a la página de pago. Se mide con Google Analytics, no con Hotmart, y es del sitio entero: no se reparte por campaña. Se configura en cada pestaña del cliente con la URL o el título de la página de pago.',
-      'hotmart'
+      // En la carpeta de GA4, que es de donde sale el dato (decisión del
+      // 2026-09-29); el nombre conserva el que usa el equipo.
+      'ga4'
     ),
 
     money(

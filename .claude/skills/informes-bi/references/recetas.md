@@ -31,6 +31,12 @@
 ```
 Para que cruce exacto con el gasto, los anuncios de Meta deben llevar `utm_id={{campaign.id}}` en los parámetros de URL. Eventos clave frente a leads: `{"metric":"leads_count,ga4ev:generate_lead","dimension":"utm_campaign"}`.
 
+**Landing por landing** (sesiones → leads por página de entrada):
+```json
+{"type":"table","title":"Páginas de entrada","w":4,"h":2,"config":{"metric":"ga4_sesiones,ga4_visitantes,leads_count,ga4_tasa_sesion_lead,ga4_tasa_rebote","dimension":"landing","limit":20}}
+```
+Vistas por página: `{"metric":"ga4_vistas","dimension":"ga4_pagina","limit":20}`.
+
 **Embudo**: `{"type":"funnel","config":{"metrics":["impressions","clicks","leads_count","sales_count"]}}`. Valen como etapa los conteos y los segmentos o respuestas de lead.
 
 **Agrupar en una sección**: crea la sección con `add_report_widget` (`{"type":"section","title":"Captación","config":{"columns":4}}`) y añade dentro con `seccion_id`, o pásala entera con `children`.

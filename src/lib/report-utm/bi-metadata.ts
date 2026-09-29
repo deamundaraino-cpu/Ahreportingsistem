@@ -144,6 +144,9 @@ export type BiMetric =
   | 'ga4_coste_evento_clave'
   | 'ga4_tasa_sesion_lead'
   | 'ga4_roas'
+  // ── GA4 por página (migración 100) ──
+  | 'ga4_visitantes'
+  | 'ga4_vistas'
   // ── TikTok ──
   | 'tiktok_conversions'
   // ── Hotmart (columnas escalares de metricas_diarias) ──
@@ -357,6 +360,8 @@ export const ADDITIVE_METRICS: ReadonlySet<string> = new Set<string>([
   'ga4_sesiones_interaccion',
   'ga4_eventos_clave',
   'ga4_ingresos',
+  // Las vistas sí se suman; los visitantes NO (quien vuelve cuenta dos veces).
+  'ga4_vistas',
 ]);
 
 /** ¿La fila "Total" de una tabla puede sumar esta métrica directamente? */
@@ -498,7 +503,16 @@ export type BiDimension =
   | 'hm_metodo_pago'
   // ── Dimensiones de anuncio/conjunto (solo gasto/métricas de campaña) ──
   | 'ad'
-  | 'adset';
+  | 'adset'
+  // ── Páginas (migración 100) ──
+  /**
+   * Página de entrada: la de la PRIMERA vista de una sesión de GA4
+   * (`landingPage`) y la `page_url` de un lead, las dos normalizadas con
+   * `rutaDePagina`. Es lo que permite «sesiones → leads por landing».
+   */
+  | 'landing'
+  /** Página vista (`pagePath`), solo para las vistas de GA4. */
+  | 'ga4_pagina';
 
 export type DateGrouping = 'day' | 'week' | 'month';
 
@@ -862,13 +876,29 @@ export const METRIC_META: Record<BiMetric, MetricMetaEntry> = {
     breakdown: 'utm',
   },
   ga4_roas: { label: 'ROAS (GA4)', format: 'ratio', group: 'ga4', breakdown: 'campaign_top' },
+  // ── GA4 por página (migración 100) ──
+  // Visitantes: personas únicas de cada día, sumadas. No aditiva (como `reach`).
+  ga4_visitantes: {
+    label: 'Visitantes (GA4, suma diaria)',
+    format: 'number',
+    group: 'ga4',
+    breakdown: 'utm',
+  },
+  // Vistas: por fecha o por página vista. `breakdown: 'total'` + la regla de
+  // `ga4_pagina` en `metricCrossesDimension`.
+  ga4_vistas: {
+    label: 'Vistas de página (GA4)',
+    format: 'number',
+    group: 'ga4',
+    breakdown: 'total',
+  },
   // ── Hotmart ──
   // OJO: `hotmart_pagos_iniciados` se calcula desde GA4 (payment_page_views),
   // no desde la API de Hotmart. El nombre viene del dashboard clásico.
   hotmart_pagos_iniciados: {
     label: 'Pagos iniciados (GA4 · pág. de pago)',
     format: 'number',
-    group: 'hotmart',
+    group: 'ga4',
     breakdown: 'total',
   },
   // Sumas de columnas escalares, no ratios: son aditivas (ver ADDITIVE_METRICS).
@@ -1198,8 +1228,29 @@ export function metricCrossesDimension(metric: string, dimension: string): boole
   // tres niveles), así que se reparten igual que él: fecha, campaña, conjunto y
   // anuncio. No por lead.
   if (isMetaCcMetric(metric)) return dimension === 'date' || unifiedTarget(dimension) !== null;
-  // Eventos clave de GA4: misma tabla por tupla UTM que las sesiones.
+  // Eventos clave de GA4: misma tabla por tupla UTM que las sesiones. Por página
+  // de entrada no: el evento concreto no se guarda por landing.
   if (isGa4EvMetric(metric)) return cruzaComoUtm(dimension);
+  // Páginas: reglas explícitas. Por página de entrada solo cruzan los leads y
+  // las métricas de sesión de GA4; el gasto, las ventas y Hotmart no tienen
+  // página. La página vista solo la tienen las vistas.
+  if (dimension === 'landing') {
+    if (GA4_POR_LANDING.has(metric)) return true;
+    // Los tokens de lead (segmentos, respuestas, campos) se cuentan por lead:
+    // tienen la página del lead igual que `leads_count`.
+    if (
+      metric === 'leads_count' ||
+      metric === 'leads_total' ||
+      isFieldMetric(metric) ||
+      isLeadSegMetric(metric) ||
+      isLeadAnsMetricLocal(metric)
+    )
+      return true;
+    // Del catálogo fijo, el resto no tiene página; un campo calculado se
+    // decide por sus operandos al consultar.
+    return !(metric in METRIC_META);
+  }
+  if (dimension === 'ga4_pagina') return metric === 'ga4_vistas';
   const meta = METRIC_META[metric as BiMetric];
   if (!meta) return true; // calculada, campo de formulario o de Sheet
   switch (meta.breakdown) {
@@ -1217,6 +1268,23 @@ export function metricCrossesDimension(metric: string, dimension: string): boole
       return false;
   }
 }
+
+/**
+ * Métricas de GA4 que se reparten por página de entrada: las de sesión de
+ * `ga4_landing_diarios`. Los costes (`campaign_top`) no, porque el gasto no
+ * tiene página.
+ */
+export const GA4_POR_LANDING: ReadonlySet<string> = new Set([
+  'ga4_sesiones',
+  'ga4_sesiones_interaccion',
+  'ga4_eventos_clave',
+  'ga4_ingresos',
+  'ga4_tasa_interaccion',
+  'ga4_tasa_rebote',
+  'ga4_tasa_evento_clave',
+  'ga4_tasa_sesion_lead',
+  'ga4_visitantes',
+]);
 
 /**
  * Dimensiones de una fuente con eje `campaign` + `utm` pero sin anuncio ni
@@ -1266,6 +1334,9 @@ export const DIMENSION_META: Record<BiDimension, { label: string; hidden?: boole
   hm_producto: { label: 'Producto (Hotmart)' },
   hm_pais: { label: 'País (Hotmart)' },
   hm_metodo_pago: { label: 'Método de pago' },
+  // ── Páginas ──
+  landing: { label: 'Página de entrada' },
+  ga4_pagina: { label: 'Página (GA4)' },
 };
 
 // ── Dimensiones unificadas (leads/ventas ↔ gasto) ─────────────────────
@@ -2249,6 +2320,9 @@ export const DIM_FILTER_KEYS = [
   'form_plugin',
   'attribution_method',
   'platform',
+  // Página de entrada (migración 100): se evalúa en memoria sobre la ruta
+  // normalizada, no es una columna.
+  'landing',
 ] as const;
 
 /**
@@ -2352,6 +2426,7 @@ export const FILTERABLE_BASE_DIMS: { value: string; label: string }[] = [
   { value: 'form_plugin', label: 'Plugin' },
   { value: 'attribution_method', label: 'Atribución' },
   { value: 'platform', label: 'Plataforma (solo ventas)' },
+  { value: 'landing', label: 'Página de entrada' },
 ];
 
 /** Parsea el filtro avanzado desde su forma serializada (string JSON u objeto). */
@@ -2552,6 +2627,8 @@ export const NON_ATTRIBUTABLE_FIELDS: ReadonlySet<string> = new Set([
   'form_plugin',
   'attribution_method',
   'platform',
+  // El gasto no tiene página: filtrar por landing lo deja en «—».
+  'landing',
 ]);
 
 /**

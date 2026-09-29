@@ -68,6 +68,24 @@ import {
   STATE_AGENCIA_GOOGLE,
   verificarStateGoogle,
 } from '../src/lib/integrations/google-oauth-state';
+import {
+  peticionLanding,
+  peticionVistas,
+  filasLanding,
+  filasVistas,
+  paginasSospechosas,
+  desvioLanding,
+} from '../src/lib/integrations/ga4-desglose';
+import { rutaDePagina, SIN_PAGINA } from '../src/lib/report-utm/page-url';
+import { GA4_POR_LANDING } from '../src/lib/report-utm/bi-metadata';
+import { fieldCrossesDimension } from '../src/lib/report-utm/bi/registry';
+import { migrateDimensionId, migrateMeasureId } from '../src/lib/report-utm/bi/legacy-tokens';
+import {
+  agruparPorProveedor,
+  CARPETA_GA4,
+  CARPETA_HOTMART,
+} from '../src/components/report-utm/bi/fuentesPorProveedor';
+import type { CatalogSource } from '../src/components/report-utm/bi/BiFieldPicker';
 import { salir } from './_salida';
 
 process.env.CRON_SECRET = 'secreto-de-prueba-para-firmar-el-state';
@@ -614,6 +632,310 @@ seccion('sync_jobs: todo tipo del código está en el último CHECK de migration
   check(
     'tieneGa4 con propiedad',
     tieneGa4({ ga_property_id: '524635063' }) && !tieneGa4({}) && !tieneGa4(null)
+  );
+}
+
+// ════════════════════════════════════════════════════════════════
+seccion('Páginas: la ruta canónica (GA4 ≡ lead)');
+// ════════════════════════════════════════════════════════════════
+{
+  const casos: Array<[string | null, string]> = [
+    ['https://robla.pro/clase-gratis/?fbclid=IwAR1', '/clase-gratis'],
+    ['/clase-gratis', '/clase-gratis'],
+    ['/clase-gratis/', '/clase-gratis'],
+    ['/Clase-Gratis#form', '/clase-gratis'],
+    ['/asesoria-de-ahorro-tributario-v2/', '/asesoria-de-ahorro-tributario-v2'],
+    ['(not set)', ''],
+    ['', ''],
+    [null, ''],
+    ['/', '/'],
+    ['https://cristributario.cl', '/'],
+    ['//cdn.x.com/a/?q=1', '/a'],
+    ['/a%C3%B1o', '/año'],
+    ['/a//b/', '/a/b'],
+    ['landing', '/landing'],
+  ];
+  for (const [entrada, esperado] of casos) {
+    const r = rutaDePagina(entrada);
+    check(`«${entrada}» → «${esperado}»`, r === esperado, r);
+  }
+  check('una % rota no rompe', rutaDePagina('/bad%E0%A4%A') === '/bad%e0%a4%a');
+  check(
+    'idempotente en todos los casos',
+    casos.every(([e]) => rutaDePagina(rutaDePagina(e)) === rutaDePagina(e))
+  );
+  check(
+    'el landingPage de GA4 y la page_url del lead dan la MISMA clave',
+    rutaDePagina('/asesoria-de-ahorro-tributario-v3') ===
+      rutaDePagina('https://cristributario.cl/asesoria-de-ahorro-tributario-v3/?fbclid=abc')
+  );
+  check('etiqueta de sin página', SIN_PAGINA === '(sin página)');
+}
+
+seccion('Páginas: peticiones');
+{
+  const l = peticionLanding('2026-09-01', '2026-09-27');
+  const dl = l.dimensions.map((d) => d.name);
+  check('landing: la tupla + landingPage', dl.at(-1) === 'landingPage' && dl.length === 6);
+  check('landing: ≤ 9 dimensiones (límite de la API)', dl.length <= 9);
+  check(
+    'landing: pide totalUsers (visitantes)',
+    l.metrics.some((m) => m.name === 'totalUsers')
+  );
+  check('landing: ordena por todas sus dimensiones', l.orderBys.length === dl.length);
+  const v = peticionVistas('2026-09-01', '2026-09-27');
+  check(
+    'vistas: fecha, host y página + screenPageViews',
+    JSON.stringify(v.dimensions.map((d) => d.name)) === '["date","hostName","pagePath"]' &&
+      v.metrics[0].name === 'screenPageViews'
+  );
+  check('vistas: orden por sus 3 dimensiones', v.orderBys.length === 3);
+}
+
+seccion('Páginas: filas, colisiones y guardas');
+{
+  const DL = [...DIMS, 'landingPage'];
+  const ML = ['sessions', 'engagedSessions', 'keyEvents', 'totalRevenue', 'totalUsers'];
+  const r = resp(DL, ML, [
+    [
+      ['20260920', 'm.facebook.com', 'referral', '(referral)', '(not set)', '/asesoria-v2'],
+      [41, 0, 0, 0, 41],
+    ],
+    // La misma página con barra final y mayúsculas: tras normalizar, la misma fila.
+    [
+      ['20260920', 'm.facebook.com', 'referral', '(referral)', '(not set)', '/Asesoria-v2/'],
+      [9, 2, 1, 0, 8],
+    ],
+    [
+      ['20260920', '(direct)', '(none)', '(direct)', '(not set)', '(not set)'],
+      [3, 1, 0, 0, 3],
+    ],
+  ]);
+  const f = filasLanding([r]);
+  check('dos filas que solo difieren en la barra/mayúsculas se funden', f.length === 2);
+  const a = f.find((x) => x.landing === '/asesoria-v2');
+  check('suma sesiones y visitantes', a?.sesiones === 50 && a?.visitantes === 49);
+  check(
+    '(not set) → landing vacía',
+    f.some((x) => x.landing === '' && x.sesiones === 3)
+  );
+  check(
+    'la tupla UTM se normaliza igual que en campañas',
+    a?.utm_campaign === '' && a?.utm_source === 'm.facebook.com'
+  );
+
+  const vr = resp(
+    ['date', 'hostName', 'pagePath'],
+    ['screenPageViews'],
+    [
+      [['20260908', 'cristributario.cl', '/asesoria-v3/'], [64]],
+      [['20260908', 'CRISTRIBUTARIO.cl', '/asesoria-v3'], [6]],
+      [['20260908', 'cristributario.cl', '/otra/'], [0]],
+    ]
+  );
+  const fv = filasVistas([vr]);
+  check(
+    'vistas: la misma página en otra forma se funde (host en minúsculas)',
+    fv.length === 1 && fv[0].vistas === 70
+  );
+  check('vistas: una fila con 0 vistas no se guarda', !fv.some((x) => x.pagina === '/otra'));
+
+  check(
+    'con sesiones y landing vacío → no se escribe landing',
+    paginasSospechosas(10, [], fv).landing
+  );
+  check(
+    'con sesiones y vistas vacías → no se escriben vistas',
+    paginasSospechosas(10, f, []).vistas
+  );
+  const ok = paginasSospechosas(10, f, fv);
+  check('con datos, se escriben las dos', !ok.landing && !ok.vistas);
+  check('sin sesiones, un vacío no es sospechoso', !paginasSospechosas(0, [], []).landing);
+  check('desvío 0 cuando cuadran', desvioLanding(53, f) === 0);
+  check('desvío > 5 % detectado', desvioLanding(100, f) > 0.05);
+}
+
+// ════════════════════════════════════════════════════════════════
+seccion('Páginas: qué cruza con qué (editor y registro de acuerdo)');
+// ════════════════════════════════════════════════════════════════
+{
+  const debeCruzar: Array<[string, string]> = [
+    ['ga4_sesiones', 'landing'],
+    ['ga4_tasa_rebote', 'landing'],
+    ['ga4_tasa_sesion_lead', 'landing'],
+    ['ga4_visitantes', 'landing'],
+    ['leads_count', 'landing'],
+    ['ga4_vistas', 'ga4_pagina'],
+    ['ga4_vistas', 'date'],
+    ['ga4_visitantes', 'utm_campaign'],
+    ['ga4_visitantes', 'utm_source'],
+  ];
+  const noDebeCruzar: Array<[string, string]> = [
+    ['spend', 'landing'],
+    ['cpl', 'landing'],
+    ['sales_count', 'landing'],
+    ['conversion_rate', 'landing'],
+    ['hm_ventas', 'landing'],
+    ['ga4_coste_sesion', 'landing'],
+    ['ga4_roas', 'landing'],
+    ['ga_sessions', 'landing'],
+    ['ga4ev:purchase', 'landing'],
+    ['leads_count', 'ga4_pagina'],
+    ['ga4_sesiones', 'ga4_pagina'],
+    ['ga4_vistas', 'landing'],
+    ['ga4_vistas', 'utm_source'],
+    ['ga4_vistas', 'utm_campaign'],
+  ];
+  for (const [m, d] of debeCruzar) check(`${m} × ${d} → cruza`, metricCrossesDimension(m, d));
+  for (const [m, d] of noDebeCruzar) check(`${m} × ${d} → NO cruza`, !metricCrossesDimension(m, d));
+  const discrepan = [...debeCruzar, ...noDebeCruzar]
+    .filter(([m]) => !m.startsWith('ga4ev:'))
+    .filter(
+      ([m, d]) =>
+        metricCrossesDimension(m, d) !==
+        fieldCrossesDimension(BASE_REGISTRY, migrateMeasureId(m), migrateDimensionId(d))
+    );
+  check('el registro canónico dice lo mismo', discrepan.length === 0, JSON.stringify(discrepan));
+  check(
+    'las métricas de lead dinámicas cruzan por landing',
+    metricCrossesDimension('leadseg:x', 'landing')
+  );
+  check(
+    'GA4_POR_LANDING incluye visitantes y no los costes',
+    GA4_POR_LANDING.has('ga4_visitantes') && !GA4_POR_LANDING.has('ga4_coste_sesion')
+  );
+  check(
+    "registro: ga4_paginas.vistas → 'total'",
+    legacyBreakdownOfField(BASE_REGISTRY, 'ga4_paginas.vistas') === 'total'
+  );
+  check('visitantes NO es aditiva (suma diaria)', !isAdditiveMetric('ga4_visitantes'));
+  check('vistas SÍ es aditiva', isAdditiveMetric('ga4_vistas'));
+  check(
+    'pagos iniciados está en el grupo GA4',
+    METRIC_META.hotmart_pagos_iniciados.group === 'ga4'
+  );
+}
+
+// ════════════════════════════════════════════════════════════════
+seccion('Selector de campos: carpetas por proveedor');
+// ════════════════════════════════════════════════════════════════
+{
+  const campo = (id: string, group: string) => ({
+    id,
+    canonicalId: id,
+    label: id,
+    help: '',
+    kind: 'measure' as const,
+    group,
+  });
+  const fuente = (
+    id: string,
+    fields: ReturnType<typeof campo>[],
+    available = true
+  ): CatalogSource => ({
+    id,
+    label: id,
+    grain: 'daily',
+    grainText: '',
+    joinAxes: ['date'],
+    available,
+    fields,
+  });
+  const entrada: CatalogSource[] = [
+    fuente('cliente_ga4ev', [campo('ga4ev:purchase', 'ga4')]),
+    fuente('leads', [campo('leads_count', 'leads')]),
+    fuente('hotmart', [campo('hm_ventas', 'hotmart')]),
+    fuente('cuenta', [
+      campo('ga_sessions', 'ga4'),
+      campo('hotmart_pagos_iniciados', 'ga4'),
+      campo('ventas_principal', 'hotmart'),
+      campo('ventas_cerradas', 'manual'),
+    ]),
+    fuente('ga4', [campo('ga4_sesiones', 'ga4')]),
+    fuente('ga4_paginas', [campo('ga4_vistas', 'ga4')]),
+  ];
+  const salida = agruparPorProveedor(entrada);
+  const ids = salida.map((s) => s.id);
+  const ga4 = salida.find((s) => s.id === CARPETA_GA4)!;
+  const hm = salida.find((s) => s.id === CARPETA_HOTMART)!;
+  const todos = (ss: CatalogSource[]) => ss.flatMap((s) => s.fields.map((f) => f.id)).sort();
+  check(
+    'no se pierde ni se duplica ningún campo',
+    JSON.stringify(todos(entrada)) === JSON.stringify(todos(salida))
+  );
+  check(
+    'una carpeta «Google Analytics 4» con todo lo de GA4',
+    !!ga4 && ga4.label === 'Google Analytics 4'
+  );
+  check(
+    'GA4 junta sitio, campaña, página, eventos y pagos iniciados',
+    [
+      'ga_sessions',
+      'ga4_sesiones',
+      'ga4_vistas',
+      'ga4ev:purchase',
+      'hotmart_pagos_iniciados',
+    ].every((id) => ga4.fields.some((f) => f.id === id))
+  );
+  check(
+    'secciones en orden: sitio → campaña → página → eventos',
+    JSON.stringify([...new Set(ga4.fields.map((f) => f.group))]) ===
+      '["Todo el sitio (por día)","Por campaña","Por página","Eventos clave"]'
+  );
+  check(
+    'Hotmart junta las ventas y los totales por día',
+    hm.fields.map((f) => f.id).join() === 'hm_ventas,ventas_principal'
+  );
+  check(
+    '«Cuenta» se queda solo con lo manual',
+    salida
+      .find((s) => s.id === 'cuenta')
+      ?.fields.map((f) => f.id)
+      .join() === 'ventas_cerradas'
+  );
+  check(
+    'la carpeta ocupa el sitio de su primera fuente',
+    ids.indexOf(CARPETA_GA4) === 0 && ids.indexOf('leads') === 1
+  );
+  const sinCuenta = agruparPorProveedor([fuente('cuenta', [campo('ga_sessions', 'ga4')])]);
+  check(
+    'una fuente que se vacía desaparece',
+    sinCuenta.length === 1 && sinCuenta[0].id === CARPETA_GA4
+  );
+  const bloqueada = agruparPorProveedor([
+    fuente('ga4', [campo('ga4_sesiones', 'ga4')], false),
+    fuente('cuenta', [campo('ga_sessions', 'ga4')]),
+  ]);
+  check('si una fuente no se puede leer, la carpeta tampoco', bloqueada[0].available === false);
+  check('las carpetas traen su propio texto', !!ga4.nota && !!hm.nota);
+}
+
+seccion('Migración 100');
+{
+  const sql = readFileSync('migrations/100_ga4_paginas.sql', 'utf8');
+  for (const t of ['ga4_landing_diarios', 'ga4_vistas_diarias']) {
+    check(
+      `${t}: FK en cascada`,
+      new RegExp(`TABLE IF NOT EXISTS public\\.${t}[\\s\\S]*?ON DELETE CASCADE`).test(sql)
+    );
+    check(`${t}: RLS`, sql.includes(`ALTER TABLE public.${t} ENABLE ROW LEVEL SECURITY`));
+  }
+  for (const fn of [
+    'ga4_reemplazar_paginas',
+    'ga4_landing_resumen',
+    'ga4_vistas_resumen',
+    'bi_valores_pagina',
+  ]) {
+    check(`${fn}: GRANT`, new RegExp(`GRANT EXECUTE ON FUNCTION [a-z_.]*${fn}`).test(sql));
+  }
+  check(
+    'los resúmenes ordenan (paginación estable)',
+    (sql.match(/ORDER BY 1, 2/g) ?? []).length >= 2
+  );
+  check('termina recargando el esquema', /NOTIFY pgrst, 'reload schema';\s*$/.test(sql));
+  check(
+    'no toca el CHECK de sync_jobs (el job sigue siendo ga4)',
+    !sql.includes('sync_jobs_tipo_check')
   );
 }
 

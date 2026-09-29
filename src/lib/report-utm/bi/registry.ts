@@ -23,6 +23,7 @@ import { HOTMART_SOURCE } from './sources/hotmart';
 import { ADS_SOURCE } from './sources/ads';
 import { CUENTA_SOURCE } from './sources/cuenta';
 import { GA4_SOURCE } from './sources/ga4';
+import { GA4_PAGINAS_SOURCE } from './sources/ga4-paginas';
 import { OFFLINE_SOURCE } from './sources/offline';
 import { SHEET_SOURCE } from './sources/sheet';
 import { SUBS_SOURCE } from './sources/subs';
@@ -46,6 +47,7 @@ export const STATIC_SOURCES: readonly DataSource[] = [
   CUENTA_SOURCE,
   // GA4 por campaña: junto a `cuenta`, que tiene el GA4 del sitio entero.
   GA4_SOURCE,
+  GA4_PAGINAS_SOURCE,
   OFFLINE_SOURCE,
   SHEET_SOURCE,
   SUBS_SOURCE,

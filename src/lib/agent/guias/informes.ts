@@ -101,6 +101,9 @@ Un widget que desglosa una métrica por una dimensión que no la reparte mostrar
 - **Leads, ventas, revenue, Hotmart neto**: por cualquier dimensión.
 - **GA4 del sitio (\`ga_sessions\`, \`ga_bounce_rate\`, \`ga_avg_session_duration\`) y columnas offline**: solo por \`date\` (o total).
 - **GA4 por campaña (\`ga4_sesiones\`, \`ga4_eventos_clave\`, \`ga4_tasa_rebote\`, \`ga4_tasa_sesion_lead\`, \`ga4ev:\`…)**: por \`date\`, campaña (\`utm_campaign\`, \`utm_id\`), \`utm_source\` y \`utm_medium\`. NO por anuncio, conjunto, país ni pregunta de lead. \`ga4_coste_sesion\`, \`ga4_coste_evento_clave\` y \`ga4_roas\` usan el gasto: solo por \`date\` y campaña. La suma por campaña puede no coincidir con \`ga_sessions\` (umbrales de privacidad de GA4): no mezcles las dos en un mismo total.
+- **Por página de entrada (\`dimension: "landing"\`)**: cruzan los leads (su \`page_url\`) y las métricas de sesión de GA4 (\`ga4_sesiones\`, \`ga4_tasa_rebote\`, \`ga4_tasa_sesion_lead\`, \`ga4_visitantes\`…). El gasto, el CPL, las ventas, Hotmart y los \`ga4ev:\` salen «—». También se puede filtrar por \`landing\`.
+- **Vistas por página**: \`ga4_vistas\` solo por \`date\` o por \`dimension: "ga4_pagina"\` (la página vista), sin filtros. \`ga4_pagina\` no sirve para ninguna otra métrica.
+- **\`ga4_visitantes\`** es la suma de las personas de cada día: quien vuelve otro día cuenta dos veces y la fila Total sale «—». No la sumes con otras.
 - **Conversiones de Meta (\`metacc:\`, \`resultados_custom\`)**: igual que el gasto: por \`date\` y por campaña, anuncio o conjunto.
 - **MRR y métricas de suscripción**: solo total (\`dimension: "none"\`).
 - **Filtrar por una pregunta de lead anula el gasto** (el gasto no se puede atribuir a una respuesta). Para medir el coste por respuesta usa una fórmula: \`spend / lf__<pregunta>__<respuesta>\`.
@@ -139,6 +142,12 @@ Un widget que desglosa una métrica por una dimensión que no la reparte mostrar
 {"type":"table","title":"Tráfico por campaña","w":4,"h":2,"config":{"metric":"spend,ga4_sesiones,ga4_coste_sesion,leads_count,ga4_tasa_sesion_lead","dimension":"utm_campaign","limit":20,"show_totals":true}}
 \`\`\`
 Para que cruce exacto con el gasto, los anuncios de Meta deben llevar \`utm_id={{campaign.id}}\` en los parámetros de URL. Eventos clave frente a leads: \`{"metric":"leads_count,ga4ev:generate_lead","dimension":"utm_campaign"}\`.
+
+**Landing por landing** (sesiones → leads por página de entrada):
+\`\`\`json
+{"type":"table","title":"Páginas de entrada","w":4,"h":2,"config":{"metric":"ga4_sesiones,ga4_visitantes,leads_count,ga4_tasa_sesion_lead,ga4_tasa_rebote","dimension":"landing","limit":20}}
+\`\`\`
+Vistas por página: \`{"metric":"ga4_vistas","dimension":"ga4_pagina","limit":20}\`.
 
 **Embudo**: \`{"type":"funnel","config":{"metrics":["impressions","clicks","leads_count","sales_count"]}}\`. Valen como etapa los conteos y los segmentos o respuestas de lead.
 

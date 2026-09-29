@@ -58,7 +58,14 @@ export type JoinAxis =
   /** Clave de `lead_events.raw_fields`, cruda o agrupada por `lead_campos`. */
   | 'lead_raw'
   /** Bucket de un campo de Sheet (`sheet_campo_valores_diarios.valor`). */
-  | 'sheet_value';
+  | 'sheet_value'
+  /**
+   * Página de ENTRADA: la `page_url` del lead y el `landingPage` de la sesión
+   * de GA4, normalizadas con `rutaDePagina` (migración 100).
+   */
+  | 'landing'
+  /** Página VISTA (`pagePath`): solo las vistas de GA4. */
+  | 'pagina';
 
 export type PhysicalLocation =
   | { kind: 'table'; schema: 'public' | 'report_utm'; table: string }
@@ -180,7 +187,15 @@ export interface DimensionField {
   group: FieldGroup;
   column?: string;
   /** Resolución necesaria para producir la clave de agrupación. */
-  resolve?: 'entity' | 'entity_raw' | 'raw_field' | 'lead_campo' | 'sheet_value' | 'date_trunc';
+  resolve?:
+    | 'entity'
+    | 'entity_raw'
+    | 'raw_field'
+    | 'lead_campo'
+    | 'sheet_value'
+    | 'date_trunc'
+    /** Ruta normalizada con `rutaDePagina`. */
+    | 'page_path';
   /** Se ofrece como filtro pero no como agrupación (correos, ids…). */
   highCardinality?: boolean;
   /** No se lista en el selector (alias histórico). */

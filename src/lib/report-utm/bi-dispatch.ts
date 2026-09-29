@@ -16,7 +16,7 @@ import {
 } from './bi-metadata';
 import { resolvePublicClienteId } from './campaign-resolver';
 import { cargarEstadoGa4 } from '@/lib/ga4/estado';
-import { ga4SinDatos } from '@/lib/ga4/metricas';
+import { ga4PaginasSinDatos, ga4SinDatos } from '@/lib/ga4/metricas';
 import { leadFieldLabel, leadAnsLabel, leadSegLabel, ga4EvLabel } from './bi-metadata';
 import { loadLeadCampos, loadLeadSegmentos } from './lead-campos-db';
 import { createAdminClient } from '@/utils/supabase/server';
@@ -92,10 +92,15 @@ async function diagnosticarSeguro(p: ParsedBiQuery): Promise<QueryDiagnostics | 
       ...(p.metrics as unknown as string[]),
       ...p.calculated.map((c) => c.expression),
     ].some((t) => /\bga4(_|ev:|ev__)/.test(t));
-    const notConfigured =
-      pideGa4 && publicId && ga4SinDatos(await cargarEstadoGa4(publicId))
-        ? new Set(['ga4'])
-        : undefined;
+    let notConfigured: Set<string> | undefined;
+    if (pideGa4 && publicId) {
+      const estado = await cargarEstadoGa4(publicId);
+      const nc = new Set<string>();
+      if (ga4SinDatos(estado)) nc.add('ga4');
+      // Vistas por página (migración 100): su propia sincronización.
+      if (ga4PaginasSinDatos(estado)) nc.add('ga4_paginas');
+      if (nc.size) notConfigured = nc;
+    }
     return computeDiagnostics({
       notConfigured,
       metrics: p.metrics as unknown as string[],

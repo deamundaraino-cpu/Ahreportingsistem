@@ -31,6 +31,15 @@ export async function cargarEstadoGa4(publicClienteId: string): Promise<EstadoGa
       .maybeSingle(),
   ]);
 
+  // Páginas (migración 100) en consulta APARTE: si sus columnas aún no existen,
+  // esta falla sola y el resto de GA4 sigue funcionando.
+  const { data: pag } = await db
+    .from('ga4_estado')
+    .select('paginas_ultimo_ok_at, paginas_cubierto_desde')
+    .eq('cliente_id', publicClienteId)
+    .maybeSingle();
+  const pg = (pag ?? null) as Record<string, unknown> | null;
+
   const configurado = !!String(
     (cli?.config_api as Record<string, unknown> | null)?.ga_property_id ?? ''
   ).trim();
@@ -46,6 +55,8 @@ export async function cargarEstadoGa4(publicClienteId: string): Promise<EstadoGa
     filaOtros: !!e?.fila_otros,
     eventos:
       e?.eventos && typeof e.eventos === 'object' ? (e.eventos as Record<string, string>) : {},
+    paginasSincronizado: !!pg?.paginas_ultimo_ok_at,
+    paginasCubiertoDesde: (pg?.paginas_cubierto_desde as string | null) ?? null,
   };
   if (!e1 && !e2) {
     if (cache.size > 500) cache.clear();

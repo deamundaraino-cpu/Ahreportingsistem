@@ -84,7 +84,9 @@ import {
   cruzaComoUtm,
   parseGa4EvMetric,
   extractGa4EvAliases,
+  GA4_POR_LANDING,
 } from './bi-metadata';
+import { rutaDePagina, SIN_PAGINA } from './page-url';
 import {
   GA4_CON_GASTO,
   GA4_CON_LEADS,
@@ -94,6 +96,7 @@ import {
   aporteVacioGa4,
   derivadasGa4,
   ga4SinDatos,
+  ga4PaginasSinDatos,
   sumarAporteGa4,
   type AporteGa4,
 } from '@/lib/ga4/metricas';
@@ -442,6 +445,10 @@ export async function runBiQuery(params: BiQueryParams): Promise<BiQueryRow[]> {
   // 'leads_total' sigue en la lista solo por compatibilidad: se retiró del
   // catálogo en la migración 045 (era un duplicado exacto de leads_count), pero
   // un campo calculado guardado puede seguir nombrándola.
+  // Páginas (migración 100): la página de entrada la tienen los leads y GA4; la
+  // página vista, solo las vistas de GA4. El gasto, las ventas, Hotmart y los
+  // Sheets no tienen página: no se consultan (su fila «(total)» sería falsa).
+  const isPaginaDim = params.dimension === 'landing' || params.dimension === 'ga4_pagina';
   const needsLeads =
     // `hm_conversion` = compras de Hotmart ÷ leads: necesita el denominador.
     (requires([
@@ -457,21 +464,25 @@ export async function runBiQuery(params: BiQueryParams): Promise<BiQueryRow[]> {
       fieldMetrics.length > 0 ||
       leadSegs.length > 0) &&
     !isSalesOnlyDim &&
-    !isSheetDimQuery;
+    !isSheetDimQuery &&
+    params.dimension !== 'ga4_pagina';
   // Las ventas y el gasto no se pueden desglosar por un campo de formulario
   // (sales_events / metricas_diarias no tienen raw_fields) → se omiten cuando
   // se agrupa por campo para no romper el select ni inventar una fila "(total)".
   const needsSales =
     !isFieldDimQuery &&
     !isSheetDimQuery &&
+    !isPaginaDim &&
     requires(['sales_count', 'revenue', 'cpa', 'roas', 'conversion_rate']);
   // Ventas de Hotmart por transacción (public.hotmart_ventas). Fuente aparte de
   // `sales`: cuelga de `public.clientes` vía el puente, tiene el dinero ya en
   // dólares y distingue reembolsos.
-  const needsHotmart = !isFieldDimQuery && !isSheetDimQuery && requires([...HOTMART_ALL_METRICS]);
+  const needsHotmart =
+    !isFieldDimQuery && !isSheetDimQuery && !isPaginaDim && requires([...HOTMART_ALL_METRICS]);
   const needsAds =
     !isFieldDimQuery &&
     !isSheetDimQuery &&
+    !isPaginaDim &&
     ((planCc !== null && planCc.claves.length > 0) ||
       requires([
         'spend',
@@ -506,10 +517,13 @@ export async function runBiQuery(params: BiQueryParams): Promise<BiQueryRow[]> {
       ]));
   // GA4 por campaña. Sin exclusiones por dimensión: si el corte no existe en
   // GA4, `queryGa4Direct` lo dice (`aplica: false`) y las celdas salen «—».
-  const needsGa4 = requires([...GA4_METRICAS]) || ga4Evs.length > 0;
+  const needsGa4 = requires([...GA4_METRICAS, 'ga4_visitantes']) || ga4Evs.length > 0;
+  // Vistas por página (`ga4_vistas_diarias`, migración 100).
+  const needsGa4Vistas = requires(['ga4_vistas']);
   // Offline (día×cliente) y suscripciones (snapshot) son globales/por fecha,
   // no cruzan por dimensiones de lead/venta/anuncio.
-  const isBreakdownDim = isSalesOnlyDim || unified !== null || isFieldDimQuery || isSheetDimQuery;
+  const isBreakdownDim =
+    isSalesOnlyDim || unified !== null || isFieldDimQuery || isSheetDimQuery || isPaginaDim;
   const needsOffline =
     !isBreakdownDim && (requires([...OFFLINE_METRICS]) || offlineFields.length > 0);
   const needsSubs = !isBreakdownDim && requires([...SUBS_METRICS]);
@@ -524,6 +538,7 @@ export async function runBiQuery(params: BiQueryParams): Promise<BiQueryRow[]> {
   const needsSheet =
     (sheetFields.length > 0 || isSheetDimQuery) &&
     !isSalesOnlyDim &&
+    !isPaginaDim &&
     !isFieldDimQuery &&
     (unified === null || !isSheetDimQuery);
   /** ¿Hay que resolver la identidad publicitaria de cada fila del Sheet? */
@@ -601,9 +616,12 @@ export async function runBiQuery(params: BiQueryParams): Promise<BiQueryRow[]> {
       resolver,
       nocross,
       ga4Evs,
-      requires(['ga4_ingresos', 'ga4_roas'])
+      requires(['ga4_ingresos', 'ga4_roas']),
+      requires(['ga4_visitantes'])
     );
   }
+  let ga4Vistas: Ga4VistasResultado | null = null;
+  if (needsGa4Vistas) ga4Vistas = await queryGa4VistasDirect(params, dateFrom, dateTo);
   // El GA4 de la cuenta (`ga_*`) de un cliente sin propiedad: «—», no 0.
   let gaNoConfigurado = false;
   if (
@@ -694,7 +712,7 @@ export async function runBiQuery(params: BiQueryParams): Promise<BiQueryRow[]> {
     leadSegs,
     tasaBi,
     planCc,
-    { ga4: ga4Data, gaNoConfigurado }
+    { ga4: ga4Data, gaNoConfigurado, ga4Vistas }
   );
 }
 
@@ -890,8 +908,10 @@ function liftLeadFieldFilters<
   T extends { filters?: Record<string, string>; advancedFilter?: AdvancedFilter },
 >(params: T): T {
   const filters = params.filters ?? {};
+  // `landing` tampoco es una columna: es la ruta normalizada de `page_url`
+  // (leads) o la columna `landing` (GA4), así que también va en memoria.
   const claves = Object.keys(filters).filter(
-    (k) => isLeadFieldDim(k) && String(filters[k] ?? '').trim()
+    (k) => (isLeadFieldDim(k) || k === 'landing') && String(filters[k] ?? '').trim()
   );
   if (claves.length === 0) return params;
 
@@ -915,7 +935,7 @@ function liftLeadFieldFilters<
 // por tabla: los leads tienen todas las dimensiones de lead; las ventas solo
 // UTMs + plataforma (no país/formulario/campos). Una condición sobre un campo
 // no disponible en esa tabla se ignora (no restringe) → el grupo O sigue.
-type AdvTable = 'leads' | 'sales' | 'hotmart';
+type AdvTable = 'leads' | 'sales' | 'hotmart' | 'ga4';
 const LEAD_ADV_COLS = new Set([
   'utm_source',
   'utm_medium',
@@ -962,6 +982,13 @@ function advCellValue(
     const rf = (row.raw_fields as Record<string, unknown> | null) ?? null;
     return rf && rf[fk] !== null && rf[fk] !== undefined ? String(rf[fk]) : '';
   }
+  // Página de entrada: la ruta normalizada. Las ventas y Hotmart no tienen
+  // página (el filtro no les aplica: `NON_ATTRIBUTABLE_FIELDS` las anula).
+  if (field === 'landing') {
+    if (table === 'leads') return rutaDePagina(row.page_url as string | null);
+    if (table === 'ga4') return String(row.landing ?? '');
+    return undefined;
+  }
   if (table === 'hotmart') {
     // Una venta de Hotmart viene siempre de la plataforma `hotmart`; el resto
     // de campos se traducen a su columna (`product_name` → `producto_nombre`).
@@ -970,7 +997,8 @@ function advCellValue(
     if (!col) return undefined;
     return row[col] !== null && row[col] !== undefined ? String(row[col]) : '';
   }
-  const cols = table === 'sales' ? SALES_ADV_COLS : LEAD_ADV_COLS;
+  // Una fila de GA4 tiene las mismas columnas que una venta: UTM y plataforma.
+  const cols = table === 'sales' || table === 'ga4' ? SALES_ADV_COLS : LEAD_ADV_COLS;
   if (!cols.has(field)) return undefined;
   return row[field] !== null && row[field] !== undefined ? String(row[field]) : '';
 }
@@ -1015,12 +1043,16 @@ export function collectAdvancedColumns(
         if (table === 'leads') needsRawFields = true;
         continue;
       }
+      if (c.field === 'landing') {
+        if (table === 'leads') cols.add('page_url');
+        continue;
+      }
       if (table === 'hotmart') {
         const col = HOTMART_FILTER_COL[c.field];
         if (col) cols.add(col);
         continue;
       }
-      const set = table === 'sales' ? SALES_ADV_COLS : LEAD_ADV_COLS;
+      const set = table === 'sales' || table === 'ga4' ? SALES_ADV_COLS : LEAD_ADV_COLS;
       if (set.has(c.field)) cols.add(c.field);
     }
   }
@@ -1258,7 +1290,14 @@ function buildLeadSelect(
     !isLeadFieldDim(dimension)
   ) {
     // `utm_campaign_raw` no es una columna: agrupa por el utm_campaign crudo.
-    cols.add(dimension === 'utm_campaign_raw' ? 'utm_campaign' : dimension);
+    // `landing` tampoco: es la ruta normalizada de `page_url`.
+    cols.add(
+      dimension === 'utm_campaign_raw'
+        ? 'utm_campaign'
+        : dimension === 'landing'
+          ? 'page_url'
+          : dimension
+    );
   }
   // Resolver una entidad necesita las cuatro claves UTM, no solo la homónima:
   // la cascada de matching prueba utm_id, luego el nombre, luego content/term.
@@ -1654,6 +1693,8 @@ interface Ga4EvReq {
 interface Ga4Row extends AporteGa4 {
   dim: string;
   ev: Record<string, number>;
+  /** Suma de los visitantes diarios (`ga4_landing_diarios`). */
+  ga4_visitantes: number;
 }
 
 /**
@@ -1668,15 +1709,45 @@ interface Ga4Resultado {
   ingresosNulos: boolean;
   filas: Ga4Row[];
   eventos: Ga4EvReq[];
+  /** Se leyó por página de entrada (`ga4_landing_diarios`). */
+  porLanding?: boolean;
+  /** Visitantes desconocidos: las páginas aún no se han sincronizado. */
+  visitantesNulos?: boolean;
+  /** Eventos clave concretos desconocidos: no se guardan por página. */
+  eventosNulos?: boolean;
+}
+
+/** Vistas por página (`ga4_vistas_diarias`), ya agregadas por clave. */
+interface Ga4VistasResultado {
+  aplica: boolean;
+  sinDatos: boolean;
+  filas: Array<{ dim: string; vistas: number }>;
+}
+
+/** ¿La consulta agrupa o filtra por página de entrada? */
+function usaLanding(params: BiQueryParams): boolean {
+  if (params.dimension === 'landing') return true;
+  if (String(params.filters?.landing ?? '').trim()) return true;
+  return !!params.advancedFilter?.groups?.some((g) =>
+    g.conditions?.some((c) => c.field === 'landing' && String(c.value ?? '').trim())
+  );
 }
 
 /** Filtros que una fila de GA4 puede cumplir: su tupla UTM y la plataforma. */
-const GA4_FILTROS = new Set(['utm_source', 'utm_medium', 'utm_campaign', 'utm_id', 'platform']);
+const GA4_FILTROS = new Set([
+  'utm_source',
+  'utm_medium',
+  'utm_campaign',
+  'utm_id',
+  'platform',
+  // Página de entrada (migración 100): se lee entonces `ga4_landing_diarios`.
+  'landing',
+]);
 
 /** ¿Hay un corte (dimensión o filtro) que GA4 no puede responder? */
 function ga4NoAplica(params: BiQueryParams): boolean {
   const dim = params.dimension;
-  if (dim !== 'none' && !cruzaComoUtm(dim)) return true;
+  if (dim !== 'none' && dim !== 'landing' && !cruzaComoUtm(dim)) return true;
   const conValor = (v: unknown) => v !== null && v !== undefined && String(v).trim() !== '';
   for (const [k, v] of Object.entries(params.filters ?? {})) {
     if (conValor(v) && !GA4_FILTROS.has(k)) return true;
@@ -1696,7 +1767,7 @@ function cumpleFiltroPlano(celda: string, raw: string): boolean {
 /** RPC de lectura paginada con `.range()` (PostgREST corta en 1.000 filas). */
 async function leerRpcGa4(
   supabase: any,
-  fn: 'ga4_sesiones_resumen' | 'ga4_eventos_resumen',
+  fn: 'ga4_sesiones_resumen' | 'ga4_eventos_resumen' | 'ga4_landing_resumen' | 'ga4_vistas_resumen',
   args: Record<string, unknown>
 ): Promise<Record<string, unknown>[] | null> {
   const out: Record<string, unknown>[] = [];
@@ -1718,14 +1789,17 @@ async function queryGa4Direct(
   resolver: CampaignResolver | null,
   nocross: Set<string>,
   eventos: Ga4EvReq[],
-  pideIngresos: boolean
+  pideIngresos: boolean,
+  pideVisitantes = false
 ): Promise<Ga4Resultado> {
+  const porLanding = usaLanding(params);
   const vacio = (aplica: boolean, sinDatos: boolean): Ga4Resultado => ({
     aplica,
     sinDatos,
     ingresosNulos: false,
     filas: [],
     eventos,
+    porLanding,
   });
   if (!params.cliente_id) return vacio(true, true);
   const publicId = await resolvePublicClienteId(params.cliente_id);
@@ -1733,6 +1807,19 @@ async function queryGa4Direct(
   const estado = await cargarEstadoGa4(publicId);
   if (ga4SinDatos(estado)) return vacio(true, true);
   if (ga4NoAplica(params)) return vacio(false, false);
+  // Por página hacen falta las tablas de la migración 100 ya sincronizadas.
+  const paginasSinDatos = ga4PaginasSinDatos(estado);
+  if (porLanding && paginasSinDatos) {
+    registrarAvisoConsulta(
+      'GA4 por página de entrada todavía no se ha sincronizado: las celdas de GA4 salen «—».'
+    );
+    return vacio(true, true);
+  }
+  if (porLanding && estado.paginasCubiertoDesde && dateFrom < estado.paginasCubiertoDesde) {
+    registrarAvisoConsulta(
+      `GA4 por página tiene datos desde el ${estado.paginasCubiertoDesde}: los días anteriores del rango no suman.`
+    );
+  }
 
   if (estado.cubiertoDesde && dateFrom < estado.cubiertoDesde) {
     registrarAvisoConsulta(
@@ -1766,14 +1853,19 @@ async function queryGa4Direct(
     params.dimension === 'date' ||
     (pideIngresos && monedaGa === 'USD' && monedaGa !== monedaCliente);
 
-  const [sesiones, evRows] = await Promise.all([
-    leerRpcGa4(supabase, 'ga4_sesiones_resumen', {
+  // Por página de entrada todo sale de `ga4_landing_diarios` (sesiones,
+  // interacción, eventos, ingresos y visitantes). Si no, de la tabla por
+  // campaña, y los visitantes —que solo existen por página— de la de landing.
+  const leerVisitantesAparte = pideVisitantes && !porLanding && !paginasSinDatos;
+  const [sesiones, evRows, visRows] = await Promise.all([
+    leerRpcGa4(supabase, porLanding ? 'ga4_landing_resumen' : 'ga4_sesiones_resumen', {
       p_cliente_id: publicId,
       p_desde: dateFrom,
       p_hasta: dateTo,
       p_por_fecha: porFecha,
     }),
-    eventos.length
+    // Los eventos clave concretos no se guardan por página.
+    eventos.length && !porLanding
       ? leerRpcGa4(supabase, 'ga4_eventos_resumen', {
           p_cliente_id: publicId,
           p_desde: dateFrom,
@@ -1782,8 +1874,16 @@ async function queryGa4Direct(
           p_por_fecha: porFecha,
         })
       : Promise.resolve([] as Record<string, unknown>[]),
+    leerVisitantesAparte
+      ? leerRpcGa4(supabase, 'ga4_landing_resumen', {
+          p_cliente_id: publicId,
+          p_desde: dateFrom,
+          p_hasta: dateTo,
+          p_por_fecha: params.dimension === 'date',
+        })
+      : Promise.resolve([] as Record<string, unknown>[]),
   ]);
-  if (sesiones === null || evRows === null) {
+  if (sesiones === null || evRows === null || visRows === null) {
     registrarAvisoConsulta('No se pudo leer GA4 por campaña: vuelve a cargar en unos segundos.');
     return vacio(true, true);
   }
@@ -1807,7 +1907,7 @@ async function queryGa4Direct(
       if (k === 'utm_campaign' && plan.inMemory) continue;
       if (!cumpleFiltroPlano(String(r[k] ?? ''), String(raw))) return false;
     }
-    if (hayAdv && !evalAdvancedRow(r, adv, 'sales')) return false;
+    if (hayAdv && !evalAdvancedRow(r, adv, 'ga4')) return false;
     if (plan.inMemory && !rowPassesEntityFilters(r, plan, resolver!)) return false;
     return true;
   };
@@ -1818,7 +1918,7 @@ async function queryGa4Direct(
   const entrada = (dim: string) => {
     let e = map.get(dim);
     if (!e) {
-      e = { dim, ...aporteVacioGa4(), ev: {} };
+      e = { dim, ...aporteVacioGa4(), ev: {}, ga4_visitantes: 0 };
       map.set(dim, e);
     }
     return e;
@@ -1834,6 +1934,12 @@ async function queryGa4Direct(
       ga4_eventos_clave: Number(r.eventos_clave ?? 0),
       ga4_ingresos: convertir ? convertir(ingresos, String(r.fecha ?? dateTo)) : 0,
     });
+    if (porLanding) e.ga4_visitantes += Number(r.visitantes ?? 0) || 0;
+  }
+  for (const raw of visRows) {
+    const r = normalizar(raw);
+    if (!pasa(r)) continue;
+    entrada(dimDe(r)).ga4_visitantes += Number(r.visitantes ?? 0) || 0;
   }
   for (const raw of evRows) {
     const r = normalizar(raw);
@@ -1843,7 +1949,85 @@ async function queryGa4Direct(
     e.ev[ev] = (e.ev[ev] ?? 0) + (Number(r.eventos_clave ?? 0) || 0);
   }
 
-  return { aplica: true, sinDatos: false, ingresosNulos, filas: [...map.values()], eventos };
+  return {
+    aplica: true,
+    sinDatos: false,
+    ingresosNulos,
+    filas: [...map.values()],
+    eventos,
+    porLanding,
+    visitantesNulos: pideVisitantes && paginasSinDatos,
+    eventosNulos: porLanding,
+  };
+}
+
+/**
+ * Vistas por página (`ga4_vistas_diarias`). Solo por total, fecha o página
+ * vista: una vista no tiene campaña ni página de entrada, y no admite filtros.
+ */
+async function queryGa4VistasDirect(
+  params: BiQueryParams,
+  dateFrom: string,
+  dateTo: string
+): Promise<Ga4VistasResultado> {
+  const vacio = (aplica: boolean, sinDatos: boolean): Ga4VistasResultado => ({
+    aplica,
+    sinDatos,
+    filas: [],
+  });
+  if (!params.cliente_id) return vacio(true, true);
+  const publicId = await resolvePublicClienteId(params.cliente_id);
+  if (!publicId) return vacio(true, true);
+  const estado = await cargarEstadoGa4(publicId);
+  if (ga4PaginasSinDatos(estado)) {
+    if (estado.configurado) {
+      registrarAvisoConsulta('Las vistas por página de GA4 todavía no se han sincronizado.');
+    }
+    return vacio(true, true);
+  }
+  const dim = params.dimension;
+  if (dim !== 'none' && dim !== 'date' && dim !== 'ga4_pagina') return vacio(false, false);
+  const conValor = (v: unknown) => v !== null && v !== undefined && String(v).trim() !== '';
+  const hayFiltro =
+    Object.values(params.filters ?? {}).some(conValor) ||
+    !!params.advancedFilter?.groups?.some((g) => g.conditions?.some((c) => conValor(c.value)));
+  if (hayFiltro) {
+    registrarAvisoConsulta('Las vistas por página de GA4 no admiten filtros: salen «—».');
+    return vacio(false, false);
+  }
+  if (estado.paginasCubiertoDesde && dateFrom < estado.paginasCubiertoDesde) {
+    registrarAvisoConsulta(
+      `Las vistas de GA4 tienen datos desde el ${estado.paginasCubiertoDesde}: los días anteriores del rango no suman.`
+    );
+  }
+  const supabase = await createAdminClient();
+  const filas = await leerRpcGa4(supabase, 'ga4_vistas_resumen', {
+    p_cliente_id: publicId,
+    p_desde: dateFrom,
+    p_hasta: dateTo,
+    p_por_fecha: dim === 'date',
+  });
+  if (filas === null) {
+    registrarAvisoConsulta(
+      'No se pudieron leer las vistas de GA4: vuelve a cargar en unos segundos.'
+    );
+    return vacio(true, true);
+  }
+  const map = new Map<string, number>();
+  for (const r of filas) {
+    const k =
+      dim === 'none'
+        ? 'total'
+        : dim === 'date'
+          ? truncateDate(String(r.fecha ?? ''), params.date_grouping ?? 'day')
+          : String(r.pagina ?? '') || SIN_PAGINA;
+    map.set(k, (map.get(k) ?? 0) + (Number(r.vistas ?? 0) || 0));
+  }
+  return {
+    aplica: true,
+    sinDatos: false,
+    filas: [...map.entries()].map(([k, vistas]) => ({ dim: k, vistas })),
+  };
 }
 
 /**
@@ -3196,6 +3380,9 @@ export function consultaSinGasto(params: {
   return (
     isFieldDim(params.dimension) ||
     isLeadFieldDim(params.dimension) ||
+    // Las páginas tampoco las conoce el gasto (migración 100).
+    params.dimension === 'landing' ||
+    params.dimension === 'ga4_pagina' ||
     hasNonAttributableFilter(params.filters, params.advancedFilter)
   );
 }
@@ -3222,10 +3409,27 @@ function mergeResults(
   leadSegs: LeadSegReq[] = [],
   tasa: TasaBi | null = null,
   planCc: PeticionCc | null = null,
-  extra: { ga4?: Ga4Resultado | null; gaNoConfigurado?: boolean } = {}
+  extra: {
+    ga4?: Ga4Resultado | null;
+    gaNoConfigurado?: boolean;
+    ga4Vistas?: Ga4VistasResultado | null;
+  } = {}
 ): BiQueryRow[] {
   const ga4 = extra.ga4 ?? null;
   const ga4Nulo = !ga4 || ga4.sinDatos || !ga4.aplica;
+  const vistas = extra.ga4Vistas ?? null;
+  const vistasNulo = !vistas || vistas.sinDatos || !vistas.aplica;
+  /**
+   * ¿Esta métrica tiene sentido en el ámbito de la consulta? Con un corte que el
+   * gasto no conoce (campo de lead, país, página…) solo las de lead; por página
+   * de entrada, además las de sesión de GA4; por página vista, solo las vistas.
+   * Lo demás sale null («—»), nunca 0.
+   */
+  const permitida = (m: string): boolean => {
+    if (params.dimension === 'ga4_pagina') return m === 'ga4_vistas';
+    if (esMetricaDeLead(m)) return true;
+    return !!ga4?.porLanding && GA4_POR_LANDING.has(m);
+  };
   // Escalares de la CUENTA (GA4 del sitio, Hotmart agregado, manuales) que esta
   // consulta no puede atribuir: el gasto salió del desglose por entidad (filtro
   // de campaña) o por plataforma, que no los lee. Antes salían 0; ahora «—».
@@ -3236,6 +3440,7 @@ function mergeResults(
   if (extra.gaNoConfigurado) for (const k of GA_CUENTA) cuentaNula.add(k);
   const keys = new Set<string>();
   if (ga4 && !ga4Nulo) ga4.filas.forEach((r) => keys.add(r.dim));
+  if (vistas && !vistasNulo) vistas.filas.forEach((r) => keys.add(r.dim));
   leadsData.forEach((r) => keys.add(r.dim ?? 'total'));
   salesData.forEach((r) => keys.add(r.dim ?? 'total'));
   hotmartData.forEach((r) => keys.add(r.dim ?? 'total'));
@@ -3432,8 +3637,11 @@ function mergeResults(
       g4Fila.ga4_roas = null;
     }
     for (const e of ga4?.eventos ?? []) {
-      g4Fila[e.outKey] = ga4Nulo ? null : round2(g4?.ev[e.evento] ?? 0);
+      g4Fila[e.outKey] = ga4Nulo || ga4?.eventosNulos ? null : round2(g4?.ev[e.evento] ?? 0);
     }
+    // Por página (migración 100): visitantes (suma diaria) y vistas.
+    g4Fila.ga4_visitantes = ga4Nulo || ga4?.visitantesNulos ? null : (g4?.ga4_visitantes ?? 0);
+    g4Fila.ga4_vistas = vistasNulo ? null : (vistas!.filas.find((r) => r.dim === key)?.vistas ?? 0);
     for (const [k, v] of Object.entries(g4Fila)) {
       if ((params.metrics as string[]).includes(k)) row[k] = v;
     }
@@ -3499,7 +3707,7 @@ function mergeResults(
     // que no recorta el ámbito y conserva el gasto entero.
     if (gastoNoAplica) {
       for (const m of params.metrics as string[]) {
-        if (m in row && !esMetricaDeLead(m)) row[m] = null;
+        if (m in row && !permitida(m)) row[m] = null;
       }
     }
 
@@ -3572,7 +3780,7 @@ function mergeResults(
         // Una fórmula que usa el gasto con el gasto anulado no vale 0: vale
         // «no se puede calcular». Mismo criterio que las celdas de arriba.
         row[cf.name] =
-          gastoNoAplica && expresionUsaMetricaDeAnuncio(cf.expression)
+          gastoNoAplica && refsOf(cf.expression).some((id) => !permitida(id))
             ? null
             : evaluateExpression(cf.expression, baseValues);
       }
@@ -3720,6 +3928,10 @@ export async function runPivotQuery(
   // Misma guarda que `querySalesDirect`: una venta no puede cumplir un filtro de
   // lead (formulario, respuesta, país IP), así que no se muestra ninguna.
   if (isSales && filtroSoloDeLeads(params)) return { rows: [], seriesKeys: [] };
+  // Páginas: una venta no tiene página de entrada, y la página vista es solo de
+  // las vistas de GA4, que no son filas que se puedan pivotar.
+  if (dim1 === 'ga4_pagina' || dim2 === 'ga4_pagina') return { rows: [], seriesKeys: [] };
+  if (isSales && (dim1 === 'landing' || dim2 === 'landing')) return { rows: [], seriesKeys: [] };
   const table = isSales ? 'sales_events' : 'lead_events';
   const esDimDeCampo = (d: string) => isFieldDim(d) || isLeadFieldDim(d);
   // El pivot agrupa filas de leads/ventas, así que una dimensión unificada se
@@ -3766,7 +3978,8 @@ export async function runPivotQuery(
     cols.add('status');
     cols.add('platform');
   }
-  const axisCol = (d: BiDimension) => (d === 'utm_campaign_raw' ? 'utm_campaign' : d);
+  const axisCol = (d: BiDimension) =>
+    d === 'utm_campaign_raw' ? 'utm_campaign' : d === 'landing' ? 'page_url' : d;
   if (
     dim1 !== 'none' &&
     dim1 !== 'date' &&
@@ -3932,6 +4145,12 @@ function getDimValue(
     // Medido en julio 2026: el 26,9% de los leads caía en el día incorrecto.
     return truncateDate(colombiaDateOf(row[columnaFecha] as string), grouping ?? 'day');
   }
+  // Páginas (migración 100). La de entrada, con la MISMA normalización para el
+  // lead (`page_url`) que para GA4 (`landing`, ya normalizada al guardarse).
+  if (dimension === 'landing') {
+    return rutaDePagina((row.landing ?? row.page_url) as string | null) || SIN_PAGINA;
+  }
+  if (dimension === 'ga4_pagina') return String(row.pagina ?? '') || SIN_PAGINA;
   // Dimensión unificada: la fila cuenta bajo el NOMBRE REAL de la campaña /
   // anuncio / conjunto al que cruza, que es la misma clave con la que se emite
   // el gasto. Sin cruce se queda con su UTM crudo y se marca, para que la fila
@@ -4191,6 +4410,8 @@ async function calcularValores(params: ParamsValores): Promise<ResultadoValores>
   // «Total» y «Fecha» no son enumerables: una no tiene valores y la otra los
   // tiene todos.
   if (dim === 'none' || dim === 'date') return sinValores('dimension_no_listable');
+  // La página vista es solo de las vistas de GA4, que no admiten filtros.
+  if (dim === 'ga4_pagina') return sinValores('dimension_no_listable');
 
   const supabase = await createAdminClient();
   const dateFrom =
@@ -4224,6 +4445,53 @@ async function calcularValores(params: ParamsValores): Promise<ResultadoValores>
       });
       if (error) return errorDeConsulta('hotmart_valores_conteo', error);
       return desdeFilasRpc(data, limite, filtrarPorBusqueda);
+    }
+
+    // ── Página de entrada (migración 100) ────────────────────────
+    // SQL agrupa `page_url` sin query ni fragmento (Eduversio: 38.000 URL para
+    // 19 rutas) y Node aplica `rutaDePagina`, la misma regla que el motor.
+    if (dim === 'landing') {
+      if (!params.cliente_id) return sinValores('sin_cliente');
+      const { data, error } = await supabase.schema('report_utm').rpc('bi_valores_pagina', {
+        p_cliente_id: params.cliente_id,
+        p_desde: bounds.gte,
+        p_hasta: bounds.lt,
+        p_limite: 5000,
+        ...(params.incluir_excluidos ? { p_incluir_excluidos: true } : {}),
+      });
+      if (error) {
+        // Sin la migración 100 la función no existe: no es un fallo de consulta.
+        if (error.code === 'PGRST202') return sinValores('dimension_no_listable');
+        return errorDeConsulta('bi_valores_pagina', error);
+      }
+      const plegado = plegarConteos(
+        ((data ?? []) as Array<{ url_base: string; n: number }>).map((r) => ({
+          valor: String(r.url_base ?? ''),
+          n: Number(r.n),
+        })),
+        (url) => rutaDePagina(url) || SIN_PAGINA
+      );
+      // Las landings que solo conoce GA4 también se ofrecen: en un cliente cuyos
+      // leads no traen página (Cris, por GoHighLevel) la lista saldría vacía. Su
+      // recuento es de SESIONES, no de leads; las que ya están por los leads
+      // conservan el suyo.
+      const publicId = await resolvePublicClienteId(params.cliente_id);
+      if (publicId) {
+        const ga = await leerRpcGa4(supabase, 'ga4_landing_resumen', {
+          p_cliente_id: publicId,
+          p_desde: dateFrom,
+          p_hasta: dateTo,
+          p_por_fecha: false,
+        });
+        const sesionesGa = new Map<string, number>();
+        for (const r of ga ?? []) {
+          const ruta = String(r.landing ?? '');
+          if (!ruta) continue;
+          sesionesGa.set(ruta, (sesionesGa.get(ruta) ?? 0) + (Number(r.sesiones ?? 0) || 0));
+        }
+        for (const [ruta, n] of sesionesGa) if (!plegado.has(ruta)) plegado.set(ruta, n);
+      }
+      return recortar(filtrarPorBusqueda(ordenarPorFrecuencia(plegado)), limite);
     }
 
     // ── Campo de lead del catálogo ───────────────────────────────

@@ -89,6 +89,9 @@ export const LEGACY_MEASURE_IDS: Readonly<Record<string, string>> = {
   ga4_coste_evento_clave: 'ga4.coste_evento_clave',
   ga4_tasa_sesion_lead: 'ga4.tasa_sesion_lead',
   ga4_roas: 'ga4.roas',
+  // GA4 por página (migración 100).
+  ga4_visitantes: 'ga4.visitantes',
+  ga4_vistas: 'ga4_paginas.vistas',
 
   // ── Hotmart ──
   // El id canónico dice de dónde sale de verdad (GA4), y la etiqueta conserva
@@ -186,6 +189,8 @@ export const LEGACY_DIMENSION_IDS: Readonly<Record<string, string>> = {
   hm_metodo_pago: 'hotmart.metodo_pago',
   ad: 'ads.ad',
   adset: 'ads.adset',
+  landing: 'leads.landing',
+  ga4_pagina: 'ga4_paginas.pagina',
 };
 
 /** Prefijos de las familias de tokens dinámicos. */
