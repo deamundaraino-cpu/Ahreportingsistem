@@ -295,7 +295,7 @@ CREATE TABLE IF NOT EXISTS public.agent_turns (
   estado TEXT NOT NULL DEFAULT 'pending'
     CHECK (estado IN ('pending', 'running', 'done', 'error', 'cancelled')),
   -- Estado parcial: un turno se ejecuta a trozos para no chocar con el tiempo
-  -- máximo de una función serverless.
+  -- máximo de una petición.
   cursor JSONB NOT NULL DEFAULT '{}'::jsonb,
   iteraciones INTEGER NOT NULL DEFAULT 0,
   intentos INTEGER NOT NULL DEFAULT 0,
@@ -369,7 +369,7 @@ CREATE INDEX IF NOT EXISTS idx_agent_audit_tool
   ON public.agent_audit_log (tool_name, created_at DESC);
 
 -- Límites de uso. En Postgres y no en memoria: los contadores en memoria no se
--- coordinan entre invocaciones serverless, como ya advierte `lib/rate-limit.ts`.
+-- coordinan entre procesos ni sobreviven a un reinicio, como ya advierte `lib/rate-limit.ts`.
 CREATE TABLE IF NOT EXISTS public.agent_rate_limits (
   subject_key TEXT NOT NULL,
   ventana TIMESTAMPTZ NOT NULL,

@@ -26,8 +26,7 @@ on:
     # es best-effort y se congestiona en las horas en punto, donde los retrasos
     # (y los saltos de ejecución) son mucho más frecuentes.
     #
-    # Vercel Hobby solo permite 2 crons; GitHub Actions no tiene ese límite y en
-    # repos públicos los minutos son ilimitados y gratuitos.
+    # En repos públicos los minutos de GitHub Actions son ilimitados y gratuitos.
     - cron: '7,37 * * * *'
   workflow_dispatch:
     inputs:
@@ -54,8 +53,8 @@ jobs:
 
       - name: Drenar la cola
         run: |
-          # Tres pasadas: cada invocación procesa ~40s de trabajo antes de que
-          # Vercel corte la función, así que encadenarlas avanza más por ciclo.
+          # Tres pasadas: cada invocación drena hasta agotar su presupuesto
+          # (RUNJOBS_BUDGET_MS), así que encadenarlas avanza más por ciclo.
           for i in 1 2 3; do
             echo "── Pasada $i ──"
             response=$(curl -sS -w "\n%{http_code}" -X POST \

@@ -6,14 +6,11 @@ import { syncMetaLeadsForCliente, type MetaLeadsSyncSummary } from '@/lib/report
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-// Vercel Hobby corta a 60s. El backfill largo (muchos formularios) se hace desde
-// el worker self-hosted; aquí el cursor reanudable permite avanzar por tandas.
-export const maxDuration = 60;
 
 /**
  * Polling de Meta Lead Ads → report_utm.lead_events.
  *
- *   GET  /api/cron/sync-meta-leads            (cron Vercel, todos los clientes activos)
+ *   GET  /api/cron/sync-meta-leads            (cron, todos los clientes activos)
  *   POST /api/cron/sync-meta-leads?clienteId= (trigger manual / backfill de un cliente)
  *
  * Es la red de seguridad del webhook + el backfill histórico (~90 días que
@@ -58,11 +55,11 @@ async function run(request: Request) {
   }
 
   // Presupuesto global: cada cliente ya se autolimita; esto evita que muchos
-  // clientes en backfill excedan el maxDuration del cron. Los que queden se
+  // clientes en backfill alarguen la corrida sin techo. Los que queden se
   // procesan en la próxima corrida (cursor intacto; el webhook cubre el realtime).
   const startedAt = Date.now();
-  // Alineado con maxDuration=60s de Hobby: con 250_000 el checkpoint nunca
-  // disparaba y la función moría a mitad de un cliente.
+  // Corto a propósito: con 250_000 el checkpoint nunca disparaba y quien
+  // llama abortaba la petición a mitad de un cliente.
   const CRON_BUDGET_MS = 45_000;
 
   const results: Array<{ clienteId: string } & MetaLeadsSyncSummary> = [];

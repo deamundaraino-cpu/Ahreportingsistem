@@ -23,8 +23,8 @@ export function isEmailConfigured(): boolean {
   return !!(process.env.GMAIL_USER && process.env.GMAIL_APP_PASSWORD);
 }
 
-// Transport cacheado entre invocaciones (reutiliza la conexión en la misma
-// instancia serverless; si cambian las credenciales se recrea).
+// Transport cacheado entre peticiones (reutiliza la conexión dentro del mismo
+// proceso; si cambian las credenciales se recrea).
 let cachedTransport: Transporter | null = null;
 let cachedFor = '';
 

@@ -3,9 +3,6 @@ import { NextRequest, NextResponse } from 'next/server';
 import { authenticateCron } from '@/lib/cron-auth';
 import { ApiError } from '@/lib/error-handler';
 
-// Vercel Hobby corta a 60s: pedir más no alarga nada, solo desalinea los presupuestos internos.
-export const maxDuration = 60;
-
 /**
  * POST /api/backfill-forms
  * Body: { clienteId?: string, days?: number }

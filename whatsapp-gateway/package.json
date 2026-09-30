@@ -2,7 +2,7 @@
   "name": "whatsapp-gateway",
   "version": "0.1.0",
   "private": true,
-  "description": "Gateway Baileys para notificaciones a grupos de WhatsApp (proceso persistente, fuera de Vercel)",
+  "description": "Gateway Baileys para notificaciones a grupos de WhatsApp (proceso persistente, fuera de la app)",
   "type": "module",
   "main": "dist/index.js",
   "scripts": {

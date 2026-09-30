@@ -26,8 +26,6 @@ import { ingresosEnMonedaReporte } from '@/lib/notifications/rules-engine';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-// Vercel Hobby corta a 60s: pedir más no alarga nada, solo desalinea los presupuestos internos.
-export const maxDuration = 60;
 
 type DailyRow = {
   cliente_id: string;

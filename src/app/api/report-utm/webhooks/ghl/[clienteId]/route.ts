@@ -32,8 +32,8 @@ export const dynamic = 'force-dynamic';
 /** Tope de cuerpo. Un contacto completo de GHL ronda 8-20 KB; 256 KB deja margen. */
 const MAX_BODY_BYTES = 256 * 1024;
 
-// Rate limit en memoria POR CLIENTE. En serverless cada instancia lleva su propio
-// contador, así que es una mitigación, no una garantía; la defensa real contra
+// Rate limit en memoria POR CLIENTE. El contador vive en el proceso y se pierde
+// al reiniciar, así que es una mitigación, no una garantía; la defensa real contra
 // reentregas es el índice único (cliente_id, external_id).
 const RATE_WINDOW_MS = 60_000;
 const RATE_MAX = 300;

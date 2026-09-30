@@ -2,7 +2,7 @@
 -- Hace idempotente el sync de conversiones offline desde Google Sheets.
 --
 -- `saveConversionesToDb` borraba TODAS las filas del cliente y luego insertaba
--- las nuevas por lotes de 500. Si el insert fallaba a mitad (timeout de Vercel,
+-- las nuevas por lotes de 500. Si el insert fallaba a mitad (timeout de la petición,
 -- error de red, hoja mal formada), el cliente se quedaba sin conversiones hasta
 -- que alguien reintentara el sync a mano.
 --

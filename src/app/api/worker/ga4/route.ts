@@ -19,9 +19,7 @@ import { addDaysISO, colombiaToday, hoyCliente } from '@/lib/colombia-date';
 import { conDeadline } from '@/lib/rate-limit';
 import { sincronizarGa4Cliente } from '@/lib/integrations/ga4-desglose';
 
-export const maxDuration = 60;
-
-/** Margen dentro del límite de 60 s. */
+/** Presupuesto por petición. */
 const PRESUPUESTO_MS = 45_000;
 
 type Resultado = Record<string, unknown> & { status: 'ok' | 'error' | 'skipped_budget' };

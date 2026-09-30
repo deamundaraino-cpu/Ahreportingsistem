@@ -96,7 +96,7 @@ EVOLUTION_API_KEY=<apikey-de-evolution>           # header `apikey`
 EVOLUTION_INSTANCE=adshouse                        # nombre de la instancia
 ```
 
-> Ninguno corre en Vercel (necesitan un proceso persistente). El gateway propio es un
+> Ninguno corre dentro de la app (necesitan un proceso persistente propio). El gateway propio es un
 > microservicio Node (carpeta `whatsapp-gateway/`); Evolution es un contenedor Docker
 > (con Postgres + Redis). Con Evolution **no** se usa `whatsapp-gateway/` ni la tabla
 > `whatsapp_session` (Evolution gestiona su sesión). Ver [doc 08 · Integraciones](./08-integraciones.md).

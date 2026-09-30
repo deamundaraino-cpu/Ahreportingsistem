@@ -1,5 +1,5 @@
 // Gateway Baileys — proceso Node persistente que mantiene la conexión con
-// WhatsApp y expone una API REST mínima para la app Next.js (en Vercel).
+// WhatsApp y expone una API REST mínima para la app Next.js.
 //
 // Endpoints (todos con Authorization: Bearer WHATSAPP_GATEWAY_API_KEY):
 //   GET  /status  -> { connected, me, lastSeen }

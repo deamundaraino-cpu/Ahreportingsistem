@@ -7,8 +7,6 @@ import { esUuid } from '@/lib/validation';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-export const maxDuration = 60;
-
 /**
  * Retirar un documento de Sheets **con sus datos**.
  *

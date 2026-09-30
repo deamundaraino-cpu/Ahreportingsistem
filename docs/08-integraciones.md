@@ -571,7 +571,7 @@ Para el residuo ya existente: `npx tsx scripts/limpiar-sheets-huerfanos.ts`
   | `{ clientId, sheetId?, recalcularCampos? }`                             | documento(s) enteros de una vez        |
 
   **"Sincronizar todos ahora" va pestaña a pestaña.** Un documento de decenas de
-  miles de filas no cabe en el `maxDuration`: leer las tres pestañas de un sheet
+  miles de filas no cabe en una petición: leer las tres pestañas de un sheet
   real costaba 73 s (11,6 + 15,0 + 37,7 de lectura + 9,4 de cierre), la petición
   moría y devolvía la página de error de la plataforma en texto plano — no JSON.
   Troceado, la más lenta son 37,7 s.
@@ -715,18 +715,18 @@ Notificaciones a **grupos de WhatsApp**, ruteables **por cliente** o **por tipo 
 
 ### Arquitectura
 
-WhatsApp necesita un proceso persistente (WebSocket vivo + sesión), incompatible con Vercel
-serverless. La app nunca importa Baileys; solo habla con `src/lib/whatsapp/gateway.ts`, que
+WhatsApp necesita un proceso persistente (WebSocket vivo + sesión) que no debe reiniciarse
+con cada despliegue de la app. La app nunca importa Baileys; solo habla con `src/lib/whatsapp/gateway.ts`, que
 enruta a uno de **dos proveedores** según `WHATSAPP_PROVIDER`:
 
 - **`baileys`** (default): microservicio propio `whatsapp-gateway/` (Node + Baileys), desplegado
-  en Railway/Render/Fly/VPS. Auth `Bearer`. Sesión en `public.whatsapp_session`.
+  como contenedor aparte en el VPS. Auth `Bearer`. Sesión en `public.whatsapp_session`.
 - **`evolution`**: [Evolution API v2](https://doc.evolution-api.com/v2) self-hosted (Docker +
   Postgres + Redis), que ya envuelve Baileys con multi-instancia. Auth header `apikey`. Evolution
   gestiona su propia sesión (no usa `whatsapp_session` ni `whatsapp-gateway/`).
 
 ```
-[Next.js/Vercel] --HTTP--> [gateway.ts dispatcher] --> [whatsapp-gateway propio | Evolution API] --WS--> WhatsApp
+[App Next.js] --HTTP--> [gateway.ts dispatcher] --> [whatsapp-gateway propio | Evolution API] --WS--> WhatsApp
        |                                                          |
        +---------------------- Supabase --------------------------+   (ruteo, logs; sesión solo en baileys)
 ```
@@ -762,7 +762,7 @@ disparador de ventas no cambian. Mapeo de endpoints en `src/lib/whatsapp/provide
 `metrics_summary`, `alert_threshold`, `report_ready`, `sale.approved`, `sale.refunded`, `manual`
 (ver `src/lib/whatsapp/types.ts`).
 
-> Config: `WHATSAPP_GATEWAY_URL` + `WHATSAPP_GATEWAY_API_KEY` en Vercel. Ver el README de
+> Config: `WHATSAPP_GATEWAY_URL` + `WHATSAPP_GATEWAY_API_KEY` en el entorno de la app. Ver el README de
 > `whatsapp-gateway/` para desplegar y emparejar el número de la agencia.
 
 ---

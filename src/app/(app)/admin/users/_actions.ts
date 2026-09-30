@@ -194,7 +194,7 @@ export async function setClientAssignments(targetUserId: string, clientIds: stri
 
   const addedIds = clientIds.filter((id) => !previousIds.has(id));
   if (addedIds.length > 0) {
-    // after() evita que Vercel congele la función antes de los inserts
+    // after() completa los inserts sin retrasar la respuesta
     after(() => notifyNewAssignments(adminSupabase, targetUserId, addedIds));
   }
 

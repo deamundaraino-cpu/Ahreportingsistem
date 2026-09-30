@@ -2,7 +2,7 @@
 -- Migration 021: WhatsApp notifications (Baileys gateway)
 -- ════════════════════════════════════════════════════════════════
 -- Notificaciones a GRUPOS de WhatsApp vía un microservicio externo
--- (gateway Baileys, fuera de Vercel). La app NO mantiene la conexión:
+-- (gateway Baileys, fuera de la app). La app NO mantiene la conexión:
 -- el gateway expone una API REST y persiste su sesión en
 -- `whatsapp_session`. Aquí viven el catálogo de grupos, el ruteo
 -- (por cliente y/o por tipo de notificación) y el log de envíos.

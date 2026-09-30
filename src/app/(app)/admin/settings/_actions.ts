@@ -1505,7 +1505,7 @@ export async function syncConversionesOffline(
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ clientId: clienteId, ...(sheetId ? { sheetId } : {}) }),
       cache: 'no-store',
-      // Justo por debajo del maxDuration de la ruta: así el error lo damos
+      // Justo por debajo del minuto que se da la ruta: así el error lo damos
       // nosotros, con un mensaje que se entiende.
       signal: AbortSignal.timeout(58_000),
     });

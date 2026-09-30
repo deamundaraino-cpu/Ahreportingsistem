@@ -31,7 +31,7 @@ import { motivoConsultaNoPermitida } from '@/lib/report-utm/bi/public-allowlist'
 export const dynamic = 'force-dynamic';
 
 // Rate limit en memoria por token+IP. Es una mitigación básica de scraping del
-// link público; en serverless cada instancia lleva su propio contador.
+// link público; el contador vive en el proceso y se pierde al reiniciar.
 const RATE_WINDOW_MS = 60_000;
 const RATE_MAX = 120;
 const hits = new Map<string, number[]>();

@@ -14,7 +14,6 @@ import {
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-export const maxDuration = 60;
 
 /**
  * Planner de la cola: crea los jobs, no los ejecuta.

@@ -3,19 +3,15 @@
 ## Plataforma
 
 La aplicación es un Next.js estándar contra **Supabase** (base de datos + Auth).
-Corre en dos sitios sin cambiar una línea de código:
-
-- **Dokploy** (o cualquier host de contenedores) con el `Dockerfile` de la raíz
-  — ver [Despliegue en Dokploy](#despliegue-en-dokploy-autoalojado).
-- **Vercel**, que fue el destino original — ver [Pasos de despliegue en Vercel](#pasos-de-despliegue-en-vercel).
+Corre en contenedores Docker sobre un VPS con **Dokploy** (o cualquier host de
+contenedores), con el `Dockerfile` de la raíz — ver
+[Despliegue en Dokploy](#despliegue-en-dokploy-autoalojado).
 
 El dominio de producción referenciado en el código es `https://reportes.adshouse.cloud`.
 
-La diferencia operativa importante no es el hosting sino los **crons**: los
-declaraba `vercel.json`, que **ya no existe en el repositorio** — fuera de Vercel
-no lo leía nadie y mantenerlo sugería una programación que en realidad no
-ocurría. Hoy los cubre el `sync-worker` ([doc 14](./14-cron-y-workers.md)); si se
-volviera a Vercel habría que recrearlo.
+La plataforma **no programa ningún cron**: los dispara el `sync-worker`
+([doc 14](./14-cron-y-workers.md)), que por eso es una pieza obligatoria del
+despliegue y no un añadido.
 
 ## Versión de Node (obligatorio ≥ 22.12)
 
@@ -25,7 +21,7 @@ La cadena es `sanitize-html.ts` → `isomorphic-dompurify` → `jsdom` → `html
 
 Afecta a toda ruta que importe `sanitize-html`: `/dashboard/[clientId]` (vía `getBitacoras`), `/admin/settings/[id]` y `/p/[token]`.
 
-Vercel resuelve `engines.node` contra las versiones que ofrece; conviene confirmar en el log de build cuál eligió y que la opción _Project Settings → Node.js Version_ no se quede en una anterior.
+En producción la versión la fija la imagen base del `Dockerfile`; en local y en CI (`.github/workflows/`) hay que comprobarla a mano.
 
 ## Despliegue en Dokploy (autoalojado)
 
@@ -34,11 +30,6 @@ Dokploy corre contenedores Docker detrás de Traefik. La app se empaqueta con el
 en `.next/standalone` un `server.js` y **solo** los módulos que la traza
 encuentra, así que la imagen final no lleva `node_modules` completo (~67 MB en
 lugar de ~1 GB).
-
-`standalone` se activa solo cuando **no** existe `VERCEL` (`next.config.ts`). En
-Vercel el adapter de la plataforma empaqueta las funciones por su cuenta y, con
-`standalone` puesto, el build compila entero y muere al final con
-`ENOENT … .next/next-server.js.nft.json`.
 
 ### Qué se despliega
 
@@ -143,22 +134,21 @@ from sync_runs where started_at > now() - interval '1 hour' group by 1;
 ```
 
 Debe aparecer `vps`. Si sólo aparece `app`, el worker no está tomando jobs
-—revisa sus logs y que `CRON_SECRET` coincida—. `vercel` es histórico anterior
-a la migración.
+—revisa sus logs y que `CRON_SECRET` coincida—. Cualquier otro valor sólo puede
+salir en filas antiguas, anteriores a la migración 102.
 
-### 6 · Los crons ya no los pone la plataforma
+### 6 · Quién dispara los crons
 
-`vercel.json` se eliminó del repositorio al migrar. Sus dos crons los cubren
-ahora:
+La plataforma no programa nada. Los dos que sostienen el sistema:
 
-| Cron de `vercel.json`           | Quién lo cubre ahora                                           |
+| Endpoint                        | Quién lo dispara                                               |
 | ------------------------------- | -------------------------------------------------------------- |
 | `/api/cron/refresh-meta-tokens` | El scheduler del `sync-worker` (02:00 🇨🇴, entrada `0 2 * * *`) |
 | `/api/worker/run-jobs`          | El poll continuo del `sync-worker` + el workflow de GitHub     |
 
-El refresco de tokens de Meta se añadió al scheduler del worker justo por esto:
-vivía **únicamente** como cron de Vercel, y sin él los tokens caducan a los ~60
-días y todos los clientes de Meta quedan desconectados sin aviso.
+El refresco de tokens de Meta sólo está programado en el scheduler del worker:
+sin él los tokens caducan a los ~60 días y todos los clientes de Meta quedan
+desconectados sin aviso.
 
 Si se prefiere no depender del worker para eso, Dokploy tiene _Schedules_ por
 aplicación; el equivalente es:
@@ -211,20 +201,6 @@ de extremo a extremo (la app encola, el worker reclama, los datos aterrizan).
   Supabase.
 - Sí conviene poner **límite a los logs** de Docker (`max-size`), como ya hace
   `sync-worker/docker-compose.yml`: los logs de sincronización son verbosos.
-
-## Pasos de despliegue en Vercel
-
-1. **Conectar el repo a Vercel** (framework Next.js detectado automáticamente).
-2. **Configurar las variables de entorno** en Vercel (Production + Preview). Lista completa en [doc 03](./03-instalacion-y-configuracion.md):
-   - Supabase: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`.
-   - App: `NEXT_PUBLIC_APP_URL` (= dominio de producción).
-   - Cron: `CRON_SECRET`.
-   - OAuth: `META_APP_ID`, `META_APP_SECRET`, `TIKTOK_APP_ID`, `TIKTOK_APP_SECRET`.
-   - Sheets: `GOOGLE_SERVICE_ACCOUNT_EMAIL`, `GOOGLE_SERVICE_ACCOUNT_KEY`.
-3. **Aplicar el esquema y migraciones** en Supabase (`schema.sql` + `migrations/001…020`). Exponer `report_utm` si se usa el módulo.
-4. **Configurar callbacks OAuth** en Meta y TikTok con el dominio de producción.
-5. **Recrear `vercel.json`** con los crons: se eliminó al migrar a Dokploy, así que un despliegue en Vercel partiría sin ninguna programación (ver [doc 14](./14-cron-y-workers.md)).
-6. **Configurar el secreto de la GitHub Action** (`CRON_SECRET`) para el chequeo de presupuesto.
 
 ## Headers de seguridad (`next.config.ts`)
 

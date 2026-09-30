@@ -2,7 +2,7 @@
 
 Plataforma multi-cliente para agencias de publicidad que **consolida métricas de Meta Ads, TikTok Ads, Google Analytics 4, Hotmart y Google Sheets** en dashboards personalizables, reportes mensuales y enlaces públicos compartibles. Incluye además un módulo independiente de **tracking y atribución UTM** (`report-utm`).
 
-> Aplicación Next.js 16 (App Router) + React 19 + Supabase (Postgres + Auth) + Tailwind 4, desplegada en Vercel.
+> Aplicación Next.js 16 (App Router) + React 19 + Supabase (Postgres + Auth) + Tailwind 4, desplegada en Dokploy (Docker en un VPS).
 
 ---
 
@@ -25,7 +25,7 @@ Plataforma multi-cliente para agencias de publicidad que **consolida métricas d
 | 12  | [Módulo Report-UTM](./12-modulo-report-utm.md)                     | Tracking, pixel, webhooks y atribución multi-touch                                                                                       |
 | 13  | [MCP y tokens de API](./13-mcp-y-tokens-api.md)                    | Servidor MCP y gestión de tokens programáticos                                                                                           |
 | 14  | [Cron jobs y workers](./14-cron-y-workers.md)                      | Sincronizaciones automáticas y tareas programadas                                                                                        |
-| 15  | [Despliegue y operación](./15-despliegue.md)                       | Vercel, crons, headers de seguridad y monitoreo                                                                                          |
+| 15  | [Despliegue y operación](./15-despliegue.md)                       | Dokploy, crons, headers de seguridad y monitoreo                                                                                         |
 | 16  | [Campos de Sheet](./16-campos-de-sheet.md)                         | Guía paso a paso: conectar un Google Sheet y convertir sus columnas en métricas                                                          |
 | 17  | [Campos de lead](./17-campos-de-lead.md)                           | Convertir las respuestas de los formularios en dimensiones y filtros de los informes                                                     |
 | 18  | [Fuentes de datos y cruces](./18-fuentes-y-cruces.md)              | Qué cruza con qué y por qué, recetario de widgets y diagnóstico de informes vacíos                                                       |

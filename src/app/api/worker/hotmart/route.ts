@@ -44,9 +44,7 @@ import {
   reconciliarReembolsos,
 } from '@/lib/hotmart/sync';
 
-export const maxDuration = 60;
-
-/** Margen dentro del límite de 60 s: al agotarse se persiste lo hecho. */
+/** Presupuesto por petición: al agotarse se persiste lo hecho. */
 const PRESUPUESTO_MS = 45_000;
 /** Ventana del barrido diario de atribución por lead. */
 const DIAS_REATRIBUIR = 30;

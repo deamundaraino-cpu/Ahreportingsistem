@@ -135,7 +135,7 @@ export default function PrivacyPolicyPage() {
           <Section title="5. Almacenamiento y seguridad">
             <p>
               Tus datos se almacenan en infraestructura segura proporcionada por nuestros
-              proveedores de servicios (Supabase y Vercel). Aplicamos medidas técnicas y
+              proveedores de servicios (Supabase y Hostinger). Aplicamos medidas técnicas y
               organizativas razonables para proteger la información contra el acceso no autorizado,
               la pérdida o la divulgación, incluyendo el cifrado en tránsito y el almacenamiento
               protegido de los tokens de acceso.

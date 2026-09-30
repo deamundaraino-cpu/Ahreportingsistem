@@ -354,7 +354,7 @@ export function clasificarErrorHotmart(status: number): ErrorHotmartClasificado 
 /**
  * Cabeceras que ayudan a distinguir un rechazo de la API de uno de su WAF/CDN.
  *
- * Cuando el fallo solo ocurre desde una IP concreta (p. ej. la de Vercel) y no
+ * Cuando el fallo solo ocurre desde una IP concreta (p. ej. la del VPS) y no
  * desde otra, el cuerpo del error es idéntico y lo único que los separa está
  * aquí. Sin esto no hay forma de diagnosticarlo sin acceso al entorno.
  */

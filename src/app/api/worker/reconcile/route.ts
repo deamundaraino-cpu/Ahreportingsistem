@@ -14,7 +14,6 @@ import { trocearRangoDias } from '@/lib/tiktok/rangos';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-export const maxDuration = 60;
 
 /**
  * Reconcilia el gasto publicitario guardado contra el que reporta la plataforma.
@@ -269,7 +268,7 @@ async function run(request: Request) {
     const plataformas = plataformasPedidas.filter((p) => cuentas[p] > 0);
     if (plataformas.length === 0) continue;
 
-    // El presupuesto de Vercel Hobby (60s) obliga a cortar limpio: los
+    // Presupuesto por corrida: se corta limpio y los
     // clientes no revisados quedan para la siguiente corrida.
     if (Date.now() - startedAt > 45_000) {
       log(`[reconcile] presupuesto agotado — ${cliente.nombre} y siguientes quedan pendientes`);

@@ -83,7 +83,7 @@ export const dynamic = 'force-dynamic';
 const MAX_BODY_BYTES = 256 * 1024;
 
 // Rate limit en memoria POR CLIENTE (no por IP: Hotmart sale de un pool de
-// direcciones). En serverless cada instancia lleva su propio contador, así que
+// direcciones). El contador vive en el proceso y se pierde al reiniciar, así que
 // es una mitigación, no una garantía; la defensa real contra reentregas es la
 // guarda de orden de `guardar_hotmart_venta`.
 const RATE_WINDOW_MS = 60_000;
@@ -453,8 +453,8 @@ export async function POST(
   }
 
   if (avisar && outboundType) {
-    // 9a) Webhooks salientes. Dentro de after(): suelto, en serverless se
-    // cortaba al devolver la respuesta.
+    // 9a) Webhooks salientes. Dentro de after(): no retrasan la respuesta a
+    // Hotmart y Next espera a que terminen.
     after(async () => {
       try {
         await emitOutboundForSale(trackingDb, {

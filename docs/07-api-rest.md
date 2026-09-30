@@ -153,7 +153,7 @@ Requieren `Authorization: Bearer $CRON_SECRET`. Programación en [doc 14](./14-c
 
 ### `GET /api/worker`
 
-Sincronizador principal (Meta, TikTok, Hotmart, GA4). Params: `date` | (`start`+`end`) | `client_id`. `maxDuration` 300s. Hace `upsert` en `metricas_diarias` con desgloses JSONB. Devuelve un resumen por cliente.
+Sincronizador principal (Meta, TikTok, Hotmart, GA4). Params: `date` | (`start`+`end`) | `client_id`. Hace `upsert` en `metricas_diarias` con desgloses JSONB. Devuelve un resumen por cliente.
 
 ### `GET /api/worker/hotmart`
 

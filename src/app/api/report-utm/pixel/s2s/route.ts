@@ -156,7 +156,7 @@ export async function POST(req: NextRequest) {
   const ip =
     ipPublica(body.visitor_ip) ?? ipPublica(body.ip) ?? (ipHeader.split(',')[0]?.trim() || null);
   const ipCountry =
-    paisVisitante(body.visitor_country) ?? req.headers.get('x-vercel-ip-country') ?? null;
+    paisVisitante(body.visitor_country) ?? paisVisitante(req.headers.get('cf-ipcountry'));
   const userAgent = req.headers.get('user-agent') ?? null;
 
   // UTMs e IDs efectivos: el primer valor NO VACÍO entre el body y la query

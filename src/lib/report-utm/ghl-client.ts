@@ -208,8 +208,8 @@ export async function fetchCustomFields(cred: GhlCredenciales): Promise<GhlCusto
  *
  * `onBatch` puede devolver `false` para **parar la paginación**. Es lo que usa
  * el sync para respetar su presupuesto de tiempo: sin ese corte, una location de
- * 23.000 contactos seguiría pidiendo las 230 páginas restantes y la función
- * moriría por `maxDuration` a mitad de un lote.
+ * 23.000 contactos seguiría pidiendo las 230 páginas restantes y la petición
+ * se abortaría por timeout a mitad de un lote.
  */
 export async function searchContactsPaged(
   cred: GhlCredenciales,

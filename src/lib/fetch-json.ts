@@ -4,11 +4,10 @@
  * Lectura de respuestas de nuestros propios endpoints tolerando que el cuerpo
  * no sea JSON.
  *
- * Cuando una función se pasa de su `maxDuration` o se cae, quien responde es la
- * plataforma, no el handler: un cuerpo en texto plano del estilo
- * `An error occurred with this application.\n\nFUNCTION_INVOCATION_TIMEOUT`.
- * `res.json()` reventaba ahí con
- * `Unexpected token 'A', "An error o"... is not valid JSON`, un mensaje que no
+ * Cuando una petición se pasa de tiempo o el proceso se cae, quien responde es
+ * el proxy de delante, no el handler: un cuerpo en texto plano o HTML del
+ * estilo `504 Gateway Timeout`. `res.json()` reventaba ahí con
+ * `Unexpected token 'G', "Gateway Ti"... is not valid JSON`, un mensaje que no
  * le dice nada a nadie: lo que había pasado era un timeout.
  */
 

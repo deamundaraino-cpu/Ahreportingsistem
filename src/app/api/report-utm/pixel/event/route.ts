@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/utils/supabase/server';
 import { normalizarPageUrl } from '@/lib/report-utm/page-url';
-import { customDataConIds, resolverCampos } from '@/lib/report-utm/s2s-captura';
+import { customDataConIds, paisVisitante, resolverCampos } from '@/lib/report-utm/s2s-captura';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -88,7 +88,8 @@ export async function POST(req: NextRequest) {
 
   const ipHeader = req.headers.get('x-forwarded-for') ?? '';
   const ip = ipHeader.split(',')[0]?.trim() || null;
-  const ipCountry = req.headers.get('x-vercel-ip-country') ?? null;
+  // País según Cloudflare; sin su proxy delante la cabecera no llega y queda null.
+  const ipCountry = paisVisitante(req.headers.get('cf-ipcountry'));
 
   // UTMs e IDs: primer valor no vacío entre el body y la query string de
   // page_url, leída ANTES de `normalizarPageUrl` (que recorta `utm_*`, también

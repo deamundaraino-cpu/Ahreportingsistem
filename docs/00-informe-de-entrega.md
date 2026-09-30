@@ -39,8 +39,6 @@
 | Píxel JS            | `public/report-utm-pixel.js`              | En las landings                                                                      | Envía eventos a `/api/report-utm/pixel/event`                                                                                                                                                   |
 | Base de datos       | `migrations/`                             | Supabase, proyecto `dfdeizrbkpdocgckqlel` («REPORTING APP»), plan Pro, cómputo Micro | Postgres + Auth + Storage                                                                                                                                                                       |
 
-> **Vercel ya no se usa.** Mucha documentación y muchos comentarios todavía lo mencionan (límite de 60 s, `maxDuration`, `vercel.json`). Todo eso es histórico. Ver el apartado 10.
-
 ### Flujo de datos
 
 1. El **worker** encola y ejecuta los jobs (`src/lib/sync/planner.ts`, `runner.ts`, `queue.ts`). Cada job llama a un endpoint de la app (`/api/worker`, `/api/worker/hotmart`, `/api/worker/ga4`, `/api/worker/google-sheets-conversiones`, `/api/cron/sync-ghl-leads`…). La lógica de sincronización vive **solo en la app**; el worker la importa.
@@ -90,7 +88,7 @@ Es la mayor fuente de confusión del proyecto:
 | `src/lib/clientes/`                     | `ciclo-de-vida.ts` (crear, archivar y borrar clientes: único camino permitido) y `puesta-en-marcha.ts`                                                                |
 | `src/lib/supabase-paginate.ts`          | `fetchAllRows`: la forma correcta de leer muchas filas. Ver 4.6                                                                                                       |
 | `scripts/`                              | ~120 scripts: tests `verify-*`, backfills, diagnósticos, `auditoria-cruce.ts` y `sql-remoto.ts`                                                                       |
-| `migrations/`                           | 102 archivos SQL, del 001 al 100                                                                                                                                      |
+| `migrations/`                           | 102 archivos SQL, del 001 al 102                                                                                                                                      |
 | `docs/`                                 | Documentación temática (índice en `docs/README.md`)                                                                                                                   |
 | `skills/`, `.claude/skills/`            | Skill «informes-bi» para usar el MCP desde Claude                                                                                                                     |
 
@@ -231,6 +229,7 @@ Estado verificado en producción el 2026-09-30:
 | 001–084, 086–100                                              | Aplicadas                                                                           | —                                                                                                       |
 | 098 · clientes de la empresa · 099 · fuera `clientes.user_id` | Aplicadas (la 099, después de desplegar el código que ya no lee la columna)         | —                                                                                                       |
 | 100 · GA4 por página                                          | Aplicada                                                                            | —                                                                                                       |
+| **102** `sync_runs_ejecutor_default`                          | **SIN aplicar**                                                                     | Aplicarla. Solo cambia el default (`app`) y el comentario de `sync_runs.ejecutor`; no reescribe filas   |
 | **085** `autovacuum_tablas_de_evento`                         | **SIN aplicar** (`reloptions` de `lead_events` vacío)                               | Aplicarla. Es segura: solo cambia parámetros de almacenamiento, sin bloqueos. Ver 4.7                   |
 | Backfill de la **084**                                        | **Nunca ejecutado**: 87.332 de 100.202 filas conservan las UTM dentro de `page_url` | `npx tsx scripts/backfill-page-url.ts`. Va por lotes de 2.000 **a propósito**. Libera ~40 MB            |
 | Claves de respuestas (090)                                    | 7 de 10 `lead_campos` tienen `respuestas`                                           | `npx tsx scripts/migrar-respuestas-lead.ts` en seco y luego `--aplicar`                                 |
@@ -486,16 +485,14 @@ Cómo distinguir la saturación de otra cosa: fallan a la vez base, Auth y Stora
 
 ## 10 · Documentación desactualizada
 
-La carpeta `docs/` es buena y detallada, pero tiene restos de la época de Vercel y del estado anterior al 2026-09-28:
+La carpeta `docs/` es buena y detallada, pero tiene restos del estado anterior al 2026-09-28:
 
-- `docs/02-arquitectura.md`: dice «Deploy: Vercel», «migraciones 001…020» y «van por la 081»; menciona el route group `(report-utm)`, que ya no existe.
+- `docs/02-arquitectura.md`: dice «migraciones 001…020» y «van por la 081»; menciona el route group `(report-utm)`, que ya no existe.
 - `docs/14-cron-y-workers.md`: dice que la zona por cliente «no está activada». Ya lo está. También le faltan los jobs nuevos en la lista de tipos (`ghl_oportunidades`, `tiktok_leads`, `ga4`).
 - `docs/15-despliegue.md`: dice que «no hay suite de tests» (sí la hay) y que `/p/*` y `/report/*` son embebibles (no lo son, ver apartado 8).
 - `docs/23-runbook-empalme.md`: la sección «No me deja eliminar un usuario» describe el bloqueo antiguo. Ya no existe: borrar un usuario funciona siempre.
-- `sync-worker/README.md`: «La app está en Vercel plan Hobby»; faltan los horarios de tokens y reconciliación.
 - `.github/workflows/validate.yml`: **Node 20**, cuando debe ser `22.12` o superior.
 - `.env.example`: el comentario «Activa el módulo report-utm» no tiene variable debajo (restos).
-- Comentarios de `maxDuration` y del límite de 60 s: inertes en Docker.
 - Cabeceras de las migraciones 098 y 099: citan un nombre de archivo antiguo.
 
 Están al día y conviene leerlas: [doc 04](./04-modelo-de-datos.md) y [doc 05](./05-autenticacion-y-roles.md) (actualizadas con la 098), [doc 25](./25-auditoria-cruce-canales.md) (cruce por canal) y [doc 26](./26-auditoria-ga4.md) (GA4).

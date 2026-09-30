@@ -10,7 +10,7 @@ export function formatCurrency(amount: number | string, currency: string): strin
 
 /**
  * Zona horaria del negocio (Colombia, UTC-5). Se fija explícitamente para que
- * el formateo no dependa de la zona del servidor (Vercel corre en UTC, lo que
+ * el formateo no dependa de la zona del servidor (el contenedor corre en UTC, lo que
  * hacía que las fechas se mostraran 5 horas adelantadas).
  */
 const APP_TIME_ZONE = 'America/Bogota';

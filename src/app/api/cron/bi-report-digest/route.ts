@@ -1,7 +1,6 @@
 // Cron: envío automático de informes BI programados.
 //
-// Corre UNA VEZ AL DÍA (13:00 UTC = 08:00 Colombia; el plan Hobby de Vercel no
-// admite crons más frecuentes). Recorre los informes (bi_reports) con
+// Corre UNA VEZ AL DÍA (13:00 UTC = 08:00 Colombia). Recorre los informes (bi_reports) con
 // schedule.enabled=true, comprueba si el día de Colombia coincide con la programación
 // (semanal / quincenal / mensual), calcula el último período COMPLETO y delega
 // el envío + registro en el historial a `deliverReport`.
@@ -19,8 +18,6 @@ import { deliverReport, type DeliverReportResult } from '@/lib/report-utm/report
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-// Vercel Hobby corta a 60s: pedir más no alarga nada, solo desalinea los presupuestos internos.
-export const maxDuration = 60;
 
 interface Schedule {
   enabled?: boolean;

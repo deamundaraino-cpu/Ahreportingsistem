@@ -2,9 +2,8 @@
 -- Cola de trabajos de sincronización en Postgres.
 --
 -- Por qué existe:
---   1. Vercel Hobby corta las funciones a 60s y solo admite 2 crons diarios. Un
---      rango de 365 días (Hotmart y GA4 se piden por día) no cabe en una sola
---      invocación: la función moría a mitad y el trabajo se perdía sin rastro.
+--   1. Un rango de 365 días (Hotmart y GA4 se piden por día) no cabe en una
+--      sola petición HTTP: moría a mitad y el trabajo se perdía sin rastro.
 --   2. El sync manual desde el dashboard y el cron podían correr a la vez sobre
 --      el mismo cliente y fecha, duplicando llamadas a las APIs externas.
 --
@@ -14,7 +13,7 @@
 --
 -- Ejecutores posibles (comparten esta misma tabla):
 --   • `sync-worker/` self-hosted en el VPS (principal, sin límite de tiempo)
---   • POST /api/worker/run-jobs en Vercel (respaldo, tandas de ≤45s)
+--   • POST /api/worker/run-jobs en la app (respaldo, por tandas)
 
 CREATE TABLE IF NOT EXISTS public.sync_jobs (
     id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -91,7 +90,7 @@ CREATE TRIGGER trg_sync_jobs_updated_at
 -- duplicar el trabajo.
 --
 -- `p_lease_seconds` recupera jobs huérfanos: si el proceso murió (deploy, OOM,
--- corte de los 60s de Vercel), pasado el lease el job vuelve a la cola. El
+-- reinicio del contenedor), pasado el lease el job vuelve a la cola. El
 -- cursor persistido hace que solo se repita la unidad en curso, y los upserts
 -- son idempotentes, así que repetirla no duplica datos.
 -- ─────────────────────────────────────────────────────────────────────────────

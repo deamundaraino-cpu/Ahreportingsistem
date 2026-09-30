@@ -7,12 +7,11 @@
  * concurrencia + separación mínima entre arranques, y reintentamos los throttles
  * transitorios (429 / códigos de rate-limit) con backoff exponencial + jitter.
  *
- * ⚠️ LIMITACIÓN (serverless): los limiters son singletons EN-MEMORIA, así que solo
- * acotan UNA invocación serverless. El cron diario corre todos los clientes en una
- * sola invocación (sí acota la ráfaga global) y el sync manual es un cliente por
- * invocación (sí acota el escenario que optimizamos). NO coordina invocaciones
- * concurrentes distintas — aceptable a esta escala (10–50 clientes). Un límite
- * verdaderamente global requeriría Redis/Upstash (fuera de alcance).
+ * ⚠️ LIMITACIÓN: los limiters son singletons EN-MEMORIA del proceso. Con un
+ * único contenedor de la app acotan todas sus peticiones a la vez, pero NO se
+ * coordinan con otros procesos (una segunda réplica, scripts lanzados a mano).
+ * Aceptable a esta escala (10–50 clientes); un límite verdaderamente global
+ * requeriría Redis (fuera de alcance).
  */
 
 import { AsyncLocalStorage } from 'node:async_hooks';
@@ -66,7 +65,7 @@ export function limit<T>(platform: Platform, fn: () => Promise<T>): Promise<T> {
 }
 
 // ─── Guarda de presupuesto de tiempo ─────────────────────────────────────────
-// En Vercel Hobby la función se corta a 60s (el worker self-hosted no tiene tope).
+// Las rutas de sync trabajan con un presupuesto por petición.
 // Para no consumir todo el presupuesto en reintentos, dejamos de reintentar pasado
 // el deadline (se devuelve el último resultado/lanza el último error tal cual).
 //
@@ -266,7 +265,7 @@ export const HOTMART_TIMEOUT_MS = 20_000;
  * Sin `init.signal`, cada INTENTO lleva su propio `AbortSignal.timeout` (uno
  * compartido llegaría ya vencido al reintento). Antes no había ninguno: una
  * conexión que Hotmart dejaba colgada colgaba la corrida entera en el worker
- * VPS, que no tiene el tope de 60 s de Vercel. Ese timeout propio se reintenta
+ * VPS, que no tiene tope de tiempo. Ese timeout propio se reintenta
  * igual que un error de red. Si el `signal` lo pasa quien llama, su abort se
  * respeta: ni se sustituye ni se reintenta.
  *

@@ -10,9 +10,6 @@ import {
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-// Vercel Hobby corta a 60s. Cada cliente se autolimita y la pasada siguiente
-// retoma lo que quede: las ventas ya guardadas no se reescriben.
-export const maxDuration = 60;
 
 /**
  * Sync de respaldo de las VENTAS de GoHighLevel → report_utm.sales_events.

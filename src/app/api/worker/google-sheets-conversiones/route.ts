@@ -8,13 +8,6 @@ import { requireCronAuth } from '@/lib/cron-auth';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-/**
- * Sin este export la ruta se quedaba con la duración por defecto de la
- * plataforma: era la ÚNICA de `/api/worker/*` que no la declaraba, y por eso su
- * ejecución podía sobrevivir al `AbortSignal` del runner y seguir escribiendo
- * en la base después de que el job ya se hubiera dado por fallido.
- */
-export const maxDuration = 60;
 
 /**
  * Worker de conversiones offline — sincroniza Google Sheets → DB.

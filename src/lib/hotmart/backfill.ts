@@ -5,7 +5,7 @@
 // Rellena `public.hotmart_ventas` hacia atrás. Lo usan dos llamadores que
 // comparten este motor:
 //
-//   • `scripts/backfill-hotmart.ts` — carga inicial larga, fuera de Vercel.
+//   • `scripts/backfill-hotmart.ts` — carga inicial larga, fuera de la app.
 //   • `/api/worker/hotmart` — el job de la cola, para el goteo y las
 //     reclasificaciones.
 //

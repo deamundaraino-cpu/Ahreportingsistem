@@ -7,12 +7,6 @@ import { ensurePlanDiario } from '@/lib/sync/planner';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-/**
- * Inerte en Docker/Dokploy (no hay límite de plataforma); se conserva por si se
- * vuelve a desplegar en Vercel. El techo real de este endpoint lo fija
- * `RUNJOBS_BUDGET_MS`, más abajo.
- */
-export const maxDuration = 60;
 
 /**
  * Número de entorno con default, tolerando basura en la variable.
@@ -74,10 +68,9 @@ async function run(request: Request) {
      * llamada a lo que quede de presupuesto, así que el budget no puede
      * convertirse en budget+timeout.
      *
-     * Estuvo en 50 s para caber en los 60 s de Vercel Hobby, y ese techo era la
-     * causa del error más frecuente del sistema: el runner abortaba jobs sanos
-     * por falta de presupuesto propio y a los 3 abortos los pintaba de rojo.
-     * En un contenedor no existe tal límite, así que el default sube a 4 min.
+     * Con 50 s el runner abortaba jobs sanos por falta de presupuesto propio y
+     * a los 3 abortos los pintaba de rojo: era el error más frecuente del
+     * sistema. El contenedor no tiene límite de plataforma: el default es 4 min.
      * Ajustable por si el proxy de delante corta antes.
      */
     budgetMs: envMs('RUNJOBS_BUDGET_MS', 240_000),

@@ -1,8 +1,8 @@
 /**
  * Backfill histórico de ventas de Hotmart → `public.hotmart_ventas`.
  *
- * Existe además del job de la cola porque la carga inicial no cabe en los 60 s
- * de una invocación de Vercel: aquí no hay límite de tiempo.
+ * Existe además del job de la cola porque la carga inicial no cabe en el
+ * presupuesto de una petición del job: aquí no hay límite de tiempo.
  *
  *   npx tsx scripts/backfill-hotmart.ts --contar
  *   npx tsx scripts/backfill-hotmart.ts --contar --desde=2026-03-01

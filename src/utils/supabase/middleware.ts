@@ -134,7 +134,7 @@ export async function updateSession(request: NextRequest) {
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
       global: {
-        // Aborta la llamada a Supabase antes de que Vercel corte la invocación.
+        // Aborta la llamada a Supabase antes de que la petición se quede colgada.
         fetch: (input, init) =>
           fetch(input, { ...init, signal: AbortSignal.timeout(AUTH_TIMEOUT_MS) }),
       },

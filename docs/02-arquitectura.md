@@ -15,7 +15,7 @@
 | PDF / export         | `jspdf`, `html2canvas`                                                                          |
 | Validación           | **Zod**                                                                                         |
 | Lenguaje             | **TypeScript 5.9**                                                                              |
-| Deploy               | **Vercel** (con Vercel Cron) + GitHub Actions                                                   |
+| Deploy               | **Dokploy** (Docker en un VPS) + `sync-worker` + GitHub Actions                                 |
 
 El servidor de desarrollo corre en el **puerto 3000** (`next dev -p 3000`). Requiere **Node ≥ 22.12**.
 
@@ -95,7 +95,7 @@ Ver el mapa completo en [doc 06 · Rutas y páginas](./06-rutas-y-paginas.md).
 ## Flujo de datos principal (reporting)
 
 ```
-┌─────────────┐   Vercel Cron (diario)   ┌──────────────────┐
+┌─────────────┐   sync-worker (diario)   ┌──────────────────┐
 │ Meta / TikTok│ ───────────────────────►│  /api/worker     │
 │ GA4 / Hotmart│                          │  (sincronizador) │
 └─────────────┘                          └────────┬─────────┘

@@ -105,7 +105,7 @@ export type SheetsSyncResult = {
  * Sincroniza los Google Sheets del cliente y recalcula sus campos.
  *
  * Va aparte de `triggerWorkerSync` por dos razones: el worker de métricas ya
- * consume casi todo el presupuesto de tiempo de una función de Vercel, y
+ * consume casi todo el presupuesto de tiempo de una petición, y
  * separarlas permite que el botón informe de en qué fase está en vez de quedarse
  * mudo. El endpoint que llama encadena `syncClienteConversiones` →
  * `recalcularCamposCliente`, que es lo único que repuebla el desglose diario.
@@ -133,7 +133,7 @@ export async function triggerSheetsSync(clientId: string): Promise<SheetsSyncRes
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ clientId }),
-      // Un punto por debajo del maxDuration de la ruta, para devolver un error
+      // Un punto por debajo del minuto que se da la ruta, para devolver un error
       // legible en vez de que la petición muera sin más.
       signal: AbortSignal.timeout(58_000),
     });
@@ -2148,8 +2148,8 @@ export async function createSoporteTicket(payload: {
 
   if (error) return { error: error.message };
 
-  // Notificaciones tras responder; after() evita que Vercel congele la
-  // función antes de completar los inserts. In-app (campanita) + WhatsApp.
+  // Notificaciones tras responder; after() completa los inserts sin retrasar
+  // la respuesta. In-app (campanita) + WhatsApp.
   after(async () => {
     await notifyUsers({
       db: supabase,
@@ -2325,7 +2325,7 @@ export async function getMirrorDashboardData(token: string, from?: string, to?: 
 
   // Use tab dates only if not provided in URL.
   // Mismo criterio que el dashboard interno: hora Colombia y 30 días inclusive.
-  // `new Date()` era UTC en Vercel, así que a partir de las 19:00 el rango del
+  // `new Date()` es UTC en el servidor, así que a partir de las 19:00 el rango del
   // enlace público terminaba en mañana.
   const porDefecto = rangoPorDefectoCliente(30);
   const startStr = from || activeTabObj?.fecha_inicio || porDefecto.from;

@@ -20,7 +20,7 @@ export default async function DashboardPage(props: {
   const params = await props.params;
   const clientId = params.clientId;
   const searchParams = await props.searchParams;
-  // Hora Colombia, no la del servidor: en Vercel `new Date()` es UTC, así que a
+  // Hora Colombia, no la del servidor: allí `new Date()` es UTC, así que a
   // partir de las 19:00 el rango por defecto terminaba en MAÑANA y pintaba una
   // fila futura en ceros. Y son 30 días inclusive (no 31) para que coincida con
   // el preset "Últimos 30 días" del selector: si no, `getActivePreset` no lo

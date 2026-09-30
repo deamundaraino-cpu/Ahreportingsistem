@@ -1,6 +1,6 @@
 // Proveedor: microservicio gateway Baileys propio (whatsapp-gateway/).
 //
-// Proceso Node persistente (fuera de Vercel) que mantiene la conexión
+// Proceso Node persistente (fuera de la app) que mantiene la conexión
 // WebSocket con WhatsApp. Aquí solo lo llamamos por REST con un Bearer
 // compartido. Mismo patrón de fetch + AbortController/timeout que
 // src/lib/report-utm/outbound-emitter.ts (deliverOne).

@@ -4,7 +4,6 @@ import { requireCronAuth } from '@/lib/cron-auth';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-export const maxDuration = 60;
 
 /**
  * Congela un mes ya cerrado.

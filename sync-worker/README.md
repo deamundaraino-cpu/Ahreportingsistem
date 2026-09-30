@@ -1,18 +1,15 @@
 # sync-worker
 
-Proceso persistente que ejecuta la cola `public.sync_jobs`. **No corre en Vercel**:
-existe precisamente para escapar de sus límites.
+Proceso persistente que ejecuta la cola `public.sync_jobs` y programa los crons
+de la app. Corre como una Application propia de Dokploy, en el mismo VPS que la
+app y **sin dominio**.
 
 ## Por qué existe
 
-La app está en Vercel plan Hobby:
-
-- las funciones se cortan a **60 segundos**
-- solo se admiten **2 crons diarios**, y `vercel.json` declaraba 9
-
-Sincronizar Meta + TikTok + Hotmart + GA4 para todos los clientes no cabe en 60s
-(Hotmart y GA4 se consultan día a día). El worker moría a mitad del recorrido y
-dejaba datos parciales sin dejar rastro de lo ocurrido.
+Sincronizar Meta + TikTok + Hotmart + GA4 para todos los clientes no cabe en una
+petición HTTP a la app (Hotmart y GA4 se consultan día a día): moría a mitad del
+recorrido y dejaba datos parciales sin dejar rastro de lo ocurrido. Además la
+plataforma no programa nada: alguien tiene que disparar los crons.
 
 Este proceso reclama trabajos de la cola, los ejecuta sin prisa y persiste el
 progreso. Si se cae, el *lease* del job vence y el trabajo vuelve a la cola: nada
@@ -61,13 +58,20 @@ Definidos en `src/index.ts`, en hora Colombia (`TZ_OPERACION`):
 | 05:00 | `diario` | Métricas de ayer y hoy (todos los clientes) + Sheets + Meta Leads + agregación UTM |
 | 14:00 | `diario` | Segunda pasada: recoge correcciones de atribución del día |
 | día 7, 03:00 | `cierre_mes` | Re-descarga forzada del mes anterior (ventana de 35 días) y congelado del período |
+| domingo, 03:00 | `reconciliacion` | Audita el gasto de Meta contra el real de cada cuenta y repara los días con desglose incompleto |
+| cada 2 h | — | Llama a `/api/cron/refresh-hotmart-tokens` |
+| 02:00 | — | Llama a `/api/cron/refresh-meta-tokens` (es el único sitio donde se programa) |
 
 Además hace *poll* de la cola cada `POLL_SECONDS` (15s por defecto), que es lo
 que hace que el botón "Sincronizar" del dashboard responda en segundos.
 
 ## Despliegue
 
-### Docker (recomendado en VPS)
+En producción es una Application de Dokploy con **Dockerfile Path**
+`sync-worker/Dockerfile` y **Context** `.` — ver
+[docs/15-despliegue.md](../docs/15-despliegue.md). A mano:
+
+### Docker
 
 Desde la **raíz del repo** (el `Dockerfile` necesita `src/lib/sync/`):
 
@@ -86,18 +90,8 @@ pm2 start dist/sync-worker/src/index.js --name sync-worker
 pm2 save
 ```
 
-### Railway / Render
-
-- Root directory: la raíz del repo (no `sync-worker/`)
-- Build: `cd sync-worker && npm install && npm run build`
-- Start: `node sync-worker/dist/sync-worker/src/index.js`
-- Exponer `$PORT`
-
-En los planes gratuitos de Render el servicio se duerme por inactividad; para un
-worker que debe despertar solo, un VPS pequeño o el plan de pago es más fiable.
-
 ## Respaldo si el worker está caído
 
-`POST /api/worker/run-jobs` en Vercel drena la misma cola en tandas de ~40s. Los
+`POST /api/worker/run-jobs` en la app drena la misma cola por tandas. Los
 dos ejecutores pueden convivir: `claim_sync_job` usa `FOR UPDATE SKIP LOCKED`, así
 que nunca toman el mismo job.

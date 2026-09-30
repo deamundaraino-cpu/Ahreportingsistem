@@ -3,16 +3,16 @@
  *
  * Por qué existe
  * ─────────────
- * La app corre en Vercel Hobby: funciones de 60s y solo 2 crons diarios. Eso no
- * da para sincronizar Meta + TikTok + Hotmart + GA4 de todos los clientes (el
- * worker moría a mitad y dejaba datos parciales sin rastro). Este proceso vive
- * en el VPS, no tiene límite de tiempo y va drenando la cola a su ritmo.
+ * Sincronizar Meta + TikTok + Hotmart + GA4 de todos los clientes no cabe en
+ * una petición HTTP a la app (moría a mitad y dejaba datos parciales sin
+ * rastro), y nadie más programa los crons. Este proceso vive en el VPS, no tiene
+ * límite de tiempo, lleva el scheduler y va drenando la cola a su ritmo.
  *
  * No duplica la lógica de sincronización: importa `runner.ts` de la app, que
  * traduce cada job a una llamada a los endpoints existentes. Aquí solo vive el
  * bucle, el scheduler y el healthcheck.
  *
- * Despliegue: ver README.md (Docker o PM2 en el VPS).
+ * Despliegue: ver README.md (Application de Dokploy en el VPS).
  */
 
 import express from 'express'
@@ -90,7 +90,7 @@ async function drenarCola(): Promise<void> {
             cronSecret: CRON_SECRET!,
             workerId,
             ejecutor: 'vps',
-            // Sin el techo de 60s de Vercel: tandas largas, menos overhead de claim.
+            // Proceso persistente: tandas largas, menos overhead de claim.
             budgetMs: 10 * 60_000,
             // Lease holgado acorde a la tanda; si el proceso muere, otro ejecutor
             // (o este al reiniciar) retoma el job pasado ese tiempo.
@@ -148,8 +148,8 @@ async function encolarPlan(plan: 'diario' | 'intradia' | 'cierre_mes' | 'reconci
 /**
  * Llama a un endpoint de cron de la app.
  *
- * Vercel Hobby solo admite 2 crons y los dos están ocupados
- * (`refresh-meta-tokens` y `run-jobs`), así que los demás cuelgan de aquí.
+ * La plataforma no programa nada: todo cron de `/api/cron/*` que deba correr
+ * cuelga de aquí.
  */
 async function llamarCron(ruta: string, nombre: string): Promise<void> {
     try {
@@ -168,7 +168,7 @@ async function llamarCron(ruta: string, nombre: string): Promise<void> {
     }
 }
 
-// Horarios en hora Colombia. Sustituyen a los 9 crons de vercel.json.
+// Horarios en hora Colombia. Es el único planificador de la app.
 const horarios: Array<{ expr: string; nombre: string; fn: () => Promise<void> }> = [
     // Plan completo de la mañana: ayer (ya cerrado) + hoy.
     { expr: '0 5 * * *', nombre: 'plan diario', fn: () => encolarPlan('diario') },
@@ -183,8 +183,8 @@ const horarios: Array<{ expr: string; nombre: string; fn: () => Promise<void> }>
     // Refresco de tokens de Hotmart (HotConnect).
     //
     // El endpoint existía desde hace meses y la documentación afirmaba que
-    // corría, pero NO estaba en ningún planificador: ni en vercel.json, ni aquí,
-    // ni en el workflow de respaldo. La conexión sobrevivía solo porque el
+    // corría, pero NO estaba en ningún planificador: ni aquí ni en el
+    // workflow de respaldo. La conexión sobrevivía solo porque el
     // worker refresca en línea cuando el token está a punto de vencer, con dos
     // consecuencias: el estado 'expired' no se escribía nunca y el aviso a los
     // administradores por token caducado NO se disparaba jamás.
@@ -194,11 +194,9 @@ const horarios: Array<{ expr: string; nombre: string; fn: () => Promise<void> }>
     { expr: '0 */2 * * *', nombre: 'refresco de tokens Hotmart', fn: () => llamarCron('/api/cron/refresh-hotmart-tokens', 'hotmart-tokens') },
     // Refresco de tokens de larga duración de Meta.
     //
-    // Vivía ÚNICAMENTE como cron de vercel.json (`0 7 * * *` UTC = 02:00 en
-    // Colombia). Al desplegar en Dokploy ese cron deja de existir, así que
-    // sin esta entrada los tokens caducarían a los ~60 días y todos los
-    // clientes de Meta quedarían desconectados sin aviso. Se mantiene la
-    // misma hora para no cambiar el comportamiento observado.
+    // Es el ÚNICO sitio donde se programa: sin esta entrada los tokens
+    // caducarían a los ~60 días y todos los clientes de Meta quedarían
+    // desconectados sin aviso. 02:00 en Colombia (07:00 UTC).
     { expr: '0 2 * * *', nombre: 'refresco de tokens Meta', fn: () => llamarCron('/api/cron/refresh-meta-tokens', 'meta-tokens') },
 ]
 

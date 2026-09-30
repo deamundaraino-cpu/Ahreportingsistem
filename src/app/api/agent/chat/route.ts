@@ -19,7 +19,6 @@ import type { MensajeLlm } from '@/lib/agent/llm/client';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-export const maxDuration = 300;
 
 const cuerpoSchema = z.object({
   mensaje: z.string().min(1).max(4000),

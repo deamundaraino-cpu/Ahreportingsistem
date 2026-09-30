@@ -4,7 +4,7 @@
  * Es la pieza que permite sincronizar rangos largos sin depender de una única
  * invocación larga: el trabajo se trocea, cada unidad persiste su cursor y
  * `claimJob` usa FOR UPDATE SKIP LOCKED para que dos ejecutores (el worker del
- * VPS y el endpoint de respaldo en Vercel) nunca tomen el mismo job.
+ * VPS y el endpoint de respaldo de la app) nunca tomen el mismo job.
  *
  * Sin dependencias de Next.js a propósito: el worker self-hosted importa este
  * mismo archivo.
@@ -278,8 +278,8 @@ export async function releaseJob(db: any, jobId: string, intentos?: number): Pro
  * ¿Hay OTRO job vivo del mismo cliente, tomado por otro ejecutor?
  *
  * `claim_sync_job` usa SKIP LOCKED, que garantiza que un job no se entrega dos
- * veces, pero NO que un cliente no se procese dos veces a la vez: el cron de
- * Vercel y el worker del VPS pueden estar corriendo rangos solapados del mismo
+ * veces, pero NO que un cliente no se procese dos veces a la vez: el drenador
+ * de respaldo y el worker del VPS pueden estar corriendo rangos solapados del mismo
  * cliente (se observaron 5 corridas del mismo cliente en 3 minutos). Dos
  * corridas concurrentes sobre las mismas fechas se pisan los datos, así que la
  * segunda se devuelve a la cola y espera turno.

@@ -10,10 +10,6 @@ import {
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-// Vercel Hobby corta a 60s. Cada formulario de TikTok es una tarea asíncrona
-// (crear → sondear → descargar), así que el cursor y el `form_offset`
-// reanudables permiten avanzar por tandas sin perder nada.
-export const maxDuration = 60;
 
 /**
  * Polling de TikTok Lead Generation → report_utm.lead_events.
@@ -53,7 +49,9 @@ async function run(request: Request) {
     );
   }
 
-  // Presupuesto global alineado con maxDuration=60s: cada cliente recibe lo
+  // Presupuesto global por corrida. Cada formulario de TikTok es una tarea
+  // asíncrona (crear → sondear → descargar) y el cursor y el `form_offset` son
+  // reanudables, así que se avanza por tandas sin perder nada: cada cliente recibe lo
   // que quede y se autolimita; los que no entren van primero en la próxima
   // corrida (se ordenan por `last_sync_at`).
   const startedAt = Date.now();

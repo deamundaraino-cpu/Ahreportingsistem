@@ -5,7 +5,7 @@ import { codigoErrorDeRed, describirErrorDeRed } from '@/lib/fetch-json';
  * Llamadas de la app a su propia API desde server actions.
  *
  * Existen porque varias rutas de `/api/admin` necesitan el service role y su
- * propio presupuesto de invocación (`maxDuration = 60`), cosa que una server
+ * propio presupuesto de tiempo, cosa que una server
  * action no puede darles.
  *
  * Dos cosas que el patrón anterior (`fetch(\`${protocol}://${host}/api/...\`)`)

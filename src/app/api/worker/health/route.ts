@@ -6,7 +6,6 @@ import { medirSaludBase } from '@/lib/salud/base';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-export const maxDuration = 30;
 
 /**
  * Healthcheck del pipeline de sincronización.

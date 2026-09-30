@@ -53,7 +53,7 @@ ENV NODE_ENV=production \
     PORT=3000 \
     HOSTNAME=0.0.0.0
 
-# Sin TZ a propósito: el contenedor corre en UTC, igual que Vercel. Toda la
+# Sin TZ a propósito: el contenedor corre en UTC. Toda la
 # aritmética de fechas de Colombia es explícita (`colombia-date.ts` usa un
 # offset fijo y lee en UTC), así que fijarla aquí no arreglaría nada y metería
 # una diferencia más entre entornos. En alpine, además, sería silenciosamente

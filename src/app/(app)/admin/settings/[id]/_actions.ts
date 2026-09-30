@@ -7,7 +7,7 @@ import { revalidatePath } from 'next/cache';
  * El saneador se carga bajo demanda, NO con un import estático arriba.
  *
  * `sanitize-html.ts` arrastra `isomorphic-dompurify` → `jsdom`: 653 de los 1892
- * ficheros que Vercel traza para `/dashboard/[clientId]`, más de un tercio de la
+ * ficheros que Next traza para `/dashboard/[clientId]`, más de un tercio de la
  * ruta. Y esa página no lo necesita para nada — de este módulo solo usa
  * `getBitacoras`, que lee. Entraba de rebote por compartir archivo con las
  * escrituras.

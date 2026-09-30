@@ -1,7 +1,7 @@
 /**
  * Mensajes entrantes de WhatsApp.
  *
- * El gateway (proceso Baileys, fuera de Vercel) reenvía aquí lo que llega,
+ * El gateway (proceso Baileys, fuera de la app) reenvía aquí lo que llega,
  * firmado con HMAC-SHA256. Esta ruta decide si el agente debe responder y, si
  * es así, encola el turno.
  *
@@ -56,7 +56,6 @@ import {
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-export const maxDuration = 30;
 
 type Entrante = {
   messageId: string;

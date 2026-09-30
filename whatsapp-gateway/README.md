@@ -1,13 +1,14 @@
 # WhatsApp Gateway (Baileys)
 
 Microservicio Node persistente que mantiene la conexión con WhatsApp y expone una
-API REST para la app Next.js. **No corre en Vercel** (necesita un proceso de larga
-duración con WebSocket vivo). Desplegar en Railway / Render / Fly / VPS.
+API REST para la app Next.js. **Es un proceso aparte de la app**: se despliega
+como un contenedor propio en el VPS (o en cualquier host de procesos de larga
+duración).
 
 ## Por qué existe
 
-La app principal está en Vercel (serverless): funciones efímeras, sin filesystem
-persistente, máx. 300s. Baileys necesita lo contrario. Este gateway aísla todo el
+Baileys necesita un WebSocket siempre vivo y una sesión persistente, y no debe
+reiniciarse cada vez que se redespliega la app. Este gateway aísla todo el
 estado de WhatsApp; la app solo lo llama por HTTP con un Bearer compartido.
 
 ## Setup local
@@ -38,13 +39,14 @@ Todas requieren `Authorization: Bearer $WHATSAPP_GATEWAY_API_KEY` (salvo `/healt
 ## Variables de entorno
 
 Ver `.env.example`. En producción setearlas en el panel del host.
-`WHATSAPP_GATEWAY_API_KEY` debe coincidir con el de Vercel.
+`WHATSAPP_GATEWAY_API_KEY` debe coincidir con el de la app.
 
-## Despliegue (Railway/Render)
+## Despliegue
 
 - Build: `npm install && npm run build`
 - Start: `npm start`
-- Exponer el puerto `$PORT`. Copiar la URL pública a `WHATSAPP_GATEWAY_URL` en Vercel.
+- Exponer el puerto `$PORT`. Copiar su URL a `WHATSAPP_GATEWAY_URL` en el
+  entorno de la app (Dokploy → Environment).
 
 ## Notas anti-baneo
 

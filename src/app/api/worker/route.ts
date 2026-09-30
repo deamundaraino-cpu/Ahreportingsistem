@@ -50,12 +50,10 @@ import {
 } from '@/lib/meta/conversiones-personalizadas-sync';
 import { extraerConversionesPersonalizadas } from '@/lib/meta/conversiones-personalizadas';
 
-// Vercel Hobby corta las funciones a 60s: pedir 300 no las alarga, solo hacía que
-// los presupuestos internos (270s) nunca dispararan y la función muriera a mitad
-// del upsert. Los rangos amplios van por la cola `sync_jobs` (worker self-hosted).
-export const maxDuration = 60;
-
-/** Margen de seguridad dentro del límite de 60s: al agotarse se persiste lo hecho. */
+/**
+ * Presupuesto por petición: al agotarse se persiste lo hecho. Los rangos amplios
+ * van troceados por la cola `sync_jobs` (worker self-hosted).
+ */
 const WORKER_BUDGET_MS = 45_000;
 
 /**
@@ -264,7 +262,7 @@ async function sincronizar(request: Request) {
     (conexionGooglePromesa ??= hasAgencyGoogleConnection().catch(() => false));
 
   // Presupuesto de tiempo para reintentos: no reintentar pasado este momento
-  // (maxDuration=60s en Hobby; dejamos margen para upserts y respuesta final).
+  // (dejamos margen para los upserts y la respuesta final).
   const runStartedAt = Date.now();
   setRetryDeadline(runStartedAt + 50_000);
   const budgetExhausted = () => Date.now() - runStartedAt > WORKER_BUDGET_MS;

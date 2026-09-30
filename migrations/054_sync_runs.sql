@@ -27,11 +27,11 @@ CREATE TABLE IF NOT EXISTS public.sync_runs (
     error          text,
     -- debugLogs truncados (~200 entradas) para diagnosticar sin abrir el código.
     logs           jsonb NOT NULL DEFAULT '[]'::jsonb,
-    ejecutor       text NOT NULL DEFAULT 'vercel'
+    ejecutor       text NOT NULL DEFAULT 'app'
 );
 
 COMMENT ON TABLE  public.sync_runs IS 'Una fila por unidad de sync ejecutada. Alimenta el panel /admin/sync.';
-COMMENT ON COLUMN public.sync_runs.ejecutor IS 'vercel | vps — de dónde salió la ejecución.';
+COMMENT ON COLUMN public.sync_runs.ejecutor IS 'app | vps — de dónde salió la ejecución.';
 
 CREATE INDEX IF NOT EXISTS idx_sync_runs_cliente_started
     ON public.sync_runs (cliente_id, started_at DESC);

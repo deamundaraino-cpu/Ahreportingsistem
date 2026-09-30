@@ -1939,7 +1939,7 @@ async function syncTabConversionesEnZona(
 export interface SyncClienteConversionesOptions {
   /**
    * Sincroniza solo este sheet. Los demás quedan intactos: un documento grande
-   * no cabe junto a los otros en el `maxDuration` de una función, así que la UI
+   * no cabe junto a los otros en el presupuesto de una petición, así que la UI
    * los sincroniza de uno en uno.
    */
   sheetId?: string;

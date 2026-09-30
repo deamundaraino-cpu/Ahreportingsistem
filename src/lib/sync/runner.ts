@@ -66,9 +66,8 @@ export type RunnerOptions = {
    * dentro del contenedor de Next) o `'vps'` (el `sync-worker` persistente).
    *
    * No es cosmético: es el ÚNICO termómetro de si el worker principal está
-   * vivo. Durante meses el default fue `'vercel'` y el worker mandaba `'vps'`,
-   * así que una consulta de una línea —`select ejecutor, count(*) from
-   * sync_runs group by 1`— revela al instante que el worker nunca arrancó.
+   * vivo. Una consulta de una línea —`select ejecutor, count(*) from sync_runs
+   * group by 1`— revela al instante si el worker nunca arrancó: no hay `'vps'`.
    */
   ejecutor?: string;
   /** Corta el bucle al superarlo. */
@@ -380,7 +379,7 @@ export async function runJobs(db: any, opts: RunnerOptions): Promise<RunnerResul
      * `claim_sync_job` incrementa `intentos` también cuando recupera un job
      * `running` con el lease vencido, y ese camino no pasa por `failJob`, que
      * es quien decide el paso a 'error'. Un ejecutor que muere sin responder
-     * (la función de Vercel cortada a mitad) deja el job colgado, y al
+     * (un contenedor reiniciado a mitad) deja el job colgado, y al
      * repetirse el ciclo `intentos` crece sin techo: en producción se vio un
      * 7/3. Aquí se cierra ese camino.
      */

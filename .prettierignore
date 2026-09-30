@@ -28,9 +28,6 @@ Thumbs.db
 *.log
 logs
 
-# Vercel
-.vercel
-
 # Datos volcados, no código
 backups
 

@@ -722,7 +722,7 @@ export async function syncGhlLeadsForCliente(
 
   let maxVisto = cursor;
   const startedAt = Date.now();
-  // Margen frente al maxDuration de 60s del plan Hobby. El cursor se persiste al
+  // Presupuesto por tanda, bajo el timeout de quien llama. El cursor se persiste al
   // cortar, así que el backfill continúa en la siguiente corrida sin perder nada.
   const BUDGET_MS = Number(process.env.GHL_LEADS_BUDGET_MS) || 40_000;
 

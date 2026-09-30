@@ -1,7 +1,7 @@
 /**
  * Planner: decide QUÉ jobs encolar y cuándo.
  *
- * Sustituye a los 9 crons que llegó a declarar el antiguo `vercel.json`. En vez
+ * Sustituye a los 9 crons independientes que llegó a haber. En vez
  * de nueve disparadores independientes, un único planner encola el plan del día
  * y el runner lo drena en el orden que marca la prioridad.
  */
@@ -123,7 +123,7 @@ export async function planDiario(db: any, opts?: { triggeredBy?: string }): Prom
    * Sheets va por cliente, no en un único job global.
    *
    * Como job global recorría TODOS los clientes, TODOS sus documentos y TODAS
-   * sus pestañas dentro de una sola petición HTTP, y el drenador de Vercel lo
+   * sus pestañas dentro de una sola petición HTTP, y el drenador de respaldo lo
    * espera con un `AbortSignal` que no llega a un minuto. Medido en
    * producción: las corridas buenas tardaban 39-40 s y las malas morían a los
    * 55 — el trabajo estaba justo en el borde, así que del 2 al 10 de agosto de
@@ -398,7 +398,7 @@ export async function planHotmartReconciliacion(
  *
  * El scheduler del VPS (`sync-worker/`) es el planner primario, pero es un único
  * punto de fallo: si el contenedor está caído, nadie llena la cola y los
- * drenadores de respaldo (Vercel Cron, GitHub Actions) encuentran `sync_jobs`
+ * drenadores de respaldo (`run-jobs`, GitHub Actions) encuentran `sync_jobs`
  * vacía. Esta función convierte a cualquier drenador en un planner de respaldo:
  * antes de drenar, comprueba si ya se encoló un plan en la franja vigente
  * (05:00 o 14:00 hora Colombia) y, si no, lo encola.

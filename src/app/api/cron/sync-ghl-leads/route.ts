@@ -10,9 +10,6 @@ import {
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-// Vercel Hobby corta a 60s. El backfill largo se hace desde el worker
-// self-hosted; aquí el cursor reanudable permite avanzar por tandas.
-export const maxDuration = 60;
 
 /**
  * Polling de GoHighLevel → report_utm.lead_events.
@@ -55,7 +52,7 @@ async function run(request: Request) {
   }
 
   // Presupuesto global: cada cliente ya se autolimita; esto evita que varios
-  // clientes en backfill excedan el maxDuration. Los que queden se procesan en
+  // clientes en backfill alarguen la corrida sin techo. Los que queden se procesan en
   // la próxima corrida (cursor intacto; el webhook cubre el tiempo real).
   const startedAt = Date.now();
   const CRON_BUDGET_MS = 45_000;

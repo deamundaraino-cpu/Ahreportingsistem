@@ -22,7 +22,7 @@ export default async function PublicReportPage(props: {
   // salen de `getSesionActual()` (una sola vez por petición) y los datos del
   // dashboard se lanzan a la vez que la comprobación de asignación.
   const searchParams = await props.searchParams;
-  // Día del CLIENTE (hoy, Colombia), no el del servidor: en Vercel `new Date()`
+  // Día del CLIENTE (hoy, Colombia), no el del servidor: allí `new Date()`
   // es UTC, así que desde las 19:00 el rango terminaba en mañana. Y 30 días
   // inclusive (no 31), como el dashboard interno y el espejo público.
   const { from: fallbackFrom, to: fallbackTo } = rangoPorDefectoCliente(30);

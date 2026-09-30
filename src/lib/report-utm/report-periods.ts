@@ -163,8 +163,7 @@ export function computePeriod(freq: ReportFrequency, now: Date = new Date()): Re
  * informe.
  *
  * ⚠️ `/api/cron/bi-report-digest` **no lo dispara nadie**: no está en el
- * scheduler del `sync-worker` ni en el workflow de GitHub, y tampoco llegó a
- * estar en el `vercel.json` que existió (sólo declaraba 2 crons). Las entregas
+ * scheduler del `sync-worker` ni en el workflow de GitHub. Las entregas
  * automáticas no se envían; sólo funciona el reenvío manual. Para activarlas
  * hay que añadir una entrada al scheduler (ver doc 14).
  */
