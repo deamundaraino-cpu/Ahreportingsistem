@@ -264,7 +264,8 @@ form-action 'self'
 
 ## Monitoreo
 
-- **Health check**: `GET /api/health` (sin auth) verifica conexión a BD y variables de entorno. Responde 200 (`up`) o 503 (`degraded`/`down`). Útil como _uptime monitor_.
+- **Health check**: `GET /api/health` (sin auth) verifica conexión a BD y variables de entorno. Responde 200 (`up`) o 503 (`degraded`/`down`), también 503 si la base contesta pero tarda más de 3 s. Es la URL del _uptime monitor_: ver [doc 27](./27-alertas-y-staging.md).
+- **Salud de la base**: `/api/worker/health` alerta por tamaño, crecimiento, conexiones y purgas paradas (migración 101, [doc 27](./27-alertas-y-staging.md)).
 - **Logging**: `src/lib/error-handler.ts` provee `logger` (info/warn/error/debug) con salida JSON estructurada, listo para integrar Sentry u observabilidad posterior.
 - **Errores de API**: `ApiError` + `apiErrorResponse` devuelven respuestas consistentes con código, mensaje y (solo en dev) detalles.
 

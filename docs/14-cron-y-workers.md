@@ -189,6 +189,10 @@ el runner lo trata como fallo.
 franja: pasado su día ya no son accionables y solo entierran el problema de hoy
 bajo las lápidas de las semanas anteriores.
 
+Al terminar deja una fila `purga` en `public.mantenimiento_log` (migración 101).
+`/api/worker/health` alerta si pasan más de 36 h sin ella, y también por tamaño y
+crecimiento de la base: ver [doc 27](./27-alertas-y-staging.md).
+
 Tipos de job: `metricas`, `sheets_conversiones`, `meta_leads`, `ghl_leads`,
 `utm_aggregate`, `cierre_mes`, `reconciliar`, `hotmart_ventas` (backfill o
 reclasificación) y `hotmart_reconciliar`; los dos últimos van a

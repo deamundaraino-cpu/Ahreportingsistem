@@ -2,6 +2,7 @@ import { createClient } from '@supabase/supabase-js';
 import { NextResponse } from 'next/server';
 import { requireCronAuth } from '@/lib/cron-auth';
 import { notifyUsers } from '@/lib/notifications/notify';
+import { medirSaludBase } from '@/lib/salud/base';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -15,6 +16,9 @@ export const maxDuration = 30;
  * campanita. Lo consume el workflow de GitHub Actions, que falla ruidosamente
  * (email al owner + issue) cuando este endpoint reporta problemas — el objetivo
  * es que una caída del sync deje de ser invisible.
+ *
+ * Incluye la salud de la base (`base`): tamaño, crecimiento, conexiones y
+ * latido de las purgas. Ver `src/lib/salud/base.ts`.
  *
  *   GET|POST /api/worker/health   (Bearer CRON_SECRET)
  */
@@ -95,8 +99,38 @@ async function handler(request: Request) {
     }
   }
 
+  // Salud de la base (migración 101). Mismo dedupe que arriba, pero por su
+  // propia clave: un aviso de sync reciente no debe tapar uno de la base.
+  const base = await medirSaludBase(db);
+  if (base.disponible && base.alertas.length > 0) {
+    const { data: reciente } = await db
+      .from('notifications')
+      .select('id')
+      .eq('type', 'system')
+      .eq('metadata->>alerta', 'salud_base')
+      .gte('created_at', new Date(nowMs - STALE_HOURS * 3_600_000).toISOString())
+      .limit(1);
+
+    if (!reciente || reciente.length === 0) {
+      await notifyUsers({
+        db,
+        type: 'system',
+        severity: base.critico ? 'error' : 'warning',
+        audience: 'admins',
+        title:
+          base.alertas.length === 1
+            ? base.alertas[0].titulo
+            : `Salud de la base: ${base.alertas.length} alertas`,
+        message: base.alertas.map((a) => `${a.titulo}. ${a.detalle}`).join('\n'),
+        link: '/admin/sync',
+        metadata: { alerta: 'salud_base', db_mb: base.db_mb, alertas: base.alertas },
+      });
+    }
+  }
+
   return NextResponse.json({
     ok: true,
+    base,
     stale,
     horas_desde_ultimo_ok: horasDesdeUltimoOk,
     jobs_error: jobsError,

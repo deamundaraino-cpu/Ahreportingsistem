@@ -10,6 +10,7 @@ import { enqueueJob, enqueueRange, type SyncJobTipo } from './queue';
 import { colombiaToday, colombiaYesterday, COLOMBIA_UTC_OFFSET_MS } from '../date-utils';
 import { hotmartConectado } from '../hotmart/cliente';
 import { normalizeSheetConfigs } from '../integrations/google-sheets-conversiones';
+import { registrarMantenimiento, MANTENIMIENTO_LOG_RETENCION_DIAS } from '../salud/base';
 
 /** ¿El cliente tiene alguna cuenta publicitaria de Meta? */
 export function tieneMeta(configApi: unknown): boolean {
@@ -471,9 +472,24 @@ export async function limpiarHistorial(db: any, dias = 30): Promise<void> {
     .in('estado', ['done', 'cancelled', 'error'])
     .lt('updated_at', corte);
   await db.from('sync_runs').delete().lt('started_at', corte);
-  await purgarPixelEvents(db);
-  await purgarAdsDaily(db);
-  await purgarHotmart(db);
+  const pixelEvents = await purgarPixelEvents(db);
+  const adsDaily = await purgarAdsDaily(db);
+  const hotmart = await purgarHotmart(db);
+
+  // Latido: `/api/worker/health` alerta si pasa día y medio sin esta fila. Sin
+  // ella, que las purgas dejaran de correr no tenía síntoma hasta faltar espacio.
+  await db
+    .from('mantenimiento_log')
+    .delete()
+    .lt(
+      'ocurrido_at',
+      new Date(Date.now() - MANTENIMIENTO_LOG_RETENCION_DIAS * 86_400_000).toISOString()
+    );
+  await registrarMantenimiento(db, 'purga', {
+    pixel_events: pixelEvents,
+    ads_daily: adsDaily,
+    hotmart,
+  });
 }
 
 /** Días que se conservan del nivel ANUNCIO en `ads_daily`. */

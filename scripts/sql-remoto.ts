@@ -14,12 +14,27 @@
  * como una transacción implícita, así que una migración que falla a la mitad no
  * deja la base a medias. Por eso las migraciones de este repo son idempotentes:
  * volver a aplicarlas tras un fallo es seguro.
+ *
+ * Con `--staging` el destino es el proyecto de pruebas: lee
+ * `.env.staging.local` (las mismas dos variables, con los valores del proyecto
+ * de staging) en vez de `.env.local`. Una migración se prueba primero ahí:
+ *
+ *   npx tsx scripts/sql-remoto.ts --staging migrations/101_salud_base.sql
+ *
+ * Ver docs/27-alertas-y-staging.md.
  */
 
 import { readFileSync } from 'node:fs';
 
-function envLocal(): (k: string) => string {
-  const env = readFileSync('.env.local', 'utf8');
+export type Destino = 'produccion' | 'staging';
+
+const ARCHIVO_ENV: Record<Destino, string> = {
+  produccion: '.env.local',
+  staging: '.env.staging.local',
+};
+
+function leerEnv(archivo: string): (k: string) => string {
+  const env = readFileSync(archivo, 'utf8');
   return (k: string) =>
     env
       .split('\n')
@@ -29,15 +44,39 @@ function envLocal(): (k: string) => string {
       .replace(/^"|"$/g, '') ?? '';
 }
 
-export async function sqlRemoto<T = Record<string, unknown>>(query: string): Promise<T[]> {
-  const get = envLocal();
-  const proj = get('NEXT_PUBLIC_SUPABASE_URL')
+function refDe(get: (k: string) => string): string {
+  return get('NEXT_PUBLIC_SUPABASE_URL')
     .replace(/.*https:\/\//, '')
     .replace(/\.supabase\.co.*/, '');
+}
+
+/** Ref del proyecto y token del destino. Staging nunca puede ser producción. */
+export function proyectoDe(destino: Destino = 'produccion'): { proj: string; token: string } {
+  const archivo = ARCHIVO_ENV[destino];
+  let get: (k: string) => string;
+  try {
+    get = leerEnv(archivo);
+  } catch {
+    throw new Error(`No existe ${archivo}. Ver docs/27-alertas-y-staging.md.`);
+  }
+  const proj = refDe(get);
   const token = get('SUPABASE_ACCESS_TOKEN');
   if (!proj || !token) {
-    throw new Error('Faltan NEXT_PUBLIC_SUPABASE_URL o SUPABASE_ACCESS_TOKEN en .env.local');
+    throw new Error(`Faltan NEXT_PUBLIC_SUPABASE_URL o SUPABASE_ACCESS_TOKEN en ${archivo}`);
   }
+  // Un `.env.staging.local` copiado de `.env.local` sin cambiar la URL haría
+  // que «probar en staging» fuera aplicar en producción sin saberlo.
+  if (destino === 'staging' && proj === refDe(leerEnv(ARCHIVO_ENV.produccion))) {
+    throw new Error(`${archivo} apunta al proyecto de PRODUCCIÓN (${proj}). Corrige la URL.`);
+  }
+  return { proj, token };
+}
+
+export async function sqlRemoto<T = Record<string, unknown>>(
+  query: string,
+  destino: Destino = 'produccion'
+): Promise<T[]> {
+  const { proj, token } = proyectoDe(destino);
 
   const res = await fetch(`https://api.supabase.com/v1/projects/${proj}/database/query`, {
     method: 'POST',
@@ -55,13 +94,16 @@ async function main() {
   const archivo = args.find((a) => !a.startsWith('--'));
 
   if (!q && !archivo) {
-    console.error('Uso: npx tsx scripts/sql-remoto.ts <archivo.sql> | --query="..."');
+    console.error('Uso: npx tsx scripts/sql-remoto.ts [--staging] <archivo.sql> | --query="..."');
     process.exit(2);
   }
 
   const query = q ? q.slice('--query='.length) : readFileSync(archivo!, 'utf8');
-  const filas = await sqlRemoto(query);
-  if (archivo && !q) console.log(`✅ Aplicado ${archivo}`);
+  const destino: Destino = args.includes('--staging') ? 'staging' : 'produccion';
+  const filas = await sqlRemoto(query, destino);
+  if (archivo && !q) {
+    console.log(`✅ Aplicado ${archivo} en ${destino} (${proyectoDe(destino).proj})`);
+  }
   if (filas.length > 0) console.log(JSON.stringify(filas, null, 2));
 }
 

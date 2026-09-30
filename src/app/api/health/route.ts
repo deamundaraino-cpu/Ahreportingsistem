@@ -28,6 +28,11 @@ interface HealthCheckResponse {
 // Track start time for uptime calculation
 const startTime = Date.now();
 
+/** A partir de aquí la consulta de prueba se corta y el check responde 503. */
+const DB_TIMEOUT_MS = 8_000;
+/** Una consulta de una fila que tarda más que esto delata una base saturada. */
+const DB_SLOW_MS = Number(process.env.HEALTH_DB_SLOW_MS) || 3_000;
+
 export async function GET(): Promise<NextResponse<HealthCheckResponse>> {
   const timestamp = new Date().toISOString();
   const uptime = Date.now() - startTime;
@@ -58,20 +63,35 @@ export async function GET(): Promise<NextResponse<HealthCheckResponse>> {
     responseTime: 0,
   };
 
+  const dbStartTime = Date.now();
   try {
-    const dbStartTime = Date.now();
-
     const supabase = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.SUPABASE_SERVICE_ROLE_KEY!
     );
 
-    // Simple query to verify connection
-    const { error } = await supabase.from('clientes').select('id').limit(1);
+    // Simple query to verify connection. Con tope: una base saturada no
+    // rechaza la consulta, la deja colgada, y el monitor de uptime necesita un
+    // 503 a tiempo y no su propio timeout.
+    const { error } = await supabase
+      .from('clientes')
+      .select('id')
+      .limit(1)
+      .abortSignal(AbortSignal.timeout(DB_TIMEOUT_MS));
 
     const responseTime = Date.now() - dbStartTime;
 
-    if (error) {
+    if (!error && responseTime > DB_SLOW_MS) {
+      // La saturación del 2026-09-20 no agotó conexiones: contestaba, pero una
+      // consulta trivial tardaba segundos. Eso también es estar degradado.
+      logger.warn('Health check: Database slow', { responseTime });
+      databaseCheck = {
+        status: 'unhealthy',
+        responseTime,
+        error: `Respuesta lenta (${responseTime} ms)`,
+      };
+      overallStatus = 'degraded';
+    } else if (error) {
       logger.warn('Health check: Database query failed', { error: error.message });
       databaseCheck = {
         status: 'unhealthy',
@@ -86,7 +106,7 @@ export async function GET(): Promise<NextResponse<HealthCheckResponse>> {
       };
     }
   } catch (error) {
-    const responseTime = Date.now() - (startTime || 0);
+    const responseTime = Date.now() - dbStartTime;
     const message = error instanceof Error ? error.message : 'Connection failed';
 
     logger.error('Health check: Database connection error', error, {

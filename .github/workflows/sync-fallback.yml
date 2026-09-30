@@ -121,17 +121,38 @@ jobs:
           fi
           echo "✓ Pipeline saludable."
 
+          # Salud de la base (migración 101): tamaño, crecimiento, conexiones y
+          # latido de las purgas. Solo lo CRÍTICO tumba el job; los avisos van
+          # a la campanita. Sin la migración, `base.disponible` es false y no
+          # se evalúa nada.
+          if [ "$(echo "$body" | jq -r '.base.critico // false')" = "true" ]; then
+            echo "❌ Salud de la base en estado crítico:"
+            echo "$body" | jq -r '.base.alertas[] | "  · [\(.gravedad)] \(.titulo). \(.detalle)"'
+            echo "MOTIVO=base" >> "$GITHUB_ENV"
+            exit 1
+          fi
+          echo "✓ Base saludable."
+
       - name: Abrir issue si el pipeline falló
         if: failure()
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          if [ "$MOTIVO" = "base" ]; then
+            titulo="Salud de la base en estado crítico"
+            cuerpo="El healthcheck detectó una alerta crítica de la base (tamaño, crecimiento, conexiones o purgas paradas). El detalle está en el log del paso «Healthcheck del pipeline» y en docs/14-cron-y-workers.md."
+          else
+            titulo="Sync pipeline caído"
+            cuerpo="El workflow de respaldo de sincronización falló (run ${{ github.run_id }}). Revisa el worker del VPS, la alineación de CRON_SECRET y el panel /admin/sync."
+          fi
           # Evita duplicar issues: solo abre una si no hay ya una abierta.
-          existing=$(gh issue list --state open --search 'Sync pipeline caído in:title' --json number --jq 'length' 2>/dev/null || echo 0)
+          existing=$(gh issue list --state open --search "$titulo in:title" --json number --jq 'length' 2>/dev/null || echo 0)
           if [ "$existing" = "0" ]; then
             gh issue create \
-              --title "Sync pipeline caído" \
-              --body "El workflow de respaldo de sincronización falló (run ${{ github.run_id }}). Revisa el worker del VPS, la alineación de CRON_SECRET y el panel /admin/sync.\n\nRun: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+              --title "$titulo" \
+              --body "$cuerpo
+
+          Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
               || echo "No se pudo crear la issue (¿permisos?)."
           else
             echo "Ya existe una issue abierta para este problema."

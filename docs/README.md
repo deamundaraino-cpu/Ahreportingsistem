@@ -37,6 +37,7 @@ Plataforma multi-cliente para agencias de publicidad que **consolida métricas d
 | 24  | [Respuestas de formulario](./24-respuestas-de-formulario.md)       | Un solo sitio (pestaña «Leads»): medir una pregunta en un clic y usar cada respuesta como métrica (leads, CPL, %) en pestañas e informes |
 | 25  | [Auditoría del cruce por canal](./25-auditoria-cruce-canales.md)   | Cruce por plataforma e IDs, cuenta compartida, zona horaria por cliente, atribución de ventas y paridad entre superficies (2026-09-28)   |
 | 26  | [Auditoría de GA4](./26-auditoria-ga4.md)                          | Por qué GA4 no aportaba datos, OAuth seguro, y GA4 por campaña (sesiones y eventos clave) cruzable con gasto y leads (2026-09-28)        |
+| 27  | [Alertas y entorno de pruebas](./27-alertas-y-staging.md)          | Alertas de tamaño, crecimiento y purgas de la base; monitor de uptime; alertas de Supabase; `sql-remoto --staging` (2026-09-30)          |
 
 ---
 
